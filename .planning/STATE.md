@@ -18,22 +18,20 @@
 ## Current Position
 
 **Phase:** 1 (Foundation — NUT Integration & Core Infrastructure)
-**Current Plan:** 04 (Battery Model Persistence)
-**Status:** Plan 04 Complete
-**Progress:** 1/5 plans completed (20%)
+**Current Plan:** 02 (NUT Socket Client)
+**Status:** Plan 02 Complete
+**Progress:** 2/5 plans completed (40%)
 
 ### Completed Plans
 
 - [x] 01-01: Test infrastructure
-- [ ] 01-02: NUT socket client
-- [ ] 01-03: EMA smoothing and IR compensation
+- [x] 01-02: NUT socket client (COMPLETE)
+- [x] 01-03: EMA smoothing and IR compensation (COMPLETE)
 - [x] 01-04: Battery model persistence (COMPLETE)
 - [ ] 01-05: Daemon integration and systemd service
 
 ### What's Next
 
-- [ ] Plan 01-02: Implement NUT socket client (Wave 1)
-- [ ] Plan 01-03: Build ring buffer + EMA core (Wave 1)
 - [ ] Plan 01-05: Integrate daemon and systemd service (Wave 2)
 
 ---
@@ -42,6 +40,7 @@
 
 | Plan | Duration | Tasks | Tests | Completion Date |
 |------|----------|-------|-------|-----------------|
+| 01-02 | 45 min | 2 | 4 | 2026-03-13 |
 | 01-04 | 98 sec | 1 | 20 | 2026-03-13 |
 
 ---
@@ -77,11 +76,12 @@
 
 **Lessons Learned:**
 
-- Atomic write pattern (tempfile + fsync + os.replace) works reliably across Python versions
-- Malformed JSON handling with graceful fallback prevents daemon crashes (B3 fix validated)
-- VRLA curve initialization covers full discharge range with 7 standard points
-- Test coverage essential for model persistence: all 20 tests passing validates correctness
+- Stateless socket polling (connect/send/recv/close per poll) enables automatic NUT restart recovery without daemon changes
+- Socket timeout (2.0 sec) prevents daemon hangs; exceptions re-raised for daemon-level retry logic
+- Mock socket parameter in __init__ provides clean testing without patching built-in socket module
+- Python stdlib socket is sufficient; PyNUT library not needed for this use case
+- Test fixtures (conftest.py) with Mock sockets provide comprehensive coverage for socket edge cases
 
 ---
 
-*State updated: 2026-03-13 after plan 01-04 completion*
+*State updated: 2026-03-13 after plan 01-02 completion*
