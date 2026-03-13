@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: "06-01 (Wave 0 Complete)"
+current_plan: "06-02 (Wave 1 Complete)"
 status: in-progress
-last_updated: "2026-03-14T00:10:00Z"
+last_updated: "2026-03-14T23:15:00Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 19
-  completed_plans: 21
-  percent: 42
+  completed_plans: 22
+  percent: 44
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-14 T00:10Z
-**Current Focus:** Phase 6 Plan 01 Wave 0 Complete (Calibration Mode Flag & Threshold Override)
+**Last Updated:** 2026-03-14 T23:15Z
+**Current Focus:** Phase 6 Plan 02 Wave 1 Complete (Calibration Mode Integration & LUT Interpolation)
 
 ---
 
@@ -33,9 +33,9 @@ progress:
 ## Current Position
 
 **Phase:** 6
-**Current Plan:** 06-01 (Wave 0 Complete)
+**Current Plan:** 06-02 (Wave 1 Complete)
 **Status:** In Progress
-**Progress:** 1/5 plans completed Phase 6 (21/19 cumulative)
+**Progress:** 2/5 plans completed Phase 6 (22/19 cumulative)
 
 ### Phase 6 Completed Plans
 
@@ -49,6 +49,18 @@ progress:
   * Created tests/test_model.py additions: 5 calibration_write tests
   * Created tests/test_soh_calculator.py additions: 5 interpolation tests
   * All tests passing: 146/146 (Phase 1-6 test coverage)
+
+- [x] 06-02: Calibration Mode Wave 1 (Integration & Interpolation) ✓ COMPLETE - 2026-03-14
+  * Integrated interpolate_cliff_region() into monitor.py OB→OL transition handler
+  * Implemented BatteryModel.update_lut_from_calibration() for persistent LUT updates
+  * Added calibration_mode conditional logic: if BLACKOUT_TEST→ONLINE transition
+  * Automatic cliff region interpolation on discharge completion
+  * LUT persisted with source field tracking (measured/interpolated/standard/anchor)
+  * Completion logging: "Calibration complete; remove --calibration-mode for normal operation"
+  * Created test_monitor.py: 4 integration tests + 1 end-to-end test
+  * Created test_model.py: 4 update_lut_from_calibration() tests
+  * Created test_soh_calculator.py: 5 cliff interpolation tests
+  * All tests passing: 160/160 (Phase 1-6 test coverage, +14 new tests)
 
 ### Phase 5 Completed Plans
 
@@ -162,6 +174,7 @@ progress:
 | 05-01 | ~15 min | 2 | 91 (install.sh + existing tests) | 2026-03-13 |
 | 05-02 | ~12 min | 2 | 130 (all phases) | 2026-03-14 |
 | 06-01 | ~12 min | 5 | 146 (all phases) | 2026-03-14 |
+| 06-02 | ~25 min | 5 | 160 (all phases) | 2026-03-14 |
 
 ---
 
@@ -236,6 +249,18 @@ progress:
 - Configuration via environment variables (SOH_THRESHOLD, RUNTIME_THRESHOLD_MINUTES) enables testing without code changes
 - SoH history requires 3+ points for meaningful regression; prediction gracefully degrades if insufficient data
 
----
+**Lessons Learned (from 06-01 and 06-02):**
 
-*State updated: 2026-03-14 T04:20Z after plan 04-02 completion — Phase 4 Wave 1 Health Monitoring Integration COMPLETE*
+- Calibration mode threshold (1 min) allows battery to discharge closer to cutoff (10.5V) for better measured data coverage in low-voltage cliff region
+- Instance variables (self.calibration_mode) vs sys.argv polling ensure flag is immutable after startup (no runtime polling)
+- Discharge buffer batching (6 polls ≈ 60 seconds) minimizes fsync overhead during calibration without blocking polling loop
+- Source field tracking ('measured', 'interpolated') prevents auto-interpolation from overwriting manual calibration data; enables rollback if needed
+- Linear interpolation fills gaps at 0.1V resolution; adequate for VRLA discharge curve smoothing without overfitting
+- Duplicate prevention (±0.01V tolerance) avoids redundant LUT entries from noisy voltage readings
+- Atomic write + fsync pattern reused from Phase 1 ensures calibration data survives power loss during write
+- Cliff region = 11.0V to 10.5V; interpolation separates cliff measured points from non-cliff (all entries below 10.5V or above 11.0V preserved)
+- Integration into existing _handle_event_transition() flow minimizes code duplication and leverages existing discharge buffer clearing
+- End-to-end testing without real hardware validates full calibration workflow before operator manual testing on real UPS
+
+
+*State updated: 2026-03-14 T23:15Z after plan 06-02 completion — Phase 6 Wave 1 Calibration Mode Integration COMPLETE*
