@@ -33,6 +33,8 @@ def mock_socket_ok():
 
     mock_sock.recv = Mock(side_effect=mock_recv)
     mock_sock.sendall = Mock(return_value=None)
+    mock_sock.connect = Mock(return_value=None)
+    mock_sock.close = Mock(return_value=None)
 
     return mock_sock
 
@@ -50,6 +52,8 @@ def mock_socket_timeout():
     # Socket recv() will raise timeout exception
     mock_sock.recv = Mock(side_effect=socket.timeout("Connection timed out"))
     mock_sock.sendall = Mock(return_value=None)
+    mock_sock.connect = Mock(return_value=None)
+    mock_sock.close = Mock(return_value=None)
 
     return mock_sock
 
