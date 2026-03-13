@@ -12,6 +12,7 @@ from src.model import BatteryModel
 from src.soc_predictor import soc_from_voltage, charge_percentage
 from src.runtime_calculator import runtime_minutes
 from src.event_classifier import EventClassifier, EventType
+from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 
 # === INLINE CONFIGURATION (H2 fix: removed src/config.py) ===
 POLL_INTERVAL = int(os.getenv('UPS_MONITOR_POLL_INTERVAL', '10'))
@@ -271,6 +272,30 @@ class MonitorDaemon:
                             f"event={event_str}, "
                             f"stabilized={stabilized}"
                         )
+
+                        # Write virtual UPS metrics to tmpfs for NUT dummy-ups to read
+                        try:
+                            # Compute status override based on event type and time remaining
+                            event_type = self.current_metrics.get("event_type", EventType.ONLINE)
+                            ups_status_override = compute_ups_status_override(
+                                event_type,
+                                time_rem if time_rem is not None else 0,
+                                SHUTDOWN_THRESHOLD_MINUTES
+                            )
+
+                            # Build virtual metrics dict with overrides + passthrough fields
+                            virtual_metrics = {
+                                "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,  # seconds
+                                "battery.charge": int(battery_charge) if battery_charge is not None else 0,  # %
+                                "ups.status": ups_status_override,
+                                **{k: v for k, v in ups_data.items()
+                                   if k not in ["battery.runtime", "battery.charge", "ups.status"]}
+                            }
+
+                            # Write to tmpfs
+                            write_virtual_ups_dev(virtual_metrics)
+                        except Exception as e:
+                            logger.error(f"Failed to write virtual UPS metrics: {e}")
                 else:
                     logger.warning(f"Poll {poll_count}: Missing voltage or load data")
 
