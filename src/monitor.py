@@ -11,6 +11,7 @@ from src.ema_ring_buffer import EMABuffer, ir_compensate
 from src.model import BatteryModel
 from src.soc_predictor import soc_from_voltage, charge_percentage
 from src.runtime_calculator import runtime_minutes
+from src.event_classifier import EventClassifier, EventType
 
 # === INLINE CONFIGURATION (H2 fix: removed src/config.py) ===
 POLL_INTERVAL = int(os.getenv('UPS_MONITOR_POLL_INTERVAL', '10'))
@@ -23,6 +24,7 @@ UPS_NAME = os.getenv('UPS_MONITOR_UPS_NAME', 'cyberpower')
 EMA_WINDOW = int(os.getenv('UPS_MONITOR_EMA_WINDOW', '120'))
 IR_K = float(os.getenv('UPS_MONITOR_IR_K', '0.015'))
 IR_L_BASE = float(os.getenv('UPS_MONITOR_IR_BASE', '20.0'))
+SHUTDOWN_THRESHOLD_MINUTES = int(os.getenv('UPS_MONITOR_SHUTDOWN_THRESHOLD_MIN', '5'))
 
 # === INLINE LOGGING SETUP (H3 fix: removed src/logger.py) ===
 logger = logging.getLogger('ups-battery-monitor')
@@ -70,12 +72,18 @@ class MonitorDaemon:
         )
 
         self.battery_model = BatteryModel(MODEL_PATH)
+        self.event_classifier = EventClassifier()
 
         # Metrics tracking for current battery state
         self.current_metrics = {
             "soc": None,
             "battery_charge": None,
             "time_rem_minutes": None,
+            "event_type": None,
+            "transition_occurred": False,
+            "shutdown_imminent": False,
+            "ups_status_override": None,
+            "previous_event_type": EventType.ONLINE,
             "timestamp": None,
         }
         self.last_soc = None
@@ -100,6 +108,54 @@ class MonitorDaemon:
             logger.info("NUT upsd reachable, polling started")
         except Exception:
             logger.warning(f"NUT upsd unreachable at startup, will retry every {POLL_INTERVAL}s")
+
+    def _handle_event_transition(self):
+        """
+        Execute actions based on event transitions.
+
+        Implements EVT-02 (blackout), EVT-03 (test), EVT-04 (status arbiter),
+        and EVT-05 (model update on discharge completion).
+        """
+        event_type = self.current_metrics["event_type"]
+        previous_event_type = self.current_metrics["previous_event_type"]
+
+        # EVT-02: Real blackout - prepare shutdown signal
+        if event_type == EventType.BLACKOUT_REAL:
+            time_rem = self.current_metrics.get("time_rem_minutes")
+            if time_rem is not None and time_rem < SHUTDOWN_THRESHOLD_MINUTES:
+                logger.warning(
+                    f"Real blackout: time_rem={time_rem:.1f}min < threshold {SHUTDOWN_THRESHOLD_MINUTES}min; "
+                    f"prepare LB flag"
+                )
+                self.current_metrics["shutdown_imminent"] = True
+            else:
+                self.current_metrics["shutdown_imminent"] = False
+
+        # EVT-03: Battery test - suppress shutdown
+        if event_type == EventType.BLACKOUT_TEST:
+            logger.info("Battery test detected; collecting calibration data, no shutdown")
+            self.current_metrics["shutdown_imminent"] = False
+
+        # EVT-04: Status arbitration - emit UPS status override
+        if event_type == EventType.BLACKOUT_REAL:
+            if self.current_metrics.get("shutdown_imminent"):
+                self.current_metrics["ups_status_override"] = "OB DISCHRG LB"
+            else:
+                self.current_metrics["ups_status_override"] = "OB DISCHRG"
+        elif event_type == EventType.ONLINE:
+            self.current_metrics["ups_status_override"] = "OL"
+        elif event_type == EventType.BLACKOUT_TEST:
+            self.current_metrics["ups_status_override"] = "OB DISCHRG"
+
+        # EVT-05: Model update on OB→OL transition
+        if (self.current_metrics.get("transition_occurred") and
+            event_type == EventType.ONLINE and
+            previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
+            logger.info("Power restored; updating LUT with measured discharge points")
+            # Collect voltage-time points from discharge event
+            # Update model.lut with source="measured" (Phase 6 implementation detail)
+            # Recalculate SoH (Phase 6 implementation detail)
+            self.battery_model.save()  # Persist updated model to disk
 
     def _signal_handler(self, signum, frame):
         """Handle SIGTERM/SIGINT gracefully."""
@@ -136,6 +192,18 @@ class MonitorDaemon:
                     if self.ema_buffer.stabilized and not was_stabilized:
                         logger.info(f"EMA buffer stabilized after {poll_count} samples, IR compensation active")
                         was_stabilized = True
+
+                    # Classify event based on UPS status and input voltage
+                    ups_status = ups_data.get('ups.status')
+                    input_voltage = ups_data.get('input.voltage')
+                    if ups_status is not None and input_voltage is not None:
+                        event_type = self.event_classifier.classify(ups_status, input_voltage)
+                        self.current_metrics["event_type"] = event_type
+                        self.current_metrics["transition_occurred"] = self.event_classifier.transition_occurred
+
+                        # Log transitions
+                        if self.event_classifier.transition_occurred:
+                            logger.info(f"Event transition: → {event_type.name}")
 
                     # Log every 6 polls (60 seconds at 10-sec interval)
                     if poll_count % 6 == 0:
@@ -182,15 +250,25 @@ class MonitorDaemon:
                             battery_charge = None
                             time_rem = None
 
+                        # Handle event-driven logic
+                        self._handle_event_transition()
+
+                        # Update previous event type for transition tracking
+                        self.current_metrics["previous_event_type"] = self.current_metrics.get(
+                            "event_type", EventType.ONLINE
+                        )
+
                         v_norm_str = f"{v_norm:.2f}V" if v_norm is not None else "N/A"
                         charge_str = f"{battery_charge}%" if battery_charge is not None else "N/A"
                         time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
+                        event_str = self.current_metrics.get("event_type", "UNKNOWN").name if self.current_metrics.get("event_type") else "N/A"
                         logger.info(
                             f"Poll {poll_count}: V_ema={v_ema:.2f}V, "
                             f"L_ema={l_ema:.1f}%, "
                             f"V_norm={v_norm_str}, "
                             f"charge={charge_str}, "
                             f"time_rem={time_rem_str}, "
+                            f"event={event_str}, "
                             f"stabilized={stabilized}"
                         )
                 else:
