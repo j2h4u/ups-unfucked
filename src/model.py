@@ -179,3 +179,39 @@ class BatteryModel:
         """True if LUT contains any 'measured' source entries."""
         lut = self.get_lut()
         return any(entry['source'] == 'measured' for entry in lut)
+
+    def calibration_write(self, voltage: float, soc: float, timestamp: float):
+        """
+        Write calibration datapoint to model.json with fsync during BLACKOUT_TEST.
+
+        Called from monitor.py discharge buffer handler to capture intermediate
+        measurements in real-time (fsync cost acceptable for one-time calibration).
+
+        Args:
+            voltage: Measured battery voltage (V)
+            soc: Calculated SoC as fraction (0.0-1.0)
+            timestamp: Unix timestamp of measurement
+
+        Raises:
+            IOError: If atomic write fails
+        """
+        # Check for duplicates within ±0.01V tolerance
+        existing = [e for e in self.data['lut'] if abs(e['v'] - voltage) < 0.01]
+        if existing:
+            return  # Skip duplicate
+
+        # Add new entry
+        self.data['lut'].append({
+            'v': round(voltage, 2),
+            'soc': round(soc, 3),
+            'source': 'measured',
+            'timestamp': timestamp
+        })
+
+        # Sort LUT descending by voltage (maintain consistency with save())
+        self.data['lut'].sort(key=lambda x: x['v'], reverse=True)
+
+        # Atomic write with fsync
+        logger.info(f"Calibration write: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")
+        self.save()
+

@@ -254,3 +254,95 @@ class TestBatteryModelMethods:
         model = BatteryModel(model_path=model_file)
 
         assert model.get_soh() == 1.0
+
+
+class TestCalibrationWrite:
+    """Test BatteryModel.calibration_write() for real-time discharge data collection."""
+
+    def test_calibration_write_adds_entry(self, tmp_path):
+        """Verify calibration_write() appends new LUT entry with measured source."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        initial_count = len(model.get_lut())
+        model.calibration_write(voltage=12.5, soc=0.65, timestamp=1234567890.0)
+
+        lut = model.get_lut()
+        assert len(lut) == initial_count + 1
+
+        # Find the new entry
+        new_entry = [e for e in lut if e['v'] == 12.5]
+        assert len(new_entry) == 1
+        assert new_entry[0]['soc'] == 0.65
+        assert new_entry[0]['source'] == 'measured'
+        assert new_entry[0]['timestamp'] == 1234567890.0
+
+    def test_calibration_write_duplicate_prevention(self, tmp_path):
+        """Verify calibration_write() skips duplicates within ±0.01V tolerance."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Write first entry
+        model.calibration_write(voltage=12.5, soc=0.65, timestamp=1000.0)
+        count_after_first = len(model.get_lut())
+
+        # Try to write duplicate (within ±0.01V)
+        model.calibration_write(voltage=12.505, soc=0.64, timestamp=2000.0)
+        count_after_second = len(model.get_lut())
+
+        # Count should not increase
+        assert count_after_second == count_after_first
+
+    def test_calibration_write_fsync(self, tmp_path):
+        """Verify calibration_write() calls save() for atomic write with fsync."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Write calibration data
+        model.calibration_write(voltage=12.5, soc=0.65, timestamp=1234567890.0)
+
+        # Verify file was written to disk
+        assert model_file.exists()
+
+        # Reload from disk to verify persistence
+        model2 = BatteryModel(model_path=model_file)
+        lut = model2.get_lut()
+        new_entries = [e for e in lut if e['v'] == 12.5]
+        assert len(new_entries) == 1
+
+    def test_calibration_write_sorts_lut(self, tmp_path):
+        """Verify LUT is sorted descending by voltage after each write."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Write entries in non-descending order
+        model.calibration_write(voltage=11.5, soc=0.30, timestamp=1000.0)
+        model.calibration_write(voltage=12.5, soc=0.65, timestamp=2000.0)
+        model.calibration_write(voltage=12.0, soc=0.50, timestamp=3000.0)
+
+        # Check LUT is sorted descending
+        lut = model.get_lut()
+        voltages = [e['v'] for e in lut]
+        assert voltages == sorted(voltages, reverse=True)
+
+    def test_calibration_write_multiple_calls(self, tmp_path):
+        """Verify multiple calibration_write() calls accumulate entries."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        initial_count = len(model.get_lut())
+
+        # Write 3 distinct entries
+        model.calibration_write(voltage=13.0, soc=0.95, timestamp=1000.0)
+        model.calibration_write(voltage=12.5, soc=0.65, timestamp=2000.0)
+        model.calibration_write(voltage=11.5, soc=0.30, timestamp=3000.0)
+
+        lut = model.get_lut()
+        assert len(lut) == initial_count + 3
+
+        # Check all entries are present
+        voltages = [e['v'] for e in lut if e['source'] == 'measured']
+        assert 13.0 in voltages
+        assert 12.5 in voltages
+        assert 11.5 in voltages
+
