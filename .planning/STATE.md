@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 03-02
+current_plan: 03-03
 status: executing
-last_updated: "2026-03-14T00:45:00.000Z"
+last_updated: "2026-03-14T00:53:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 11
-  completed_plans: 13
+  completed_plans: 14
   percent: 100
 ---
 
 # Project State — UPS Battery Monitor
 
 **Last Updated:** 2026-03-14
-**Current Focus:** Phase 2 in Progress (Plans 01-06 Complete)
+**Current Focus:** Phase 3 in Progress (Plans 01-02 Complete)
 
 ---
 
@@ -33,9 +33,9 @@ progress:
 ## Current Position
 
 **Phase:** 3
-**Current Plan:** 03-02 (next)
-**Status:** 03-01 COMPLETE
-**Progress:** 1/4 plans completed Phase 3 (25%)
+**Current Plan:** 03-03 (next)
+**Status:** 03-02 COMPLETE
+**Progress:** 2/4 plans completed Phase 3 (50%)
 
 ### Phase 3 Completed Plans
 
@@ -44,6 +44,13 @@ progress:
   * 9 test stubs for all Phase 3 requirements
   * 2 concrete tests (test_write_to_tmpfs, test_nut_format_compliance)
   * 87/87 tests passing (0 regressions)
+
+- [x] 03-02: Virtual UPS status override & shutdown thresholds (Wave 1) ✓ COMPLETE - 2026-03-14
+  * compute_ups_status_override() fully implemented with all EventType cases
+  * 5 new tests: test_field_overrides, test_passthrough_fields, test_lb_flag_threshold, test_configurable_threshold, test_calibration_mode_threshold
+  * LB flag boundary behavior verified (< not <=)
+  * Configurable shutdown threshold validated across [1, 3, 5, 10] thresholds
+  * 88/88 tests passing (0 regressions)
 
 ### Phase 2 Completed Plans
 
@@ -80,6 +87,7 @@ progress:
 | 02-05 | 15 min | 2 | 78 (all phases) | 2026-03-13 |
 | 02-06 | 12 min | 2 | 78 (all phases) | 2026-03-14 |
 | 03-01 | 10 min | 3 | 87 (all phases) | 2026-03-14 |
+| 03-02 | ~8 min | 4 | 88 (all phases) | 2026-03-14 |
 
 ---
 
@@ -112,7 +120,7 @@ progress:
 
 **Blockers:** None currently.
 
-**Last session:** Completed plan 03-01 (virtual UPS infrastructure Wave 0). Created src/virtual_ups.py with atomic tmpfs write function. Created 9 test stubs covering all Phase 3 requirements. Implemented 2 concrete tests (test_write_to_tmpfs, test_nut_format_compliance). All 87 tests passing.
+**Last session:** Completed plan 03-02 (virtual UPS status override & shutdown thresholds Wave 1). Implemented compute_ups_status_override() with all EventType cases. Created 5 new tests covering field overrides, passthrough fields, LB flag threshold logic, configurable thresholds, and calibration mode thresholds. All 88 tests passing (0 regressions).
 
 **Next phase:** Phase 3 planning will integrate virtual UPS dummy-ups proxy, implement shutdown coordination, and provide transparent data source switching without changing Grafana dashboards.
 
@@ -131,4 +139,4 @@ progress:
 
 ---
 
-*State updated: 2026-03-14 after plan 02-01 completion — Phase 2 Wave 0 Test Infrastructure and Implementations COMPLETE*
+*State updated: 2026-03-14 after plan 03-02 completion — Phase 3 Wave 1 Status Override & Shutdown Thresholds COMPLETE*
