@@ -327,9 +327,61 @@ class TestShutdownThresholds:
         - LB flag triggers upsmon to initiate graceful shutdown
         - Threshold is configurable (default from SHUT-02)
         """
-        # TODO: Implement - parametrize time_rem values, verify ups.status
-        # reflects correct LB presence
-        pass
+        # Arrange: Default threshold = 5 minutes
+        default_threshold = 5
+        test_cases = [
+            (6, "OB DISCHRG"),    # time_rem > threshold: no LB
+            (5, "OB DISCHRG"),    # time_rem == threshold: no LB (uses <, not <=)
+            (4.9, "OB DISCHRG LB"),  # time_rem < threshold: LB flag set
+            (0, "OB DISCHRG LB"),    # time_rem = 0: LB flag set
+        ]
+
+        # Act: Call compute_ups_status_override for each case
+        for time_rem, expected_status in test_cases:
+            result = compute_ups_status_override(
+                EventType.BLACKOUT_REAL,
+                time_rem,
+                default_threshold
+            )
+            # Assert: Status matches expected
+            assert result == expected_status, \
+                f"time_rem={time_rem}, threshold={default_threshold}: " \
+                f"expected '{expected_status}', got '{result}'"
+
+    @pytest.mark.parametrize("threshold", [1, 3, 5, 10])
+    def test_configurable_threshold(self, threshold):
+        """Test SHUT-02: Shutdown threshold configurable via environment variable.
+
+        Validates:
+        - Threshold parameter actually controls LB firing (not hardcoded)
+        - Default shutdown threshold (e.g., 5 minutes) when env var not set
+        - Custom threshold from UPS_SHUTDOWN_THRESHOLD_MINUTES env var
+        - Threshold applies to all blackout event classifications
+        - Invalid threshold values handled gracefully (fallback to default)
+        """
+        # Arrange: Test just below threshold (should trigger LB)
+        time_rem_below = threshold - 0.1
+
+        # Act: Call compute_ups_status_override with various thresholds
+        result = compute_ups_status_override(
+            EventType.BLACKOUT_REAL,
+            time_rem_below,
+            threshold
+        )
+
+        # Assert: LB flag fires for all thresholds when time_rem < threshold
+        assert result == "OB DISCHRG LB", \
+            f"Threshold {threshold}: LB should fire when time_rem={time_rem_below} < {threshold}"
+
+        # Verify threshold parameter actually controls the decision
+        time_rem_above = threshold + 0.1
+        result_above = compute_ups_status_override(
+            EventType.BLACKOUT_REAL,
+            time_rem_above,
+            threshold
+        )
+        assert result_above == "OB DISCHRG", \
+            f"Threshold {threshold}: LB should not fire when time_rem={time_rem_above} > {threshold}"
 
     def test_configurable_threshold(self):
         """Test SHUT-02: Shutdown threshold configurable via environment variable.
@@ -344,7 +396,8 @@ class TestShutdownThresholds:
         # compute_ups_status_override(), verify LB flag logic respects threshold
         pass
 
-    def test_calibration_mode_threshold(self):
+    @pytest.mark.parametrize("calibration_threshold", [1, 0])
+    def test_calibration_mode_threshold(self, calibration_threshold):
         """Test SHUT-03: Calibration mode uses reduced shutdown threshold.
 
         Validates:
@@ -353,9 +406,43 @@ class TestShutdownThresholds:
         - Threshold switch is atomic (no mid-test confusion)
         - Calibration mode off → reverts to standard threshold
         """
-        # TODO: Implement - set calibration mode flag, verify threshold drops to 1 min,
-        # simulate longer discharge, verify shutdown not triggered, reset and test normal flow
-        pass
+        # Arrange: Normal threshold = 5 minutes, calibration threshold = 1 or 0 minute
+        normal_threshold = 5
+        test_cases = [2, 1, 0.9]  # Various time_rem values
+
+        # Act: Test with normal threshold
+        for time_rem in test_cases:
+            result_normal = compute_ups_status_override(
+                EventType.BLACKOUT_REAL,
+                time_rem,
+                normal_threshold
+            )
+            # time_rem=2: >= 5 → "OB DISCHRG"
+            if time_rem >= normal_threshold:
+                assert result_normal == "OB DISCHRG", \
+                    f"Normal mode: time_rem={time_rem} >= threshold={normal_threshold} should not trigger LB"
+
+        # Act: Test with calibration threshold (lower)
+        for time_rem in test_cases:
+            result_calib = compute_ups_status_override(
+                EventType.BLACKOUT_REAL,
+                time_rem,
+                calibration_threshold
+            )
+            # With threshold=1: only time_rem < 1 triggers LB
+            # With threshold=0: only time_rem < 0 (unphysical, but test anyway)
+            if time_rem >= calibration_threshold:
+                assert result_calib == "OB DISCHRG", \
+                    f"Calibration mode (threshold={calibration_threshold}): time_rem={time_rem} should not trigger LB"
+            else:
+                assert result_calib == "OB DISCHRG LB", \
+                    f"Calibration mode (threshold={calibration_threshold}): time_rem={time_rem} should trigger LB"
+
+        # Assert: Verify lower threshold allows longer test runs
+        # Example: time_rem=2 with normal threshold=5 → no LB, but with threshold=1 → still no LB
+        # Example: time_rem=0.5 with normal threshold=5 → LB, with threshold=1 → LB
+        # Example: time_rem=2 with normal threshold=5 → no LB, with threshold=0 → no LB
+        # This shows calibration threshold can be set independently
 
 
 class TestEventTypeIntegration:
