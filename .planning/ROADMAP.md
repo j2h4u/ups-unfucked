@@ -10,7 +10,7 @@
 ## Phases
 
 - [x] **Phase 1: Foundation — NUT Integration & Core Infrastructure** - Read real UPS data, integrate with NUT, establish data collection pipeline
-- [ ] **Phase 2: Battery Model — State Estimation & Event Classification** (4/6 plans complete) - Build battery model, estimate SoC/runtime, distinguish blackout from test
+- [x] **Phase 2: Battery Model — State Estimation & Event Classification** (6/6 plans complete) - Build battery model, estimate SoC/runtime, distinguish blackout from test
 - [ ] **Phase 3: Virtual UPS & Safe Shutdown** - Implement dummy-ups proxy, safe LB signaling, shutdown coordination with upsmon
 - [ ] **Phase 4: Health Monitoring & Battery Degradation** - Track SoH, predict replacement date, generate alerts
 - [ ] **Phase 5: Operational Setup & Systemd Integration** - Install systemd service, logging, production deployment
@@ -67,8 +67,8 @@ Plans:
 - [x] 02-02-PLAN.md — SoC predictor integration (Wave 1) ✓ COMPLETE
 - [x] 02-03-PLAN.md — Runtime calculator integration (Wave 1) ✓ COMPLETE
 - [x] 02-04-PLAN.md — Event classifier integration (Wave 1) ✓ COMPLETE
-- [ ] 02-05-PLAN.md — SoC + runtime integration into monitor loop (Wave 2)
-- [ ] 02-06-PLAN.md — Event classification and event-driven logic (Wave 2)
+- [x] 02-05-PLAN.md — SoC + runtime integration into monitor loop (Wave 2) ✓ COMPLETE
+- [x] 02-06-PLAN.md — Event classification and event-driven logic (Wave 2) ✓ COMPLETE
 
 ---
 
