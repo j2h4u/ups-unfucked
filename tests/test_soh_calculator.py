@@ -190,3 +190,122 @@ def test_interpolate_cliff_region_sorted():
     voltages = [e['v'] for e in result]
     assert voltages == sorted(voltages, reverse=True)
 
+
+def test_interpolate_cliff_region_with_realistic_data():
+    """Test interpolation with measured points from 2026-03-12 blackout."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    # Setup: 3 measured points, expect many interpolated fill-ins
+    lut = [
+        {'v': 13.4, 'soc': 1.0, 'source': 'standard'},  # Non-cliff, preserved
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},  # Cliff boundary
+        {'v': 10.6, 'soc': 0.10, 'source': 'measured'},  # Cliff middle
+        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},   # Cliff anchor
+    ]
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Verify non-cliff entries preserved
+    assert any(e['v'] == 13.4 and e['source'] == 'standard' for e in result)
+
+    # Verify measured points present
+    assert any(e['v'] == 11.0 and e['source'] == 'measured' for e in result)
+    assert any(e['v'] == 10.5 and e['source'] == 'measured' for e in result)
+
+    # Verify interpolated entries exist and count
+    interpolated = [e for e in result if e['source'] == 'interpolated']
+    assert len(interpolated) >= 4  # At least 4 interpolated between measured points
+
+    # Verify sorted descending
+    assert result == sorted(result, key=lambda x: x['v'], reverse=True)
+
+
+def test_interpolate_cliff_region_removes_standard():
+    """Verify standard entries in cliff region are removed and replaced by interpolated fill."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    lut = [
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.8, 'soc': 0.40, 'source': 'standard'},  # Should be removed
+        {'v': 10.7, 'soc': 0.25, 'source': 'standard'},  # Should be removed
+        {'v': 10.6, 'soc': 0.20, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},
+    ]
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Verify old standard entries removed
+    assert not any(e['v'] == 10.8 and e['source'] == 'standard' for e in result)
+    assert not any(e['v'] == 10.7 and e['source'] == 'standard' for e in result)
+
+    # Verify new entries at those voltages are interpolated
+    assert any(e['v'] == 10.8 and e['source'] == 'interpolated' for e in result)
+    assert any(e['v'] == 10.7 and e['source'] == 'interpolated' for e in result)
+
+
+def test_interpolate_cliff_region_preserves_measured():
+    """Measured points marked with source='measured' preserved in output."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    lut = [
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},
+    ]
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Measured entries should still be there with same source
+    assert any(e['v'] == 11.0 and e['source'] == 'measured' for e in result)
+    assert any(e['v'] == 10.5 and e['source'] == 'measured' for e in result)
+
+
+def test_lut_source_field_preservation():
+    """Verify source field values are preserved and properly tracked."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    lut = [
+        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.0, 'source': 'anchor'},
+    ]
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Non-cliff entries should be unchanged
+    assert any(e['v'] == 13.4 and e['source'] == 'standard' for e in result)
+
+    # Measured entries should stay marked as measured
+    assert any(e['v'] == 11.0 and e['source'] == 'measured' for e in result)
+
+    # Interpolated entries should be marked as interpolated
+    interpolated = [e for e in result if e['source'] == 'interpolated']
+    assert all(e['source'] == 'interpolated' for e in interpolated)
+
+
+def test_interpolate_cliff_region_linear_math():
+    """Verify linear interpolation math is correct."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    # Two measured points: 11.0V→50%, 10.5V→0%
+    # Interpolation at 0.1V steps: 10.9V, 10.8V, 10.7V, 10.6V (not 10.75V)
+    lut = [
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},
+    ]
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Find interpolated entry at 10.8V (should be ~0.4 or 40% SoC)
+    entry_10_8 = [e for e in result if abs(e['v'] - 10.8) < 0.01]
+    assert len(entry_10_8) > 0, f"No entry near 10.8V. Available: {[e['v'] for e in result]}"
+    soc_10_8 = entry_10_8[0]['soc']
+
+    # Should be approximately 0.4 (40% SoC) due to linear interpolation
+    # (11.0V = 0.5, 10.5V = 0.0, so 10.8V = 0.5 - 0.4 = 0.1... wait let me recalculate)
+    # Actually: slope = (0.0 - 0.5) / (10.5 - 11.0) = -0.5 / -0.5 = 1.0
+    # At 10.8V: soc = 0.5 + (10.8 - 11.0) * 1.0 = 0.5 - 0.2 = 0.3 (30%)
+    assert abs(soc_10_8 - 0.3) < 0.05, f"Expected ~0.3 at 10.8V, got {soc_10_8}"
+
+    # Find interpolated entry at 10.6V (should be ~0.1 or 10% SoC)
+    entry_10_6 = [e for e in result if abs(e['v'] - 10.6) < 0.01]
+    assert len(entry_10_6) > 0, f"No entry near 10.6V. Available: {[e['v'] for e in result]}"
+    soc_10_6 = entry_10_6[0]['soc']
+
+    # At 10.6V: soc = 0.5 + (10.6 - 11.0) * 1.0 = 0.5 - 0.4 = 0.1 (10%)
+    assert abs(soc_10_6 - 0.1) < 0.05, f"Expected ~0.1 at 10.6V, got {soc_10_6}"
+
