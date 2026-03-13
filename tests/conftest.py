@@ -93,3 +93,55 @@ def nut_protocol_samples():
         'charge': 'VAR cyberpower battery.charge 100',
         'input_voltage': 'VAR cyberpower input.voltage 230',
     }
+
+
+@pytest.fixture
+def mock_lut_standard():
+    """
+    Standard VRLA LUT from research (02-RESEARCH.md).
+
+    Returns a list of dictionaries with voltage, SoC, and source tracking.
+    Used for SoC prediction tests and interpolation validation.
+    """
+    return [
+        {"v": 13.4, "soc": 1.0, "source": "standard"},
+        {"v": 12.8, "soc": 0.9, "source": "standard"},
+        {"v": 12.4, "soc": 0.64, "source": "standard"},  # Knee point
+        {"v": 12.0, "soc": 0.4, "source": "standard"},
+        {"v": 11.5, "soc": 0.2, "source": "standard"},
+        {"v": 10.5, "soc": 0.0, "source": "anchor"},
+    ]
+
+
+@pytest.fixture
+def mock_lut_measured():
+    """
+    Measured VRLA LUT for test scenarios.
+
+    Subset of standard LUT with some measured points included.
+    Used to test LUT flexibility and measured point handling.
+    """
+    return [
+        {"v": 13.4, "soc": 1.0, "source": "measured"},
+        {"v": 12.4, "soc": 0.63, "source": "measured"},
+        {"v": 11.0, "soc": 0.15, "source": "measured"},
+        {"v": 10.5, "soc": 0.0, "source": "anchor"},
+    ]
+
+
+@pytest.fixture
+def sample_model_data(mock_lut_standard):
+    """
+    Complete battery model dict with standard LUT and metadata.
+
+    Provides realistic model data for integration tests. Includes capacity,
+    state of health, LUT, and SoH history tracking.
+    """
+    return {
+        "capacity_ah": 7.2,
+        "soh": 1.0,
+        "lut": mock_lut_standard,
+        "soh_history": [
+            {"date": "2026-03-12", "soh": 1.0}
+        ]
+    }
