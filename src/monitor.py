@@ -4,6 +4,7 @@ import sys
 import os
 import logging
 from pathlib import Path
+from datetime import datetime
 from systemd.journal import JournalHandler
 
 from src.nut_client import NUTClient
@@ -13,6 +14,7 @@ from src.soc_predictor import soc_from_voltage, charge_percentage
 from src.runtime_calculator import runtime_minutes
 from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
+from src import soh_calculator, replacement_predictor, alerter
 
 # === INLINE CONFIGURATION (H2 fix: removed src/config.py) ===
 POLL_INTERVAL = int(os.getenv('UPS_MONITOR_POLL_INTERVAL', '10'))
@@ -26,6 +28,9 @@ EMA_WINDOW = int(os.getenv('UPS_MONITOR_EMA_WINDOW', '120'))
 IR_K = float(os.getenv('UPS_MONITOR_IR_K', '0.015'))
 IR_L_BASE = float(os.getenv('UPS_MONITOR_IR_BASE', '20.0'))
 SHUTDOWN_THRESHOLD_MINUTES = int(os.getenv('UPS_MONITOR_SHUTDOWN_THRESHOLD_MIN', '5'))
+SOH_THRESHOLD = float(os.getenv('UPS_MONITOR_SOH_THRESHOLD', '0.80'))
+RUNTIME_THRESHOLD_MINUTES = int(os.getenv('UPS_MONITOR_RUNTIME_THRESHOLD_MIN', '20'))
+REFERENCE_LOAD_PERCENT = float(os.getenv('UPS_MONITOR_REFERENCE_LOAD_PCT', '20.0'))
 
 # === INLINE LOGGING SETUP (H3 fix: removed src/logger.py) ===
 logger = logging.getLogger('ups-battery-monitor')
@@ -41,6 +46,9 @@ except Exception as e:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter('[ups-battery-monitor] %(levelname)s: %(message)s'))
     logger.addHandler(handler)
+
+# Setup alerter logger (Phase 4) for health monitoring
+ups_logger = alerter.setup_ups_logger("ups-battery-monitor")
 
 
 class MonitorDaemon:
@@ -89,6 +97,16 @@ class MonitorDaemon:
         }
         self.last_soc = None
         self.last_time_rem = None
+
+        # Phase 4: Discharge buffer and health monitoring thresholds
+        self.discharge_buffer = {
+            'voltages': [],      # Voltage samples during OB state
+            'times': [],         # Timestamps relative to discharge start
+            'active': False      # True while in BLACKOUT_REAL state
+        }
+        self.soh_threshold = SOH_THRESHOLD
+        self.runtime_threshold_minutes = RUNTIME_THRESHOLD_MINUTES
+        self.reference_load_percent = REFERENCE_LOAD_PERCENT
 
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -153,10 +171,81 @@ class MonitorDaemon:
             event_type == EventType.ONLINE and
             previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
             logger.info("Power restored; updating LUT with measured discharge points")
-            # Collect voltage-time points from discharge event
+            # Phase 4: Calculate SoH and check health thresholds
+            self._update_battery_health()
             # Update model.lut with source="measured" (Phase 6 implementation detail)
             # Recalculate SoH (Phase 6 implementation detail)
             self.battery_model.save()  # Persist updated model to disk
+
+    def _update_battery_health(self):
+        """
+        Called when discharge event completes (OB→OL transition).
+
+        Workflow:
+        1. Extract discharge voltage/time series from buffer
+        2. Calculate SoH using area-under-curve
+        3. Append to soh_history in model.json
+        4. Predict replacement date via linear regression
+        5. Alert if SoH or runtime thresholds breached
+        6. Clear discharge buffer
+        """
+        # Check discharge buffer has data
+        if not self.discharge_buffer['voltages'] or len(self.discharge_buffer['voltages']) < 2:
+            return  # No discharge detected; skip SoH update
+
+        # Phase 4: Calculate SoH from discharge data
+        soh_new = soh_calculator.calculate_soh_from_discharge(
+            discharge_voltage_series=self.discharge_buffer['voltages'],
+            discharge_time_series=self.discharge_buffer['times'],
+            reference_soh=self.battery_model.get_soh(),
+            anchor_voltage=10.5
+        )
+
+        # Add to history
+        today = datetime.now().strftime('%Y-%m-%d')
+        self.battery_model.add_soh_history_entry(today, soh_new)
+        self.battery_model.save()
+
+        logger.info(f"SoH calculated: {soh_new:.2%}")
+
+        # Predict replacement date
+        result = replacement_predictor.linear_regression_soh(
+            soh_history=self.battery_model.get_soh_history(),
+            threshold_soh=self.soh_threshold
+        )
+
+        # Alert if SoH below threshold
+        if soh_new < self.soh_threshold:
+            days_to_replacement = None
+            if result:
+                slope, intercept, r2, replacement_date = result
+                if replacement_date and replacement_date != 'overdue':
+                    try:
+                        repl_dt = datetime.strptime(replacement_date, '%Y-%m-%d')
+                        days_to_replacement = (repl_dt - datetime.now()).days
+                    except ValueError:
+                        pass
+
+            alerter.alert_soh_below_threshold(
+                ups_logger,
+                soh_new,
+                self.soh_threshold,
+                days_to_replacement
+            )
+
+        # Alert if runtime at 100% is low
+        time_rem_at_100pct = runtime_minutes(soc=1.0, load_percent=self.reference_load_percent,
+                                              capacity_ah=self.battery_model.get_capacity_ah(),
+                                              soh=soh_new)
+        if time_rem_at_100pct < self.runtime_threshold_minutes:
+            alerter.alert_runtime_below_threshold(
+                ups_logger,
+                time_rem_at_100pct,
+                self.runtime_threshold_minutes
+            )
+
+        # Clear discharge buffer
+        self.discharge_buffer = {'voltages': [], 'times': [], 'active': False}
 
     def _signal_handler(self, signum, frame):
         """Handle SIGTERM/SIGINT gracefully."""
