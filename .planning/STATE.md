@@ -1,7 +1,7 @@
 # Project State — UPS Battery Monitor
 
 **Last Updated:** 2026-03-13
-**Current Focus:** Phase 1 (Wave 0 Complete — Test Infrastructure Ready)
+**Current Focus:** Phase 1 COMPLETE (All 5 Plans Finished)
 
 ---
 
@@ -18,9 +18,9 @@
 ## Current Position
 
 **Phase:** 1 (Foundation — NUT Integration & Core Infrastructure)
-**Current Plan:** 05 (Daemon Integration & Systemd Service — Wave 2)
-**Status:** Plan 01-01 Complete; 01-02, 01-03, 01-04 Complete; 01-05 Ready
-**Progress:** 4/5 plans completed (80%)
+**Current Plan:** 05 (Daemon Integration & Systemd Service — COMPLETE)
+**Status:** All 5 plans complete (100%)
+**Progress:** 5/5 plans completed (100%)
 
 ### Completed Plans
 
@@ -28,11 +28,11 @@
 - [x] 01-02: NUT socket client (COMPLETE)
 - [x] 01-03: EMA smoothing and IR compensation (COMPLETE)
 - [x] 01-04: Battery model persistence (COMPLETE)
-- [ ] 01-05: Daemon integration and systemd service
+- [x] 01-05: Daemon integration and systemd service (COMPLETE)
 
 ### What's Next
 
-- [ ] Plan 01-05: Integrate daemon and systemd service (Wave 2)
+- [ ] Phase 2: Battery state estimation (SoC from voltage, blackout vs test detection)
 
 ---
 
@@ -44,6 +44,7 @@
 | 01-02 | 45 min | 2 | 4 | 2026-03-13 |
 | 01-03 | — | — | 14 | 2026-03-13 |
 | 01-04 | 98 sec | 1 | 20 | 2026-03-13 |
+| 01-05 | 18 min | 3 | 38 (all phases) | 2026-03-13 |
 
 ---
 
@@ -83,7 +84,10 @@
 - Mock socket parameter in __init__ provides clean testing without patching built-in socket module
 - Python stdlib socket is sufficient; PyNUT library not needed for this use case
 - Test fixtures (conftest.py) with Mock sockets provide comprehensive coverage for socket edge cases
+- Inline configuration (environment variables) simplifies daemon deployment and testing vs separate config file
+- JournalHandler with stderr fallback makes journald optional (graceful degradation if systemd unavailable)
+- Type=simple systemd service with foreground daemon simpler than Type=forking with PID management
 
 ---
 
-*State updated: 2026-03-13 after plan 01-01 completion*
+*State updated: 2026-03-13 after plan 01-05 completion — Phase 1 COMPLETE*

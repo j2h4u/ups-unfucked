@@ -92,9 +92,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | 1 | Pending |
-| DATA-02 | 1 | Pending |
-| DATA-03 | 1 | Pending |
+| DATA-01 | 1 | Complete |
+| DATA-02 | 1 | Complete |
+| DATA-03 | 1 | Complete |
 | MODEL-01 | 1 | Complete |
 | MODEL-02 | 1 | Complete |
 | MODEL-03 | 1 | Complete |

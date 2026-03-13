@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Foundation — NUT Integration & Core Infrastructure** - Read real UPS data, integrate with NUT, establish data collection pipeline
+- [x] **Phase 1: Foundation — NUT Integration & Core Infrastructure** - Read real UPS data, integrate with NUT, establish data collection pipeline
 - [ ] **Phase 2: Battery Model — State Estimation & Event Classification** - Build battery model, estimate SoC/runtime, distinguish blackout from test
 - [ ] **Phase 3: Virtual UPS & Safe Shutdown** - Implement dummy-ups proxy, safe LB signaling, shutdown coordination with upsmon
 - [ ] **Phase 4: Health Monitoring & Battery Degradation** - Track SoH, predict replacement date, generate alerts
@@ -41,7 +41,7 @@ Plans:
 - [x] 01-02-PLAN.md — NUT socket client (Wave 1)
 - [x] 01-03-PLAN.md — EMA smoothing and IR compensation (Wave 1)
 - [x] 01-04-PLAN.md — Battery model persistence (Wave 1)
-- [ ] 01-05-PLAN.md — Daemon integration and systemd service (Wave 2)
+- [x] 01-05-PLAN.md — Daemon integration and systemd service (Wave 2)
 
 ---
 
@@ -141,7 +141,7 @@ Plans:
 
 | Phase | Name | Plans Complete | Status | Completed |
 |-------|------|----------------|--------|-----------|
-| 1 | Foundation | 2/5 | In Progress | — |
+| 1 | Foundation | 5/5 | Complete | 2026-03-13 |
 | 2 | Battery Model | 0/TBD | Not started | — |
 | 3 | Virtual UPS & Shutdown | 0/TBD | Not started | — |
 | 4 | Health Monitoring | 0/TBD | Not started | — |
@@ -150,4 +150,4 @@ Plans:
 
 ---
 
-**Next:** `/gsd:execute-phase 01-foundation-nut-integration-core-infrastructure`
+**Next:** `/gsd:plan-phase 02-battery-model-state-estimation-event-classification`
