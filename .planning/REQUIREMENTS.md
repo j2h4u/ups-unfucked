@@ -13,10 +13,10 @@
 
 ### Battery Model
 
-- [ ] **MODEL-01**: model.json хранит LUT (voltage → SoC%) с поддержкой source: standard/measured/anchor
-- [ ] **MODEL-02**: LUT инициализируется из стандартной VRLA-кривой по даташиту
-- [ ] **MODEL-03**: SoH-история хранится в model.json как список `{date, soh}` точек
-- [ ] **MODEL-04**: model.json обновляется только по завершении discharge event (диск не изнашивается)
+- [x] **MODEL-01**: model.json хранит LUT (voltage → SoC%) с поддержкой source: standard/measured/anchor
+- [x] **MODEL-02**: LUT инициализируется из стандартной VRLA-кривой по даташиту
+- [x] **MODEL-03**: SoH-история хранится в model.json как список `{date, soh}` точек
+- [x] **MODEL-04**: model.json обновляется только по завершении discharge event (диск не изнашивается)
 
 ### Prediction Engine
 
@@ -95,10 +95,10 @@
 | DATA-01 | 1 | Pending |
 | DATA-02 | 1 | Pending |
 | DATA-03 | 1 | Pending |
-| MODEL-01 | 1 | Pending |
-| MODEL-02 | 1 | Pending |
-| MODEL-03 | 1 | Pending |
-| MODEL-04 | 1 | Pending |
+| MODEL-01 | 1 | Complete |
+| MODEL-02 | 1 | Complete |
+| MODEL-03 | 1 | Complete |
+| MODEL-04 | 1 | Complete |
 | PRED-01 | 2 | Pending |
 | PRED-02 | 2 | Pending |
 | PRED-03 | 2 | Pending |

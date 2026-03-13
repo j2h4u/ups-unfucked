@@ -37,10 +37,10 @@
 **Plans:** 5 plans in 2 waves
 
 Plans:
-- [ ] 01-01-PLAN.md — Test infrastructure (Wave 0)
+- [x] 01-01-PLAN.md — Test infrastructure (Wave 0)
 - [ ] 01-02-PLAN.md — NUT socket client (Wave 1)
 - [ ] 01-03-PLAN.md — EMA smoothing and IR compensation (Wave 1)
-- [ ] 01-04-PLAN.md — Battery model persistence (Wave 1)
+- [x] 01-04-PLAN.md — Battery model persistence (Wave 1)
 - [ ] 01-05-PLAN.md — Daemon integration and systemd service (Wave 2)
 
 ---
@@ -141,7 +141,7 @@ Plans:
 
 | Phase | Name | Plans Complete | Status | Completed |
 |-------|------|----------------|--------|-----------|
-| 1 | Foundation | 5/5 | Planned ✓ | — |
+| 1 | Foundation | 2/5 | In Progress | — |
 | 2 | Battery Model | 0/TBD | Not started | — |
 | 3 | Virtual UPS & Shutdown | 0/TBD | Not started | — |
 | 4 | Health Monitoring | 0/TBD | Not started | — |
