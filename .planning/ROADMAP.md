@@ -60,7 +60,14 @@ Plans:
 4. Real blackout distinguished from battery test by input.voltage threshold (≈0V vs ≈230V) with 100% accuracy
 5. ups.status arbiter emits correct OB DISCHRG or OB DISCHRG LB flags based on time-to-empty, not firmware state
 
-**Plans:** TBD
+**Plans:** 5 plans in 2 waves
+
+Plans:
+- [ ] 02-01-PLAN.md — Test infrastructure: test files and fixtures (Wave 0)
+- [ ] 02-02-PLAN.md — SoC predictor: voltage → SoC lookup (Wave 1)
+- [ ] 02-03-PLAN.md — Runtime calculator: Peukert's Law (Wave 1)
+- [ ] 02-04-PLAN.md — Event classifier: blackout vs test state machine (Wave 1)
+- [ ] 02-05-PLAN.md — Monitor integration: wire all modules into daemon loop (Wave 2)
 
 ---
 
@@ -142,7 +149,7 @@ Plans:
 | Phase | Name | Plans Complete | Status | Completed |
 |-------|------|----------------|--------|-----------|
 | 1 | Foundation | 5/5 | Complete | 2026-03-13 |
-| 2 | Battery Model | 0/TBD | Not started | — |
+| 2 | Battery Model | 0/5 | Planning complete | — |
 | 3 | Virtual UPS & Shutdown | 0/TBD | Not started | — |
 | 4 | Health Monitoring | 0/TBD | Not started | — |
 | 5 | Operational Setup | 0/TBD | Not started | — |
@@ -150,4 +157,4 @@ Plans:
 
 ---
 
-**Next:** `/gsd:plan-phase 02-battery-model-state-estimation-event-classification`
+**Next:** `/gsd:execute-phase 02-battery-model-state-estimation-event-classification`
