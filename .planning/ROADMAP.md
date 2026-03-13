@@ -12,7 +12,7 @@
 - [x] **Phase 1: Foundation — NUT Integration & Core Infrastructure** - Read real UPS data, integrate with NUT, establish data collection pipeline
 - [x] **Phase 2: Battery Model — State Estimation & Event Classification** (6/6 plans complete) - Build battery model, estimate SoC/runtime, distinguish blackout from test
 - [x] **Phase 3: Virtual UPS & Safe Shutdown** (3/4 plans complete) - Implement dummy-ups proxy, safe LB signaling, shutdown coordination with upsmon
-- [ ] **Phase 4: Health Monitoring & Battery Degradation** - Track SoH, predict replacement date, generate alerts
+- [x] **Phase 4: Health Monitoring & Battery Degradation** - Track SoH, predict replacement date, generate alerts
 - [ ] **Phase 5: Operational Setup & Systemd Integration** - Install systemd service, logging, production deployment
 - [ ] **Phase 6: Calibration Mode** - Manual calibration flag, cliff region acquisition, one-time setup
 
@@ -114,8 +114,8 @@ Plans:
 **Plans:** 2 plans in 1 wave
 
 Plans:
-- [ ] 04-01-PLAN.md — Test infrastructure and module implementations (Wave 0: soh_calculator, replacement_predictor, alerter)
-- [ ] 04-02-PLAN.md — Integration into monitor.py and MOTD script (Wave 1)
+- [x] 04-01-PLAN.md — Test infrastructure and module implementations (Wave 0: soh_calculator, replacement_predictor, alerter) ✓ COMPLETE
+- [x] 04-02-PLAN.md — Integration into monitor.py and MOTD script (Wave 1) ✓ COMPLETE
 
 ---
 
@@ -123,7 +123,7 @@ Plans:
 
 **Goal:** Package daemon as production-ready systemd service with logging, installation script, and minimal privilege requirements.
 
-**Depends on:** Phase 1
+**Depends on:** Phase 1, Phase 4
 
 **Requirements:** OPS-01, OPS-02, OPS-03, OPS-04
 
@@ -133,7 +133,11 @@ Plans:
 3. Daemon runs without root in hot path (reading UPS data, computing metrics); privileged operations (NUT communication) isolated to systemd socket
 4. All output logged to journald with structured identifiers (unit name, PID, log level) searchable via `journalctl`
 
-**Plans:** TBD
+**Plans:** 2 plans in 1 wave
+
+Plans:
+- [ ] 05-01-PLAN.md — Installation script and logging tests (Wave 0)
+- [ ] 05-02-PLAN.md — Systemd service configuration verification (Wave 1)
 
 ---
 
@@ -162,10 +166,10 @@ Plans:
 | 1 | Foundation | 5/5 | Complete | 2026-03-13 |
 | 2 | Battery Model | 6/6 | Complete | 2026-03-14 |
 | 3 | Virtual UPS & Shutdown | 3/4 | In Progress | — |
-| 4 | Health Monitoring | 0/2 | Planned | — |
-| 5 | Operational Setup | 0/TBD | Not started | — |
+| 4 | Health Monitoring | 2/2 | Complete | 2026-03-14 |
+| 5 | Operational Setup | 0/2 | Planned | — |
 | 6 | Calibration Mode | 0/TBD | Not started | — |
 
 ---
 
-**Next:** `/gsd:plan-phase 4` (Phase 4 planning complete)
+**Next:** `/gsd:execute-phase 5` (Phase 5 execution — Wave 0 install.sh + logging tests)
