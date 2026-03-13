@@ -15,8 +15,8 @@ progress:
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-14
-**Current Focus:** Phase 3 in Progress (Plans 01-04 Complete, Wave 3 Systemd & NUT Configuration Finished)
+**Last Updated:** 2026-03-14 T04:15Z
+**Current Focus:** Phase 4 Wave 0 Complete (Health Monitoring Foundation Implemented)
 
 ---
 
@@ -33,9 +33,19 @@ progress:
 ## Current Position
 
 **Phase:** 4
-**Current Plan:** Not started
-**Status:** Ready to plan
-**Progress:** 4/4 plans completed Phase 3 (100%)
+**Current Plan:** 04-01 COMPLETE
+**Status:** Executing
+**Progress:** 1/5 plans completed Phase 4 (20%)
+
+### Phase 4 Completed Plans
+
+- [x] 04-01: Health Monitoring Foundation (Wave 0) ✓ COMPLETE - 2026-03-14
+  * Implemented soh_calculator.py: Area-under-curve SoH calculation via trapezoidal rule
+  * Implemented replacement_predictor.py: Linear regression degradation trend analysis
+  * Implemented alerter.py: Journald structured logging for health threshold alerts
+  * 24 new unit tests: 8 per module (test_soh_calculator, test_replacement_predictor, test_alerter)
+  * All 115 tests passing (91 prior phases + 24 new, 0 regressions)
+  * Ready for integration into monitor.py (Plan 02)
 
 ### Phase 3 Completed Plans
 
@@ -107,6 +117,7 @@ progress:
 | 03-02 | ~8 min | 4 | 88 (all phases) | 2026-03-14 |
 | 03-03 | ~2 min | 3 | 91 (all phases) | 2026-03-13 |
 | 03-04 | ~4 min | 3 | 91 (all phases) | 2026-03-14 |
+| 04-01 | 15 min | 3 | 115 (all phases) | 2026-03-14 |
 
 ---
 
@@ -139,23 +150,23 @@ progress:
 
 **Blockers:** None currently.
 
-**Last session:** Completed plan 03-03 (monitor virtual UPS integration Wave 2). Integrated write_virtual_ups_dev() call into monitor.py polling loop to construct and write virtual_metrics dict every poll cycle. Created 3 integration tests covering main flow, threshold variations, and error handling. All 91 tests passing (0 regressions).
+**Last session:** Completed plan 04-01 (Health Monitoring Foundation Wave 0). Implemented three independent health monitoring modules: SoH calculator (area-under-curve via trapezoidal rule), replacement predictor (least-squares regression), and alerter (journald structured logging). Created 24 unit tests (8 per module), all passing. Full suite: 115/115 tests (0 regressions).
 
-**Next phase:** Plan 03-05 (Wave 4): Alert thresholds and model lifecycle (Phase 4).
+**Next phase:** Plan 04-02 (Wave 1): Integrate health modules into monitor.py loop.
 
-**Lessons Learned (from 03-01, 03-02, 03-03, 03-04):**
+**Lessons Learned (from 04-01):**
 
-- Tmpfs atomic writes (tempfile + fsync + rename) are essential for crash safety without SSD wear
-- Event type enum provides clean pattern matching for conditional logic (ONLINE/BLACKOUT_REAL/BLACKOUT_TEST)
-- Threshold-based decisions (< vs <=) require careful boundary testing to ensure correct behavior
-- Integration tests validate end-to-end flows better than unit tests alone
-- Error handling in polling loops should catch exceptions, log, and continue (non-fatal failures)
-- Virtual UPS pattern: 3 computed overrides + passthrough fields preserves transparency
-- Configurable thresholds via function parameters enable testing without environment variables
-- Systemd dependency ordering critical: sysinit.target must precede network-online.target for tmpfs availability
-- NUT dummy-ups mode=dummy-once provides atomic reads without CPU polling overhead
-- Configuration provisioning artifacts (ready-for-install files) bridge development and operations
+- Area-under-curve via trapezoidal rule captures non-linear VRLA discharge shapes (exponential tail)
+- Least-squares regression without scipy avoids dependencies; math O(n) with simple stability checks
+- R² > 0.5 validation rejects noisy trends; conservative but appropriate for small datasets (3–20 points)
+- Fire-and-forget journald alerts (no deduplication) simplify daemon logic; journald handles filtering
+- Structured extra fields (BATTERY_SOH, THRESHOLD, DAYS_TO_REPLACEMENT) enable journalctl queries
+- SysLogHandler fallback to stderr keeps code testable (no /dev/log dependency in tests)
+- Non-uniform time intervals Δt in discharge profiles require weighted trapezoidal rule, not simple averaging
+- Anchor voltage trimming (10.5V) at physical limit prevents false calibration from incomplete discharge
+- Reference area (12V × 2820s) empirically derived from 2026-03-12 blackout; baseline not constant
+- Proportional degradation model: new_soh = reference_soh × (measured_area / reference_area) preserves monotonicity
 
 ---
 
-*State updated: 2026-03-14 after plan 03-04 completion — Phase 3 Wave 3 Systemd & NUT Configuration COMPLETE*
+*State updated: 2026-03-14 T04:15Z after plan 04-01 completion — Phase 4 Wave 0 Health Monitoring Foundation COMPLETE*
