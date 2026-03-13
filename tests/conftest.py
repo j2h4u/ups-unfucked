@@ -76,3 +76,16 @@ def temporary_model_path():
         os.unlink(tmp_path)
     except OSError:
         pass  # File might already be deleted by test
+
+
+@pytest.fixture
+def nut_protocol_samples():
+    """Real NUT protocol response samples for parsing tests."""
+    return {
+        'voltage': 'VAR cyberpower battery.voltage 13.4',
+        'load': 'VAR cyberpower ups.load 25',
+        'status': 'VAR cyberpower ups.status OL',
+        'runtime': 'VAR cyberpower battery.runtime 3600',
+        'charge': 'VAR cyberpower battery.charge 100',
+        'input_voltage': 'VAR cyberpower input.voltage 230',
+    }
