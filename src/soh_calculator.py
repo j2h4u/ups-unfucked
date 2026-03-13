@@ -1,6 +1,7 @@
 """State of Health (SoH) calculation from discharge voltage profiles."""
 
-from typing import List
+from typing import List, Dict
+
 
 
 def calculate_soh_from_discharge(
@@ -67,3 +68,70 @@ def calculate_soh_from_discharge(
     new_soh = max(0.0, min(1.0, new_soh))
 
     return new_soh
+
+
+def interpolate_cliff_region(
+    lut: List[Dict],
+    anchor_voltage: float = 10.5,
+    cliff_start: float = 11.0,
+    step_mv: float = 0.1
+) -> List[Dict]:
+    """
+    Interpolate cliff region (11.0V–10.5V) from measured calibration data.
+
+    Fills gaps between measured points with linear interpolation.
+    Marks interpolated entries with source='interpolated'.
+    Removes old 'standard' entries in cliff region.
+
+    Args:
+        lut: Current LUT entries
+        anchor_voltage: Bottom of cliff (10.5V default)
+        cliff_start: Top of cliff (11.0V default)
+        step_mv: Interpolation resolution (0.1V = 100mV)
+
+    Returns:
+        Updated LUT with cliff region interpolated
+    """
+    # Separate cliff measured points from rest of LUT
+    cliff_measured = [e for e in lut
+                     if anchor_voltage <= e['v'] <= cliff_start
+                     and e['source'] == 'measured']
+    other_entries = [e for e in lut
+                    if e['v'] < anchor_voltage or e['v'] > cliff_start]
+
+    # Can't interpolate with <2 points
+    if len(cliff_measured) < 2:
+        return lut
+
+    # Sort measured points ascending by voltage
+    cliff_measured.sort(key=lambda x: x['v'])
+
+    # Interpolate between consecutive measured points
+    interpolated = []
+    for i in range(len(cliff_measured) - 1):
+        p1, p2 = cliff_measured[i], cliff_measured[i + 1]
+
+        # Add first point
+        interpolated.append(p1)
+
+        # Linear interpolation
+        v_current = p1['v'] + step_mv
+        while v_current < p2['v']:
+            frac = (v_current - p1['v']) / (p2['v'] - p1['v'])
+            soc_interp = p1['soc'] + frac * (p2['soc'] - p1['soc'])
+            interpolated.append({
+                'v': round(v_current, 2),
+                'soc': round(soc_interp, 3),
+                'source': 'interpolated'
+            })
+            v_current += step_mv
+
+    # Add last point
+    interpolated.append(cliff_measured[-1])
+
+    # Combine with non-cliff entries and re-sort
+    updated_lut = other_entries + interpolated
+    updated_lut.sort(key=lambda x: x['v'], reverse=True)
+
+    return updated_lut
+

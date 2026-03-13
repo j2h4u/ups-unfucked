@@ -91,3 +91,102 @@ def test_clamping_bounds():
 
     soh_low = calculate_soh_from_discharge(v, t, reference_soh=0.01, anchor_voltage=10.5)
     assert soh_low >= 0.0
+
+
+def test_interpolate_cliff_region_basic():
+    """Two measured points 11.0V→50%, 10.5V→0% → fills with interpolated entries."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    # Measured points in cliff region
+    lut = [
+        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+    ]
+
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Should have more entries now (interpolated between 11.0 and 10.5)
+    assert len(result) > len(lut)
+
+    # Check that interpolated entries exist
+    interpolated = [e for e in result if e['source'] == 'interpolated']
+    assert len(interpolated) > 0
+
+    # Check source field is marked correctly
+    for entry in interpolated:
+        assert entry['source'] == 'interpolated'
+
+
+def test_interpolate_cliff_region_insufficient_points():
+    """0 or 1 measured points → returns LUT unchanged."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    # LUT with no measured points in cliff region
+    lut = [
+        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
+        {'v': 12.0, 'soc': 0.50, 'source': 'standard'},
+        {'v': 10.5, 'soc': 0.00, 'source': 'anchor'},
+    ]
+
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Should be unchanged
+    assert result == lut
+
+
+def test_interpolate_cliff_region_preserves_non_cliff():
+    """Entries >11.0V and <10.5V are preserved unchanged."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    lut = [
+        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},  # >11.0
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},  # cliff
+        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},  # cliff
+        {'v': 10.0, 'soc': 0.00, 'source': 'standard'},  # <10.5
+    ]
+
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # Check non-cliff entries are preserved
+    result_13_4 = [e for e in result if e['v'] == 13.4]
+    assert len(result_13_4) == 1
+    assert result_13_4[0]['source'] == 'standard'
+
+    result_10_0 = [e for e in result if e['v'] == 10.0]
+    assert len(result_10_0) == 1
+    assert result_10_0[0]['source'] == 'standard'
+
+
+def test_interpolate_cliff_region_source_field():
+    """Interpolated entries marked with source='interpolated'."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    lut = [
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+    ]
+
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    # All entries should have source field
+    for entry in result:
+        assert 'source' in entry
+        assert entry['source'] in ['measured', 'interpolated']
+
+
+def test_interpolate_cliff_region_sorted():
+    """Result is sorted descending by voltage."""
+    from src.soh_calculator import interpolate_cliff_region
+
+    lut = [
+        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
+        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
+    ]
+
+    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
+
+    voltages = [e['v'] for e in result]
+    assert voltages == sorted(voltages, reverse=True)
+
