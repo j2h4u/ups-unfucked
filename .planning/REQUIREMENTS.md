@@ -20,17 +20,17 @@
 
 ### Prediction Engine
 
-- [ ] **PRED-01**: V_norm → LUT lookup с линейной интерполяцией → SoC
-- [ ] **PRED-02**: Time_rem по закону Пеукерта: `(capacity_ah * SoC * SoH) / (L_ema ^ 1.2) * Const`
-- [ ] **PRED-03**: battery.charge вычисляется из SoC (честное значение взамен firmware)
+- [x] **PRED-01**: V_norm → LUT lookup с линейной интерполяцией → SoC
+- [x] **PRED-02**: Time_rem по закону Пеукерта: `(capacity_ah * SoC * SoH) / (L_ema ^ 1.2) * Const`
+- [x] **PRED-03**: battery.charge вычисляется из SoC (честное значение взамен firmware)
 
 ### Event Classification
 
-- [ ] **EVT-01**: Различение реального блекаута и теста батареи по input.voltage (≈0 vs ≈230V)
-- [ ] **EVT-02**: При реальном блекауте — считаем Time_rem, готовим shutdown
-- [ ] **EVT-03**: При тесте батареи — собираем калибровочные данные, shutdown не нужен
-- [ ] **EVT-04**: Арбитраж ups.status: сами эмитируем OB DISCHRG LB когда Time_rem < порог
-- [ ] **EVT-05**: При переходе OB→OL — обновляем LUT measured-точками и пересчитываем SoH
+- [x] **EVT-01**: Различение реального блекаута и теста батареи по input.voltage (≈0 vs ≈230V)
+- [x] **EVT-02**: При реальном блекауте — считаем Time_rem, готовим shutdown
+- [x] **EVT-03**: При тесте батареи — собираем калибровочные данные, shutdown не нужен
+- [x] **EVT-04**: Арбитраж ups.status: сами эмитируем OB DISCHRG LB когда Time_rem < порог
+- [x] **EVT-05**: При переходе OB→OL — обновляем LUT measured-точками и пересчитываем SoH
 
 ### Virtual UPS (dummy-ups)
 
@@ -99,14 +99,14 @@
 | MODEL-02 | 1 | Complete |
 | MODEL-03 | 1 | Complete |
 | MODEL-04 | 1 | Complete |
-| PRED-01 | 2 | Pending |
-| PRED-02 | 2 | Pending |
-| PRED-03 | 2 | Pending |
-| EVT-01 | 2 | Pending |
-| EVT-02 | 2 | Pending |
-| EVT-03 | 2 | Pending |
-| EVT-04 | 2 | Pending |
-| EVT-05 | 2 | Pending |
+| PRED-01 | 2 | Complete |
+| PRED-02 | 2 | Complete |
+| PRED-03 | 2 | Complete |
+| EVT-01 | 2 | Complete |
+| EVT-02 | 2 | Complete |
+| EVT-03 | 2 | Complete |
+| EVT-04 | 2 | Complete |
+| EVT-05 | 2 | Complete |
 | VUPS-01 | 3 | Pending |
 | VUPS-02 | 3 | Pending |
 | VUPS-03 | 3 | Pending |
