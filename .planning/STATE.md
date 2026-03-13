@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 03-03
+current_plan: 03-04
 status: executing
-last_updated: "2026-03-14T00:53:00.000Z"
+last_updated: "2026-03-13T19:54:12.000Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 11
-  completed_plans: 14
+  completed_plans: 15
   percent: 100
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-14
-**Current Focus:** Phase 3 in Progress (Plans 01-02 Complete)
+**Last Updated:** 2026-03-13
+**Current Focus:** Phase 3 in Progress (Plans 01-03 Complete, Wave 2 Monitor Integration Finished)
 
 ---
 
@@ -33,9 +33,9 @@ progress:
 ## Current Position
 
 **Phase:** 3
-**Current Plan:** 03-03 (next)
-**Status:** 03-02 COMPLETE
-**Progress:** 2/4 plans completed Phase 3 (50%)
+**Current Plan:** 03-04 (next)
+**Status:** 03-03 COMPLETE
+**Progress:** 3/4 plans completed Phase 3 (75%)
 
 ### Phase 3 Completed Plans
 
@@ -43,7 +43,7 @@ progress:
   * Atomic tmpfs write function (write_virtual_ups_dev)
   * 9 test stubs for all Phase 3 requirements
   * 2 concrete tests (test_write_to_tmpfs, test_nut_format_compliance)
-  * 87/87 tests passing (0 regressions)
+  * 88/88 tests passing (0 regressions)
 
 - [x] 03-02: Virtual UPS status override & shutdown thresholds (Wave 1) ✓ COMPLETE - 2026-03-14
   * compute_ups_status_override() fully implemented with all EventType cases
@@ -51,6 +51,14 @@ progress:
   * LB flag boundary behavior verified (< not <=)
   * Configurable shutdown threshold validated across [1, 3, 5, 10] thresholds
   * 88/88 tests passing (0 regressions)
+
+- [x] 03-03: Monitor virtual UPS integration (Wave 2) ✓ COMPLETE - 2026-03-13
+  * write_virtual_ups_dev() integrated into monitor.py polling loop
+  * Virtual metrics dict construction with 3 overrides + passthrough fields
+  * compute_ups_status_override() called for every poll cycle
+  * 3 new integration tests: test_monitor_virtual_ups_integration, test_monitor_virtual_ups_below_threshold, test_monitor_virtual_ups_error_handling
+  * Error handling: tmpfs write failures logged but daemon continues
+  * 91/91 tests passing (all phases, 0 regressions)
 
 ### Phase 2 Completed Plans
 
@@ -88,6 +96,7 @@ progress:
 | 02-06 | 12 min | 2 | 78 (all phases) | 2026-03-14 |
 | 03-01 | 10 min | 3 | 87 (all phases) | 2026-03-14 |
 | 03-02 | ~8 min | 4 | 88 (all phases) | 2026-03-14 |
+| 03-03 | ~2 min | 3 | 91 (all phases) | 2026-03-13 |
 
 ---
 
@@ -120,23 +129,20 @@ progress:
 
 **Blockers:** None currently.
 
-**Last session:** Completed plan 03-02 (virtual UPS status override & shutdown thresholds Wave 1). Implemented compute_ups_status_override() with all EventType cases. Created 5 new tests covering field overrides, passthrough fields, LB flag threshold logic, configurable thresholds, and calibration mode thresholds. All 88 tests passing (0 regressions).
+**Last session:** Completed plan 03-03 (monitor virtual UPS integration Wave 2). Integrated write_virtual_ups_dev() call into monitor.py polling loop to construct and write virtual_metrics dict every poll cycle. Created 3 integration tests covering main flow, threshold variations, and error handling. All 91 tests passing (0 regressions).
 
-**Next phase:** Phase 3 planning will integrate virtual UPS dummy-ups proxy, implement shutdown coordination, and provide transparent data source switching without changing Grafana dashboards.
+**Next phase:** Plan 03-04 (Wave 3): Systemd service configuration and NUT dummy-ups setup for transparent data source switching.
 
-**Lessons Learned:**
+**Lessons Learned (from 03-01, 03-02, 03-03):**
 
-- Stateless socket polling (connect/send/recv/close per poll) enables automatic NUT restart recovery without daemon changes
-- Socket timeout (2.0 sec) prevents daemon hangs; exceptions re-raised for daemon-level retry logic
-- Mock socket parameter in __init__ provides clean testing without patching built-in socket module
-- Python stdlib socket is sufficient; PyNUT library not needed for this use case
-- Test fixtures (conftest.py) with Mock sockets provide comprehensive coverage for socket edge cases
-- Inline configuration (environment variables) simplifies daemon deployment and testing vs separate config file
-- JournalHandler with stderr fallback makes journald optional (graceful degradation if systemd unavailable)
-- Type=simple systemd service with foreground daemon simpler than Type=forking with PID management
-- Physical sensor invariant (input.voltage) beats firmware flag interpretation for reliable event classification (eliminates onlinedischarge_calibration bug)
-- Voltage thresholds with hysteresis (>100V vs <50V) prevent oscillation in undefined range and provide clear decision boundaries
+- Tmpfs atomic writes (tempfile + fsync + rename) are essential for crash safety without SSD wear
+- Event type enum provides clean pattern matching for conditional logic (ONLINE/BLACKOUT_REAL/BLACKOUT_TEST)
+- Threshold-based decisions (< vs <=) require careful boundary testing to ensure correct behavior
+- Integration tests validate end-to-end flows better than unit tests alone
+- Error handling in polling loops should catch exceptions, log, and continue (non-fatal failures)
+- Virtual UPS pattern: 3 computed overrides + passthrough fields preserves transparency
+- Configurable thresholds via function parameters enable testing without environment variables
 
 ---
 
-*State updated: 2026-03-14 after plan 03-02 completion — Phase 3 Wave 1 Status Override & Shutdown Thresholds COMPLETE*
+*State updated: 2026-03-13 after plan 03-03 completion — Phase 3 Wave 2 Monitor Integration COMPLETE*
