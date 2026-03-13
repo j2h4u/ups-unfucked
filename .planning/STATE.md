@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: Not started
-status: planning
-last_updated: "2026-03-13T20:02:13.761Z"
+current_plan: 04-02 COMPLETE
+status: executing
+last_updated: "2026-03-14T04:20:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 15
-  completed_plans: 16
+  completed_plans: 18
   percent: 100
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-14 T04:15Z
-**Current Focus:** Phase 4 Wave 0 Complete (Health Monitoring Foundation Implemented)
+**Last Updated:** 2026-03-14 T04:20Z
+**Current Focus:** Phase 4 Wave 1 Complete (Health Monitoring Integration Done)
 
 ---
 
@@ -33,9 +33,9 @@ progress:
 ## Current Position
 
 **Phase:** 4
-**Current Plan:** 04-01 COMPLETE
+**Current Plan:** 04-02 COMPLETE
 **Status:** Executing
-**Progress:** 1/5 plans completed Phase 4 (20%)
+**Progress:** 2/5 plans completed Phase 4 (40%)
 
 ### Phase 4 Completed Plans
 
@@ -46,6 +46,20 @@ progress:
   * 24 new unit tests: 8 per module (test_soh_calculator, test_replacement_predictor, test_alerter)
   * All 115 tests passing (91 prior phases + 24 new, 0 regressions)
   * Ready for integration into monitor.py (Plan 02)
+
+- [x] 04-02: Health Monitoring Integration (Wave 1) ✓ COMPLETE - 2026-03-14
+  * Integrated Phase 4 modules into monitor.py polling loop
+  * Added discharge_buffer tracking for voltage/time samples during blackout
+  * Implemented _update_battery_health() method: SoH calc → prediction → alerts
+  * Called on OB→OL transition (discharge event completion)
+  * Updates model.json soh_history with new entry (date + SoH)
+  * Predicts replacement date via linear regression (3+ points required)
+  * Triggers journald alerts if SoH < 80% or runtime@100% < 20 min
+  * Created scripts/motd/51-ups-health.sh: Real-time UPS health MOTD display
+  * MOTD displays: status, charge%, runtime, load%, SoH%, replacement date
+  * Color-coded output: green (healthy), yellow (warning), red (critical)
+  * All 115 tests passing, zero regressions
+  * Health monitoring pipeline complete and operational
 
 ### Phase 3 Completed Plans
 
@@ -118,6 +132,7 @@ progress:
 | 03-03 | ~2 min | 3 | 91 (all phases) | 2026-03-13 |
 | 03-04 | ~4 min | 3 | 91 (all phases) | 2026-03-14 |
 | 04-01 | 15 min | 3 | 115 (all phases) | 2026-03-14 |
+| 04-02 | ~20 min | 2 | 115 (all phases) | 2026-03-14 |
 
 ---
 
@@ -150,11 +165,11 @@ progress:
 
 **Blockers:** None currently.
 
-**Last session:** Completed plan 04-01 (Health Monitoring Foundation Wave 0). Implemented three independent health monitoring modules: SoH calculator (area-under-curve via trapezoidal rule), replacement predictor (least-squares regression), and alerter (journald structured logging). Created 24 unit tests (8 per module), all passing. Full suite: 115/115 tests (0 regressions).
+**Last session:** Completed plan 04-02 (Health Monitoring Integration Wave 1). Integrated Phase 4 calculation modules into monitor.py polling loop. Added discharge_buffer tracking, implemented _update_battery_health() method (SoH calc → prediction → alerts), and created MOTD script for real-time status display. Method called on OB→OL transition (discharge event completion). Updates model.json soh_history, predicts replacement date, and triggers journald alerts on threshold breaches. MOTD displays charge, runtime, load, SoH%, and replacement date with color-coded health status. Full suite: 115/115 tests passing (0 regressions).
 
-**Next phase:** Plan 04-02 (Wave 1): Integrate health modules into monitor.py loop.
+**Next phase:** Plan 04-03 (Wave 2): Discharge buffer population (integrate EMA samples during BLACKOUT_REAL state).
 
-**Lessons Learned (from 04-01):**
+**Lessons Learned (from 04-01 and 04-02):**
 
 - Area-under-curve via trapezoidal rule captures non-linear VRLA discharge shapes (exponential tail)
 - Least-squares regression without scipy avoids dependencies; math O(n) with simple stability checks
@@ -166,7 +181,11 @@ progress:
 - Anchor voltage trimming (10.5V) at physical limit prevents false calibration from incomplete discharge
 - Reference area (12V × 2820s) empirically derived from 2026-03-12 blackout; baseline not constant
 - Proportional degradation model: new_soh = reference_soh × (measured_area / reference_area) preserves monotonicity
+- Discharge buffer pattern allows event-driven sample collection during states (BLACKOUT_REAL) before consuming on transition (OB→OL)
+- MOTD script integration requires robust error handling (upsc may not be available, model.json may not exist, jq may fail)
+- Configuration via environment variables (SOH_THRESHOLD, RUNTIME_THRESHOLD_MINUTES) enables testing without code changes
+- SoH history requires 3+ points for meaningful regression; prediction gracefully degrades if insufficient data
 
 ---
 
-*State updated: 2026-03-14 T04:15Z after plan 04-01 completion — Phase 4 Wave 0 Health Monitoring Foundation COMPLETE*
+*State updated: 2026-03-14 T04:20Z after plan 04-02 completion — Phase 4 Wave 1 Health Monitoring Integration COMPLETE*
