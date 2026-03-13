@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи, и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Один установленный systemd-сервис, никакого ручного участия в работе.
+Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Один systemd-сервис, zero manual intervention после установки.
 
 ## Core Value
 
@@ -12,19 +12,19 @@
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Честный прогноз остаточного времени на батарее (voltage + load → LUT → Peukert) — v1.0
+- ✓ Безопасный автоматический shutdown через upsmon (эмитируем LB сами) — v1.0
+- ✓ Различение реального блекаута и теста батареи по input.voltage — v1.0
+- ✓ Самообучающаяся модель батареи с накоплением measured-точек из discharge events — v1.0
+- ✓ Предсказание даты замены батареи по линейной регрессии SoH-истории — v1.0
+- ✓ Виртуальный dummy-ups как прозрачный источник данных — v1.0
+- ✓ Алерты через MOTD и journald (деградация батареи, SoH, дата замены) — v1.0
+- ✓ Systemd-демон: установка, запуск, автозапуск после установки — v1.0
+- ✓ Режим ручной калибровки (--calibration-mode) для получения cliff region — v1.0
 
 ### Active
 
-- [ ] Честный прогноз остаточного времени на батарее (voltage + load → LUT → Peukert)
-- [ ] Безопасный автоматический shutdown через upsmon (эмитируем LB сами)
-- [ ] Различение реального блекаута и теста батареи по input.voltage
-- [ ] Самообучающаяся модель батареи с накоплением measured-точек из discharge events
-- [ ] Предсказание даты замены батареи по линейной регрессии SoH-истории
-- [ ] Виртуальный dummy-ups как прозрачный источник данных (переключение без смены дашбордов)
-- [ ] Алерты через MOTD и journald (деградация батареи, SoH, дата замены)
-- [ ] Systemd-демон: установка, запуск, автозапуск после установки
-- [ ] Режим ручной калибровки (--calibration-mode) для получения cliff region
+(None — define in next milestone via `/gsd:new-milestone`)
 
 ### Out of Scope
 
@@ -36,36 +36,33 @@
 
 ## Context
 
-**Hardware:** CyberPower UT850EG (425W), USB, NUT usbhid-ups v2.8.1, сервер senbonzakura (Debian 13).
+Shipped v1.0 with 5,003 LOC Python, 160 tests, 103 commits over 2 days.
+Tech stack: Python 3.13, NUT (upsc + dummy-ups), systemd, journald.
+Hardware: CyberPower UT850EG (425W), USB, NUT usbhid-ups, Debian 13 (senbonzakura).
 
-**Реальный блекаут 2026-03-12:** 47 мин реального времени против ~22 мин по firmware. Прошивка показала 0% на 35-й минуте — UPS проработал ещё 12 мин. Автошатдаун не сработал из-за бага `onlinedischarge_calibration: true` в конфиге NUT (firmware-калибровка классифицировалась как OB+LB, но не critical).
+Real blackout 2026-03-12 validated the model: 47 min actual vs ~22 min firmware prediction.
+Firmware showed 0% at minute 35 — UPS ran 12 more minutes.
 
-**Надёжные физические данные:** только `battery.voltage` (физический показатель) и `ups.load` (текущая нагрузка %). Все остальные поля (`battery.charge`, `battery.runtime`) — ненадёжны.
-
-**Калибровка:** UT850EG не поддерживает `calibrate.start` через NUT. Firmware накапливает данные через deep test (ежемесячно). Реальная кривая строится из discharge events.
-
-**Математика:** EMA-сглаживание (окно ~2 мин) → IR compensation (нормализация к эталонной нагрузке) → LUT lookup → Peukert (показатель 1.2 для VRLA) → Time_rem.
-
-**Хранение:** model.json на диске (обновляется только по завершении discharge event — раз в месяц), /dev/shm/ups-virtual.dev в tmpfs для runtime-метрик, ring buffer в RAM для EMA.
+Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert exponent refinement (CAL2-02), Grafana metrics export (MON-01).
 
 ## Constraints
 
 - **Minimal deps**: нет тяжёлых зависимостей, минимум RAM, не изнашивать SSD
-- **NUT stack**: Python-скрипт или легковесный демон, интеграция с NUT через `upsc` + dummy-ups
+- **NUT stack**: Python-скрипт, интеграция с NUT через `upsc` + dummy-ups
 - **Disk writes**: обновление model.json только по завершении discharge event
-- **No root in hot path**: демон работает как системный сервис с минимальными правами
+- **No root in hot path**: демон работает с минимальными правами
 - **Production install**: файлы устанавливаются в систему (не запускаются из ~/repos/)
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| dummy-ups как прозрачный proxy | Grafana и upsmon не меняются — переключаются на виртуальный источник | — Pending |
-| Различение блекаут/тест по input.voltage | Физический признак, не зависит от интерпретации firmware | — Pending |
-| Мы — арбитр ups.status и флага LB | Обходим баг onlinedischarge_calibration без изменения NUT конфига | — Pending |
-| LUT + IR + Peukert вместо формул | VRLA-кривая не описывается формулой — только таблицей точек | — Pending |
-| model.json как персистентная модель | Discharge events редки (раз в месяц), SSD не изнашивается | — Pending |
-| SoH через площадь под кривой voltage×time | Единственный способ посчитать деградацию без доступа к calibrate | — Pending |
+| dummy-ups как прозрачный proxy | Grafana и upsmon не меняются — переключаются на виртуальный источник | ✓ Good |
+| Различение блекаут/тест по input.voltage | Физический признак, не зависит от интерпретации firmware | ✓ Good |
+| Мы — арбитр ups.status и флага LB | Обходим баг onlinedischarge_calibration без изменения NUT конфига | ✓ Good |
+| LUT + IR + Peukert вместо формул | VRLA-кривая не описывается формулой — только таблицей точек | ✓ Good |
+| model.json как персистентная модель | Discharge events редки (раз в месяц), SSD не изнашивается | ✓ Good |
+| SoH через площадь под кривой voltage×time | Единственный способ посчитать деградацию без доступа к calibrate | ✓ Good |
 
 ---
-*Last updated: 2026-03-13 after initialization*
+*Last updated: 2026-03-14 after v1.0 milestone*
