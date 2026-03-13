@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Foundation — NUT Integration & Core Infrastructure** - Read real UPS data, integrate with NUT, establish data collection pipeline
 - [x] **Phase 2: Battery Model — State Estimation & Event Classification** (6/6 plans complete) - Build battery model, estimate SoC/runtime, distinguish blackout from test
-- [ ] **Phase 3: Virtual UPS & Safe Shutdown** - Implement dummy-ups proxy, safe LB signaling, shutdown coordination with upsmon
+- [ ] **Phase 3: Virtual UPS & Safe Shutdown** (1/4 plans complete) - Implement dummy-ups proxy, safe LB signaling, shutdown coordination with upsmon
 - [ ] **Phase 4: Health Monitoring & Battery Degradation** - Track SoH, predict replacement date, generate alerts
 - [ ] **Phase 5: Operational Setup & Systemd Integration** - Install systemd service, logging, production deployment
 - [ ] **Phase 6: Calibration Mode** - Manual calibration flag, cliff region acquisition, one-time setup
@@ -89,7 +89,7 @@ Plans:
 **Plans:** 4 plans in 3 waves
 
 Plans:
-- [ ] 03-01-PLAN.md — Virtual UPS infrastructure and test stubs (Wave 0)
+- [x] 03-01-PLAN.md — Virtual UPS infrastructure and test stubs (Wave 0) ✓ COMPLETE
 - [ ] 03-02-PLAN.md — Field overrides and status arbiter implementation (Wave 1)
 - [ ] 03-03-PLAN.md — Monitor daemon integration (Wave 2)
 - [ ] 03-04-PLAN.md — Systemd service and NUT configuration (Wave 3)
