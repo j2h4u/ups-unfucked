@@ -86,7 +86,13 @@ Plans:
 3. dummy-ups source configured in NUT reads virtual device and provides metrics to upsmon without changing upsd.conf
 4. upsmon receives LB signal and initiates graceful shutdown within expected threshold (configurable); shutdown does not happen before Time_rem expires
 
-**Plans:** TBD
+**Plans:** 4 plans in 3 waves
+
+Plans:
+- [ ] 03-01-PLAN.md — Virtual UPS infrastructure and test stubs (Wave 0)
+- [ ] 03-02-PLAN.md — Field overrides and status arbiter implementation (Wave 1)
+- [ ] 03-03-PLAN.md — Monitor daemon integration (Wave 2)
+- [ ] 03-04-PLAN.md — Systemd service and NUT configuration (Wave 3)
 
 ---
 
@@ -150,12 +156,12 @@ Plans:
 | Phase | Name | Plans Complete | Status | Completed |
 |-------|------|----------------|--------|-----------|
 | 1 | Foundation | 5/5 | Complete | 2026-03-13 |
-| 2 | Battery Model | 0/6 | Planning revised | — |
-| 3 | Virtual UPS & Shutdown | 0/TBD | Not started | — |
+| 2 | Battery Model | 6/6 | Complete | 2026-03-14 |
+| 3 | Virtual UPS & Shutdown | 0/4 | Planned | — |
 | 4 | Health Monitoring | 0/TBD | Not started | — |
 | 5 | Operational Setup | 0/TBD | Not started | — |
 | 6 | Calibration Mode | 0/TBD | Not started | — |
 
 ---
 
-**Next:** `/gsd:execute-phase 02-battery-model-state-estimation-event-classification`
+**Next:** `/gsd:execute-phase 03-virtual-ups-safe-shutdown`
