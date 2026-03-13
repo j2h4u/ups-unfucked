@@ -1,7 +1,7 @@
 # Project State — UPS Battery Monitor
 
 **Last Updated:** 2026-03-13
-**Current Focus:** Phase 1 (not yet started)
+**Current Focus:** Phase 1 (Wave 0 Complete — Test Infrastructure Ready)
 
 ---
 
@@ -18,9 +18,9 @@
 ## Current Position
 
 **Phase:** 1 (Foundation — NUT Integration & Core Infrastructure)
-**Current Plan:** 02 (NUT Socket Client)
-**Status:** Plan 02 Complete
-**Progress:** 2/5 plans completed (40%)
+**Current Plan:** 05 (Daemon Integration & Systemd Service — Wave 2)
+**Status:** Plan 01-01 Complete; 01-02, 01-03, 01-04 Complete; 01-05 Ready
+**Progress:** 4/5 plans completed (80%)
 
 ### Completed Plans
 
@@ -40,7 +40,9 @@
 
 | Plan | Duration | Tasks | Tests | Completion Date |
 |------|----------|-------|-------|-----------------|
+| 01-01 | 8 min | 5 | 38 | 2026-03-13 |
 | 01-02 | 45 min | 2 | 4 | 2026-03-13 |
+| 01-03 | — | — | 14 | 2026-03-13 |
 | 01-04 | 98 sec | 1 | 20 | 2026-03-13 |
 
 ---
@@ -84,4 +86,4 @@
 
 ---
 
-*State updated: 2026-03-13 after plan 01-02 completion*
+*State updated: 2026-03-13 after plan 01-01 completion*
