@@ -26,15 +26,22 @@
 
 **Depends on:** Nothing (first phase)
 
-**Requirements:** DATA-01, DATA-02, DATA-03, MODEL-01, MODEL-02, MODEL-03, MODEL-04
+**Requirements:** DATA-01, DATA-02, DATA-03, MODEL-01, MODEL-02, MODEL-04
 
 **Success Criteria:**
-1. Daemon reads `upsc cyberpower@localhost` at configurable interval (5 or 10 sec) with zero dropped samples
+1. Daemon reads `upsc cyberpower@localhost` at configurable interval (10 sec) with zero dropped samples
 2. EMA smoothing maintains ~2-minute rolling window for voltage and load; values stabilize within 3 readings
 3. model.json is created at startup with standard VRLA curve initialized, updated only on discharge events (no constant disk churn)
 4. Ring buffer in RAM holds 120+ seconds of readings for EMA computation without memory leak
 
-**Plans:** TBD
+**Plans:** 5 plans in 2 waves
+
+Plans:
+- [ ] 01-01-PLAN.md — Test infrastructure (Wave 0)
+- [ ] 01-02-PLAN.md — NUT socket client (Wave 1)
+- [ ] 01-03-PLAN.md — EMA smoothing and IR compensation (Wave 1)
+- [ ] 01-04-PLAN.md — Battery model persistence (Wave 1)
+- [ ] 01-05-PLAN.md — Daemon integration and systemd service (Wave 2)
 
 ---
 
@@ -134,7 +141,7 @@
 
 | Phase | Name | Plans Complete | Status | Completed |
 |-------|------|----------------|--------|-----------|
-| 1 | Foundation | 0/TBD | Not started | — |
+| 1 | Foundation | 5/5 | Planned ✓ | — |
 | 2 | Battery Model | 0/TBD | Not started | — |
 | 3 | Virtual UPS & Shutdown | 0/TBD | Not started | — |
 | 4 | Health Monitoring | 0/TBD | Not started | — |
@@ -143,4 +150,4 @@
 
 ---
 
-**Next:** `/gsd:plan-phase 1`
+**Next:** `/gsd:execute-phase 01-foundation-nut-integration-core-infrastructure`
