@@ -116,6 +116,9 @@ class MonitorDaemon:
         self.runtime_threshold_minutes = RUNTIME_THRESHOLD_MINUTES
         self.reference_load_percent = REFERENCE_LOAD_PERCENT
 
+        # Phase 6: Track calibration writes
+        self.calibration_last_written_index = 0
+
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -302,6 +305,39 @@ class MonitorDaemon:
                         # Log transitions
                         if self.event_classifier.transition_occurred:
                             logger.info(f"Event transition: → {event_type.name}")
+
+                        # Phase 6: Collect discharge data during BLACKOUT_REAL or BLACKOUT_TEST
+                        if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+                            if not self.discharge_buffer['active']:
+                                self.discharge_buffer['active'] = True
+                                self.discharge_buffer['voltages'] = []
+                                self.discharge_buffer['times'] = []
+                                logger.info(f"Starting discharge buffer collection ({event_type.name})")
+
+                            # Append voltage and timestamp to buffer (raw voltage, not normalized)
+                            if voltage is not None:
+                                self.discharge_buffer['voltages'].append(voltage)
+                                self.discharge_buffer['times'].append(timestamp)
+
+                                # Phase 6: Write calibration points every 6 polls (~60 seconds) if calibration mode
+                                if self.calibration_mode and event_type == EventType.BLACKOUT_TEST:
+                                    if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index >= 6:
+                                        # Write accumulated points to model
+                                        try:
+                                            for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
+                                                v = self.discharge_buffer['voltages'][i]
+                                                t = self.discharge_buffer['times'][i]
+                                                # Estimate SoC from voltage using LUT
+                                                soc_est = soc_from_voltage(v, self.battery_model.get_lut())
+                                                self.battery_model.calibration_write(v, soc_est, t)
+                                            self.calibration_last_written_index = len(self.discharge_buffer['voltages'])
+                                        except Exception as e:
+                                            logger.error(f"Calibration write failed: {e}")
+                        else:
+                            # Not in blackout; clear buffer on next event transition
+                            if self.discharge_buffer['active']:
+                                self.discharge_buffer['active'] = False
+                                self.calibration_last_written_index = 0
 
                     # Log every 6 polls (60 seconds at 10-sec interval)
                     if poll_count % 6 == 0:

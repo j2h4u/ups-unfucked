@@ -132,12 +132,10 @@ def test_discharge_buffer_calibration_write():
                             mock_model = MagicMock()
                             daemon.battery_model = mock_model
 
-                            # Set up discharge buffer with test data
-                            daemon.discharge_buffer = {
-                                'voltages': [13.0, 12.5, 12.0],
-                                'times': [0, 10, 20],
-                                'active': True
-                            }
-
-                            # Should have calibration_write method available
+                            # Verify calibration_write method is available
                             assert hasattr(mock_model, 'calibration_write')
+
+                            # Verify tracking variable exists
+                            assert hasattr(daemon, 'calibration_last_written_index')
+                            assert daemon.calibration_last_written_index == 0
+
