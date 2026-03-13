@@ -1,0 +1,25 @@
+[Unit]
+Description=UPS Battery Monitor
+Documentation=https://github.com/j2h4u/ups-battery-monitor
+After=network-online.target nut-server.service
+Wants=network-online.target
+ConditionPathExists=/run/nut/
+
+[Service]
+Type=simple
+User=j2h4u
+Group=j2h4u
+WorkingDirectory=/home/j2h4u/repos/j2h4u/ups-battery-monitor
+Environment="PYTHONPATH=/home/j2h4u/repos/j2h4u/ups-battery-monitor"
+ExecStart=/usr/bin/python3 -m src.monitor
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=3
+StartLimitIntervalSec=60
+TimeoutStartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ups-battery-monitor
+
+[Install]
+WantedBy=multi-user.target
