@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: Not started
-status: planning
-last_updated: "2026-03-13T20:59:13.596Z"
+current_plan: 05-02
+status: executing
+last_updated: "2026-03-14T04:40:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 17
-  completed_plans: 18
-  percent: 40
+  completed_plans: 19
+  percent: 42
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-14 T04:20Z
-**Current Focus:** Phase 4 Wave 1 Complete (Health Monitoring Integration Done)
+**Last Updated:** 2026-03-14 T04:40Z
+**Current Focus:** Phase 5 Wave 1 Complete (Systemd Integration Verification Done)
 
 ---
 
@@ -33,9 +33,22 @@ progress:
 ## Current Position
 
 **Phase:** 5
-**Current Plan:** Not started
-**Status:** Ready to plan
-**Progress:** 2/5 plans completed Phase 4 (40%)
+**Current Plan:** 05-02 COMPLETE
+**Status:** Wave 1 execution complete
+**Progress:** 2/5 plans completed Phase 5 (40%)
+
+### Phase 5 Completed Plans
+
+- [x] 05-01: Installation Script (Wave 0) ✓ COMPLETE - 2026-03-13
+  * Created scripts/install.sh: Deploy daemon to systemd
+  * Installs service unit, sets permissions, enables auto-start
+  * Ready for production installation
+
+- [x] 05-02: Systemd Integration Verification (Wave 1) ✓ COMPLETE - 2026-03-14
+  * Verified systemd service unit against all OPS requirements
+  * Created tests/test_systemd_integration.py: 9 comprehensive tests
+  * All tests passing: 130/130 (Phase 1-5 test coverage)
+  * Service ready for production deployment
 
 ### Phase 4 Completed Plans
 
@@ -133,6 +146,8 @@ progress:
 | 03-04 | ~4 min | 3 | 91 (all phases) | 2026-03-14 |
 | 04-01 | 15 min | 3 | 115 (all phases) | 2026-03-14 |
 | 04-02 | ~20 min | 2 | 115 (all phases) | 2026-03-14 |
+| 05-01 | ~15 min | 2 | 91 (install.sh + existing tests) | 2026-03-13 |
+| 05-02 | ~12 min | 2 | 130 (all phases) | 2026-03-14 |
 
 ---
 
@@ -165,9 +180,19 @@ progress:
 
 **Blockers:** None currently.
 
-**Last session:** Completed plan 04-02 (Health Monitoring Integration Wave 1). Integrated Phase 4 calculation modules into monitor.py polling loop. Added discharge_buffer tracking, implemented _update_battery_health() method (SoH calc → prediction → alerts), and created MOTD script for real-time status display. Method called on OB→OL transition (discharge event completion). Updates model.json soh_history, predicts replacement date, and triggers journald alerts on threshold breaches. MOTD displays charge, runtime, load, SoH%, and replacement date with color-coded health status. Full suite: 115/115 tests passing (0 regressions).
+**Last session:** Completed plan 05-02 (Systemd Integration Verification Wave 1). Verified systemd service unit (systemd/ups-battery-monitor.service) against all OPS requirements: auto-start on boot (WantedBy=multi-user.target), privilege separation (User=j2h4u), restart throttling (on-failure with 3-restart-in-60sec limit), and journald logging (StandardOutput=journal + SyslogIdentifier). Created tests/test_systemd_integration.py with 9 comprehensive unit tests covering [Unit], [Service], and [Install] sections. No modifications needed — service file correctly configured since Phase 3-04. Full test suite: 130/130 tests passing (9 new systemd + Phase 1-4 coverage, 0 regressions).
 
-**Next phase:** Plan 04-03 (Wave 2): Discharge buffer population (integrate EMA samples during BLACKOUT_REAL state).
+**Next phase:** Plan 05-03 (Wave 2): If needed; otherwise Phase 6 calibration mode.
+
+**Lessons Learned (from 05-01 and 05-02):**
+
+- Systemd .service files are INI-style (ConfigParser-compatible); direct parsing without systemctl enables CI/unit-test friendly validation
+- Service file verification requires 0 root privileges; tests validate [Unit], [Service], [Install] sections independently
+- Restart throttling (StartLimitBurst=3, StartLimitIntervalSec=60) prevents infinite crash loops; on-failure respects clean exits
+- User=unprivileged + StandardOutput=journal ensures security + observability without privilege escalation
+- SyslogIdentifier enables precise journalctl filtering; downstream log analysis benefits from tagged output
+- Soft dependencies (ConditionPathExists) prevent hard failures when optional resources (NUT socket) unavailable
+- WorkingDirectory + PYTHONPATH enables Python module discovery without relying on shell environment
 
 **Lessons Learned (from 04-01 and 04-02):**
 

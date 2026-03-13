@@ -13,7 +13,7 @@
 - [x] **Phase 2: Battery Model — State Estimation & Event Classification** (6/6 plans complete) - Build battery model, estimate SoC/runtime, distinguish blackout from test
 - [x] **Phase 3: Virtual UPS & Safe Shutdown** (3/4 plans complete) - Implement dummy-ups proxy, safe LB signaling, shutdown coordination with upsmon
 - [x] **Phase 4: Health Monitoring & Battery Degradation** - Track SoH, predict replacement date, generate alerts
-- [ ] **Phase 5: Operational Setup & Systemd Integration** - Install systemd service, logging, production deployment
+- [ ] **Phase 5: Operational Setup & Systemd Integration** (2/2 plans complete) - Install systemd service, logging, production deployment
 - [ ] **Phase 6: Calibration Mode** - Manual calibration flag, cliff region acquisition, one-time setup
 
 ---
@@ -136,8 +136,8 @@ Plans:
 **Plans:** 2 plans in 1 wave
 
 Plans:
-- [ ] 05-01-PLAN.md — Installation script and logging tests (Wave 0)
-- [ ] 05-02-PLAN.md — Systemd service configuration verification (Wave 1)
+- [x] 05-01-PLAN.md — Installation script and logging tests (Wave 0) ✓ COMPLETE
+- [x] 05-02-PLAN.md — Systemd service configuration verification (Wave 1) ✓ COMPLETE
 
 ---
 
@@ -167,7 +167,7 @@ Plans:
 | 2 | Battery Model | 6/6 | Complete | 2026-03-14 |
 | 3 | Virtual UPS & Shutdown | 3/4 | In Progress | — |
 | 4 | Health Monitoring | 2/2 | Complete | 2026-03-14 |
-| 5 | Operational Setup | 0/2 | Planned | — |
+| 5 | Operational Setup | 2/2 | Complete | 2026-03-14 |
 | 6 | Calibration Mode | 0/TBD | Not started | — |
 
 ---

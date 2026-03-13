@@ -47,18 +47,18 @@
 
 ### Battery Health & Alerts
 
-- [ ] **HLTH-01**: SoH пересчитывается после каждого discharge event (площадь под кривой voltage×time)
-- [ ] **HLTH-02**: Линейная регрессия по soh_history → предсказание даты когда SoH < порог замены
-- [ ] **HLTH-03**: MOTD-модуль отображает: статус, заряд, Time_rem, нагрузку, SoH, дату замены
-- [ ] **HLTH-04**: Алерт в journald при деградации SoH ниже порога
-- [ ] **HLTH-05**: MOTD-алерт при расчётном Time_rem@100% < X мин (X — TBD, настраивается)
+- [x] **HLTH-01**: SoH пересчитывается после каждого discharge event (площадь под кривой voltage×time)
+- [x] **HLTH-02**: Линейная регрессия по soh_history → предсказание даты когда SoH < порог замены
+- [x] **HLTH-03**: MOTD-модуль отображает: статус, заряд, Time_rem, нагрузку, SoH, дату замены
+- [x] **HLTH-04**: Алерт в journald при деградации SoH ниже порога
+- [x] **HLTH-05**: MOTD-алерт при расчётном Time_rem@100% < X мин (X — TBD, настраивается)
 
 ### Installation & Operations
 
-- [ ] **OPS-01**: Systemd unit файл для автозапуска демона
-- [ ] **OPS-02**: Install-скрипт: копирует файлы, настраивает NUT dummy-ups, активирует сервис
-- [ ] **OPS-03**: Демон работает как системный сервис с минимальными правами (не root в hot path)
-- [ ] **OPS-04**: Логирование в journald (structured, с идентификатором)
+- [x] **OPS-01**: Systemd unit файл для автозапуска демона
+- [x] **OPS-02**: Install-скрипт: копирует файлы, настраивает NUT dummy-ups, активирует сервис
+- [x] **OPS-03**: Демон работает как системный сервис с минимальными правами (не root в hot path)
+- [x] **OPS-04**: Логирование в journald (structured, с идентификатором)
 
 ### Calibration Mode
 
@@ -114,15 +114,15 @@
 | SHUT-01 | 3 | Complete |
 | SHUT-02 | 3 | Complete |
 | SHUT-03 | 3 | Complete |
-| HLTH-01 | 4 | Pending |
-| HLTH-02 | 4 | Pending |
-| HLTH-03 | 4 | Pending |
-| HLTH-04 | 4 | Pending |
-| HLTH-05 | 4 | Pending |
-| OPS-01 | 5 | Pending |
-| OPS-02 | 5 | Pending |
-| OPS-03 | 5 | Pending |
-| OPS-04 | 5 | Pending |
+| HLTH-01 | 4 | Complete |
+| HLTH-02 | 4 | Complete |
+| HLTH-03 | 4 | Complete |
+| HLTH-04 | 4 | Complete |
+| HLTH-05 | 4 | Complete |
+| OPS-01 | 5 | Complete |
+| OPS-02 | 5 | Complete |
+| OPS-03 | 5 | Complete |
+| OPS-04 | 5 | Complete |
 | CAL-01 | 6 | Pending |
 | CAL-02 | 6 | Pending |
 | CAL-03 | 6 | Pending |
@@ -131,8 +131,8 @@
 - v1 requirements: 34 total
 - Mapped to phases: 34
 - Unmapped: 0 ✓
-- Completed: 21 (7 Phase 1, 8 Phase 2, 6 Phase 3 Wave 1+2)
+- Completed: 30 (7 Phase 1, 8 Phase 2, 6 Phase 3, 5 Phase 4, 4 Phase 5)
 
 ---
 *Requirements defined: 2026-03-13*
-*Traceability updated: 2026-03-13 after plan 03-03 completion — VUPS-01 through SHUT-03 marked complete*
+*Traceability updated: 2026-03-14 after plan 05-02 completion — HLTH-01 through OPS-04 marked complete*
