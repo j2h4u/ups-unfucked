@@ -111,7 +111,11 @@ Plans:
 4. journald alert triggered when SoH degrades below configured threshold (e.g., 80%)
 5. journald alert triggered when calculated Time_rem@100% falls below alert threshold (e.g., X minutes; exact value TBD)
 
-**Plans:** TBD
+**Plans:** 2 plans in 1 wave
+
+Plans:
+- [ ] 04-01-PLAN.md — Test infrastructure and module implementations (Wave 0: soh_calculator, replacement_predictor, alerter)
+- [ ] 04-02-PLAN.md — Integration into monitor.py and MOTD script (Wave 1)
 
 ---
 
@@ -157,11 +161,11 @@ Plans:
 |-------|------|----------------|--------|-----------|
 | 1 | Foundation | 5/5 | Complete | 2026-03-13 |
 | 2 | Battery Model | 6/6 | Complete | 2026-03-14 |
-| 3 | Virtual UPS & Shutdown | 0/4 | Planned | — |
-| 4 | Health Monitoring | 0/TBD | Not started | — |
+| 3 | Virtual UPS & Shutdown | 3/4 | In Progress | — |
+| 4 | Health Monitoring | 0/2 | Planned | — |
 | 5 | Operational Setup | 0/TBD | Not started | — |
 | 6 | Calibration Mode | 0/TBD | Not started | — |
 
 ---
 
-**Next:** `/gsd:execute-phase 03-virtual-ups-safe-shutdown`
+**Next:** `/gsd:plan-phase 4` (Phase 4 planning complete)
