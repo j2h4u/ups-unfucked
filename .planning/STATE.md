@@ -3,20 +3,20 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_plan: 03-04
-status: executing
-last_updated: "2026-03-13T19:54:12.000Z"
+status: completed
+last_updated: "2026-03-14T00:30:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 11
-  completed_plans: 15
+  completed_plans: 16
   percent: 100
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-13
-**Current Focus:** Phase 3 in Progress (Plans 01-03 Complete, Wave 2 Monitor Integration Finished)
+**Last Updated:** 2026-03-14
+**Current Focus:** Phase 3 in Progress (Plans 01-04 Complete, Wave 3 Systemd & NUT Configuration Finished)
 
 ---
 
@@ -33,9 +33,9 @@ progress:
 ## Current Position
 
 **Phase:** 3
-**Current Plan:** 03-04 (next)
-**Status:** 03-03 COMPLETE
-**Progress:** 3/4 plans completed Phase 3 (75%)
+**Current Plan:** 03-05 (next)
+**Status:** 03-04 COMPLETE
+**Progress:** 4/4 plans completed Phase 3 (100%)
 
 ### Phase 3 Completed Plans
 
@@ -59,6 +59,15 @@ progress:
   * 3 new integration tests: test_monitor_virtual_ups_integration, test_monitor_virtual_ups_below_threshold, test_monitor_virtual_ups_error_handling
   * Error handling: tmpfs write failures logged but daemon continues
   * 91/91 tests passing (all phases, 0 regressions)
+
+- [x] 03-04: Systemd configuration & NUT integration (Wave 3) ✓ COMPLETE - 2026-03-14
+  * systemd service updated with After=sysinit.target dependency
+  * Ensures /dev/shm tmpfs available before daemon starts
+  * config/dummy-ups.conf created with NUT dummy-ups device configuration
+  * Device parameters: driver=dummy-ups, port=/dev/shm/ups-virtual.dev, mode=dummy-once
+  * CONTEXT.md extended with 5-step shutdown coordination flow documentation
+  * Event classification (ONLINE, BLACKOUT_REAL, BLACKOUT_TEST) documented
+  * Ready for Phase 5 installation and live NUT integration testing
 
 ### Phase 2 Completed Plans
 
@@ -97,6 +106,7 @@ progress:
 | 03-01 | 10 min | 3 | 87 (all phases) | 2026-03-14 |
 | 03-02 | ~8 min | 4 | 88 (all phases) | 2026-03-14 |
 | 03-03 | ~2 min | 3 | 91 (all phases) | 2026-03-13 |
+| 03-04 | ~4 min | 3 | 91 (all phases) | 2026-03-14 |
 
 ---
 
@@ -131,9 +141,9 @@ progress:
 
 **Last session:** Completed plan 03-03 (monitor virtual UPS integration Wave 2). Integrated write_virtual_ups_dev() call into monitor.py polling loop to construct and write virtual_metrics dict every poll cycle. Created 3 integration tests covering main flow, threshold variations, and error handling. All 91 tests passing (0 regressions).
 
-**Next phase:** Plan 03-04 (Wave 3): Systemd service configuration and NUT dummy-ups setup for transparent data source switching.
+**Next phase:** Plan 03-05 (Wave 4): Alert thresholds and model lifecycle (Phase 4).
 
-**Lessons Learned (from 03-01, 03-02, 03-03):**
+**Lessons Learned (from 03-01, 03-02, 03-03, 03-04):**
 
 - Tmpfs atomic writes (tempfile + fsync + rename) are essential for crash safety without SSD wear
 - Event type enum provides clean pattern matching for conditional logic (ONLINE/BLACKOUT_REAL/BLACKOUT_TEST)
@@ -142,7 +152,10 @@ progress:
 - Error handling in polling loops should catch exceptions, log, and continue (non-fatal failures)
 - Virtual UPS pattern: 3 computed overrides + passthrough fields preserves transparency
 - Configurable thresholds via function parameters enable testing without environment variables
+- Systemd dependency ordering critical: sysinit.target must precede network-online.target for tmpfs availability
+- NUT dummy-ups mode=dummy-once provides atomic reads without CPU polling overhead
+- Configuration provisioning artifacts (ready-for-install files) bridge development and operations
 
 ---
 
-*State updated: 2026-03-13 after plan 03-03 completion — Phase 3 Wave 2 Monitor Integration COMPLETE*
+*State updated: 2026-03-14 after plan 03-04 completion — Phase 3 Wave 3 Systemd & NUT Configuration COMPLETE*
