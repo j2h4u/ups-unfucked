@@ -184,6 +184,14 @@ class MonitorDaemon:
             logger.info("Power restored; updating LUT with measured discharge points")
             # Phase 4: Calculate SoH and check health thresholds
             self._update_battery_health()
+
+            # Phase 6 Wave 1: Calibration mode - interpolate cliff region on OB→OL in BLACKOUT_TEST
+            if self.calibration_mode and previous_event_type == EventType.BLACKOUT_TEST:
+                from src.soh_calculator import interpolate_cliff_region
+                updated_lut = interpolate_cliff_region(self.battery_model.data['lut'])
+                self.battery_model.update_lut_from_calibration(updated_lut)
+                logger.warning("Calibration complete; remove --calibration-mode for normal operation")
+
             # Update model.lut with source="measured" (Phase 6 implementation detail)
             # Recalculate SoH (Phase 6 implementation detail)
             self.battery_model.save()  # Persist updated model to disk
