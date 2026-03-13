@@ -1,7 +1,7 @@
 [Unit]
 Description=UPS Battery Monitor
 Documentation=https://github.com/j2h4u/ups-battery-monitor
-After=network-online.target nut-server.service
+After=sysinit.target network-online.target nut-server.service
 Wants=network-online.target
 ConditionPathExists=/run/nut/
 
