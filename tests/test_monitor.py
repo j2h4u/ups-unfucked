@@ -318,3 +318,91 @@ def test_calibration_completion_logging():
                                     call_args = str(mock_logger.warning.call_args)
                                     assert 'calibration-mode' in call_args or 'Calibration complete' in call_args
 
+
+def test_calibration_mode_end_to_end():
+    """
+    Simulate complete calibration flow:
+    1. Start daemon with --calibration-mode
+    2. Simulate battery test (BLACKOUT_TEST event)
+    3. Collect discharge buffer points via calibration_write()
+    4. Transition OB→OL (discharge complete)
+    5. Verify LUT interpolated and persisted
+    """
+    from src.monitor import MonitorDaemon
+    from src.model import BatteryModel
+    from src.event_classifier import EventType
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+    import tempfile
+    import json
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "model.json"
+
+        with patch('src.monitor.NUTClient'):
+            with patch('src.monitor.EMABuffer'):
+                with patch('src.monitor.EventClassifier'):
+                    with patch('src.monitor.alerter.setup_ups_logger'):
+                        with patch.object(MonitorDaemon, '_check_nut_connectivity'):
+                            # Create daemon in calibration mode
+                            daemon = MonitorDaemon(calibration_mode=True)
+
+                            # Set up temporary model path
+                            model = BatteryModel(model_path=model_path)
+                            daemon.battery_model = model
+
+                            # Verify initial state
+                            assert daemon.calibration_mode is True
+                            assert daemon.shutdown_threshold_minutes == 1
+
+                            # Setup: LUT with standard cliff region entries
+                            model.data['lut'] = [
+                                {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
+                                {'v': 12.8, 'soc': 0.85, 'source': 'standard'},
+                                {'v': 12.4, 'soc': 0.64, 'source': 'standard'},
+                                {'v': 11.2, 'soc': 0.60, 'source': 'standard'},
+                                {'v': 11.0, 'soc': 0.50, 'source': 'standard'},
+                                {'v': 10.8, 'soc': 0.40, 'source': 'standard'},
+                                {'v': 10.5, 'soc': 0.0, 'source': 'anchor'},
+                            ]
+                            model.save()
+
+                            # Count standard entries in cliff region before calibration
+                            standard_cliff_before = sum(1 for e in model.data['lut']
+                                                       if 10.5 <= e['v'] <= 11.0 and e['source'] == 'standard')
+                            assert standard_cliff_before >= 2  # Should have at least 2 standard entries
+
+                            # Simulate calibration writes (would happen during BLACKOUT_TEST polling)
+                            # Use distinct voltages not already in LUT to avoid duplicate skipping
+                            model.calibration_write(voltage=10.95, soc=0.48, timestamp=1000.0)
+                            model.calibration_write(voltage=10.65, soc=0.15, timestamp=1100.0)
+                            model.calibration_write(voltage=10.55, soc=0.02, timestamp=1200.0)
+
+                            # Verify measured points written
+                            lut_before_interp = model.get_lut()
+                            measured_count_before = sum(1 for e in lut_before_interp if e['source'] == 'measured')
+                            assert measured_count_before >= 3
+
+                            # Simulate discharge completion (OB→OL transition)
+                            # In real monitor loop, this would trigger interpolation
+                            from src.soh_calculator import interpolate_cliff_region
+                            updated_lut = interpolate_cliff_region(model.data['lut'])
+                            model.update_lut_from_calibration(updated_lut)
+
+                            # Verify LUT updated in memory
+                            lut_after = model.get_lut()
+                            interpolated_count = sum(1 for e in lut_after if e['source'] == 'interpolated')
+                            assert interpolated_count > 0, "No interpolated entries found"
+
+                            # Verify model persisted (reload from disk)
+                            reloaded_model = BatteryModel(model_path=model_path)
+                            reloaded_lut = reloaded_model.get_lut()
+
+                            # Verify interpolation persisted
+                            interpolated_reloaded = sum(1 for e in reloaded_lut if e['source'] == 'interpolated')
+                            assert interpolated_reloaded > 0, "Interpolation not persisted"
+
+                            # Verify measured points still exist
+                            measured_reloaded = sum(1 for e in reloaded_lut if e['source'] == 'measured')
+                            assert measured_reloaded >= 3, "Measured points not persisted"
+
