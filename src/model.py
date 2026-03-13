@@ -5,7 +5,7 @@ import os
 import tempfile
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 logger = logging.getLogger(__name__)
@@ -214,4 +214,26 @@ class BatteryModel:
         # Atomic write with fsync
         logger.info(f"Calibration write: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")
         self.save()
+
+    def update_lut_from_calibration(self, new_lut: List[Dict]):
+        """
+        Replace LUT with interpolated calibration result and persist to disk.
+
+        Called after interpolate_cliff_region() completes to apply cliff region
+        interpolation to persistent model storage.
+
+        Args:
+            new_lut: Updated LUT from interpolate_cliff_region()
+        """
+        old_count = len(self.data['lut'])
+        self.data['lut'] = new_lut
+        try:
+            self.save()
+            logger.info(
+                f"LUT updated from calibration: {len(new_lut)} entries, "
+                f"cliff region interpolated (was {old_count} entries)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to update LUT from calibration: {e}")
+            raise
 
