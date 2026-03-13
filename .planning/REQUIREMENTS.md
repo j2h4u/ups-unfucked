@@ -34,16 +34,16 @@
 
 ### Virtual UPS (dummy-ups)
 
-- [ ] **VUPS-01**: Демон пишет все поля в /dev/shm/ups-virtual.dev (tmpfs, не диск)
-- [ ] **VUPS-02**: Все поля реального UPS прозрачно проксируются в виртуальный
-- [ ] **VUPS-03**: Три поля переопределяются нашими значениями: battery.runtime, battery.charge, ups.status
-- [ ] **VUPS-04**: dummy-ups настроен в NUT как источник для upsmon и Grafana Alloy
+- [x] **VUPS-01**: Демон пишет все поля в /dev/shm/ups-virtual.dev (tmpfs, не диск)
+- [x] **VUPS-02**: Все поля реального UPS прозрачно проксируются в виртуальный
+- [x] **VUPS-03**: Три поля переопределяются нашими значениями: battery.runtime, battery.charge, ups.status
+- [x] **VUPS-04**: dummy-ups настроен в NUT как источник для upsmon и Grafana Alloy
 
 ### Shutdown Safety
 
-- [ ] **SHUT-01**: upsmon получает LB от виртуального UPS и инициирует shutdown штатно
-- [ ] **SHUT-02**: Порог shutdown настраивается (минут до конца)
-- [ ] **SHUT-03**: При calibration-mode порог shutdown снижается до ~1 мин
+- [x] **SHUT-01**: upsmon получает LB от виртуального UPS и инициирует shutdown штатно
+- [x] **SHUT-02**: Порог shutdown настраивается (минут до конца)
+- [x] **SHUT-03**: При calibration-mode порог shutdown снижается до ~1 мин
 
 ### Battery Health & Alerts
 
@@ -107,13 +107,13 @@
 | EVT-03 | 2 | Complete |
 | EVT-04 | 2 | Complete |
 | EVT-05 | 2 | Complete |
-| VUPS-01 | 3 | Pending |
-| VUPS-02 | 3 | Pending |
-| VUPS-03 | 3 | Pending |
-| VUPS-04 | 3 | Pending |
-| SHUT-01 | 3 | Pending |
-| SHUT-02 | 3 | Pending |
-| SHUT-03 | 3 | Pending |
+| VUPS-01 | 3 | Complete |
+| VUPS-02 | 3 | Complete |
+| VUPS-03 | 3 | Complete |
+| VUPS-04 | 3 | Complete |
+| SHUT-01 | 3 | Complete |
+| SHUT-02 | 3 | Complete |
+| SHUT-03 | 3 | Complete |
 | HLTH-01 | 4 | Pending |
 | HLTH-02 | 4 | Pending |
 | HLTH-03 | 4 | Pending |
@@ -131,7 +131,8 @@
 - v1 requirements: 34 total
 - Mapped to phases: 34
 - Unmapped: 0 ✓
+- Completed: 21 (7 Phase 1, 8 Phase 2, 6 Phase 3 Wave 1+2)
 
 ---
 *Requirements defined: 2026-03-13*
-*Traceability updated: 2026-03-13 after roadmap creation*
+*Traceability updated: 2026-03-13 after plan 03-03 completion — VUPS-01 through SHUT-03 marked complete*
