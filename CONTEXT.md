@@ -167,6 +167,54 @@ disk:      ~/.config/ups-battery-monitor/model.json — модель батар�
 
 ---
 
+## Shutdown Coordination (Phase 3)
+
+### Virtual UPS Proxy Flow
+
+1. **Daemon monitors battery state** (Phase 1-2):
+   - Polls real UPS every 10 sec
+   - Calculates SoC from voltage, runtime from Peukert law
+
+2. **Daemon computes ups.status override** (Phase 3):
+   - ONLINE (input.voltage ≈230V, mains present) → emit "OL"
+   - BLACKOUT_REAL (input.voltage ≈0V, no mains) + time_rem < 5min threshold → emit "OB DISCHRG LB"
+   - BLACKOUT_TEST (battery test with mains present) → emit "OB DISCHRG" (no LB, calibration data OK)
+
+3. **Daemon writes virtual UPS file** (Phase 3):
+   - Write to /dev/shm/ups-virtual.dev (tmpfs, zero SSD wear)
+   - Format: NUT standard key-value (VAR lines)
+   - Atomic write: tempfile → fsync → rename
+   - Every poll cycle (10 sec)
+
+4. **NUT dummy-ups reads virtual device**:
+   - dummy-ups driver loads /dev/shm/ups-virtual.dev (reads every timestamp change due to mode=dummy-once)
+   - Provides metrics to upsmon and Grafana
+
+5. **upsmon receives LB signal**:
+   - Monitors ups.status field
+   - When "LB" flag present, triggers LOWBATT notify event
+   - Executes SHUTDOWNCMD for graceful shutdown
+   - Shutdown does not happen before time_rem actually expires (safety margin: LB fires at < threshold)
+
+### Shutdown Threshold Configuration
+
+Environment variable: `UPS_MONITOR_SHUTDOWN_THRESHOLD_MIN` (default: 5 minutes)
+- Set to minutes before battery depletion when LB flag should be raised
+- Must be long enough for shutdown to complete (FINALDELAY + script execution time)
+- Shorter threshold = more runtime available, but riskier if shutdown takes longer than expected
+- Recommended: 5 minutes (allows ~3-4 min shutdown + 1 min safety margin)
+- Calibration mode (Phase 6): reduce to 1 minute to collect data to battery cutoff
+
+### Event Classification
+
+- **ONLINE**: UPS on mains (input.voltage ~230V, status="OL")
+- **BLACKOUT_REAL**: UPS on battery, no mains (input.voltage ~0V, status="OB DISCHRG")
+- **BLACKOUT_TEST**: Battery test with mains present (input.voltage ~230V, status="OB DISCHRG")
+
+Distinction prevents false shutdown triggers during intentional battery tests.
+
+---
+
 ## Модель батареи
 
 ### Форма разрядной кривой VRLA
