@@ -3,6 +3,7 @@ import signal
 import sys
 import os
 import logging
+import argparse
 from pathlib import Path
 from datetime import datetime
 from systemd.journal import JournalHandler
@@ -58,11 +59,18 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self):
+    def __init__(self, calibration_mode=False):
         """
         Initialize daemon with inline configuration.
+
+        Args:
+            calibration_mode: If True, uses 1-minute shutdown threshold for battery discharge testing
         """
         self.running = True
+        self.calibration_mode = calibration_mode
+
+        # Set shutdown threshold based on mode
+        self.shutdown_threshold_minutes = 1 if calibration_mode else SHUTDOWN_THRESHOLD_MINUTES
 
         # Create model directory
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -112,7 +120,7 @@ class MonitorDaemon:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        logger.info(f"Daemon initialized: poll={POLL_INTERVAL}s, model={MODEL_PATH}, nut={NUT_HOST}:{NUT_PORT}")
+        logger.info(f"Daemon initialized: calibration_mode={self.calibration_mode}, shutdown_threshold={self.shutdown_threshold_minutes}min, poll={POLL_INTERVAL}s, model={MODEL_PATH}, nut={NUT_HOST}:{NUT_PORT}")
 
         # H1 fix: Check NUT connectivity at startup
         self._check_nut_connectivity()
@@ -141,9 +149,9 @@ class MonitorDaemon:
         # EVT-02: Real blackout - prepare shutdown signal
         if event_type == EventType.BLACKOUT_REAL:
             time_rem = self.current_metrics.get("time_rem_minutes")
-            if time_rem is not None and time_rem < SHUTDOWN_THRESHOLD_MINUTES:
+            if time_rem is not None and time_rem < self.shutdown_threshold_minutes:
                 logger.warning(
-                    f"Real blackout: time_rem={time_rem:.1f}min < threshold {SHUTDOWN_THRESHOLD_MINUTES}min; "
+                    f"Real blackout: time_rem={time_rem:.1f}min < threshold {self.shutdown_threshold_minutes}min; "
                     f"prepare LB flag"
                 )
                 self.current_metrics["shutdown_imminent"] = True
@@ -369,7 +377,7 @@ class MonitorDaemon:
                             ups_status_override = compute_ups_status_override(
                                 event_type,
                                 time_rem if time_rem is not None else 0,
-                                SHUTDOWN_THRESHOLD_MINUTES
+                                self.shutdown_threshold_minutes
                             )
 
                             # Build virtual metrics dict with overrides + passthrough fields
@@ -403,8 +411,20 @@ class MonitorDaemon:
 
 def main():
     """Entry point for daemon."""
+    parser = argparse.ArgumentParser(
+        description="UPS Battery Monitor Daemon",
+        prog="ups-battery-monitor"
+    )
+    parser.add_argument(
+        '--calibration-mode',
+        action='store_true',
+        default=False,
+        help="Enable calibration mode: shorter shutdown threshold (1 min) for battery discharge testing"
+    )
+    args = parser.parse_args()
+
     try:
-        daemon = MonitorDaemon()
+        daemon = MonitorDaemon(calibration_mode=args.calibration_mode)
         daemon.run()
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)
