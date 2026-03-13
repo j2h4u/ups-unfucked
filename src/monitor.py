@@ -9,6 +9,8 @@ from systemd.journal import JournalHandler
 from src.nut_client import NUTClient
 from src.ema_ring_buffer import EMABuffer, ir_compensate
 from src.model import BatteryModel
+from src.soc_predictor import soc_from_voltage, charge_percentage
+from src.runtime_calculator import runtime_minutes
 
 # === INLINE CONFIGURATION (H2 fix: removed src/config.py) ===
 POLL_INTERVAL = int(os.getenv('UPS_MONITOR_POLL_INTERVAL', '10'))
@@ -68,6 +70,16 @@ class MonitorDaemon:
         )
 
         self.battery_model = BatteryModel(MODEL_PATH)
+
+        # Metrics tracking for current battery state
+        self.current_metrics = {
+            "soc": None,
+            "battery_charge": None,
+            "time_rem_minutes": None,
+            "timestamp": None,
+        }
+        self.last_soc = None
+        self.last_time_rem = None
 
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -141,11 +153,44 @@ class MonitorDaemon:
                         else:
                             v_norm = None
 
+                        # Calculate SoC and battery charge from normalized voltage
+                        if stabilized and v_norm is not None:
+                            soc = soc_from_voltage(v_norm, self.battery_model.get_lut())
+                            battery_charge = charge_percentage(soc)
+
+                            # Calculate remaining runtime using SoC and load
+                            capacity_ah = self.battery_model.get_capacity_ah()
+                            soh = self.battery_model.get_soh()
+                            time_rem = runtime_minutes(soc, l_ema, capacity_ah, soh)
+
+                            # Store metrics
+                            self.current_metrics["soc"] = soc
+                            self.current_metrics["battery_charge"] = battery_charge
+                            self.current_metrics["time_rem_minutes"] = time_rem
+                            self.current_metrics["timestamp"] = timestamp
+
+                            # Log significant SoC changes (>5%)
+                            if self.last_soc is None or abs(soc - self.last_soc) > 0.05:
+                                logger.info(f"SoC updated: {self.last_soc*100:.0f}% → {soc*100:.0f}%")
+                                self.last_soc = soc
+
+                            # Log runtime changes
+                            if self.last_time_rem is None or abs(time_rem - self.last_time_rem) > 1.0:
+                                logger.info(f"Remaining runtime: {time_rem:.1f} minutes")
+                                self.last_time_rem = time_rem
+                        else:
+                            battery_charge = None
+                            time_rem = None
+
                         v_norm_str = f"{v_norm:.2f}V" if v_norm is not None else "N/A"
+                        charge_str = f"{battery_charge}%" if battery_charge is not None else "N/A"
+                        time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
                         logger.info(
                             f"Poll {poll_count}: V_ema={v_ema:.2f}V, "
                             f"L_ema={l_ema:.1f}%, "
                             f"V_norm={v_norm_str}, "
+                            f"charge={charge_str}, "
+                            f"time_rem={time_rem_str}, "
                             f"stabilized={stabilized}"
                         )
                 else:
