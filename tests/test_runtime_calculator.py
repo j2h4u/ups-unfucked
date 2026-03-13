@@ -56,11 +56,11 @@ class TestPeukertLoadNonlinearity:
         time_20 = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
         time_80 = runtime_minutes(soc=1.0, load_percent=80, capacity_ah=7.2, soh=1.0)
 
-        # With exponent 1.2: time_80/time_20 should be (20/80)^1.2 ≈ 0.115
-        # Meaning time_20 should be ~8.7x longer than time_80
+        # With exponent 1.2: time_20/time_80 = (load_80/load_20)^1.2 = (80/20)^1.2 ≈ 5.28
+        # Meaning time_20 should be ~5.3x longer than time_80
         ratio = time_20 / time_80
-        expected_ratio = (20 / 80) ** 1.2
-        assert 8.0 < ratio < 9.5, f"Expected ~8.7x difference, got {ratio:.1f}x"
+        expected_ratio = (80 / 20) ** 1.2
+        assert 5.0 < ratio < 5.6, f"Expected ~5.3x difference, got {ratio:.1f}x"
 
     def test_peukert_load_increase_drops_time(self):
         """Test load increase (20% to 80%) reduces runtime sharply."""
