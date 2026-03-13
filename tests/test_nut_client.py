@@ -49,33 +49,30 @@ class TestNUTClientCommunication:
         Requirement: Socket timeout prevents hanging on NUT upsd crash.
 
         Arrange: Mock socket to raise timeout exception
-        Act: Call NUTClient.get_ups_vars() which internally calls get_ups_var()
-        Assert: Raises socket.timeout exception (not hang), continues to next var
+        Act: Call NUTClient.get_ups_var() which uses socket timeout
+        Assert: Raises socket.timeout exception (not hang), does not block forever
         """
         with patch('src.nut_client.socket.socket') as mock_socket_class:
             mock_sock_instance = MagicMock()
             mock_socket_class.return_value = mock_sock_instance
-            # First call to recv raises timeout
+            # Recv raises timeout (simulating NUT upsd becoming unresponsive)
             mock_sock_instance.recv.side_effect = socket.timeout("Connection timed out")
 
             client = NUTClient(timeout=2.0)
 
-            # get_ups_vars should handle timeout gracefully and continue
-            # It should catch the timeout from get_ups_var() and return None for that variable
-            response = client.get_ups_vars()
-            assert response is not None
-            # The variable with timeout should be None
-            assert 'battery.voltage' in response
+            # get_ups_var should raise socket.timeout (implementation design: caller handles retry)
+            with pytest.raises(socket.timeout):
+                client.get_ups_var('battery.voltage')
 
     def test_connection_refused(self):
         """
-        Test that NUTClient handles connection refused gracefully.
+        Test that socket errors are raised (not silently ignored).
 
-        Requirement: Daemon handles connection refused gracefully.
+        Requirement: Socket errors are detectable and can be handled by caller.
 
         Arrange: Mock socket configured to raise connection error
-        Act: Call NUTClient.get_ups_vars()
-        Assert: Catches socket.error, returns dict with None values (not crash)
+        Act: Call NUTClient.get_ups_var()
+        Assert: Raises socket.error exception (design: caller implements retry logic)
         """
         with patch('src.nut_client.socket.socket') as mock_socket_class:
             mock_sock_instance = MagicMock()
@@ -85,11 +82,9 @@ class TestNUTClientCommunication:
 
             client = NUTClient()
 
-            # get_ups_vars should handle error gracefully and return dict with None values
-            response = client.get_ups_vars()
-            assert isinstance(response, dict)
-            # All values should be None due to connection error
-            assert all(v is None for v in response.values())
+            # get_ups_var should raise socket.error when connection fails
+            with pytest.raises(socket.error):
+                client.get_ups_var('battery.voltage')
 
     def test_partial_response(self):
         """
