@@ -98,34 +98,38 @@ def compute_ups_status_override(
     """
     Compute UPS status override value for virtual UPS based on event and time remaining.
 
-    STUB FOR WAVE 1: Returns placeholder "OL". Full implementation in later wave.
+    Determines the correct ups.status value including LB (LOW_BATTERY) flag based on
+    event classification and remaining runtime. This replaces unreliable firmware flags.
 
     Pattern from RESEARCH.md Phase 3:
     - ONLINE → "OL"
-    - BLACKOUT_TEST → "OB DISCHRG"
+    - BLACKOUT_TEST → "OB DISCHRG" (no LB, allow calibration data collection)
     - BLACKOUT_REAL + time_rem >= threshold → "OB DISCHRG"
-    - BLACKOUT_REAL + time_rem < threshold → "OB DISCHRG LB"
+    - BLACKOUT_REAL + time_rem < threshold → "OB DISCHRG LB" (signal LOW_BATTERY to upsmon)
 
     Args:
         event_type: EventType from event_classifier (ONLINE, BLACKOUT_REAL, BLACKOUT_TEST)
         time_rem_minutes: Calculated runtime remaining (minutes)
-        shutdown_threshold_minutes: Threshold below which to set LB flag
+        shutdown_threshold_minutes: Threshold below which to set LB flag (minutes)
 
     Returns:
         str: UPS status string suitable for NUT format
              Examples: "OL", "OB DISCHRG", "OB DISCHRG LB"
+
+    Note:
+        LB flag signals to upsmon that LOW_BATTERY condition is detected;
+        upsmon will execute SHUTDOWNCMD when LB flag is present.
+        Threshold uses < not <= (time_rem exactly at threshold does not trigger LB).
     """
-    # STUB: Return placeholder for Wave 1
-    # Full implementation will be:
-    # if event_type == EventType.ONLINE:
-    #     return "OL"
-    # elif event_type == EventType.BLACKOUT_TEST:
-    #     return "OB DISCHRG"
-    # elif event_type == EventType.BLACKOUT_REAL:
-    #     if time_rem_minutes < shutdown_threshold_minutes:
-    #         return "OB DISCHRG LB"
-    #     else:
-    #         return "OB DISCHRG"
-    # else:
-    #     return "OL"  # Default to online if unknown
-    return "OL"
+    if event_type == EventType.ONLINE:
+        return "OL"
+    elif event_type == EventType.BLACKOUT_TEST:
+        return "OB DISCHRG"
+    elif event_type == EventType.BLACKOUT_REAL:
+        if time_rem_minutes < shutdown_threshold_minutes:
+            return "OB DISCHRG LB"
+        else:
+            return "OB DISCHRG"
+    else:
+        # Default to online if unknown event type
+        return "OL"
