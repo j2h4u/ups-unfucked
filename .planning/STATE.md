@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: Not started
-status: planning
-last_updated: "2026-03-13T21:31:49.101Z"
+current_plan: "06-01 (Wave 0 Complete)"
+status: in-progress
+last_updated: "2026-03-14T00:10:00Z"
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 19
-  completed_plans: 20
-  percent: 40
+  completed_plans: 21
+  percent: 42
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-14 T04:40Z
-**Current Focus:** Phase 5 Wave 1 Complete (Systemd Integration Verification Done)
+**Last Updated:** 2026-03-14 T00:10Z
+**Current Focus:** Phase 6 Plan 01 Wave 0 Complete (Calibration Mode Flag & Threshold Override)
 
 ---
 
@@ -33,9 +33,22 @@ progress:
 ## Current Position
 
 **Phase:** 6
-**Current Plan:** Not started
-**Status:** Ready to plan
-**Progress:** 2/5 plans completed Phase 5 (40%)
+**Current Plan:** 06-01 (Wave 0 Complete)
+**Status:** In Progress
+**Progress:** 1/5 plans completed Phase 6 (21/19 cumulative)
+
+### Phase 6 Completed Plans
+
+- [x] 06-01: Calibration Mode Wave 0 (Flag & Threshold) ✓ COMPLETE - 2026-03-14
+  * Implemented --calibration-mode flag parsing (argparse)
+  * Override shutdown threshold: 1 min (calibration) vs 5 min (normal)
+  * Implemented BatteryModel.calibration_write() with fsync persistence
+  * Implemented interpolate_cliff_region() for LUT gap-filling
+  * Wired calibration_mode into event handling for discharge buffer writes
+  * Created tests/test_monitor.py: 6 comprehensive tests
+  * Created tests/test_model.py additions: 5 calibration_write tests
+  * Created tests/test_soh_calculator.py additions: 5 interpolation tests
+  * All tests passing: 146/146 (Phase 1-6 test coverage)
 
 ### Phase 5 Completed Plans
 
@@ -148,6 +161,7 @@ progress:
 | 04-02 | ~20 min | 2 | 115 (all phases) | 2026-03-14 |
 | 05-01 | ~15 min | 2 | 91 (install.sh + existing tests) | 2026-03-13 |
 | 05-02 | ~12 min | 2 | 130 (all phases) | 2026-03-14 |
+| 06-01 | ~12 min | 5 | 146 (all phases) | 2026-03-14 |
 
 ---
 
@@ -180,9 +194,20 @@ progress:
 
 **Blockers:** None currently.
 
-**Last session:** Completed plan 05-02 (Systemd Integration Verification Wave 1). Verified systemd service unit (systemd/ups-battery-monitor.service) against all OPS requirements: auto-start on boot (WantedBy=multi-user.target), privilege separation (User=j2h4u), restart throttling (on-failure with 3-restart-in-60sec limit), and journald logging (StandardOutput=journal + SyslogIdentifier). Created tests/test_systemd_integration.py with 9 comprehensive unit tests covering [Unit], [Service], and [Install] sections. No modifications needed — service file correctly configured since Phase 3-04. Full test suite: 130/130 tests passing (9 new systemd + Phase 1-4 coverage, 0 regressions).
+**Last session:** Completed plan 06-01 Wave 0 (Calibration Mode Flag & Threshold Override). Implemented --calibration-mode flag with argparse, reduced shutdown threshold to 1 min in calibration mode (vs 5 min normal). Created BatteryModel.calibration_write() for atomic fsync writes during discharge testing. Implemented interpolate_cliff_region() for linear interpolation of cliff region (11.0V–10.5V) with source field tracking ('measured', 'interpolated'). Wired calibration_mode into event handling to collect discharge buffer points and write via calibration_write() every ~60 seconds. Test suite: 146/146 passing (16 new tests for Phase 6 + 130 Phase 1-5 tests, 0 regressions).
 
-**Next phase:** Plan 05-03 (Wave 2): If needed; otherwise Phase 6 calibration mode.
+**Next phase:** Plan 06-02 (Wave 1): Integrate interpolate_cliff_region() into discharge completion flow; test full calibration cycle (collect → write → interpolate → persist); verify LUT quality improvements with measured/interpolated entries.
+
+**Lessons Learned (from 06-01):**
+
+- Calibration mode threshold (1 min) allows battery to discharge closer to cutoff (10.5V) for better measured data coverage in low-voltage cliff region
+- Instance variables (self.calibration_mode) vs sys.argv polling ensure flag is immutable after startup (no runtime polling)
+- Discharge buffer batching (6 polls ≈ 60 seconds) minimizes fsync overhead during calibration without blocking polling loop
+- Source field tracking ('measured', 'interpolated') prevents auto-interpolation from overwriting manual calibration data; enables rollback if needed
+- Linear interpolation fills gaps at 0.1V resolution; adequate for VRLA discharge curve smoothing without overfitting
+- Duplicate prevention (±0.01V tolerance) avoids redundant LUT entries from noisy voltage readings
+- Atomic write + fsync pattern reused from Phase 1 ensures calibration data survives power loss during write
+
 
 **Lessons Learned (from 05-01 and 05-02):**
 
