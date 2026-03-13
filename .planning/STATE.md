@@ -16,7 +16,7 @@ progress:
 # Project State — UPS Battery Monitor
 
 **Last Updated:** 2026-03-14
-**Current Focus:** Phase 2 in Progress (Plans 01-02 Complete)
+**Current Focus:** Phase 2 in Progress (Plans 01-04 Complete)
 
 ---
 
@@ -33,16 +33,16 @@ progress:
 ## Current Position
 
 **Phase:** 2
-**Current Plan:** 02-03 (next: Runtime calculator)
+**Current Plan:** 02-05 (next: Monitor daemon integration)
 **Status:** In Progress
-**Progress:** 2/5 plans completed Phase 2 (40%)
+**Progress:** 4/5 plans completed Phase 2 (80%)
 
 ### Phase 2 Completed Plans
 
-- [x] 02-01: NUT socket client enhanced for Phase 2
-- [x] 02-02: SoC predictor (voltage-based LUT lookup) ✓ JUST COMPLETED
-- [ ] 02-03: Runtime calculator (Peukert's Law)
-- [ ] 02-04: Event classifier (state machine for blackout vs test detection)
+- [x] 02-01: Test infrastructure and Wave 0 implementations ✓ COMPLETE
+- [x] 02-02: SoC predictor (voltage-based LUT lookup) ✓ COMPLETE
+- [x] 02-03: Runtime calculator (Peukert's Law) ✓ COMPLETE
+- [x] 02-04: Event classifier (state machine for blackout vs test detection) ✓ COMPLETE
 - [ ] 02-05: Monitor loop integration (daemon integration)
 
 ### Phase 1 Status (COMPLETE)
@@ -64,10 +64,10 @@ progress:
 | 01-03 | — | — | 14 | 2026-03-13 |
 | 01-04 | 98 sec | 1 | 20 | 2026-03-13 |
 | 01-05 | 18 min | 3 | 38 (all phases) | 2026-03-13 |
-| 02-01 | — | — | — | 2026-03-13 |
-| 02-02 | — | — | — | 2026-03-13 |
-| 02-03 | — | — | — | 2026-03-13 |
-| 02-04 | 8 min | 1 | 13 | 2026-03-13 |
+| 02-01 | 30 min | 4 | 40 | 2026-03-14 |
+| 02-02 | — | — | — | 2026-03-14 |
+| 02-03 | — | — | — | 2026-03-14 |
+| 02-04 | 8 min | 1 | 13 | 2026-03-14 |
 
 ---
 
@@ -115,4 +115,4 @@ progress:
 
 ---
 
-*State updated: 2026-03-14 after plan 02-02 completion — Phase 2 SoC Predictor COMPLETE*
+*State updated: 2026-03-14 after plan 02-01 completion — Phase 2 Wave 0 Test Infrastructure and Implementations COMPLETE*
