@@ -11,10 +11,10 @@ Constants tuned to match observed behavior from real blackout on 2026-03-12:
 - Scaling constant: 237.7 (empirically derived from 47-min blackout)
 
 Formula:
-    Time_rem = (capacity_ah * soc * soh) / (load_ema ^ peukert_exp) * const
+    Time_rem = (capacity_ah * soc * soh) / (load_percent ^ peukert_exp) * const
 
 Edge cases handled:
-- load_ema ≤ 0: return 0.0 (no discharge)
+- load_percent ≤ 0: return 0.0 (no discharge)
 - soc ≤ 0: return 0.0 (no battery available)
 """
 

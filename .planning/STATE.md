@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: Not started
-status: planning
-last_updated: "2026-03-13T17:28:57.763Z"
+current_plan: 02-05
+status: in_progress
+last_updated: "2026-03-13T19:02:05Z"
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 5
-  completed_plans: 6
+  total_plans: 7
+  completed_plans: 7
   percent: 100
 ---
 
 # Project State — UPS Battery Monitor
 
 **Last Updated:** 2026-03-13
-**Current Focus:** Phase 1 COMPLETE (All 5 Plans Finished)
+**Current Focus:** Phase 2 in Progress (Plans 01-04 Complete)
 
 ---
 
@@ -33,21 +33,25 @@ progress:
 ## Current Position
 
 **Phase:** 2
-**Current Plan:** Not started
-**Status:** Ready to plan
-**Progress:** 5/5 plans completed (100%)
+**Current Plan:** 02-05 (next: Monitor Loop Integration)
+**Status:** In Progress
+**Progress:** 4/5 plans completed Phase 2 (80%)
 
-### Completed Plans
+### Phase 2 Completed Plans
+
+- [x] 02-01: NUT socket client enhanced for Phase 2
+- [x] 02-02: SoC predictor (voltage-based LUT lookup)
+- [x] 02-03: Runtime calculator (Peukert's Law)
+- [x] 02-04: Event classifier (state machine for blackout vs test detection) ✓ JUST COMPLETED
+- [ ] 02-05: Monitor loop integration (daemon integration)
+
+### Phase 1 Status (COMPLETE)
 
 - [x] 01-01: Test infrastructure
 - [x] 01-02: NUT socket client (COMPLETE)
 - [x] 01-03: EMA smoothing and IR compensation (COMPLETE)
 - [x] 01-04: Battery model persistence (COMPLETE)
 - [x] 01-05: Daemon integration and systemd service (COMPLETE)
-
-### What's Next
-
-- [ ] Phase 2: Battery state estimation (SoC from voltage, blackout vs test detection)
 
 ---
 
@@ -60,6 +64,10 @@ progress:
 | 01-03 | — | — | 14 | 2026-03-13 |
 | 01-04 | 98 sec | 1 | 20 | 2026-03-13 |
 | 01-05 | 18 min | 3 | 38 (all phases) | 2026-03-13 |
+| 02-01 | — | — | — | 2026-03-13 |
+| 02-02 | — | — | — | 2026-03-13 |
+| 02-03 | — | — | — | 2026-03-13 |
+| 02-04 | 8 min | 1 | 13 | 2026-03-13 |
 
 ---
 
@@ -102,7 +110,9 @@ progress:
 - Inline configuration (environment variables) simplifies daemon deployment and testing vs separate config file
 - JournalHandler with stderr fallback makes journald optional (graceful degradation if systemd unavailable)
 - Type=simple systemd service with foreground daemon simpler than Type=forking with PID management
+- Physical sensor invariant (input.voltage) beats firmware flag interpretation for reliable event classification (eliminates onlinedischarge_calibration bug)
+- Voltage thresholds with hysteresis (>100V vs <50V) prevent oscillation in undefined range and provide clear decision boundaries
 
 ---
 
-*State updated: 2026-03-13 after plan 01-05 completion — Phase 1 COMPLETE*
+*State updated: 2026-03-13 after plan 02-04 completion — Phase 2 Event Classifier COMPLETE*
