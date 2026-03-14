@@ -1,6 +1,7 @@
 """State of Health (SoH) calculation from discharge voltage profiles."""
 
 import logging
+import math
 from typing import List, Dict
 from src.runtime_calculator import peukert_runtime_hours
 
@@ -92,6 +93,38 @@ def calculate_soh_from_discharge(
     return new_soh
 
 
+def _weighted_average_by_voltage(points: List[Dict], bucket_size: float = 0.05,
+                                  half_life_days: float = 90.0) -> List[Dict]:
+    """
+    Group measured points into voltage buckets and compute time-weighted average SoC.
+
+    Recent measurements weigh more than old ones: weight = exp(-age_days / half_life).
+    This ensures the LUT tracks battery degradation over time.
+    """
+    import time as _time
+    now = _time.time()
+
+    # Group into buckets by rounding voltage to nearest bucket_size
+    buckets: Dict[float, list] = {}
+    for p in points:
+        v_bucket = round(round(p['v'] / bucket_size) * bucket_size, 2)
+        buckets.setdefault(v_bucket, []).append(p)
+
+    result = []
+    for v_bucket, entries in sorted(buckets.items()):
+        total_weight = 0.0
+        weighted_soc = 0.0
+        for e in entries:
+            age_days = (now - e.get('timestamp', now)) / 86400.0
+            weight = math.exp(-age_days / half_life_days)
+            weighted_soc += e['soc'] * weight
+            total_weight += weight
+        avg_soc = weighted_soc / total_weight if total_weight > 0 else entries[-1]['soc']
+        result.append({'v': v_bucket, 'soc': round(avg_soc, 3), 'source': 'measured'})
+
+    return result
+
+
 def interpolate_cliff_region(
     lut: List[Dict],
     anchor_voltage: float = 10.5,
@@ -99,11 +132,14 @@ def interpolate_cliff_region(
     step_mv: float = 0.1
 ) -> List[Dict]:
     """
-    Interpolate cliff region (11.0V–10.5V) from measured calibration data.
+    Interpolate cliff region (11.0V-10.5V) from measured calibration data.
 
-    Fills gaps between measured points with linear interpolation.
+    Multiple measured points at similar voltages (from different discharge events)
+    are combined using time-weighted averaging — recent data weighs more, so the
+    LUT tracks battery degradation naturally.
+
     Marks interpolated entries with source='interpolated'.
-    Removes old 'standard' entries in cliff region.
+    Removes old 'standard' and 'interpolated' entries in cliff region.
 
     Args:
         lut: Current LUT entries
@@ -125,18 +161,16 @@ def interpolate_cliff_region(
     if len(cliff_measured) < 2:
         return lut
 
-    # Sort measured points ascending by voltage
-    cliff_measured.sort(key=lambda x: x['v'])
+    # Combine multiple measurements at same voltage with time-weighted average
+    anchor_points = _weighted_average_by_voltage(cliff_measured)
 
-    # Interpolate between consecutive measured points
+    # Interpolate between anchor points
     interpolated = []
-    for i in range(len(cliff_measured) - 1):
-        p1, p2 = cliff_measured[i], cliff_measured[i + 1]
+    for i in range(len(anchor_points) - 1):
+        p1, p2 = anchor_points[i], anchor_points[i + 1]
 
-        # Add first point
         interpolated.append(p1)
 
-        # Linear interpolation
         v_current = p1['v'] + step_mv
         while v_current < p2['v']:
             frac = (v_current - p1['v']) / (p2['v'] - p1['v'])
@@ -148,8 +182,7 @@ def interpolate_cliff_region(
             })
             v_current += step_mv
 
-    # Add last point
-    interpolated.append(cliff_measured[-1])
+    interpolated.append(anchor_points[-1])
 
     # Combine with non-cliff entries and re-sort
     updated_lut = other_entries + interpolated
