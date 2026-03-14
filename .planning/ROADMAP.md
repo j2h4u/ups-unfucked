@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-14)
-- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phase 8 complete, Phase 9 complete, Phase 10 started, Phases 7,11 in progress)
+- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phases 8-10 complete, Phase 11 planned)
 
 ## Phases
 
@@ -25,8 +25,8 @@
 - [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout (1/2 plans complete)
 - [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4/4 plans complete)
 - [x] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (3/3 plans complete)
-- [x] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (1/2 plans complete) (completed 2026-03-14)
-- [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint
+- [x] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (2/2 plans complete)
+- [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint (3/3 plans planned)
 
 </details>
 
@@ -43,8 +43,8 @@
 | 7. Safety-Critical Metrics | v1.1 | 1/2 | In progress | — |
 | 8. Architecture Foundation | v1.1 | 4/4 | Complete (Wave 0 + Wave 1) | 2026-03-15 |
 | 9. Test Coverage | v1.1 | 3/3 | Complete (Wave 2) | 2026-03-14 |
-| 10. Code Quality & Efficiency | v1.1 | 1/2 | Complete    | 2026-03-14 |
-| 11. Polish & Future Prep | v1.1 | 0/2 | Planned | — |
+| 10. Code Quality & Efficiency | v1.1 | 2/2 | Complete | 2026-03-14 |
+| 11. Polish & Future Prep | v1.1 | 3/3 | Planned (Wave 1) | — |
 
 ---
 
@@ -129,8 +129,8 @@
 5. Double error log in `virtual_ups.py` (lines 90 and 93) eliminated — single handler logs the failure once (verified by code inspection and test with induced error)
 
 **Plans**:
-- [ ] 10-01-PLAN.md — Wave 1: Helper extraction + fixes (QUAL-01, QUAL-02, QUAL-03)
-- [ ] 10-02-PLAN.md — Wave 1: Batch writes + logging (QUAL-04, QUAL-05)
+- [x] 10-01-PLAN.md — Wave 1: Helper extraction + fixes (QUAL-01, QUAL-02, QUAL-03) — completed 2026-03-14
+- [x] 10-02-PLAN.md — Wave 1: Batch writes + logging (QUAL-04, QUAL-05) — completed 2026-03-14
 
 ---
 
@@ -149,8 +149,11 @@
 4. `setup_ups_logger()` wrapper in alerter.py removed — direct `logging.getLogger()` calls used (verified by code inspection showing no setup_ups_logger calls)
 5. Daemon health endpoint added — last poll time and current SoC exposed via file for external monitoring tools (verified by file exists, contains valid JSON, updates on poll)
 
-**Plans**: TBD
+**Plans**:
+- [ ] 11-01-PLAN.md — Wave 1: List pruning + fdatasync (LOW-01, LOW-02)
+- [ ] 11-02-PLAN.md — Wave 1: EMA generalization + logger cleanup (LOW-03, LOW-04)
+- [ ] 11-03-PLAN.md — Wave 1: Health endpoint (LOW-05)
 
 ---
 
-*Roadmap updated: 2026-03-15 after Phase 10 planning (2/2 plans created for QUAL-01/02/03/04/05)*
+*Roadmap updated: 2026-03-15 after Phase 11 planning (3/3 plans created for LOW-01/02/03/04/05)*
