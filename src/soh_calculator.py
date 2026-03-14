@@ -93,8 +93,14 @@ def calculate_soh_from_discharge(
     return new_soh
 
 
+# Curve relevance decay: how fast old V-SoC measurements lose relevance.
+# Models electrode microstructure changes (faster than capacity loss).
+# 90 days: week-old data ≈ 0.93 weight, month-old ≈ 0.72, 6-month ≈ 0.14.
+CURVE_RELEVANCE_HALF_LIFE_DAYS = 90.0
+
+
 def _weighted_average_by_voltage(points: List[Dict], bucket_size: float = 0.05,
-                                  half_life_days: float = 90.0) -> List[Dict]:
+                                  half_life_days: float = CURVE_RELEVANCE_HALF_LIFE_DAYS) -> List[Dict]:
     """
     Group measured points into voltage buckets and compute time-weighted average SoC.
 
@@ -115,11 +121,17 @@ def _weighted_average_by_voltage(points: List[Dict], bucket_size: float = 0.05,
         total_weight = 0.0
         weighted_soc = 0.0
         for e in entries:
-            age_days = (now - e.get('timestamp', now)) / 86400.0
+            if 'timestamp' not in e:
+                logger.warning(f"LUT entry at {e.get('v')}V missing timestamp, skipping from weighted average")
+                continue
+            age_days = (now - e['timestamp']) / 86400.0
             weight = math.exp(-age_days / half_life_days)
             weighted_soc += e['soc'] * weight
             total_weight += weight
-        avg_soc = weighted_soc / total_weight if total_weight > 0 else entries[-1]['soc']
+        if total_weight > 1e-10:  # Guard against floating-point underflow on very old data
+            avg_soc = weighted_soc / total_weight
+        else:
+            avg_soc = sum(e['soc'] for e in entries) / len(entries)  # Unweighted fallback
         result.append({'v': v_bucket, 'soc': round(avg_soc, 3), 'source': 'measured'})
 
     return result
