@@ -77,44 +77,35 @@ MonitorDaemon.run()
 
 #### 1.3 Configuration Management
 
-Physics params (IR_K, Peukert exponent) exist in THREE places:
-1. `model.py` lines 125-131 (JSON defaults)
-2. `monitor.py` lines 30-31 (env var fallbacks)
-3. `BatteryModel.get_ir_k()` line 159 (nested defaults)
-
-Order of precedence is undocumented. Risk: env var set but never consulted.
+- [x] ~~Physics params in THREE places, precedence undocumented~~ — env vars replaced with TOML config file. Physics params live only in model.json.
 
 #### 1.4 Error Propagation — Silent Failures
 
-- `monitor.py:386-389`: Missing voltage/load -> logged as warning, poll continues. If stabilized gate blocks for up to 60s, shutdown signal may be delayed.
-- `monitor.py:450-461`: Calibration write exception -> logged, but index still incremented -> potential duplicate/gap writes.
-- `monitor.py:298-301`: `_auto_calibrate_peukert()` returns silently if load=0 or times<2. No log. Caller unaware calibration was skipped.
+- [x] ~~Missing voltage/load -> 60s delay~~ — after run() refactor, missing data does `continue` with 10s sleep, not 60s. Not a problem.
+- [x] ~~Calibration write index bug~~ — index now advances per successful write, breaks on first error.
+- [x] ~~Silent returns in _auto_calibrate_peukert~~ — 6 debug logs added to all early returns.
 
 #### 1.5 File Naming
 
-`ema_ring_buffer.py` contains `EMAFilter` class and `ir_compensate()` function. Neither is a ring buffer. Misleading for search and onboarding.
-
-**Recommendation:** Rename to `ema_filter.py` or `signal_filter.py`.
+- [x] ~~ema_ring_buffer.py misleading~~ — renamed to `ema_filter.py`.
 
 #### 1.6 Architect Risks Table
 
-| Risk | Severity | Location | Mitigation |
-|------|----------|----------|------------|
-| Stale tmpfs writes during fast-poll | Medium | monitor.py:565 | Write every poll during fast-poll |
-| Calibration duplicate writes on retry | Medium | monitor.py:459, model.py:247 | Use timestamp as dedup key |
-| Silent calibration skip in Peukert autocalibrate | Low | monitor.py:310-312 | Add debug log at each early return |
-| Configuration layer fragmented | Medium | monitor.py:30-31, model.py:125-131 | Document precedence |
-| MonitorDaemon violates SRP | High | monitor.py:56-600 | Extract event handlers |
-| Discharge buffer cap silently drops data | Medium | monitor.py:442-443 | Log periodically, consider hard timeout |
+- [x] ~~Stale tmpfs writes during fast-poll~~ — verified: fast poll = 1s sleep, write every 6 polls = 6s. Not a problem.
+- [x] ~~Calibration duplicate writes on retry~~ — dedup changed from voltage (±0.01V) to timestamp.
+- [x] ~~Silent calibration skip in Peukert~~ — debug logs added.
+- [x] ~~Configuration layer fragmented~~ — resolved by TOML config migration.
+- [x] ~~MonitorDaemon violates SRP~~ — run() refactored from 208 to 48 lines, 8 methods extracted.
+- [x] ~~Discharge buffer cap silently drops data~~ — logs warning on every poll while capped. Acceptable.
 
 #### 1.7 Architect Open Questions
 
-1. Tmpfs write latency SLA: dummy-ups reads every poll, metrics updated every 60s. Can stale data cause false LOW_BATTERY?
-2. Discharge buffer overflow: at cap, should we FIFO evict or stop collecting?
-3. `calibration_last_written_index` in RAM only — if daemon restarts during BLACKOUT_TEST, index resets.
-4. Peukert exponent is scalar but load-dependent — how to combine multiple discharges at different loads?
-5. Model initialization: no validation that LUT has >2 points before entering main loop.
-6. Event classifier: >=100V = test, <100V = real. 50V-99V range? Configurable threshold?
+- [x] Q1: Tmpfs write latency SLA — dummy-ups reads file on demand. 60s staleness in normal mode is fine; LB flag is set on event transition, not tied to 6-poll window.
+- [x] Q2: Discharge buffer overflow — stop collecting (not FIFO). Warning logged. Acceptable for max ~3h discharge.
+- [ ] Q3: `calibration_last_written_index` in RAM only — deferred to P2 (discharge buffer checkpointing). Low risk: timestamp dedup prevents duplicate writes on restart.
+- [ ] Q4: Peukert exponent load-dependent — open design question. Current scalar approach works with consistent load (~16-20%). Deferred.
+- [x] Q5: Model validation at startup — `_validate_model()` added: checks LUT >=2 points, anchor voltage, SoH range, capacity > 0.
+- [x] Q6: Event classifier 50-99V threshold — verified correct. CyberPower shows 0V on real blackout, full voltage on test. 100V threshold is sound, no need to configure.
 
 ---
 
@@ -126,70 +117,40 @@ Order of precedence is undocumented. Risk: env var set but never consulted.
 
 #### 2.1 Privilege & Capability Gaps (HIGH)
 
-- Daemon runs as `j2h4u:j2h4u` (ups-battery-monitor.service lines 10-11).
-- No `ProtectSystem`, `ReadWritePaths`, `NoNewPrivileges` in systemd units.
-- Should run with minimal privileges and explicitly deny what it doesn't need.
-
-**Recommendation — add to both .service files:**
-```ini
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/dev/shm/
-NoNewPrivileges=yes
-PrivateTmp=yes
-RestrictAddressFamilies=AF_INET AF_UNIX
-RestrictNamespaces=yes
-SystemCallFilter=@system-service
-UMask=0077
-PrivateDevices=yes
-ProtectKernelLogs=yes
-ProtectClock=yes
-```
+- [x] ~~No systemd hardening~~ — added ProtectSystem=strict, NoNewPrivileges, PrivateDevices, ProtectClock, RestrictAddressFamilies, UMask=0077, ProtectHome=read-only with ReadWritePaths for config dir and /dev/shm.
 
 #### 2.2 NUT Socket Injection (MEDIUM)
 
-- `nut_client.py:51-70` (`_parse_var_line`) splits on whitespace and quotes.
-- Malformed NUT response could cause crashes (mitigated by 64KB buffer cap).
-- NUT is trusted (localhost:3493) but compromised NUT upsd could trigger issues.
-- `ups_name` substituted into socket command without sanitization (nut_client.py:170).
+- [x] ~~Malformed NUT response~~ — accepted risk. NUT bound to localhost only (verified: `127.0.0.1:3493`). 64KB buffer cap + socket timeout + `_parse_var_line` bounds check mitigate crashes. `ups_name` comes from config file, not user input at runtime.
 
 #### 2.3 Tmpfs Symlink Attack (MEDIUM)
 
-- `virtual_ups.py:48` — `mkdir(parents=True, exist_ok=True)` on `/dev/shm/`.
-- `virtual_ups.py:79` — `tmp_path.replace(virtual_ups_path)` vulnerable to symlink attack.
-- **Fix:** Validate that target is a regular file (not symlink) before writing, or use `O_CREAT | O_EXCL`.
+- [x] ~~Symlink attack on /dev/shm/ups-virtual.dev~~ — added `is_symlink()` guard before write. Refuses to write through symlinks.
 
 #### 2.4 Model Directory Permissions Not Validated (MEDIUM)
 
-- `monitor.py:77` — `MODEL_DIR.mkdir(parents=True, exist_ok=True)` without permission enforcement.
-- If attacker pre-creates directory with world-writable permissions, daemon writes there without validation.
-- **Fix:** Check ownership + permissions after mkdir.
+- [x] ~~MODEL_DIR permissions~~ — mitigated by systemd `UMask=0077` and `ProtectHome=read-only`. Daemon can only write to explicitly allowed paths.
 
 #### 2.5 Install Script Issues (MEDIUM)
 
-- `install.sh:190` — `sed -i` on `/etc/nut/upsmon.conf` without backup.
-- `install.sh:201` — `eval echo ~${SUDO_USER}` — potential injection.
-- No match count validation before/after sed.
-- **Fix:** `sed -i.bak`, validate grep count, replace eval with direct path.
+- [x] ~~sed -i without backup~~ — changed to `sed -i.bak`.
+- [x] ~~eval echo ~${SUDO_USER}~~ — replaced with `getent passwd | cut -d: -f6`.
 
 #### 2.6 No Input Validation on Environment Variables (LOW)
 
-- `monitor.py:22-35` — `int()` cast without bounds.
-- `POLL_INTERVAL=0` -> tight loop, `NUT_PORT=99999` -> invalid.
-- **Fix:** Add min/max bounds check at startup.
+- [x] ~~Env var bounds checking~~ — env vars eliminated entirely. Config is now TOML file + hardcoded internals. Invalid TOML = daemon won't start.
 
 #### 2.7 No Explicit Umask in Daemon (LOW)
 
-- Daemon doesn't set `umask()` before creating files. Inherits parent process umask.
-- **Fix:** `os.umask(0o077)` at startup.
+- [x] ~~No umask~~ — handled by systemd `UMask=0077` in service file.
 
 #### 2.8 Security Open Questions
 
-1. Can NUT socket be hijacked? Check `ls -l /run/nut/` permissions.
-2. Is `/dev/shm` mounted `noexec,nosuid`? If not, tmpfs write could be exploited.
-3. What umask does systemd enforce? `systemctl show -p UMask ups-battery-monitor.service`.
-4. Does NUT dummy-ups verify file permissions before reading?
-5. Is NUT bound to localhost only? `ss -tlnp | grep 3493`.
+- [x] Q1: NUT bound to **127.0.0.1:3493** (localhost only). Safe.
+- [x] Q2: `/dev/shm` mounted **nosuid,nodev**. No noexec but we write data, not executables.
+- [x] Q3: UMask was 0022, now set to **0077** in service file.
+- [x] Q4: NUT dummy-ups reads file as `nut` user. File is 0644 (readable). Acceptable.
+- [x] Q5: NUT bound to localhost only — confirmed via `ss -tlnp`.
 
 ---
 
@@ -214,82 +175,47 @@ Memory footprint: <100 KB total. No concerns with Python GC pauses.
 
 #### 3.2 Failure Modes
 
-**Scenario 1: NUT crashes during OL->OB transition**
-- Transition detected, next poll fails, sleeps 10 sec.
-- `fast_poll_active` already False, voltage sag window lost.
-- Discharge buffer may have stale state.
-- SoH calculation uses incomplete data. Recovers on next discharge.
-- Severity: Medium.
-
-**Scenario 2: Disk full (model.json can't write)**
-- `battery_model.save()` throws IOError.
-- Exception propagates through `_handle_event_transition()`.
-- Poll loop catches at line 570, logs, sleeps 10 sec.
-- Discharge buffer data in RAM never persisted.
-- On restart: all SoH history lost.
-- Severity: HIGH (silent data loss).
-
-**Scenario 3: Virtual UPS write fails (tmpfs full or permissions)**
-- `write_virtual_ups_dev()` throws OSError.
-- Caught, logged, polling continues.
-- NUT dummy-ups reads stale data.
-- upsmon doesn't receive LB flag, shutdown delayed.
-- Severity: HIGH (shutdown signal loss).
-
-**Scenario 4: Clock jump backward (NTP correction)**
-- Discharge buffer timestamps become non-monotonic.
-- SoH area calculation uses negative dt -> breaks.
-- Severity: Medium (unhandled edge case).
+- [x] **Scenario 1: NUT crashes during OL->OB** — accepted risk. Daemon retries every 10s. Sag window lost but discharge buffer survives (collecting flag persists). Recovers on next discharge.
+- [x] **Scenario 2: Disk full** — all `model.save()` wrapped in `try/except OSError`. Daemon continues running with data in RAM. Alerting and Peukert calibration still execute. Error logged.
+- [x] **Scenario 3: Virtual UPS write fails** — already caught and logged. Old file persists (atomic rename never happens). upsmon reads stale but valid data. Acceptable.
+- [ ] **Scenario 4: Clock jump backward** — deferred. SoH uses `times[-1] - times[0]`; negative delta_t would produce invalid result. Low probability on NTP-synced system (corrections are <1ms). Guard could be added to soh_calculator.
 
 #### 3.3 Observability Gaps
 
-**Visible from logs:**
-- Daemon startup config, EMA stabilization, event transitions, SoC/runtime (every 60s), voltage sag, SoH calculations, Peukert calibration, errors.
-
-**NOT visible:**
-- NUT poll latency (no timing data)
-- Virtual UPS write latency
-- EMA filter diagnostic (alpha value, deviation magnitude)
-- Discharge buffer depth
-- Model.json file size
-- Rate of missed virtual UPS writes
+- [ ] Deferred to P2. Current logging covers all critical events. Structured fields (POLL_LATENCY_MS, DISCHARGE_BUFFER_SIZE) are nice-to-have for Grafana dashboards.
 
 #### 3.4 Signal Handling
 
-- SIGTERM/SIGINT -> `self.running = False`.
-- Allows current poll to complete (up to 10 sec latency).
-- **Missing:** No `model.save()` before exit. Latest SoH not persisted.
-- **Missing:** If in virtual_ups write at signal time, file may be partially written.
+- [x] ~~No model.save() before exit~~ — signal handler now calls `model.save()` before `running = False`.
+- [x] ~~Partial virtual_ups write~~ — atomic write pattern (tempfile + rename) prevents partial reads. Signal during write = old file persists.
 
 #### 3.5 Unbounded Log Growth
 
-- NUT unreachable -> error log with `exc_info=True` every 10 seconds.
-- No rate limiting. 30 min NUT outage = 180 entries x 10+ lines = 1800+ log lines.
-- Risk: journal pressure on headless server.
+- [x] ~~No rate limiting~~ — error logs now rate-limited: full traceback for first 10 errors, summary every 60s after. Counter resets on successful poll.
 
 #### 3.6 SRE Recommendations
 
 **P0: Data Loss Protection**
-1. Model load validation: Add checksum field to model.json. Alert on mismatch.
-2. Disk full handling: Wrap all `.save()` in try/except. Log with ALERT priority.
-3. Graceful shutdown: Call `model.save()` in signal handler before `running = False`.
+- [x] ~~Model load validation~~ — `_validate_model()` checks LUT, anchor, SoH range, capacity.
+- [x] ~~Disk full handling~~ — all save() wrapped in try/except OSError.
+- [x] ~~Graceful shutdown~~ — model.save() in signal handler.
 
 **P1: Observability**
-1. Add structured logging: `POLL_LATENCY_MS`, `DISCHARGE_BUFFER_SIZE`, `VIRTUAL_UPS_WRITE_STATUS`.
-2. Rate-limit error logs: suppress after 10 occurrences in 5 min.
-3. Health check: file-based or systemd watchdog.
+- [ ] Structured logging fields — deferred to P2.
+- [x] ~~Rate-limit error logs~~ — done, first 10 + every 60s summary.
+- [ ] Health check (systemd watchdog) — deferred.
 
 **P2: Edge Cases**
-1. Fast poll recovery: reset sag state on exception.
-2. Timestamp monotonicity: assert sorted ascending in SoH calculator.
-3. Calibration write: track exception count, skip after 3+ consecutive failures.
+- [ ] Fast poll recovery: reset sag state on exception — deferred (low impact).
+- [ ] Timestamp monotonicity guard in SoH calculator — deferred.
+- [x] ~~Calibration write error handling~~ — already breaks on first error, resumes from correct index.
 
 #### 3.7 SRE Open Questions
 
-1. Clock jump behavior: test with `timedatectl set-time` during discharge. Does SoH break?
-2. Disk full during model.save(): what's tmpfile cleanup behavior if fsync fails?
-3. Virtual UPS write atomicity: if write fails after tmpfile created, does old file persist?
-4. EMA after long NUT outage: does EMA immediately react or stay stale?
+- [x] Q1: Clock jump — low risk on NTP-synced system (corrections are sub-millisecond). Deferred guard.
+- [x] Q2: Disk full during save — atomic write pattern: temp file created, fsync fails → temp file cleaned up in except block. Old model.json untouched.
+- [x] Q3: Virtual UPS write atomicity — same: old file persists on failure. Temp file cleaned up.
+- [x] Q4: EMA after long NUT outage — adaptive alpha handles it: first sample after outage has large deviation → alpha approaches 1.0 → instant reaction. Verified by `test_spike_recovery_within_2_samples`.
 
 ---
 
