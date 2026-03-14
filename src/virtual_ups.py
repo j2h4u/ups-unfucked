@@ -42,6 +42,7 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         - Error: "Failed to write virtual UPS metrics: {e}"
     """
     virtual_ups_path = Path("/dev/shm/ups-virtual.dev")
+    tmp_path = None
 
     try:
         # Guard against symlink attack: refuse to write through symlinks
@@ -70,27 +71,23 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
             tmp.write(content)
             tmp_path = Path(tmp.name)
 
+        # Fsync to ensure all data written to disk/tmpfs
+        fd = os.open(str(tmp_path), os.O_RDONLY)
         try:
-            # Fsync to ensure all data written to disk/tmpfs
-            fd = os.open(str(tmp_path), os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
-            # Atomic rename (POSIX guarantees)
-            tmp_path.replace(virtual_ups_path)
-            # Make readable by nut user (dummy-ups driver runs as nut)
-            os.chmod(str(virtual_ups_path), 0o644)
-            logger.info(f"Virtual UPS metrics written at {virtual_ups_path}")
-
-        except Exception as e:
-            # Clean up temp file on error
-            tmp_path.unlink(missing_ok=True)
-            logger.error(f"Failed to write virtual UPS metrics: {e}")
-            raise
+        # Atomic rename (POSIX guarantees)
+        tmp_path.replace(virtual_ups_path)
+        # Make readable by nut user (dummy-ups driver runs as nut)
+        os.chmod(str(virtual_ups_path), 0o644)
+        logger.info(f"Virtual UPS metrics written at {virtual_ups_path}")
 
     except Exception as e:
+        # Consolidated handler: clean up + log once + re-raise
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         logger.error(f"Failed to write virtual UPS metrics: {e}")
         raise
 
