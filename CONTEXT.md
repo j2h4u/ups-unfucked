@@ -1,6 +1,6 @@
 # UPS Battery Monitor — Current Context
 
-This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-03-14.
+This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-03-14 (post v1.1).
 
 ## What This Is
 
@@ -21,14 +21,17 @@ A Python daemon that transforms a budget CyberPower UT850EG ($30 UPS) into an en
 Real UPS (usbhid-ups) → NUT upsd (:3493)
     ↓ TCP (LIST VAR, single connection per poll)
 ups-battery-monitor daemon (10s poll interval)
-    ↓ Adaptive EMA → IR compensation → SoC (voltage LUT) → Runtime (Peukert)
+    ↓ MetricEMA (per-metric adaptive EMA) → IR compensation → SoC (voltage LUT) → Runtime (Peukert)
     ↓ Event classifier (ONLINE / BLACKOUT_REAL / BLACKOUT_TEST)
     ↓ SoH tracking → Replacement prediction → R_internal measurement
     ↓ Enterprise counters (cycle count, cumulative on-battery time, install date)
+    ↓ Per-poll writes during OB state (no 60s lag on LB flag)
     ↓
-/dev/shm/ups-virtual.dev (atomic tmpfs write)
+/dev/shm/ups-virtual.dev (atomic tmpfs write, fdatasync)
     ↓
 NUT dummy-ups → upsd → upsmon (shutdown) / Grafana (dashboards) / MOTD
+    ↑
+health.json (last_poll, SoC, online, version — for external monitoring)
 ```
 
 **Key principle**: Daemon is a **data source**, not a decision maker. Shutdown logic belongs to upsmon. Daemon publishes corrected metrics and LB flag through the virtual UPS.
@@ -71,9 +74,9 @@ The daemon learns the battery automatically:
 
 ## Codebase
 
-- **~1,800 LoC** across 11 modules, **173 tests**
-- Key files: `src/monitor.py` (daemon, 48-line run() orchestrator with 8 extracted methods), `src/nut_client.py` (LIST VAR), `src/ema_filter.py` (adaptive EMA + IR compensation), `src/model.py` (battery model persistence), `src/soh_calculator.py` (SoH + time-weighted cliff interpolation)
-- Config: `config.toml` (3 settings), `model.json` (battery state, auto-calibrated)
+- **~6,600 LoC** across 12 modules, **205 tests**
+- Key files: `src/monitor.py` (daemon, Config/CurrentMetrics frozen dataclasses, _safe_save helper), `src/nut_client.py` (LIST VAR, single TCP connection), `src/ema_filter.py` (MetricEMA generic class + adaptive EMA + IR compensation), `src/model.py` (battery model persistence, history pruning to 30 entries), `src/soh_calculator.py` (SoH + time-weighted cliff interpolation)
+- Config: `config.toml` (3 settings), `model.json` (battery state, auto-calibrated, pruned)
 - Scripts: `scripts/battery-health.py` (health report), `scripts/install.sh` (product installer)
 
 ## Known Limitations
@@ -87,11 +90,12 @@ The daemon learns the battery automatically:
 
 - `README.md` — Product overview, architecture, quick start
 - `docs/USER-SCENARIOS.md` — Health report, deep test, battery replacement (planned), config
-- `docs/EXPERT-PANEL-REVIEW-2026-03-14.md` — Comprehensive expert review (architect, security, SRE, QA, Kaizen, statistician, battery chemist). P0-P1 complete, P2 mostly complete, P3 deferred.
+- `docs/EXPERT-PANEL-REVIEW-2026-03-14.md` — First expert review (architect, security, SRE, QA, Kaizen, statistician, battery chemist)
+- `docs/EXPERT-PANEL-REVIEW-2026-03-15.md` — Second expert review (5-panel). **All 21 findings fixed in v1.1** (2 P0 + 7 P1 + 7 P2 + 5 P3)
 - `docs/GLOSSARY.md` — Term definitions
 
 ## Open Work
 
 - **GSD todos**: Battery replacement scenario (docs + implementation), install.sh system integration gaps (product vs site-specific split)
-- **P3 deferred**: Peukert auto-calibration hardening (need 3+ months data), Kaizen 3-month verification (need 50+ events), integration tests for error scenarios
+- **v2 candidates**: Automatic IR coefficient estimation (CAL2-01), Peukert exponent refinement (CAL2-02), Grafana metrics export (MON-01)
 - **Research docs**: Enterprise UPS metrics analysis (RESEARCH-*.md) — identified 7 of 9 enterprise metrics as estimable
