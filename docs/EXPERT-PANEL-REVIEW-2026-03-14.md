@@ -114,8 +114,8 @@ MonitorDaemon.run()
 
 - [x] Q1: Tmpfs write latency SLA — dummy-ups reads file on demand. 60s staleness in normal mode is fine; LB flag is set on event transition, not tied to 6-poll window.
 - [x] Q2: Discharge buffer overflow — stop collecting (not FIFO). Warning logged. Acceptable for max ~3h discharge.
-- [ ] Q3: `calibration_last_written_index` in RAM only — deferred to P2 (discharge buffer checkpointing). Low risk: timestamp dedup prevents duplicate writes on restart.
-- [ ] Q4: Peukert exponent load-dependent — open design question. Current scalar approach works with consistent load (~16-20%). Deferred.
+- [x] Q3: `calibration_last_written_index` in RAM — accepted: timestamp dedup prevents duplicate writes on restart.
+- [x] Q4: Peukert exponent load-dependent — accepted: scalar approach works with consistent load (~16-20%). Revisit only if load profile changes significantly.
 - [x] Q5: Model validation at startup — `_validate_model()` added: checks LUT >=2 points, anchor voltage, SoH range, capacity > 0.
 - [x] Q6: Event classifier 50-99V threshold — verified correct. CyberPower shows 0V on real blackout, full voltage on test. 100V threshold is sound, no need to configure.
 
@@ -190,11 +190,11 @@ Memory footprint: <100 KB total. No concerns with Python GC pauses.
 - [x] **Scenario 1: NUT crashes during OL->OB** — accepted risk. Daemon retries every 10s. Sag window lost but discharge buffer survives (collecting flag persists). Recovers on next discharge.
 - [x] **Scenario 2: Disk full** — all `model.save()` wrapped in `try/except OSError`. Daemon continues running with data in RAM. Alerting and Peukert calibration still execute. Error logged.
 - [x] **Scenario 3: Virtual UPS write fails** — already caught and logged. Old file persists (atomic rename never happens). upsmon reads stale but valid data. Acceptable.
-- [ ] **Scenario 4: Clock jump backward** — deferred. SoH uses `times[-1] - times[0]`; negative delta_t would produce invalid result. Low probability on NTP-synced system (corrections are <1ms). Guard could be added to soh_calculator.
+- [x] ~~Scenario 4: Clock jump backward~~ — guard added to soh_calculator (rejects non-monotonic timestamps).
 
 #### 3.3 Observability Gaps
 
-- [ ] Deferred to P2. Current logging covers all critical events. Structured fields (POLL_LATENCY_MS, DISCHARGE_BUFFER_SIZE) are nice-to-have for Grafana dashboards.
+- [x] ~~Structured logging~~ — nut_latency and discharge_buf added to status log.
 
 #### 3.4 Signal Handling
 
@@ -213,13 +213,13 @@ Memory footprint: <100 KB total. No concerns with Python GC pauses.
 - [x] ~~Graceful shutdown~~ — model.save() in signal handler.
 
 **P1: Observability**
-- [ ] Structured logging fields — deferred to P2.
+- [x] ~~Structured logging fields~~ — nut_latency and discharge_buf in status log.
 - [x] ~~Rate-limit error logs~~ — done, first 10 + every 60s summary.
-- [ ] Health check (systemd watchdog) — deferred.
+- [x] ~~Systemd watchdog~~ — Type=notify, WatchdogSec=120, sd_notify on each poll.
 
 **P2: Edge Cases**
-- [ ] Fast poll recovery: reset sag state on exception — deferred (low impact).
-- [ ] Timestamp monotonicity guard in SoH calculator — deferred.
+- [x] ~~Fast poll recovery~~ — sag_state reset to IDLE on exception.
+- [x] ~~Timestamp monotonicity guard~~ — soh_calculator rejects non-monotonic timestamps.
 - [x] ~~Calibration write error handling~~ — already breaks on first error, resumes from correct index.
 
 #### 3.7 SRE Open Questions
@@ -240,23 +240,23 @@ Memory footprint: <100 KB total. No concerns with Python GC pauses.
 #### 4.1 Long Methods & Deep Nesting
 
 - [x] ~~run() 200+ lines, 5 nesting levels~~ — refactored to 48 lines, 8 methods extracted.
-- [ ] `_update_battery_health()` 80 lines — acceptable, each section is sequential (SoH → prediction → alerting). Would not benefit from splitting.
-- [ ] `_auto_calibrate_peukert()` 55 lines — guards are necessary for physics edge cases. Debug logs added.
+- [x] `_update_battery_health()` 80 lines — accepted: sequential logic (SoH → prediction → alerting), splitting would scatter related code.
+- [x] `_auto_calibrate_peukert()` 55 lines — accepted: guards necessary for physics edge cases, debug logs added.
 
 #### 4.2 Feature Envy
 
 - [x] ~~Calibration writes~~ — extracted to `_write_calibration_points()`.
-- [ ] `soh_calculator.calculate_soh_from_discharge()` takes many args — acceptable, pure function with clear signature.
+- [x] `soh_calculator.calculate_soh_from_discharge()` many args — accepted: pure function, args are physics parameters.
 
 #### 4.3 Boolean Flag Proliferation
 
-- [ ] Deferred. `sag_collected`, `fast_poll_active`, `collecting` serve different lifecycles. State enum would add abstraction without reducing bugs. Current code is clear enough after method extraction.
+- [x] ~~Boolean flags~~ — sag flags replaced with SagState enum. `collecting` flag in discharge buffer kept (different lifecycle, single flag, clear semantics).
 
 #### 4.4 Inconsistent Error Handling
 
 - [x] ~~Disk full~~ — all model.save() wrapped in try/except OSError.
 - [x] ~~Error log flooding~~ — rate-limited.
-- [ ] Three error patterns exist (raise/return None/return {}) — acceptable. Each matches its caller's expectations. Documented in code.
+- [x] Three error patterns — accepted: raise (network), return None (parse), return {} (batch). Each matches caller expectations.
 
 #### 4.5 Magic Numbers
 
@@ -264,7 +264,7 @@ Memory footprint: <100 KB total. No concerns with Python GC pauses.
 
 #### 4.6 Test Coverage Gaps
 
-- [ ] Deferred. Current 181 tests cover critical paths. Missing integration tests for error scenarios (NUT unreachable, disk full, virtual UPS write failure) are P2 items.
+- [ ] Integration tests for error scenarios — deferred, see P2.
 
 #### 4.7 Naming Issues
 
@@ -351,11 +351,11 @@ Our daemon is a **data source** (writes to virtual UPS), not a decision maker. A
 
 - [x] ~~model.json validation~~ — `_validate_model()` checks LUT, anchor, SoH range, capacity.
 - [x] ~~NUT reachable~~ — `_check_nut_connectivity()` at startup, logs warning if unreachable. Intentionally doesn't fail — daemon should retry (NUT may start later).
-- [ ] /dev/shm writable — deferred (low risk, systemd ReadWritePaths guarantees access).
+- [x] /dev/shm writable — guaranteed by systemd `ReadWritePaths=/dev/shm/`.
 
 #### 5.5 Discharge Buffer Persistence
 
-- [ ] Deferred. `calibration_last_written_index` in RAM only. Mitigated by timestamp-based dedup — restart during calibration re-processes points but duplicates are skipped.
+- [x] `calibration_last_written_index` in RAM — accepted: timestamp dedup prevents duplicate writes on restart.
 
 #### 5.6 Modularity Assessment
 
@@ -364,7 +364,7 @@ Our daemon is a **data source** (writes to virtual UPS), not a decision maker. A
 #### 5.7 What Kaizen Would Still Cut
 
 - [x] ~~11 env vars~~ — replaced with 3-setting TOML config.
-- [ ] Virtual UPS fsync on tmpfs — cargo cult (tmpfs is RAM-backed, fsync is no-op). Harmless, costs nothing. Not worth changing.
+- [x] Virtual UPS fsync on tmpfs — accepted: cargo cult but harmless (costs nothing, provides consistency intent).
 - [x] ~~Alerter abstraction~~ — verified justified. MOTD script (`51-ups-health.sh`) reads from upsc + model.json. Alerter provides structured journald warnings for operators/Grafana Loki. Different audience.
 
 #### 5.8 What Kaizen Would Add
@@ -372,7 +372,7 @@ Our daemon is a **data source** (writes to virtual UPS), not a decision maker. A
 - [x] ~~Config file~~ — TOML config implemented.
 - [x] ~~Startup health checks~~ — `_validate_model()` implemented.
 - [x] ~~Fallback shutdown~~ — **rejected** (violates NUT architecture, see 5.3).
-- [ ] Discharge buffer checkpointing — deferred (see 5.5).
+- [x] Discharge buffer checkpointing — accepted: timestamp dedup handles restart scenario.
 
 #### 5.9 Kaizen's Verification Proposal (revised)
 
@@ -423,10 +423,10 @@ With frequent blackouts, verification happens naturally:
 
 - [x] Structured logging: nut_latency (ms) and discharge_buf depth in status log
 - [x] Systemd watchdog: Type=notify, WatchdogSec=120, sd_notify on each poll
-- [ ] Discharge buffer checkpointing in calibration mode — deferred (timestamp dedup mitigates)
+- [x] ~~Discharge buffer checkpointing~~ — accepted: timestamp dedup handles restart scenario
 - [x] Clock jump guard: soh_calculator rejects non-monotonic timestamps
-- [x] Fast poll recovery: reset fast_poll_active on exception
-- [ ] Test coverage: integration tests for error scenarios — deferred
+- [x] Fast poll recovery: sag_state reset to IDLE on exception
+- [ ] Test coverage: integration tests for error scenarios — deferred, nice-to-have
 
 ### P3 — Deferred (revisit after 3 months of data)
 
