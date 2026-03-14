@@ -13,9 +13,9 @@ progress:
 
 # Project State — UPS Battery Monitor v1.1
 
-**Last Updated:** 2026-03-15 after roadmap completion
+**Last Updated:** 2026-03-15 after 08-00 Wave 0 test infrastructure
 **Milestone:** v1.1 Expert Panel Review Fixes
-**Current Focus:** Phase 7 — Safety-Critical Metrics (per-poll writes during blackout)
+**Current Focus:** Phase 8 — Architecture Foundation (dataclass refactoring)
 
 ---
 
@@ -35,9 +35,9 @@ progress:
 |------|-------|
 | Milestone | v1.1 Expert Panel Review Fixes |
 | Total Phases | 5 (Phase 7-11) |
-| Current Phase | 7: Safety-Critical Metrics |
-| Status | Plan 07-01 complete, 1 of 2 plans in phase complete |
-| Progress | 1/5 phases started, 2/19 requirements implemented (SAFE-01, SAFE-02) |
+| Current Phase | 8: Architecture Foundation |
+| Status | Plan 08-00 (Wave 0) complete, test fixtures and stubs ready |
+| Progress | 2/5 phases started, 2/19 requirements implemented (SAFE-01, SAFE-02), Wave 0 infrastructure ready for ARCH-01/02/03 |
 
 ---
 
