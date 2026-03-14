@@ -358,8 +358,24 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 - Impact: Model.json file size controlled (~500 bytes max history vs. 2KB+ unbounded), faster persistence writes
 - Test coverage: Added 9 new tests (6 pruning + 3 fdatasync), all 46 model tests passing
 
-**Remaining Phase 11 plans:** 11-02 (LOW-03), 11-03 (LOW-04), 11-04 (LOW-05)
+**Plan 11-02: EMA generalization (COMPLETED)**
+- LOW-03: Extracted MetricEMA generic class from voltage/load-specific logic
+  - Enables reuse for temperature sensor (v2 feature)
+  - Maintains backward compatibility with existing voltage/load tracking
+- Impact: Code reusability, foundation for multi-metric monitoring
+- Test coverage: All 184+ tests passing, no regressions
+
+**Plan 11-03: Daemon health endpoint (COMPLETED)**
+- LOW-05: Added health.json file interface for external monitoring tools
+  - _write_health_endpoint() writes last_poll (ISO8601 UTC + Unix epoch), current_soc_percent, online status, daemon_version
+  - Called every poll (10s) in Monitor.run() main loop, atomically written via atomic_write_json()
+  - Enables Grafana, check_mk, custom monitoring scripts to track daemon liveness without upsc/sudo
+  - Prepares stable data structure for v2 HTTP endpoint upgrade
+- Impact: External monitoring visibility, crash-safe file writes, zero daemon overhead
+- Test coverage: 7 new tests (file creation, timestamp formats, precision, status, version, updates), all 24 tests passing
+
+**Remaining Phase 11 plans:** 11-04 (LOW-03 done in 11-02, LOW-04 pending)
 
 ---
 
-*State updated: 2026-03-14T20:20:00Z after 11-01 model persistence optimization (LOW-01/02)*
+*State updated: 2026-03-15T00:18:00Z after 11-03 daemon health endpoint (LOW-05)*

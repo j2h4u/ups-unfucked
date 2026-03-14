@@ -152,8 +152,8 @@
 **Plans**:
 - [x] 11-01-PLAN.md — Wave 1: List pruning + fdatasync (LOW-01, LOW-02) — completed 2026-03-14
 - [ ] 11-02-PLAN.md — Wave 1: EMA generalization + logger cleanup (LOW-03, LOW-04)
-- [ ] 11-03-PLAN.md — Wave 1: Health endpoint (LOW-05)
+- [x] 11-03-PLAN.md — Wave 1: Health endpoint (LOW-05) — completed 2026-03-15
 
 ---
 
-*Roadmap updated: 2026-03-14 after Phase 11 Plan 01 completion (LOW-01/02)*
+*Roadmap updated: 2026-03-15 after Phase 11 Plan 03 completion (LOW-05)*

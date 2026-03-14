@@ -40,7 +40,7 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 - [x] **LOW-02**: Consider `os.fdatasync` instead of `os.fsync` in `atomic_write_json` (no metadata sync needed)
 - [ ] **LOW-03**: Decouple EMAFilter voltage/load into generic per-metric track (prepare for temperature sensor)
 - [ ] **LOW-04**: Remove `setup_ups_logger` wrapper in alerter.py — use `logging.getLogger` directly
-- [ ] **LOW-05**: Add daemon health endpoint — expose last poll time and current SoC via file for external monitoring
+- [x] **LOW-05**: Add daemon health endpoint — expose last poll time and current SoC via file for external monitoring
 
 ## Out of Scope
 
@@ -74,7 +74,7 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 | LOW-02 | 11 | Complete |
 | LOW-03 | 11 | Pending |
 | LOW-04 | 11 | Pending |
-| LOW-05 | 11 | Pending |
+| LOW-05 | 11 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 19 total
