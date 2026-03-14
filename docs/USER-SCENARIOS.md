@@ -2,47 +2,87 @@
 
 The monitor works fully automatically out of the box. These scenarios describe optional actions for users who want more control or accuracy.
 
-## Deep Battery Test (Cliff Region Calibration)
+## Battery Health Report
 
-The standard VRLA voltage curve is accurate above 11V but approximate in the "cliff region" (11.0V-10.5V) where voltage drops sharply. A deep battery test measures this region with real data, improving SoC accuracy at low charge.
+The daemon tracks battery health automatically from every discharge event. All data lives in `~/.config/ups-battery-monitor/model.json`.
 
-**When to do this:** Once after initial setup, and optionally every 6-12 months to track battery aging in the cliff region.
+```bash
+cat ~/.config/ups-battery-monitor/model.json | python3 -c "
+import json, sys
+m = json.load(sys.stdin)
 
-**What it does:** The UPS discharges the battery fully under controlled conditions. The daemon records voltage-SoC points throughout the discharge, including the cliff region that normal short blackouts don't reach.
+# State of Health
+soh = m.get('soh', 1.0)
+print(f'SoH: {soh:.0%}' + (' ⚠ below 80%' if soh < 0.80 else ''))
+
+# Capacity
+print(f'Capacity: {m.get(\"capacity_ah\", \"?\")} Ah')
+
+# LUT calibration coverage
+lut = m.get('lut', [])
+measured = sum(1 for e in lut if e.get('source') == 'measured')
+print(f'LUT: {len(lut)} points ({measured} measured, {len(lut)-measured} standard/interpolated)')
+
+# SoH history and replacement prediction
+history = m.get('soh_history', [])
+print(f'Discharge events: {len(history)}')
+if history:
+    print(f'Latest: {history[-1].get(\"date\", \"?\")} = {history[-1].get(\"soh\", 0):.0%}')
+if len(history) >= 3:
+    sys.path.insert(0, '.')
+    from src.replacement_predictor import linear_regression_soh
+    result = linear_regression_soh(history, threshold_soh=0.80)
+    if result:
+        slope, intercept, r2, date = result
+        print(f'Predicted replacement: {date} (confidence R²={r2:.2f})')
+
+# Internal resistance trend
+r_hist = m.get('r_internal_history', [])
+if r_hist:
+    latest = r_hist[-1]
+    print(f'R_internal: {latest[\"r_ohm\"]*1000:.1f}mΩ ({latest[\"date\"]})')
+    if len(r_hist) >= 3:
+        first, last = r_hist[0], r_hist[-1]
+        delta = (last['r_ohm'] - first['r_ohm']) * 1000
+        print(f'R_internal trend: {delta:+.1f}mΩ since {first[\"date\"]}')
+"
+```
+
+You can also check live metrics via NUT: `upsc cyberpower-virtual@localhost`
+
+**When to worry:** SoH below 80%, replacement prediction within 3 months, or R_internal rising sharply — all indicate the battery should be replaced soon.
+
+---
+
+## Deep Battery Test
+
+Normal short blackouts (1-2 min) calibrate the upper part of the voltage curve. A deep test reaches the "cliff region" (10.5-11.0V) where voltage drops sharply, giving the most accurate low-SoC data.
+
+**When to do this:** Once after initial setup, then every 6-12 months.
 
 ### Steps
 
-1. **Lower the shutdown threshold** so the battery discharges deeper than normal:
+1. **Lower the shutdown threshold** temporarily:
 
    ```bash
-   # Edit config
    nano ~/.config/ups-battery-monitor/config.toml
    # Change: shutdown_minutes = 1
-   ```
-
-2. **Restart the daemon** to pick up the new threshold:
-
-   ```bash
    sudo systemctl restart ups-battery-monitor
    ```
 
-3. **Start the deep test:**
+2. **Run the deep test** (30-60 min, server runs on battery):
 
    ```bash
    sudo ~/scripts/cron/ups-test.sh deep
    ```
 
-   This runs for 30-60 minutes depending on battery capacity and load. The UPS will switch to battery and discharge until low battery. The daemon collects voltage-SoC data points every 10 seconds.
-
-4. **Monitor progress** (optional):
+3. **Monitor progress** (optional):
 
    ```bash
    sudo journalctl -u ups-battery-monitor -f --no-pager
    ```
 
-   You'll see periodic poll lines with decreasing charge% and time_rem. When the test completes, you'll see "LUT cliff region updated from measured discharge data" if cliff points were captured.
-
-5. **Restore the normal shutdown threshold:**
+4. **Restore normal threshold:**
 
    ```bash
    nano ~/.config/ups-battery-monitor/config.toml
@@ -50,116 +90,23 @@ The standard VRLA voltage curve is accurate above 11V but approximate in the "cl
    sudo systemctl restart ups-battery-monitor
    ```
 
-**What changes in model.json:** New LUT entries with `"source": "measured"` and `"source": "interpolated"` appear, replacing `"standard"` entries in the cliff region.
-
-**Risk:** The server will run on battery for the entire test duration. If the test is interrupted (e.g., real blackout during test), the daemon still collects whatever data it can. The 1-minute shutdown threshold ensures the server shuts down before the battery is fully depleted.
+**What happens:** The daemon records voltage-SoC points every 10 seconds throughout the discharge. After power restores, cliff region interpolation runs automatically if enough data was captured. The 1-minute threshold ensures the server shuts down before full depletion.
 
 ---
 
-## Check Battery Health
+## Configuration
 
-The daemon tracks battery State of Health (SoH) automatically from every discharge event. To check current status:
+All settings are in `~/.config/ups-battery-monitor/config.toml`:
 
-```bash
-# Quick status from MOTD
-cat ~/.config/ups-battery-monitor/model.json | python3 -c "
-import json, sys
-m = json.load(sys.stdin)
-print(f'SoH: {m.get(\"soh\", 1.0):.0%}')
-print(f'Capacity: {m.get(\"capacity_ah\", \"?\")} Ah')
-print(f'LUT points: {len(m.get(\"lut\", []))} ({sum(1 for e in m.get(\"lut\", []) if e.get(\"source\")==\"measured\")} measured)')
-history = m.get('soh_history', [])
-if history:
-    print(f'SoH history: {len(history)} entries, latest {history[-1].get(\"date\", \"?\")} = {history[-1].get(\"soh\", \"?\"):.0%}')
-"
+```toml
+# UPS device name in NUT (as configured in ups.conf)
+ups_name = "cyberpower"
+
+# Initiate shutdown when estimated runtime drops below this (minutes)
+shutdown_minutes = 5
+
+# Alert when battery health (SoH) drops below this (0.0-1.0)
+soh_alert = 0.80
 ```
 
-Or check the virtual UPS via NUT:
-
-```bash
-upsc cyberpower-virtual@localhost
-```
-
-**When to worry:** SoH below 80% means the battery delivers significantly less runtime than rated. The daemon logs a warning to journald and the MOTD health script shows an alert.
-
----
-
-## Check Replacement Prediction
-
-After 20+ discharge events (~2-3 months of operation), the daemon can predict when battery replacement will be needed:
-
-```bash
-cat ~/.config/ups-battery-monitor/model.json | python3 -c "
-import json, sys
-m = json.load(sys.stdin)
-history = m.get('soh_history', [])
-print(f'Discharge events tracked: {len(history)}')
-if len(history) >= 3:
-    from src.replacement_predictor import linear_regression_soh
-    result = linear_regression_soh(history, threshold_soh=0.80)
-    if result:
-        slope, intercept, r2, date = result
-        print(f'Predicted replacement: {date} (R²={r2:.2f})')
-    else:
-        print('Not enough data or no degradation trend yet')
-else:
-    print('Need at least 3 discharge events for prediction')
-"
-```
-
----
-
-## View LUT Sources
-
-See which voltage-SoC points are from the standard curve vs measured data:
-
-```bash
-cat ~/.config/ups-battery-monitor/model.json | python3 -c "
-import json, sys
-lut = json.load(sys.stdin).get('lut', [])
-for e in sorted(lut, key=lambda x: -x['v']):
-    print(f'{e[\"v\"]:5.2f}V → SoC {e[\"soc\"]:5.1%}  [{e.get(\"source\", \"?\")}]')
-"
-```
-
-Over time, `standard` entries are supplemented (and in the cliff region replaced) by `measured` and `interpolated` entries from real discharge data.
-
----
-
-## Change UPS Device Name
-
-If your UPS is configured with a different name in NUT (`/etc/nut/ups.conf`):
-
-```bash
-nano ~/.config/ups-battery-monitor/config.toml
-# Change: ups_name = "your-ups-name"
-sudo systemctl restart ups-battery-monitor
-```
-
----
-
-## Adjust Shutdown Safety Margin
-
-The default 5-minute threshold provides comfortable margin for clean shutdown. Adjust if needed:
-
-```bash
-nano ~/.config/ups-battery-monitor/config.toml
-# Change: shutdown_minutes = 3   (tighter, more runtime before shutdown)
-# Or:     shutdown_minutes = 10  (conservative, earlier shutdown)
-sudo systemctl restart ups-battery-monitor
-```
-
----
-
-## View Internal Resistance History
-
-The daemon measures battery internal resistance on every OL→OB transition (voltage sag method). Rising R_internal over months indicates degradation:
-
-```bash
-cat ~/.config/ups-battery-monitor/model.json | python3 -c "
-import json, sys
-m = json.load(sys.stdin)
-for e in m.get('r_internal_history', []):
-    print(f'{e[\"date\"]}: R={e[\"r_ohm\"]*1000:.1f}mΩ  (V: {e[\"v_before\"]:.2f}→{e[\"v_after\"]:.2f}V at {e[\"load_pct\"]:.0f}% load)')
-"
-```
+After editing: `sudo systemctl restart ups-battery-monitor`
