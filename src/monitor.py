@@ -249,12 +249,13 @@ class MonitorDaemon:
             # Phase 4: Calculate SoH and check health thresholds
             self._update_battery_health()
 
-            # Phase 6 Wave 1: Calibration mode - interpolate cliff region on OB→OL in BLACKOUT_TEST
-            if self.calibration_mode and previous_event_type == EventType.BLACKOUT_TEST:
-                from src.soh_calculator import interpolate_cliff_region
-                updated_lut = interpolate_cliff_region(self.battery_model.data['lut'])
+            # Refine cliff region (10.5-11.0V) if we have measured data there.
+            # No-op if <2 measured points in cliff range — safe to call on every discharge.
+            from src.soh_calculator import interpolate_cliff_region
+            updated_lut = interpolate_cliff_region(self.battery_model.data['lut'])
+            if updated_lut != self.battery_model.data['lut']:
                 self.battery_model.update_lut_from_calibration(updated_lut)
-                logger.warning("Calibration complete; remove --calibration-mode for normal operation")
+                logger.info("LUT cliff region updated from measured discharge data")
 
             # Update model.lut with source="measured" (Phase 6 implementation detail)
             # Recalculate SoH (Phase 6 implementation detail)
@@ -510,9 +511,7 @@ class MonitorDaemon:
                 self.calibration_last_written_index = 0
 
     def _write_calibration_points(self, event_type):
-        """In calibration mode, flush accumulated points to model every 6 polls."""
-        if not (self.calibration_mode and event_type == EventType.BLACKOUT_TEST):
-            return
+        """Flush accumulated discharge points to LUT every 6 polls during any blackout."""
         if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index < REPORTING_INTERVAL_POLLS:
             return
         for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
