@@ -419,14 +419,14 @@ With frequent blackouts, verification happens naturally:
 - [x] Calibration write dedup by timestamp (not voltage)
 - [x] Debug logs on all silent early returns
 
-### P2 — Observability & Edge Cases — DEFERRED
+### P2 — Observability & Edge Cases — MOSTLY COMPLETE
 
-- [ ] Structured logging fields (POLL_LATENCY_MS, DISCHARGE_BUFFER_SIZE)
-- [ ] Systemd watchdog / health check
-- [ ] Discharge buffer checkpointing in calibration mode
-- [ ] Clock jump guard in SoH calculator (timestamp monotonicity)
-- [ ] Fast poll recovery (reset sag state on exception)
-- [ ] Test coverage: integration tests for error scenarios
+- [x] Structured logging: nut_latency (ms) and discharge_buf depth in status log
+- [x] Systemd watchdog: Type=notify, WatchdogSec=120, sd_notify on each poll
+- [ ] Discharge buffer checkpointing in calibration mode — deferred (timestamp dedup mitigates)
+- [x] Clock jump guard: soh_calculator rejects non-monotonic timestamps
+- [x] Fast poll recovery: reset fast_poll_active on exception
+- [ ] Test coverage: integration tests for error scenarios — deferred
 
 ### P3 — Deferred (revisit after 3 months of data)
 
