@@ -54,8 +54,8 @@ class TestAtomicWriteJson:
         model_file = tmp_path / "model.json"
         data = {'test': 'value'}
 
-        # Mock os.fsync to raise an error
-        with patch('os.fsync', side_effect=OSError("Disk error")):
+        # Mock os.fdatasync to raise an error (now using fdatasync instead of fsync)
+        with patch('os.fdatasync', side_effect=OSError("Disk error")):
             with pytest.raises(IOError):
                 atomic_write_json(model_file, data)
 
@@ -635,4 +635,63 @@ class TestHistoryPruning:
         model2 = BatteryModel(model_path=model_file)
         assert len(model2.get_soh_history()) <= 30
         assert len(model2.get_r_internal_history()) <= 30
+
+
+class TestFdatasyncOptimization:
+    """Test fdatasync replacement for performance optimization in atomic_write_json."""
+
+    def test_atomic_write_uses_fdatasync(self, tmp_path):
+        """Verify atomic_write_json() calls os.fdatasync instead of os.fsync."""
+        model_file = tmp_path / "model.json"
+        data = {'test': 'value', 'number': 42}
+
+        # Patch both os.fdatasync and os.fsync to track calls
+        with patch('os.fdatasync') as mock_fdatasync, \
+             patch('os.fsync') as mock_fsync, \
+             patch('os.open', wraps=os.open), \
+             patch('os.close', wraps=os.close):
+            atomic_write_json(model_file, data)
+
+            # fdatasync should be called
+            assert mock_fdatasync.called, "os.fdatasync was not called"
+            # fsync should NOT be called (replaced by fdatasync)
+            assert not mock_fsync.called, "os.fsync should not be called; use fdatasync instead"
+
+    def test_atomic_write_json_still_works_with_fdatasync(self, tmp_path):
+        """Verify atomic file write still succeeds after switching to fdatasync."""
+        model_file = tmp_path / "model.json"
+        data = {'test': 'value', 'nested': {'key': 'value'}, 'list': [1, 2, 3]}
+
+        # Write with fdatasync (already implemented)
+        atomic_write_json(model_file, data)
+
+        # Verify file was created and contains correct data
+        assert model_file.exists()
+        with open(model_file, 'r') as f:
+            loaded = json.load(f)
+        assert loaded == data
+
+    def test_atomic_write_json_content_integrity_with_fdatasync(self, tmp_path):
+        """Verify JSON content remains intact after switching to fdatasync."""
+        model_file = tmp_path / "model.json"
+        data = {
+            'lut': [
+                {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
+                {'v': 12.4, 'soc': 0.8, 'source': 'measured'},
+                {'v': 10.5, 'soc': 0.0, 'source': 'anchor'}
+            ],
+            'soh': 0.95,
+            'full_capacity_ah_ref': 7.2,
+            'cycle_count': 42
+        }
+
+        atomic_write_json(model_file, data)
+
+        # Read back and verify exact match
+        with open(model_file, 'r') as f:
+            loaded = json.load(f)
+        assert loaded == data
+        assert loaded['lut'][0]['v'] == 13.4
+        assert loaded['soh'] == 0.95
+        assert loaded['full_capacity_ah_ref'] == 7.2
 
