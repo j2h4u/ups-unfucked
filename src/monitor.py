@@ -78,7 +78,7 @@ logger.setLevel(logging.INFO)
 logger.handlers.clear()
 
 try:
-    handler = JournalHandler()
+    handler = JournalHandler(identifier='ups-battery-monitor')
     handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
 except Exception:
