@@ -12,7 +12,7 @@ sys.modules['systemd.journal'] = MagicMock()
 
 
 @pytest.fixture
-def make_daemon():
+def make_daemon(config_fixture):
     """Create MonitorDaemon with all external dependencies mocked."""
     from src.monitor import MonitorDaemon
 
@@ -29,7 +29,7 @@ def make_daemon():
         monitor_logger.addHandler(logging.StreamHandler())
 
         def _make():
-            return MonitorDaemon()
+            return MonitorDaemon(config_fixture)
         yield _make
 
 
@@ -356,7 +356,7 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     assert daemon.discharge_buffer['collecting'] is False
 
 
-def test_auto_calibration_end_to_end():
+def test_auto_calibration_end_to_end(config_fixture):
     """LUT updated with measured points from any discharge (no special mode needed)."""
     from src.monitor import MonitorDaemon
     from src.model import BatteryModel
@@ -371,7 +371,7 @@ def test_auto_calibration_end_to_end():
              patch('src.monitor.alerter.setup_ups_logger'), \
              patch.object(MonitorDaemon, '_check_nut_connectivity'), \
              patch.object(MonitorDaemon, '_validate_model'):
-            daemon = MonitorDaemon()
+            daemon = MonitorDaemon(config_fixture)
 
             model = BatteryModel(model_path=model_path)
             daemon.battery_model = model
@@ -442,26 +442,57 @@ def test_current_metrics_dataclass(current_metrics_fixture):
     assert cm_default.soc == 0.5
 
 
-def test_config_dataclass():
-    """Verify Config instantiation with all required fields.
+def test_config_dataclass(config_fixture):
+    """Verify Config dataclass instantiation and field access."""
+    # Fixture provides a populated instance
+    assert config_fixture.ups_name == 'test-cyberpower'
+    assert config_fixture.polling_interval == 10
+    assert config_fixture.reporting_interval == 60
+    assert config_fixture.nut_host == 'localhost'
+    assert config_fixture.nut_port == 3493
+    assert config_fixture.nut_timeout == 2.0
+    assert config_fixture.shutdown_minutes == 5
+    assert config_fixture.soh_alert_threshold == 0.80
+    from pathlib import Path
+    assert isinstance(config_fixture.model_dir, Path)
+    assert isinstance(config_fixture.config_dir, Path)
+    assert config_fixture.runtime_threshold_minutes == 20
+    assert config_fixture.reference_load_percent == 20.0
+    assert config_fixture.ema_window_sec == 120
 
-    Wave 1 (ARCH-02) will implement Config as a frozen dataclass with fields:
-    ups_name, polling_interval, reporting_interval, nut_host, nut_port,
-    nut_timeout, shutdown_minutes, soh_alert_threshold, model_dir, config_dir,
-    runtime_threshold_minutes, reference_load_percent, ema_window_sec.
+    # Test custom instantiation
+    from src.monitor import Config
+    custom_config = Config(
+        ups_name='custom-ups',
+        polling_interval=15,
+        reporting_interval=90,
+        nut_host='192.168.1.1',
+        nut_port=3494,
+        nut_timeout=3.0,
+        shutdown_minutes=10,
+        soh_alert_threshold=0.70,
+        model_dir=Path('/tmp/model'),
+        config_dir=Path('/tmp/config'),
+        runtime_threshold_minutes=25,
+        reference_load_percent=30.0,
+        ema_window_sec=180,
+    )
+    assert custom_config.ups_name == 'custom-ups'
+    assert custom_config.polling_interval == 15
+    assert custom_config.nut_port == 3494
 
-    This stub will be replaced with assertions once the dataclass exists.
-    """
-    pytest.skip("Wave 1: ARCH-02 — Config dataclass not yet created")
 
+def test_config_immutability(config_fixture):
+    """Verify Config frozen=True semantics prevent field mutation."""
+    from dataclasses import FrozenInstanceError
 
-def test_config_immutability():
-    """Verify frozen=True semantics prevent field mutation on Config.
+    # Attempt to mutate frozen Config field
+    with pytest.raises(FrozenInstanceError):
+        config_fixture.ups_name = 'modified'
 
-    Wave 1 (ARCH-02) will implement Config with @dataclass(frozen=True).
-    This test will verify that attempting to modify a Config field raises
-    dataclasses.FrozenInstanceError.
+    with pytest.raises(FrozenInstanceError):
+        config_fixture.polling_interval = 20
 
-    This stub will be replaced with assertions once the dataclass exists.
-    """
-    pytest.skip("Wave 1: ARCH-02 — Config dataclass not yet created")
+    # Config should be unchanged
+    assert config_fixture.ups_name == 'test-cyberpower'
+    assert config_fixture.polling_interval == 10

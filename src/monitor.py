@@ -38,6 +38,7 @@ NUT_PORT = 3493
 NUT_TIMEOUT = 2.0            # socket timeout (seconds)
 RUNTIME_THRESHOLD_MINUTES = 20
 REFERENCE_LOAD_PERCENT = 20.0
+REPORTING_INTERVAL_POLLS = 6  # Log metrics every N polls (6 * 10s = 60s)
 
 # User-configurable (from config.toml)
 _CONFIGURABLE_DEFAULTS = {
@@ -47,22 +48,67 @@ _CONFIGURABLE_DEFAULTS = {
 }
 
 
-def _load_config():
-    """Load user config from TOML, falling back to defaults for missing keys."""
-    cfg = {}
+@dataclass(frozen=True)
+class Config:
+    """Immutable UPS daemon configuration.
+
+    frozen=True prevents accidental mutation at runtime. All fields are read-only.
+    Config instance is created at startup and passed to MonitorDaemon.__init__.
+    """
+    ups_name: str                          # From config.toml['ups_name'] or default 'cyberpower'
+    polling_interval: int                  # 10 seconds
+    reporting_interval: int                # 60 seconds (REPORTING_INTERVAL_POLLS * polling_interval)
+    nut_host: str                          # 'localhost'
+    nut_port: int                          # 3493
+    nut_timeout: float                     # 2.0 seconds
+    shutdown_minutes: int                  # From config.toml['shutdown_minutes'] or default 5
+    soh_alert_threshold: float             # From config.toml['soh_alert'] or default 0.80
+    model_dir: Path                        # ~/.config/ups-battery-monitor
+    config_dir: Path                       # ~/.config/ups-battery-monitor
+    runtime_threshold_minutes: int         # 20 minutes (hardcoded constant)
+    reference_load_percent: float          # 20.0% (hardcoded constant)
+    ema_window_sec: int                    # 120 seconds (hardcoded constant)
+
+
+def _load_config() -> Config:
+    """Load user config from TOML, falling back to defaults for missing keys.
+
+    Returns: Config dataclass instance with all fields populated.
+    """
+    cfg_dict = {}
     for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
         if path.is_file():
             with open(path, 'rb') as f:
-                cfg = tomllib.load(f)
+                cfg_dict = tomllib.load(f)
             break
-    return {k: cfg.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
+
+    user_config = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
+
+    return Config(
+        ups_name=user_config['ups_name'],
+        polling_interval=POLL_INTERVAL,
+        reporting_interval=REPORTING_INTERVAL_POLLS * POLL_INTERVAL,
+        nut_host=NUT_HOST,
+        nut_port=NUT_PORT,
+        nut_timeout=NUT_TIMEOUT,
+        shutdown_minutes=user_config['shutdown_minutes'],
+        soh_alert_threshold=user_config['soh_alert'],
+        model_dir=CONFIG_DIR,
+        config_dir=CONFIG_DIR,
+        runtime_threshold_minutes=RUNTIME_THRESHOLD_MINUTES,
+        reference_load_percent=REFERENCE_LOAD_PERCENT,
+        ema_window_sec=EMA_WINDOW,
+    )
 
 
-_cfg = _load_config()
+# Default config instance (used by non-daemon code like scripts/battery-health.py)
+# Daemon code receives config via __init__ parameter
+_default_config = _load_config()
 
-UPS_NAME = _cfg['ups_name']
-SHUTDOWN_THRESHOLD_MINUTES = _cfg['shutdown_minutes']
-SOH_THRESHOLD = _cfg['soh_alert']
+# Module-level backward-compat exports for scripts that import from monitor
+UPS_NAME = _default_config.ups_name
+SHUTDOWN_THRESHOLD_MINUTES = _default_config.shutdown_minutes
+SOH_THRESHOLD = _default_config.soh_alert_threshold
 
 MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
@@ -96,7 +142,6 @@ class SagState(Enum):
 
 
 # Internal constants (not user-configurable)
-REPORTING_INTERVAL_POLLS = 6          # Log metrics every N polls (6 * 10s = 60s)
 SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of last 3 for noise rejection
 DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Cap at ~3 hours (1000 * 10s ≈ 2.8h), prevents unbounded memory growth
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
@@ -127,34 +172,40 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self):
-        """Initialize daemon with TOML configuration."""
+    def __init__(self, config: Config):
+        """Initialize daemon with provided configuration.
+
+        Args:
+            config: Config dataclass instance with all daemon parameters.
+        """
         self.running = True
-        self.shutdown_threshold_minutes = SHUTDOWN_THRESHOLD_MINUTES
+        self.config = config
+        self.shutdown_threshold_minutes = config.shutdown_minutes
 
         # Create model directory
-        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        config.model_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize components
         self.nut_client = NUTClient(
-            host=NUT_HOST,
-            port=NUT_PORT,
-            timeout=NUT_TIMEOUT,
-            ups_name=UPS_NAME
+            host=config.nut_host,
+            port=config.nut_port,
+            timeout=config.nut_timeout,
+            ups_name=config.ups_name
         )
 
         self.ema_buffer = EMAFilter(
-            window_sec=EMA_WINDOW,
-            poll_interval_sec=POLL_INTERVAL
+            window_sec=config.ema_window_sec,
+            poll_interval_sec=config.polling_interval
         )
 
-        self.battery_model = BatteryModel(MODEL_PATH)
+        model_path = config.model_dir / 'model.json'
+        self.battery_model = BatteryModel(model_path)
         self._validate_model()
 
         # Set battery install date on first ever startup
         if self.battery_model.get_battery_install_date() is None:
             self.battery_model.set_battery_install_date(datetime.now().strftime('%Y-%m-%d'))
-        if not MODEL_PATH.exists():
+        if not model_path.exists():
             self.battery_model.save()  # Write defaults so tools (battery-health.py, MOTD) can read
         self.event_classifier = EventClassifier()
 
@@ -174,9 +225,9 @@ class MonitorDaemon:
             'collecting': False  # True while actively collecting (set before data arrives)
         }
         self._discharge_start_time = None  # Timestamp when OL→OB occurred (for cumulative on-battery tracking)
-        self.soh_threshold = SOH_THRESHOLD
-        self.runtime_threshold_minutes = RUNTIME_THRESHOLD_MINUTES
-        self.reference_load_percent = REFERENCE_LOAD_PERCENT
+        self.soh_threshold = config.soh_alert_threshold
+        self.runtime_threshold_minutes = config.runtime_threshold_minutes
+        self.reference_load_percent = config.reference_load_percent
 
         # Voltage sag measurement for internal resistance tracking
         self.sag_state = SagState.IDLE
@@ -190,7 +241,7 @@ class MonitorDaemon:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        logger.info(f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, poll={POLL_INTERVAL}s, model={MODEL_PATH}, nut={NUT_HOST}:{NUT_PORT}")
+        logger.info(f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, poll={config.polling_interval}s, model={model_path}, nut={config.nut_host}:{config.nut_port}")
 
         # H1 fix: Check NUT connectivity at startup
         self._check_nut_connectivity()
@@ -223,7 +274,7 @@ class MonitorDaemon:
             _ = self.nut_client.get_ups_vars()
             logger.info("NUT upsd reachable, polling started")
         except Exception:
-            logger.warning(f"NUT upsd unreachable at startup, will retry every {POLL_INTERVAL}s")
+            logger.warning(f"NUT upsd unreachable at startup, will retry every {self.config.polling_interval}s")
 
     def _handle_event_transition(self):
         """
@@ -545,7 +596,8 @@ class MonitorDaemon:
 
     def _write_calibration_points(self, event_type):
         """Flush accumulated discharge points to LUT every 6 polls during any blackout."""
-        if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index < REPORTING_INTERVAL_POLLS:
+        reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
+        if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index < reporting_interval_polls:
             return
         for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
             try:
@@ -671,7 +723,7 @@ class MonitorDaemon:
                 voltage, load = self._update_ema(ups_data)
                 if voltage is None:
                     logger.warning(f"Poll {self.poll_count}: Missing voltage or load data")
-                    time.sleep(POLL_INTERVAL)
+                    time.sleep(self.config.polling_interval)
                     continue
 
                 self._classify_event(ups_data)
@@ -683,7 +735,8 @@ class MonitorDaemon:
                 is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
                 # State-dependent gate: every poll during OB, every 6 polls during OL
-                if is_discharging or self.poll_count % REPORTING_INTERVAL_POLLS == 0:
+                reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
+                if is_discharging or self.poll_count % reporting_interval_polls == 0:
                     logger.debug(f"Metrics gate: is_discharging={is_discharging}, poll_count={self.poll_count}")
                     battery_charge, time_rem = self._compute_metrics()
                     self._handle_event_transition()
@@ -692,7 +745,7 @@ class MonitorDaemon:
                     self._write_virtual_ups(ups_data, battery_charge, time_rem)
 
                 sd_notify('WATCHDOG=1')
-                time.sleep(1 if self.sag_state == SagState.MEASURING else POLL_INTERVAL)
+                time.sleep(1 if self.sag_state == SagState.MEASURING else self.config.polling_interval)
 
             except KeyboardInterrupt:
                 logger.info("Interrupted by user")
@@ -702,10 +755,11 @@ class MonitorDaemon:
                 # Reset sag state so we don't get stuck in 1s sleep on persistent errors
                 self.sag_state = SagState.IDLE
                 # Rate-limit: full traceback for first 10, then summary every 6th (~60s)
-                if self._consecutive_errors <= ERROR_LOG_BURST or self._consecutive_errors % REPORTING_INTERVAL_POLLS == 0:
+                reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
+                if self._consecutive_errors <= ERROR_LOG_BURST or self._consecutive_errors % reporting_interval_polls == 0:
                     logger.error(f"Error in polling loop ({self._consecutive_errors} consecutive): {e}",
                                  exc_info=(self._consecutive_errors <= ERROR_LOG_BURST))
-                time.sleep(POLL_INTERVAL)
+                time.sleep(self.config.polling_interval)
 
         logger.info("Polling loop ended; daemon shutting down")
 
@@ -719,7 +773,8 @@ def main():
     parser.parse_args()
 
     try:
-        daemon = MonitorDaemon()
+        config = _load_config()
+        daemon = MonitorDaemon(config)
         daemon.run()
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)

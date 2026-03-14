@@ -180,28 +180,30 @@ def config_fixture(tmp_path):
     """
     Fixture returning a Config dataclass instance with typical test values.
 
-    Provides reusable configuration across test suite. Once ARCH-02 is implemented,
-    tests will import Config from src.monitor. Until then, this fixture returns
-    a dict matching the expected Config schema with temporary directories.
+    Provides reusable configuration across test suite. Tests will import Config
+    from src.monitor and use this fixture to get populated instances.
 
     Args:
         tmp_path: pytest's temporary directory fixture for test isolation.
 
     Returns:
-        dict: Configuration with UPS name, intervals, hosts, paths, thresholds, model parameters.
+        Config: Configuration dataclass with UPS name, intervals, hosts, paths, thresholds, model parameters.
     """
-    return {
-        "ups_name": "test-cyberpower",
-        "polling_interval": 10,
-        "reporting_interval": 60,
-        "nut_host": "localhost",
-        "nut_port": 3493,
-        "nut_timeout": 2.0,
-        "shutdown_minutes": 5,
-        "soh_alert_threshold": 0.80,
-        "model_dir": tmp_path / "test_model",
-        "config_dir": tmp_path / "test_config",
-        "runtime_threshold_minutes": 20,
-        "reference_load_percent": 20.0,
-        "ema_window_sec": 120,
-    }
+    from src.monitor import Config
+    from pathlib import Path
+
+    return Config(
+        ups_name="test-cyberpower",
+        polling_interval=10,
+        reporting_interval=60,
+        nut_host="localhost",
+        nut_port=3493,
+        nut_timeout=2.0,
+        shutdown_minutes=5,
+        soh_alert_threshold=0.80,
+        model_dir=tmp_path / "test_model",
+        config_dir=tmp_path / "test_config",
+        runtime_threshold_minutes=20,
+        reference_load_percent=20.0,
+        ema_window_sec=120,
+    )
