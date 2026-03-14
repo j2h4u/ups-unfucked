@@ -1,4 +1,4 @@
-# UPS Battery Monitor — Current Context
+# ups-unfucked — Current Context
 
 This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-03-14 (post v1.1).
 
@@ -43,7 +43,7 @@ health.json (last_poll, SoC, online, version — for external monitoring)
 | Charge % | Coulomb counter (drifts, ±50% error) | Voltage→SoC lookup table | LUT with linear interpolation, IR-compensated |
 | Runtime | ~22 min reported, actual ~47 min | Peukert model (±10%) | Physics-based, load-dependent, SoH-adjusted |
 | SoH | Not available | Discharge curve area analysis | Trapezoidal integration, compared to reference |
-| Replacement date | Not available | Linear regression on SoH history | Needs 20+ events (~3 months) |
+| Replacement due date | Not available | Linear regression on SoH history | Persisted in model.json, exported to virtual UPS |
 | Internal resistance | Not available | Voltage sag measurement (dV/dI) | On every OL→OB transition |
 | Cycle count | Not available | OL→OB transition counter | Persisted in model.json |
 | Cumulative runtime | Not available | Sum of discharge durations | Persisted in model.json |
@@ -74,8 +74,8 @@ The daemon learns the battery automatically:
 
 ## Codebase
 
-- **~6,600 LoC** across 12 modules, **205 tests**
-- Key files: `src/monitor.py` (daemon, Config/CurrentMetrics frozen dataclasses, _safe_save helper), `src/nut_client.py` (LIST VAR, single TCP connection), `src/ema_filter.py` (MetricEMA generic class + adaptive EMA + IR compensation), `src/model.py` (battery model persistence, history pruning to 30 entries), `src/soh_calculator.py` (SoH + time-weighted cliff interpolation)
+- **~6,600 LoC** across 12 modules, **208 tests**
+- Key files: `src/monitor.py` (daemon, Config/CurrentMetrics frozen dataclasses, _safe_save helper), `src/nut_client.py` (LIST VAR, single TCP connection), `src/ema_filter.py` (MetricEMA generic class + adaptive EMA + IR compensation), `src/model.py` (battery model persistence, history/LUT pruning), `src/soh_calculator.py` (SoH + time-weighted cliff interpolation)
 - Config: `config.toml` (3 settings), `model.json` (battery state, auto-calibrated, pruned)
 - Scripts: `scripts/battery-health.py` (health report), `scripts/install.sh` (product installer)
 
@@ -92,6 +92,7 @@ The daemon learns the battery automatically:
 - `docs/USER-SCENARIOS.md` — Health report, deep test, battery replacement (planned), config
 - `docs/EXPERT-PANEL-REVIEW-2026-03-14.md` — First expert review (architect, security, SRE, QA, Kaizen, statistician, battery chemist)
 - `docs/EXPERT-PANEL-REVIEW-2026-03-15.md` — Second expert review (5-panel). **All 21 findings fixed in v1.1** (2 P0 + 7 P1 + 7 P2 + 5 P3)
+- `docs/EXPERT-PANEL-REVIEW-2026-03-14-post-v1.1.md` — Third expert review (post v1.1). **All 20 findings fixed** (0 P0 + 5 P1 + 9 P2 + 6 P3)
 - `docs/GLOSSARY.md` — Term definitions
 
 ## Open Work

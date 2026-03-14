@@ -320,3 +320,82 @@ def test_interpolate_cliff_region_linear_math():
     # At 10.6V: soc = 0.5 + (10.6 - 11.0) * 1.0 = 0.5 - 0.4 = 0.1 (10%)
     assert abs(soc_10_6 - 0.1) < 0.05, f"Expected ~0.1 at 10.6V, got {soc_10_6}"
 
+
+def test_short_discharge_duration_weighting():
+    """10-second test should barely change SoH (weight ≈ 0.01, not 0.004)."""
+    # Simulate 10-second test at 12-12.7V
+    v = [12.8, 12.75, 12.7]
+    t = [0, 5, 10]
+
+    soh = calculate_soh_from_discharge(
+        v, t,
+        reference_soh=0.95,
+        anchor_voltage=10.5,
+        capacity_ah=7.2,
+        load_percent=20.0,
+        peukert_exponent=1.2
+    )
+
+    # Should be very close to 0.95, not drastically lower
+    # Before fix: soh ≈ 0.0035 (catastrophic)
+    # After fix: soh ≈ 0.934 (0.6% change)
+    assert soh > 0.93, f"Expected SoH > 0.93 for short discharge, got {soh}"
+    assert soh <= 0.95, f"Expected SoH <= 0.95 (reference), got {soh}"
+
+
+def test_long_discharge_strong_update():
+    """30-minute discharge should significantly update SoH."""
+    # Simulate 30-minute discharge from 13.4V to 10.6V
+    v = [13.4, 13.0, 12.5, 12.0, 11.5, 11.0, 10.7]
+    t = [0, 300, 600, 900, 1200, 1500, 1800]
+
+    soh_initial = 0.95
+    soh = calculate_soh_from_discharge(
+        v, t,
+        reference_soh=soh_initial,
+        anchor_voltage=10.5,
+        capacity_ah=7.2,
+        load_percent=20.0,
+        peukert_exponent=1.2
+    )
+
+    # Long discharge should have weight ≈ 1.0, strong update
+    # If battery degraded, SoH should drop significantly
+    assert soh < soh_initial, f"Expected SoH to decrease, but {soh} >= {soh_initial}"
+    assert soh > 0.80, f"Expected reasonable SoH, not collapsed. Got {soh}"
+
+
+def test_duration_weighting_progression():
+    """SoH change should scale monotonically with discharge duration."""
+    v_base = [13.4, 12.4, 11.4, 10.6]  # 4-point discharge
+    soh_initial = 0.95
+
+    soh_10s = calculate_soh_from_discharge(
+        v_base[:2], [0, 10],
+        reference_soh=soh_initial, capacity_ah=7.2
+    )
+    soh_100s = calculate_soh_from_discharge(
+        v_base[:2], [0, 100],
+        reference_soh=soh_initial, capacity_ah=7.2
+    )
+    soh_1000s = calculate_soh_from_discharge(
+        v_base, [0, 300, 600, 1000],
+        reference_soh=soh_initial, capacity_ah=7.2
+    )
+
+    # SoH change should increase with discharge duration
+    # 10s: barely any change
+    # 100s: small change
+    # 1000s: larger change
+    delta_10s = abs(soh_initial - soh_10s)
+    delta_100s = abs(soh_initial - soh_100s)
+    delta_1000s = abs(soh_initial - soh_1000s)
+
+    assert delta_100s > delta_10s, "Longer discharge should change SoH more"
+    assert delta_1000s > delta_100s, "Even longer discharge should change SoH more"
+
+    # But all should be reasonable (no catastrophic collapse)
+    assert soh_10s > 0.93
+    assert soh_100s > 0.70
+    assert soh_1000s > 0.40
+

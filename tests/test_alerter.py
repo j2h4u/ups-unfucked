@@ -95,11 +95,13 @@ def test_setup_ups_logger_removed():
         pass
 
 
-def test_alerter_uses_standard_logging():
-    """Verify alerter functions use standard logging.getLogger pattern."""
+def test_alerter_accepts_logger_parameter():
+    """Verify alerter functions accept logger as parameter."""
     import inspect
 
-    # Check that alerter module has a logger using getLogger
-    source = inspect.getsource(alerter)
-    assert "logging.getLogger" in source, "alerter should use logging.getLogger directly"
-    assert 'getLogger("ups-battery-monitor")' in source or "getLogger('ups-battery-monitor')" in source
+    # Check that alert functions accept logger parameter
+    sig_soh = inspect.signature(alerter.alert_soh_below_threshold)
+    sig_runtime = inspect.signature(alerter.alert_runtime_below_threshold)
+
+    assert 'logger' in sig_soh.parameters, "alert_soh_below_threshold should accept logger parameter"
+    assert 'logger' in sig_runtime.parameters, "alert_runtime_below_threshold should accept logger parameter"

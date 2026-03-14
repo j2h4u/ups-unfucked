@@ -5,10 +5,6 @@ import logging.handlers
 from typing import Optional
 
 
-# Direct logger instance for ups-battery-monitor
-logger = logging.getLogger("ups-battery-monitor")
-
-
 def alert_soh_below_threshold(
     logger: logging.Logger,
     current_soh: float,

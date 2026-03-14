@@ -2,11 +2,11 @@
 
 import statistics
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 
 
 def linear_regression_soh(
-    soh_history: List[Dict[str, any]],
+    soh_history: List[Dict[str, Any]],
     threshold_soh: float = 0.80
 ) -> Optional[Tuple[float, float, float, Optional[str]]]:
     """

@@ -1,5 +1,6 @@
 """Battery model persistence with atomic JSON writes and VRLA LUT initialization."""
 
+import bisect
 import json
 import os
 import tempfile
@@ -41,17 +42,12 @@ def atomic_write_json(filepath, data):
         suffix='.tmp'
     ) as tmp:
         json.dump(data, tmp, indent=2)
+        tmp.flush()
+        os.fdatasync(tmp.fileno())
+        os.fchmod(tmp.fileno(), 0o644)
         tmp_path = Path(tmp.name)
 
     try:
-        # Reopen read-only for fdatasync: ensures data is flushed to disk.
-        # The write FD from NamedTemporaryFile is already closed at this point.
-        fd = os.open(str(tmp_path), os.O_RDONLY)
-        try:
-            os.fdatasync(fd)  # Data-only sync; metadata (inode) not durability-critical for JSON
-        finally:
-            os.close(fd)
-
         # Atomic rename (unlink + link on POSIX)
         tmp_path.replace(filepath)
         logger.info(f"Atomically wrote {filepath}")
@@ -88,6 +84,7 @@ class BatteryModel:
 
         self.model_path = model_path
         self.data = {}
+        self._seen_timestamps: set = set()
         self.load()
 
     def load(self):
@@ -102,6 +99,16 @@ class BatteryModel:
             try:
                 with open(self.model_path, 'r') as f:
                     self.data = json.load(f)
+
+                # F4: Schema validation - check for required keys
+                required_keys = {'lut', 'soh', 'physics'}
+                missing_keys = required_keys - set(self.data.keys())
+                if missing_keys:
+                    logger.warning(f"Model missing required keys: {missing_keys}; using default values")
+
+                self._seen_timestamps = {
+                    e['timestamp'] for e in self.data.get('lut', []) if 'timestamp' in e
+                }
                 logger.info(f"Loaded model from {self.model_path}")
             except json.JSONDecodeError as e:
                 logger.error(f"Malformed model.json: {e}; initializing with default VRLA curve")
@@ -188,6 +195,14 @@ class BatteryModel:
     def get_cumulative_on_battery_sec(self) -> float:
         return self.data.get('cumulative_on_battery_sec', 0.0)
 
+    def get_replacement_due(self) -> str:
+        """Return predicted replacement due date (ISO8601 or None)."""
+        return self.data.get('replacement_due')
+
+    def set_replacement_due(self, date_str: str):
+        """Set predicted replacement due date (ISO8601 string or None)."""
+        self.data['replacement_due'] = date_str
+
     def add_on_battery_time(self, seconds: float):
         self.data['cumulative_on_battery_sec'] = self.data.get('cumulative_on_battery_sec', 0.0) + seconds
 
@@ -212,6 +227,23 @@ class BatteryModel:
         if len(soh_hist) > keep_count:
             self.data['soh_history'] = soh_hist[-keep_count:]
 
+    def _prune_lut(self, keep_count: int = 200) -> None:
+        """Remove oldest measured LUT entries; retain non-measured and most recent measured.
+
+        Strategy: keep all non-measured entries (standard, anchor, interpolated)
+        plus most recent keep_count measured entries by timestamp.
+
+        Args:
+            keep_count: Maximum number of measured entries to retain (default 200)
+        """
+        lut = self.data.get('lut', [])
+        non_measured = [e for e in lut if e.get('source') != 'measured']
+        measured = [e for e in lut if e.get('source') == 'measured']
+        if len(measured) > keep_count:
+            measured.sort(key=lambda x: x.get('timestamp', 0))
+            measured = measured[-keep_count:]
+        self.data['lut'] = sorted(non_measured + measured, key=lambda x: x['v'], reverse=True)
+
     def _prune_r_internal_history(self, keep_count: int = 30) -> None:
         """Remove old internal resistance history entries; retain only most recent keep_count.
 
@@ -233,6 +265,7 @@ class BatteryModel:
         """
         self._prune_soh_history()
         self._prune_r_internal_history()
+        self._prune_lut()
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
@@ -242,6 +275,10 @@ class BatteryModel:
     def get_soh(self):
         """Return current SoH estimate (0.0 to 1.0)."""
         return self.data.get('soh', 1.0)
+
+    def set_soh(self, value: float):
+        """Set current SoH estimate (0.0 to 1.0)."""
+        self.data['soh'] = value
 
     def get_capacity_ah(self):
         """Return reference full capacity (Ah)."""
@@ -299,22 +336,20 @@ class BatteryModel:
             soc: Calculated SoC as fraction (0.0-1.0)
             timestamp: Unix timestamp of measurement
         """
-        # Deduplicate by timestamp (not voltage — noise can shift voltage between retries,
-        # but same timestamp means same physical measurement)
-        existing = [e for e in self.data['lut'] if e.get('timestamp') == timestamp]
-        if existing:
-            return  # Skip duplicate
+        if timestamp in self._seen_timestamps:
+            return
+        self._seen_timestamps.add(timestamp)
 
-        # Add new entry
-        self.data['lut'].append({
+        entry = {
             'v': round(voltage, 2),
             'soc': round(soc, 3),
             'source': 'measured',
             'timestamp': timestamp
-        })
+        }
 
-        # Sort LUT descending by voltage (maintain consistency with save())
-        self.data['lut'].sort(key=lambda x: x['v'], reverse=True)
+        # Insert into LUT maintaining descending voltage order using bisect
+        # Use a key function to find insertion point based on voltage (descending)
+        bisect.insort(self.data['lut'], entry, key=lambda x: -x['v'])
 
         # Log point accumulation (no write yet)
         logger.debug(f"Calibration point accumulated: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")

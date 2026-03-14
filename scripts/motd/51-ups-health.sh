@@ -21,6 +21,9 @@ fi
 # Path to model.json (same as monitor.py)
 MODEL_FILE="${HOME}/.config/ups-battery-monitor/model.json"
 
+# Path to health endpoint (tmpfs, written every poll)
+HEALTH_FILE="/dev/shm/ups-health.json"
+
 # Read virtual UPS metrics (Phase 3 infrastructure)
 # Format: `upsc` returns key: value pairs
 ups_data=$(upsc cyberpower-virtual@localhost 2>/dev/null) || exit 0

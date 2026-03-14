@@ -1,240 +1,227 @@
-# Тезаурус (глоссарий терминов)
+# Glossary
 
-Термины, используемые в коде и документации проекта, с погружением в доменную область.
+Terms used in the codebase and documentation, with domain context.
 
 ---
 
-## Батарея и электрохимия
+## Battery & Electrochemistry
 
-### SoC — State of Charge (состояние заряда)
-Сколько энергии осталось в батарее прямо сейчас, от 0% до 100%.
+### SoC — State of Charge
+How much energy remains in the battery right now, from 0% to 100%.
 
-Аналогия: уровень бензина в баке. Полный бак = SoC 100%, пустой = 0%.
+Analogy: fuel gauge. Full tank = SoC 100%, empty = 0%.
 
-Проблема: UPS CyberPower не умеет точно измерять SoC. Он выдаёт `battery.charge`, но это значение прыгает и не учитывает нагрузку. Поэтому мы **вычисляем SoC сами** по напряжению батареи через LUT.
+Problem: CyberPower UPS can't measure SoC accurately. It reports `battery.charge`, but the value jumps around and doesn't account for load. So we **compute SoC ourselves** from battery voltage via a LUT.
 
-### SoH — State of Health (состояние здоровья)
-Насколько батарея деградировала по сравнению с новой. Новая батарея = SoH 1.0 (100%), изношенная = 0.8 (80%).
+### SoH — State of Health
+How much the battery has degraded compared to new. New battery = SoH 1.0 (100%), worn = 0.8 (80%).
 
-Аналогия: износ двигателя. Новый мотор выдаёт полную мощность, через 100k км — уже 80%. Бак тот же, но расход вырос.
+Analogy: engine wear. A new engine delivers full power; after 100k km — only 80%. Same tank, but fuel economy is worse.
 
-SoH влияет на runtime: при SoH=0.8 батарея выдаёт только 80% от номинального времени работы.
+SoH affects runtime: at SoH=0.8, the battery delivers only 80% of its nominal runtime.
 
-Вычисляется после каждого разряда (блекаута) путём сравнения реально отданной энергии с ожидаемой.
+Calculated after every discharge (blackout) using **trapezoidal integration** of the voltage-time curve (area under curve) compared to a reference. The update uses **Bayesian prior-posterior blending** weighted by discharge duration — short events (10-second flickers) barely change SoH, while long discharges (30+ minutes) carry full weight. This prevents the catastrophic bias that naive multiplicative updating causes on short discharges.
 
 ### VRLA — Valve-Regulated Lead-Acid
-Тип свинцово-кислотной батареи (герметичная, необслуживаемая). Стоит в большинстве бытовых UPS, включая CyberPower UT850EG.
+Sealed, maintenance-free lead-acid battery type. Found in most consumer UPS units, including CyberPower UT850EG.
 
-Ключевые свойства VRLA, влияющие на код:
-- **Нелинейный разряд**: при высокой нагрузке ёмкость падает непропорционально (→ закон Пейкерта)
-- **Cliff region**: напряжение резко падает в диапазоне 11.0–10.5V (→ интерполяция cliff region)
-- **Cutoff voltage**: ниже 10.5V разряжать нельзя — необратимое повреждение (→ anchor voltage)
+Key VRLA properties that affect the code:
+- **Non-linear discharge**: capacity drops disproportionately at high loads (→ Peukert's law)
+- **Cliff region**: voltage drops sharply in the 11.0–10.5V range (→ cliff region interpolation)
+- **Cutoff voltage**: discharging below 10.5V causes irreversible damage (→ anchor voltage)
 
-### Anchor Voltage (якорное напряжение)
-10.5V — физический предел разряда 12V VRLA батареи. Ниже этого порога начинается сульфатация пластин (необратимое разрушение).
+### Anchor Voltage
+10.5V — the physical discharge limit of a 12V VRLA battery. Below this threshold, plate sulfation (irreversible damage) begins.
 
-В коде: точка LUT с `soc=0.0, source='anchor'`. Все расчёты останавливаются на этом пороге.
+In code: a LUT point with `soc=0.0, source='anchor'`. All calculations stop at this threshold.
 
-### Cliff Region (область обрыва)
-Диапазон 11.0–10.5V, где напряжение VRLA батареи падает **резко и нелинейно**. Последние 15–20% заряда «сливаются» за пару минут.
+### Cliff Region
+The 11.0–10.5V range where VRLA battery voltage drops **sharply and non-linearly**. The last 15–20% of charge drains in a couple of minutes.
 
-Аналогия: склон горы. Большую часть разряда — пологий спуск (13.4V → 11.0V). Потом — обрыв. Если не знать форму обрыва, предсказание runtime будет сильно врать.
+Analogy: a mountain slope. Most of the discharge is a gentle descent (13.4V → 11.0V). Then — a cliff. Without knowing the cliff shape, runtime prediction will be wildly wrong.
 
-Именно поэтому существует `calibration_mode` — тестовый разряд для измерения реальной формы cliff region.
-
----
-
-## Электрические величины
-
-### Напряжение батареи (battery.voltage)
-Мгновенное напряжение на клеммах батареи в вольтах. Для 12V VRLA: от ~13.5V (полностью заряжена на float charge) до ~10.5V (полностью разряжена).
-
-**Важно**: напряжение зависит от двух вещей одновременно:
-1. **Сколько заряда осталось** (SoC) — это то, что мы хотим знать
-2. **Какая сейчас нагрузка** — мешает измерению
-
-Именно из-за п.2 нужна IR-компенсация.
-
-### Load (нагрузка, ups.load)
-Какой процент от максимальной мощности UPS потребляет оборудование. Наш сервер обычно 15–18% от 425W ≈ 64–77W.
-
-### I_rated (номинальный ток)
-Ток, на который рассчитана номинальная ёмкость батареи. Для VRLA стандарт — **C/20 rate**: ёмкость делить на 20 часов.
-
-Пример: батарея 7.2Ah → I_rated = 7.2/20 = 0.36A. При таком токе она отдаст ровно 7.2Ah за 20 часов. При большем токе — отдаст **меньше** (эффект Пейкерта).
-
-### I_actual (фактический ток)
-Реальный ток разряда, вычисляемый из нагрузки: `I = load% / 100 × nominal_power / nominal_voltage`.
-
-Пример: 17% × 425W / 12V = 6.0A — в 17 раз больше I_rated, поэтому батарея отдаёт гораздо меньше номинальных 7.2Ah.
+The daemon measures the cliff shape automatically during deep discharges (long blackouts or `test.battery.start.deep`).
 
 ---
 
-## Закон Пейкерта (Peukert's Law)
+## Electrical Quantities
 
-### Суть
-Закон, описывающий, как **ёмкость свинцово-кислотной батареи падает при увеличении тока разряда**.
+### Battery Voltage (battery.voltage)
+Instantaneous voltage at the battery terminals in volts. For a 12V VRLA: from ~13.5V (fully charged on float) to ~10.5V (fully discharged).
 
-Формула: `T = T_rated × (I_rated / I_actual)^n`
+**Important**: voltage depends on two things simultaneously:
+1. **How much charge remains** (SoC) — what we want to know
+2. **Current load** — interferes with the measurement
 
-Где:
-- `T_rated` = 20 часов (при C/20 rate)
-- `I_rated` = 0.36A (для 7.2Ah батареи)
-- `I_actual` = реальный ток (зависит от нагрузки)
-- `n` = Peukert exponent (показатель Пейкерта)
+This is exactly why IR compensation is needed.
 
-### Peukert Exponent (показатель Пейкерта)
-Число от 1.0 до ~1.4, характеризующее «качество» батареи:
-- **1.0** = идеальная батарея, ёмкость не зависит от тока
-- **1.2** = типичная VRLA (дефолт в нашем коде)
-- **1.4** = старая/дешёвая батарея, сильно теряет ёмкость при нагрузке
+### Load (ups.load)
+What percentage of the UPS's maximum power the equipment is consuming. Our server typically draws 15–18% of 425W ≈ 64–77W.
 
-Автокалибровка: после каждого блекаута код сравнивает предсказанное и реальное время работы. Если расхождение >10%, вычисляет новый exponent и сохраняет в `model.json`.
+### I_rated (Rated Current)
+The current at which the battery's nominal capacity is rated. For VRLA, the standard is the **C/20 rate**: capacity divided by 20 hours.
 
-### Почему не нужна эмпирическая константа
-Старый код использовал `const=237.7` — «магическое число», подогнанное под единственный блекаут. Проблема: оно неявно включает в себя напряжение, мощность, и ёмкость батареи. При замене батареи или изменении нагрузки — число перестаёт работать.
+Example: 7.2Ah battery → I_rated = 7.2/20 = 0.36A. At this current, it delivers exactly 7.2Ah over 20 hours. At higher currents, it delivers **less** (Peukert effect).
 
-Чистая формула Пейкерта использует только физические параметры (напряжение, мощность, ёмкость, exponent). При 17% нагрузке и n=1.15 она даёт ровно 47 минут — совпадает с наблюдением блекаута 2026-03-12.
+### I_actual (Actual Current)
+Real discharge current, computed from load: `I = load% / 100 × nominal_power / nominal_voltage`.
+
+Example: 17% × 425W / 12V = 6.0A — 17× higher than I_rated, so the battery delivers far less than its nominal 7.2Ah.
 
 ---
 
-## Сглаживание и компенсация
+## Peukert's Law
 
-### EMA — Exponential Moving Average (экспоненциальное скользящее среднее)
-Метод сглаживания шумных данных. Каждое новое значение «подмешивается» к предыдущему с весом α.
+### Overview
+A law describing how **lead-acid battery capacity decreases as discharge current increases**.
 
-Аналогия: термометр с инерцией. Если температура прыгнула с 20° до 25°, EMA не покажет 25° сразу — сначала 20.4°, потом 20.7°, потом 21.0°...
+Formula: `T = T_rated × (I_rated / I_actual)^n`
 
-Зачем: напряжение батареи дёргается ±0.1V от сэмпла к сэмплу (шум АЦП, кратковременные скачки нагрузки). Без сглаживания SoC будет прыгать 95%→98%→93%→97%.
+Where:
+- `T_rated` = 20 hours (at C/20 rate)
+- `I_rated` = 0.36A (for a 7.2Ah battery)
+- `I_actual` = actual current (depends on load)
+- `n` = Peukert exponent
 
-### EMA Buffer (буфер EMA)
-Кольцевой буфер, который:
-1. Хранит последние N сэмплов напряжения и нагрузки
-2. Вычисляет EMA для каждого (отдельно для voltage и load)
-3. Отслеживает **стабилизацию** — достаточно ли данных для надёжного предсказания
+### Peukert Exponent
+A number from 1.0 to ~1.4 characterizing battery "quality":
+- **1.0** = ideal battery, capacity independent of current
+- **1.2** = typical VRLA (our code default)
+- **1.4** = old/cheap battery, significant capacity loss under load
 
-### Стабилизация EMA
-EMA нужно время, чтобы «разогнаться» — первые значения ненадёжны, потому что среднее ещё не устоялось.
-
-Порог: **12 сэмплов** (≈2 минуты при 10-секундном интервале опроса). До стабилизации IR-компенсация и расчёт SoC отключены (в логах видно `stabilized=False`, `V_norm=N/A`).
-
-Почему 12, а не 3: при α≈0.08 (window=120s, poll=10s) нужно минимум 12 сэмплов, чтобы EMA достигла 63% от реального значения (одна постоянная времени τ).
-
-### Alpha (α) — коэффициент сглаживания
-Вес нового сэмпла в EMA. Формула: `α = 1 - exp(-Δt / τ)`, где Δt = интервал опроса, τ = окно сглаживания.
-
-При наших настройках (Δt=10s, τ=120s): **α ≈ 0.08**. Это значит, что каждый новый сэмпл вносит 8% в итоговое значение, а 92% — инерция от предыдущих.
-
-### IR-компенсация (Internal Resistance Compensation)
-Коррекция напряжения батареи на влияние нагрузки.
-
-**Проблема**: при высокой нагрузке напряжение на клеммах падает из-за внутреннего сопротивления батареи — даже если заряд не изменился. Без коррекции код «думает», что батарея разряжена, хотя просто нагрузка выросла.
-
-**Формула**: `V_norm = V_ema + k × (L_ema - L_base)`
-
-- `V_ema` — сглаженное напряжение (В)
-- `L_ema` — сглаженная нагрузка (%)
-- `L_base` — референсная нагрузка (20% по умолчанию)
-- `k` — коэффициент IR (0.015 В/% по умолчанию)
-
-Пример: при нагрузке 40% (на 20% выше базовой) компенсация добавит 0.015×20 = 0.3V к измеренному напряжению. Это нормализует напряжение к тому, что было бы при 20% нагрузке.
-
-### V_norm (нормализованное напряжение)
-Напряжение батареи после IR-компенсации. Используется для поиска SoC в LUT. В логах: `V_norm=13.42V`.
+Auto-calibration: after every blackout, the code compares predicted vs actual runtime. If the error exceeds 10%, it computes a new exponent and saves it to `model.json`.
 
 ---
 
-## Модель батареи (model.json)
+## Smoothing & Compensation
 
-### LUT — Lookup Table (таблица соответствия)
-Таблица «напряжение → SoC». По нормализованному напряжению находим, сколько процентов заряда осталось.
+### EMA — Exponential Moving Average
+A method for smoothing noisy data. Each new value is "blended" into the previous one with weight α.
 
-Пример записи: `{v: 12.4, soc: 0.64, source: "standard"}` — при 12.4V батарея заряжена на 64%.
+Analogy: a thermometer with inertia. If temperature jumps from 20° to 25°, the EMA won't show 25° immediately — first 20.4°, then 20.7°, then 21.0°...
 
-Типы записей по полю `source`:
-- `standard` — стандартная кривая VRLA из даташитов
-- `measured` — реальное измерение во время разряда
-- `interpolated` — заполнение промежутков между измеренными точками
-- `anchor` — физический предел (10.5V = 0%)
+Why: battery voltage jitters ±0.1V from sample to sample (ADC noise, momentary load spikes). Without smoothing, SoC would bounce 95%→98%→93%→97%.
 
-### Секция physics
-Физические параметры батареи и UPS, хранимые в `model.json`:
-- `peukert_exponent` — показатель Пейкерта (автокалибруется)
-- `nominal_voltage` — номинальное напряжение батареи (12V)
-- `nominal_power_watts` — номинальная мощность UPS (425W)
-- `ir_compensation.k_volts_per_percent` — коэффициент IR
-- `ir_compensation.reference_load_percent` — базовая нагрузка
+### EMA Buffer
+A ring buffer that:
+1. Stores the last N voltage and load samples
+2. Computes EMA for each (separately for voltage and load)
+3. Tracks **stabilization** — whether enough data has accumulated for reliable predictions
+
+### EMA Stabilization
+The EMA needs time to "warm up" — initial values are unreliable because the average hasn't settled.
+
+Threshold: **12 samples** (≈2 minutes at 10-second poll interval). Until stabilized, IR compensation and SoC calculation are disabled (logs show `stabilized=False`, `V_norm=N/A`).
+
+Why 12, not 3: at α≈0.08 (window=120s, poll=10s), at least 12 samples are needed for the EMA to reach 63% of the true value (one time constant τ).
+
+### Alpha (α) — Smoothing Coefficient
+Weight of the new sample in the EMA. Formula: `α = 1 - exp(-Δt / τ)`, where Δt = poll interval, τ = smoothing window.
+
+With our settings (Δt=10s, τ=120s): **α ≈ 0.08**. This means each new sample contributes 8% to the result, while 92% is inertia from previous values.
+
+### IR Compensation (Internal Resistance Compensation)
+Corrects battery voltage for load effects.
+
+**Problem**: under high load, terminal voltage drops due to internal resistance — even if charge hasn't changed. Without correction, the code "thinks" the battery is discharged when only the load increased.
+
+**Formula**: `V_norm = V_ema + k × (L_ema - L_base)`
+
+- `V_ema` — smoothed voltage (V)
+- `L_ema` — smoothed load (%)
+- `L_base` — reference load (20% default)
+- `k` — IR coefficient (0.015 V/% default)
+
+Example: at 40% load (20% above baseline), compensation adds 0.015×20 = 0.3V to measured voltage. This normalizes voltage to what it would be at 20% load.
+
+### V_norm (Normalized Voltage)
+Battery voltage after IR compensation. Used for SoC lookup in the LUT. In logs: `V_norm=13.42V`.
+
+---
+
+## Battery Model (model.json)
+
+### LUT — Lookup Table
+A voltage→SoC mapping table. Given normalized voltage, find how much charge remains.
+
+Example entry: `{v: 12.4, soc: 0.64, source: "standard"}` — at 12.4V the battery is 64% charged.
+
+Entry types by `source` field:
+- `standard` — standard VRLA curve from datasheets
+- `measured` — real measurement during discharge
+- `interpolated` — gap-filling between measured points
+- `anchor` — physical limit (10.5V = 0%)
+
+### Physics Section
+Battery and UPS physical parameters stored in `model.json`:
+- `peukert_exponent` — Peukert exponent (auto-calibrated)
+- `nominal_voltage` — battery nominal voltage (12V)
+- `nominal_power_watts` — UPS nominal power (425W)
+- `ir_compensation.k_volts_per_percent` — IR coefficient
+- `ir_compensation.reference_load_percent` — baseline load
 
 ### SoH History
-Массив записей `{date, soh}` — история деградации батареи. Каждый блекаут добавляет точку. По этим точкам линейная регрессия предсказывает дату замены.
+Array of `{date, soh}` entries — battery degradation history. Each blackout adds a point. Linear regression on these points predicts the replacement date.
 
 ---
 
-## Архитектура демона
+## Daemon Architecture
 
 ### NUT — Network UPS Tools
-Стандартный Linux-софт для управления UPS. Состоит из:
-- `nut-server` (upsd) — демон, общающийся с UPS по USB
-- `nut-monitor` (upsmon) — следит за статусом, может инициировать shutdown
-- `upsc` — CLI для чтения метрик: `upsc cyberpower@localhost`
+Standard Linux software for UPS management. Consists of:
+- `nut-server` (upsd) — daemon communicating with the UPS via USB
+- `nut-monitor` (upsmon) — monitors status, can initiate shutdown
+- `upsc` — CLI for reading metrics: `upsc cyberpower@localhost`
 
-Наш демон **не заменяет** NUT — он читает из него данные и вычисляет свои метрики (SoC, SoH, runtime), которые точнее встроенных.
+Our daemon **does not replace** NUT — it reads data from it and computes its own metrics (SoC, SoH, runtime) that are more accurate than the built-in ones.
 
-### Virtual UPS (виртуальный UPS)
-Файл на tmpfs (`/run/ups-battery-monitor/cyberpower-virtual.dev`), куда демон пишет вычисленные метрики в формате NUT. Второй экземпляр NUT (`dummy-ups`) читает этот файл и отдаёт данные как настоящий UPS.
+### Virtual UPS
+A file on tmpfs (`/dev/shm/ups-virtual.dev`) where the daemon writes computed metrics in NUT format. A second NUT instance (`dummy-ups`) reads this file and serves the data as if it were a real UPS.
 
-Зачем: `nut-monitor` (upsmon) умеет делать shutdown по `battery.runtime < threshold`. Но штатные метрики CyberPower врут. Виртуальный UPS подменяет их на вычисленные.
+Why: `upsmon` can trigger shutdown when `battery.runtime < threshold`. But CyberPower's native metrics lie. The virtual UPS substitutes them with computed values.
 
-### Event Classifier (классификатор событий)
-Определяет, что сейчас происходит с UPS:
-- **ONLINE** — питание от сети, штатный режим
-- **BLACKOUT_REAL** — реальное отключение электричества
-- **BLACKOUT_TEST** — тестовый разряд батареи (`test.battery.start.deep`)
+### Event Classifier
+Determines what's currently happening with the UPS:
+- **ONLINE** — on mains power, normal operation
+- **BLACKOUT_REAL** — actual power outage
+- **BLACKOUT_TEST** — battery test discharge (`test.battery.start.deep`)
 
-Различает real от test по `input.voltage`: при тесте UPS сам отключает инвертор, но входное напряжение остаётся >0.
+Distinguishes real from test by `input.voltage`: during a test, the UPS disconnects its inverter, but input voltage remains >0.
 
-### Discharge Buffer (буфер разряда)
-Накапливает пары (напряжение, время) во время работы от батареи (OB). При восстановлении питания (OB→OL) данные используются для:
-1. Вычисления SoH (area under curve)
-2. Автокалибровки Peukert exponent
-3. В calibration mode — записи точек в LUT
-
-### Calibration Mode (режим калибровки)
-Специальный режим запуска (`--calibration-mode`), при котором:
-- Порог shutdown = 1 мин (вместо 5) — чтобы разрядить батарею почти полностью
-- Каждые 60 секунд промежуточные точки записываются в LUT (`calibration_write`)
-- При OB→OL запускается `interpolate_cliff_region` — заполнение cliff region
-
-Используется один раз для первичной калибровки, потом отключается.
+### Discharge Buffer
+Accumulates (voltage, time) pairs while running on battery (OB). On power restoration (OB→OL), the data is used for:
+1. SoH calculation (area under curve)
+2. Peukert exponent auto-calibration
+3. In calibration mode — writing points to the LUT
 
 ---
 
-## Алерты и прогнозирование
+## Alerts & Prediction
 
-### Replacement Predictor (предсказатель замены)
-Линейная регрессия по SoH history → дата, когда SoH упадёт ниже порога (80% по умолчанию).
+### Replacement Predictor
+Linear regression on SoH history → date when SoH will drop below threshold (80% default).
 
-### Alert Thresholds (пороги алертов)
-- **SoH < 80%** → алерт «батарея деградировала, запланируй замену»
-- **Runtime at 100% < 20 min** → алерт «батарея не держит нагрузку»
+### Alert Thresholds
+- **SoH < 80%** → alert "battery degraded, plan replacement"
+- **Runtime at 100% < 20 min** → alert "battery can't sustain the load"
 
-Алерты пишутся через structured logging в journald, откуда их scrape-ит Grafana Alloy.
+Alerts are written via structured logging to journald, where Grafana Alloy scrapes them.
 
 ---
 
-## NUT-специфичные термины
+## NUT-Specific Terms
 
-| Термин | Значение |
-|--------|----------|
-| `OL` | Online — питание от сети |
-| `OB` | On Battery — работа от батареи |
-| `LB` | Low Battery — мало заряда, скоро shutdown |
-| `DISCHRG` | Discharging — батарея разряжается |
-| `ups.status` | Строка статуса, комбинация флагов: `OL`, `OB DISCHRG`, `OB DISCHRG LB` |
-| `battery.voltage` | Напряжение батареи (В) |
-| `battery.charge` | Заряд по мнению UPS (%, часто врёт) |
-| `battery.runtime` | Время работы по мнению UPS (сек, часто врёт) |
-| `ups.load` | Нагрузка на UPS (% от номинала) |
-| `input.voltage` | Напряжение на входе UPS (В, 220–230 в норме) |
-| `upsc` | CLI-утилита NUT для чтения переменных |
-| `upscmd` | CLI-утилита NUT для отправки команд (`test.battery.start.deep`) |
+| Term | Meaning |
+|------|---------|
+| `OL` | Online — on mains power |
+| `OB` | On Battery — running on battery |
+| `LB` | Low Battery — low charge, shutdown imminent |
+| `DISCHRG` | Discharging — battery is discharging |
+| `ups.status` | Status string, combination of flags: `OL`, `OB DISCHRG`, `OB DISCHRG LB` |
+| `battery.voltage` | Battery voltage (V) |
+| `battery.charge` | Charge according to UPS (%, often wrong) |
+| `battery.runtime` | Runtime according to UPS (sec, often wrong) |
+| `ups.load` | UPS load (% of nominal) |
+| `input.voltage` | UPS input voltage (V, 220–230 normal) |
+| `upsc` | NUT CLI utility for reading variables |
+| `upscmd` | NUT CLI utility for sending commands (`test.battery.start.deep`) |

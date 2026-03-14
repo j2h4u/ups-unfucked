@@ -69,19 +69,13 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
             prefix='ups-virtual-'
         ) as tmp:
             tmp.write(content)
+            tmp.flush()
+            os.fdatasync(tmp.fileno())
+            os.fchmod(tmp.fileno(), 0o644)
             tmp_path = Path(tmp.name)
-
-        # Fsync to ensure all data written to disk/tmpfs
-        fd = os.open(str(tmp_path), os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
         # Atomic rename (POSIX guarantees)
         tmp_path.replace(virtual_ups_path)
-        # Make readable by nut user (dummy-ups driver runs as nut)
-        os.chmod(str(virtual_ups_path), 0o644)
         logger.info(f"Virtual UPS metrics written at {virtual_ups_path}")
 
     except Exception as e:

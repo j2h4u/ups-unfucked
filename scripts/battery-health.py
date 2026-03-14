@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 MODEL_PATH = Path.home() / '.config' / 'ups-battery-monitor' / 'model.json'
+HEALTH_PATH = Path('/dev/shm/ups-health.json')
 
 
 def main():

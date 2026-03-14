@@ -99,11 +99,11 @@ class TestEMAProperties:
 
     def test_samples_since_init_counter(self):
         buf = EMAFilter()
-        assert buf.samples_since_init == 0
+        assert buf.voltage_ema.samples_since_init == 0
         buf.add_sample(12.0, 50.0)
-        assert buf.samples_since_init == 1
+        assert buf.voltage_ema.samples_since_init == 1
         buf.add_sample(12.1, 51.0)
-        assert buf.samples_since_init == 2
+        assert buf.voltage_ema.samples_since_init == 2
 
 
 class TestAdaptiveAlpha:
@@ -135,10 +135,10 @@ class TestAdaptiveAlpha:
 
     def test_adaptive_alpha_bounds(self):
         """_adaptive_alpha always returns value in [alpha_base, 1.0]."""
-        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
-        assert buf._adaptive_alpha(13.5, 13.5) == pytest.approx(buf.alpha)  # no deviation
-        assert buf._adaptive_alpha(14.5, 13.5) <= 1.0  # large deviation
-        assert buf._adaptive_alpha(14.5, 13.5) > buf.alpha  # larger than base
+        ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
+        assert ema._adaptive_alpha(13.5, 13.5) == pytest.approx(ema.alpha)  # no deviation
+        assert ema._adaptive_alpha(14.5, 13.5) <= 1.0  # large deviation
+        assert ema._adaptive_alpha(14.5, 13.5) > ema.alpha  # larger than base
 
 
 class TestMetricEMA:
@@ -176,19 +176,6 @@ class TestMetricEMA:
         assert voltage_ema.metric_name == "voltage"
         assert load_ema.metric_name == "load"
         assert temp_ema.metric_name == "temperature"
-
-    def test_ema_filter_backward_compatible(self):
-        """EMAFilter.update(v, l) returns tuple; .ema_voltage and .ema_load still work."""
-        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
-
-        # Old API: add_sample
-        buf.add_sample(12.5, 60.0)
-        assert buf.voltage == buf.ema_voltage
-        assert buf.load == buf.ema_load
-
-        # New properties still accessible
-        assert buf.ema_voltage is not None
-        assert buf.ema_load is not None
 
     def test_metric_ema_stabilized_flag(self):
         """MetricEMA.stabilized false for < min_samples, true after."""

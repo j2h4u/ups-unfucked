@@ -96,26 +96,6 @@ class EMAFilter:
         self.alpha = self.voltage_ema.alpha
         self._min_samples = self.voltage_ema._min_samples
 
-    def _adaptive_alpha(self, new_value, current_ema):
-        """
-        Compute effective alpha based on deviation from current EMA.
-
-        Small deviation → alpha_base (smooth filtering).
-        Large deviation (≥ sensitivity) → approaches 1.0 (instant reaction).
-        """
-        if abs(current_ema) < 1e-6:  # Avoid division by zero in relative deviation calc
-            return 1.0
-        deviation = abs(new_value - current_ema) / abs(current_ema)
-        blend = min(deviation / self.sensitivity, 1.0)
-        return self.alpha + (1.0 - self.alpha) * blend
-
-    def _update_ema(self, new_value, current_ema):
-        """Apply adaptive EMA update; returns new EMA value."""
-        if current_ema is None:
-            return new_value
-        alpha = self._adaptive_alpha(new_value, current_ema)
-        return alpha * new_value + (1 - alpha) * current_ema
-
     def add_sample(self, voltage, load):
         """Add new voltage and load reading; update both EMA values."""
         self.voltage_ema.update(voltage)
@@ -136,28 +116,16 @@ class EMAFilter:
         """Current EMA load, or None if not initialized."""
         return self.load_ema.value
 
-    # Backward compatibility properties
-    @property
-    def ema_voltage(self) -> Optional[float]:
-        """Current smoothed voltage (backward compatibility)."""
-        return self.voltage_ema.value
-
-    @property
-    def ema_load(self) -> Optional[float]:
-        """Current smoothed load (backward compatibility)."""
-        return self.load_ema.value
-
-    @property
-    def samples_since_init(self) -> int:
-        """Samples processed (voltage_ema count, assuming sync with load_ema)."""
-        return self.voltage_ema.samples_since_init
-
 
 def ir_compensate(v_ema, l_ema, l_base=20.0, k=0.015):
     """
     Apply IR compensation to normalize voltage for load-independent SoC lookup.
 
     Formula: V_norm = V_ema + k * (L_ema - L_base)
+
+    NOTE: F23 — Linear model valid at <50% load only. Above 50% load,
+    concentration polarization effects make the linear approximation
+    inaccurate; higher-order effects dominate the voltage response.
     """
     if v_ema is None or l_ema is None:
         return None

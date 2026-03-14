@@ -1,5 +1,6 @@
 """SoC prediction from battery voltage using LUT with linear interpolation (PRED-01, PRED-03)."""
 
+import bisect
 import logging
 from typing import List, Dict
 
@@ -28,18 +29,12 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
         float: SoC as decimal between 0.0 and 1.0
 
     Note:
-        LUT is assumed sorted descending by voltage. Linear scan is O(n) where n is typically
-        7-20 points; acceptable for this use case. Binary search optimization possible but
-        not implemented.
+        LUT is assumed sorted descending by voltage. Binary search via bisect is used
+        for O(log n) bracket finding.
     """
     if not lut:
         logger.warning("Empty LUT provided to soc_from_voltage")
         return SOC_FALLBACK
-
-    # Check for match within tolerance (handles floating-point precision from EMA filtering)
-    for entry in lut:
-        if abs(entry["v"] - voltage) < 0.01:
-            return entry["soc"]
 
     # LUT is maintained sorted descending by voltage in BatteryModel
     v_max = lut[0]["v"]
@@ -55,18 +50,30 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
         logger.debug(f"Voltage {voltage} < min {v_min}, clamping SoC to 0.0")
         return 0.0
 
-    # Binary search for bracketing points
-    # Find v1 < voltage < v2 where v1.v > voltage >= v2.v (since sorted descending)
+    # Binary search for bracketing points (LUT sorted descending by voltage)
+    # Build reversed voltage list for bisect (which expects ascending order)
+    voltages_asc = [e["v"] for e in reversed(lut)]
+    # bisect_left finds insertion point in ascending list
+    pos = bisect.bisect_left(voltages_asc, voltage)
+    # Convert back to descending index: i is the upper bracket
+    i = len(lut) - 1 - pos
     v1_entry = None
     v2_entry = None
+    if 0 <= i < len(lut) - 1:
+        v1_entry = lut[i]
+        v2_entry = lut[i + 1]
+    elif i == len(lut) - 1:
+        # Special case: voltage equals or is very close to minimum (anchor point)
+        v1_entry = lut[i]
+        v2_entry = None
 
-    for i in range(len(lut) - 1):
-        if lut[i]["v"] >= voltage > lut[i + 1]["v"]:
-            v1_entry = lut[i]
-            v2_entry = lut[i + 1]
-            break
+    # Check for match within tolerance at bracket points (handles floating-point precision from EMA filtering)
+    if v1_entry is not None and abs(v1_entry["v"] - voltage) < 0.01:
+        return v1_entry["soc"]
+    if v2_entry is not None and abs(v2_entry["v"] - voltage) < 0.01:
+        return v2_entry["soc"]
 
-    # If no bracket found, something went wrong (shouldn't happen given above logic)
+    # If no valid bracket found, something went wrong (shouldn't happen given above logic)
     if v1_entry is None or v2_entry is None:
         logger.warning(f"No LUT bracket found for voltage {voltage}")
         return SOC_FALLBACK

@@ -2,6 +2,7 @@
 
 import logging
 import math
+import time
 from typing import List, Dict
 from src.runtime_calculator import peukert_runtime_hours
 
@@ -26,6 +27,9 @@ def calculate_soh_from_discharge(
     Uses trapezoidal rule to integrate voltage over time. Reference area is
     computed from Peukert's Law (no empirical constants).
 
+    **UPDATE (2026-03-14)**: Uses duration-weighted Bayesian blending to reduce
+    bias on short discharges. See STATISTICAL-ANALYSIS-SOH-ESTIMATOR.md.
+
     Args:
         discharge_voltage_series: Voltage readings [V] during discharge
         discharge_time_series: Time [sec] for each voltage reading (must be monotonic)
@@ -44,6 +48,7 @@ def calculate_soh_from_discharge(
         - Empty or single-point data: returns reference_soh unchanged
         - Voltage below anchor: integration stops at anchor (physical limit)
         - Computed SoH < 0 or > 1: clamped to [0, 1]
+        - Discharge <0.1% of expected: returns reference_soh (too short to measure)
     """
     if len(discharge_voltage_series) < 2:
         return reference_soh
@@ -83,9 +88,30 @@ def calculate_soh_from_discharge(
     avg_voltage = sum(trimmed_v) / len(trimmed_v)
     area_reference = avg_voltage * T_expected_sec
 
-    # SoH = (measured area / reference area) × previous SoH
+    # SoH update with duration weighting (Bayesian prior-posterior blend)
+    # See: docs/STATISTICAL-ANALYSIS-SOH-ESTIMATOR.md § Part 7
     degradation_ratio = area_measured / area_reference if area_reference > 0 else 1.0
-    new_soh = reference_soh * degradation_ratio
+
+    # Weight updates by discharge duration to reduce bias on short events
+    # discharge_weight ∈ [0, 1]: 0.01 for 10s test, 1.0 for 30min+ discharge
+    discharge_duration = trimmed_t[-1] - trimmed_t[0]  # seconds
+    discharge_weight = min(discharge_duration / (0.30 * T_expected_sec), 1.0)
+
+    if discharge_weight < 0.001:
+        # Negligible signal from micro-discharges
+        logger.debug(f"Discharge too short ({discharge_duration:.1f}s) for SoH update; "
+                     f"weight={discharge_weight:.6f}")
+        return reference_soh
+
+    # Bayesian blend: new_soh = prior * (1 - weight) + likelihood * weight
+    # This treats short discharges as weak evidence, long ones as strong evidence
+    measured_soh = reference_soh * degradation_ratio
+    new_soh = reference_soh * (1 - discharge_weight) + measured_soh * discharge_weight
+
+    logger.debug(f"SoH update: duration={discharge_duration:.1f}s, "
+                 f"weight={discharge_weight:.4f}, "
+                 f"degradation_ratio={degradation_ratio:.4f}, "
+                 f"new_soh={new_soh:.4f}")
 
     # Clamp to [0, 1]
     new_soh = max(0.0, min(1.0, new_soh))
@@ -107,8 +133,7 @@ def _weighted_average_by_voltage(points: List[Dict], bucket_size: float = 0.05,
     Recent measurements weigh more than old ones: weight = exp(-age_days / half_life).
     This ensures the LUT tracks battery degradation over time.
     """
-    import time as _time
-    now = _time.time()
+    now = time.time()
 
     # Group into buckets by rounding voltage to nearest bucket_size
     buckets: Dict[float, list] = {}

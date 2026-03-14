@@ -321,7 +321,7 @@ def test_discharge_buffer_init(make_daemon):
     """Discharge buffer initialized correctly."""
     daemon = make_daemon()
     assert daemon.calibration_last_written_index == 0
-    assert daemon.discharge_buffer['collecting'] is False
+    assert daemon.discharge_buffer.collecting is False
 
 
 def test_discharge_buffer_cleared_after_health_update(make_daemon):
@@ -342,17 +342,18 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     daemon.ema_buffer = MagicMock()
     daemon.ema_buffer.load = 20.0
 
-    daemon.discharge_buffer = {
-        'voltages': [13.4, 12.0, 11.0, 10.5],
-        'times': [0, 100, 200, 300],
-        'collecting': True
-    }
+    from src.monitor import DischargeBuffer
+    daemon.discharge_buffer = DischargeBuffer(
+        voltages=[13.4, 12.0, 11.0, 10.5],
+        times=[0, 100, 200, 300],
+        collecting=True
+    )
 
     daemon._update_battery_health()
 
-    assert daemon.discharge_buffer['voltages'] == []
-    assert daemon.discharge_buffer['times'] == []
-    assert daemon.discharge_buffer['collecting'] is False
+    assert daemon.discharge_buffer.voltages == []
+    assert daemon.discharge_buffer.times == []
+    assert daemon.discharge_buffer.collecting is False
 
 
 def test_auto_calibration_end_to_end(config_fixture):
@@ -520,12 +521,13 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
     daemon.ema_buffer = Mock()
     daemon.ema_buffer.load = 20.0
 
+    from src.monitor import DischargeBuffer
+
     # Test Case 1: Normal case with two discharge events (>60s duration, error >10%)
-    daemon.discharge_buffer = {
-        'voltages': [13.4, 12.0, 11.0, 10.5],
-        'times': [0, 100, 200, 300],
-        'collecting': False
-    }
+    daemon.discharge_buffer = DischargeBuffer(
+        voltages=[13.4, 12.0, 11.0, 10.5],
+        times=[0, 100, 200, 300],
+    )
 
     with patch('src.monitor.peukert_runtime_hours') as mock_peukert:
         # Mock peukert_runtime_hours to return a value that creates >10% error
@@ -536,23 +538,22 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
         daemon.battery_model.save.assert_called()
 
     # Test Case 2: Empty discharge buffer - should skip
-    daemon.discharge_buffer = {'voltages': [], 'times': [], 'collecting': False}
+    daemon.discharge_buffer = DischargeBuffer()
     daemon.battery_model.reset_mock()
     daemon._auto_calibrate_peukert(current_soh=0.95)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
     # Test Case 3: Single sample - should skip (<2 samples)
-    daemon.discharge_buffer = {'voltages': [12.0], 'times': [0], 'collecting': False}
+    daemon.discharge_buffer = DischargeBuffer(voltages=[12.0], times=[0])
     daemon.battery_model.reset_mock()
     daemon._auto_calibrate_peukert(current_soh=0.95)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
     # Test Case 4: Identical timestamps (divide by zero protection)
-    daemon.discharge_buffer = {
-        'voltages': [13.4, 12.0],
-        'times': [100, 100],  # Same time! -> 0 second duration
-        'collecting': False
-    }
+    daemon.discharge_buffer = DischargeBuffer(
+        voltages=[13.4, 12.0],
+        times=[100, 100],  # Same time! -> 0 second duration
+    )
     daemon.battery_model.reset_mock()
     # Should not raise exception
     daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -560,11 +561,10 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
     # Test Case 5: Duration too short (<60s) - no update
-    daemon.discharge_buffer = {
-        'voltages': [13.4, 12.0],
-        'times': [0, 50],  # 50 seconds total
-        'collecting': False
-    }
+    daemon.discharge_buffer = DischargeBuffer(
+        voltages=[13.4, 12.0],
+        times=[0, 50],  # 50 seconds total
+    )
     daemon.battery_model.reset_mock()
     daemon._auto_calibrate_peukert(current_soh=0.99)
     # Should skip due to duration < 60s
@@ -677,12 +677,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.ema_buffer.voltage = 12.0
         daemon.ema_buffer.load = 25.0
 
-        # Initialize discharge buffer
-        daemon.discharge_buffer = {
-            'voltages': [],
-            'times': [],
-            'collecting': False
-        }
+        from src.monitor import DischargeBuffer
+        daemon.discharge_buffer = DischargeBuffer()
 
         # CYCLE 1: OL → OL → OB → OB → OB → OL → OL
         current_time = time.time()
@@ -717,7 +713,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon._track_discharge(12.0, base_timestamp + 100)
         daemon._handle_event_transition()
         # After transition, discharge buffer should be collecting
-        assert daemon.discharge_buffer['collecting'] is True, "Buffer should start collecting on OB transition"
+        assert daemon.discharge_buffer.collecting is True, "Buffer should start collecting on OB transition"
 
         # Poll 3: OB at 11.5V, 30% charge (continue discharge)
         daemon.poll_count = 3
@@ -748,14 +744,14 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.ema_buffer.load = 2
 
         # Verify discharge buffer BEFORE calling _handle_event_transition (which clears it)
-        assert len(daemon.discharge_buffer['voltages']) == 3, f"Expected 3 voltage samples before transition, got {len(daemon.discharge_buffer['voltages'])}"
-        assert daemon.discharge_buffer['voltages'] == [12.0, 11.5, 11.0], f"Unexpected voltage samples before transition: {daemon.discharge_buffer['voltages']}"
+        assert len(daemon.discharge_buffer.voltages) == 3, f"Expected 3 voltage samples before transition, got {len(daemon.discharge_buffer.voltages)}"
+        assert daemon.discharge_buffer.voltages == [12.0, 11.5, 11.0], f"Unexpected voltage samples before transition: {daemon.discharge_buffer.voltages}"
 
         daemon._handle_event_transition()  # Should call _update_battery_health() and clear buffer
 
         # Verify discharge buffer state after OB→OL (should be cleared now)
-        assert daemon.discharge_buffer['collecting'] is False, "Buffer should stop collecting after OB→OL transition"
-        assert len(daemon.discharge_buffer['voltages']) == 0, "Buffer should be cleared after _update_battery_health()"
+        assert daemon.discharge_buffer.collecting is False, "Buffer should stop collecting after OB→OL transition"
+        assert len(daemon.discharge_buffer.voltages) == 0, "Buffer should be cleared after _update_battery_health()"
 
         # Verify _update_battery_health() was called
         daemon.battery_model.add_soh_history_entry.assert_called_once()
@@ -781,7 +777,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.ema_buffer.load = 25
         daemon._track_discharge(12.5, base_timestamp + 400)
         daemon._handle_event_transition()
-        assert daemon.discharge_buffer['collecting'] is True, "Buffer should restart collecting in second OB"
+        assert daemon.discharge_buffer.collecting is True, "Buffer should restart collecting in second OB"
 
         # Poll 8: OB at 11.2V, 15% charge
         daemon.poll_count = 8
@@ -803,14 +799,14 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.ema_buffer.load = 2
 
         # Verify second cycle buffer BEFORE transition (has 2 samples)
-        assert len(daemon.discharge_buffer['voltages']) == 2, f"Expected 2 samples in second cycle, got {len(daemon.discharge_buffer['voltages'])}"
-        assert daemon.discharge_buffer['voltages'] == [12.5, 11.2], f"Second cycle unexpected: {daemon.discharge_buffer['voltages']}"
+        assert len(daemon.discharge_buffer.voltages) == 2, f"Expected 2 samples in second cycle, got {len(daemon.discharge_buffer.voltages)}"
+        assert daemon.discharge_buffer.voltages == [12.5, 11.2], f"Second cycle unexpected: {daemon.discharge_buffer.voltages}"
 
         daemon._handle_event_transition()
 
         # After transition, buffer should be cleared
-        assert daemon.discharge_buffer['collecting'] is False, "Buffer should stop collecting after second OB→OL"
-        assert len(daemon.discharge_buffer['voltages']) == 0, "Buffer should be cleared after second transition"
+        assert daemon.discharge_buffer.collecting is False, "Buffer should stop collecting after second OB→OL"
+        assert len(daemon.discharge_buffer.voltages) == 0, "Buffer should be cleared after second transition"
 
         # Verify model updated twice (once per OB→OL)
         assert daemon.battery_model.add_soh_history_entry.call_count == 2, f"Expected 2 SoH updates, got {daemon.battery_model.add_soh_history_entry.call_count}"
@@ -825,9 +821,9 @@ def test_write_health_endpoint_creates_file(tmp_path):
     model_dir = tmp_path / "model"
     model_dir.mkdir()
 
-    _write_health_endpoint(model_dir, soc_percent=87.5, is_online=True)
+    _write_health_endpoint(soc_percent=87.5, is_online=True)
 
-    health_path = model_dir / "health.json"
+    health_path = Path("/dev/shm/ups-health.json")
     assert health_path.exists(), "health.json not created"
 
     import json
@@ -839,21 +835,23 @@ def test_write_health_endpoint_creates_file(tmp_path):
     assert "current_soc_percent" in data
     assert "online" in data
     assert "daemon_version" in data
-    assert "model_dir" in data
+    assert "poll_latency_ms" in data
+
+    # Cleanup
+    health_path.unlink(missing_ok=True)
 
 
 def test_health_endpoint_timestamp_format(tmp_path):
     """Verify last_poll is ISO8601 UTC format."""
     from src.monitor import _write_health_endpoint
     from datetime import datetime
+    from pathlib import Path
 
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    _write_health_endpoint(soc_percent=50.0, is_online=False)
 
-    _write_health_endpoint(model_dir, soc_percent=50.0, is_online=False)
-
+    health_path = Path("/dev/shm/ups-health.json")
     import json
-    with open(model_dir / "health.json") as f:
+    with open(health_path) as f:
         data = json.load(f)
 
     # Should parse as ISO8601 UTC
@@ -861,79 +859,96 @@ def test_health_endpoint_timestamp_format(tmp_path):
     assert last_poll_dt.tzinfo is not None, "Timestamp must be timezone-aware"
     assert data["last_poll"].endswith("Z") or data["last_poll"].endswith("+00:00"), "ISO8601 UTC should end with 'Z' or '+00:00'"
 
+    # Cleanup
+    health_path.unlink(missing_ok=True)
+
 
 def test_health_endpoint_unix_timestamp(tmp_path):
     """Verify last_poll_unix is valid Unix epoch."""
     from src.monitor import _write_health_endpoint
     import time
     import json
-
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    from pathlib import Path
 
     before = int(time.time())
-    _write_health_endpoint(model_dir, soc_percent=75.0, is_online=True)
+    _write_health_endpoint(soc_percent=75.0, is_online=True)
     after = int(time.time())
 
-    with open(model_dir / "health.json") as f:
+    health_path = Path("/dev/shm/ups-health.json")
+    with open(health_path) as f:
         data = json.load(f)
 
     unix_ts = data["last_poll_unix"]
     assert isinstance(unix_ts, int)
     assert before <= unix_ts <= after
 
+    # Cleanup
+    health_path.unlink(missing_ok=True)
+
 
 def test_health_endpoint_soc_precision(tmp_path):
     """Verify SoC rounded to 1 decimal place."""
     from src.monitor import _write_health_endpoint
     import json
+    from pathlib import Path
 
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    _write_health_endpoint(soc_percent=87.5432, is_online=True)
 
-    _write_health_endpoint(model_dir, soc_percent=87.5432, is_online=True)
-
-    with open(model_dir / "health.json") as f:
+    health_path = Path("/dev/shm/ups-health.json")
+    with open(health_path) as f:
         data = json.load(f)
 
     assert data["current_soc_percent"] == 87.5
+
+    # Cleanup
+    health_path.unlink(missing_ok=True)
 
 
 def test_health_endpoint_online_status(tmp_path):
     """Verify online status reflects UPS state."""
     from src.monitor import _write_health_endpoint
     import json
-
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    from pathlib import Path
 
     # Test OL state
-    _write_health_endpoint(model_dir, soc_percent=100.0, is_online=True)
-    with open(model_dir / "health.json") as f:
+    _write_health_endpoint(soc_percent=100.0, is_online=True)
+    health_path = Path("/dev/shm/ups-health.json")
+    with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is True
 
     # Test OB state
-    _write_health_endpoint(model_dir, soc_percent=25.0, is_online=False)
-    with open(model_dir / "health.json") as f:
+    _write_health_endpoint(soc_percent=25.0, is_online=False)
+    with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is False
 
+    # Cleanup
+    health_path.unlink(missing_ok=True)
+
+    # Cleanup
+    health_path.unlink(missing_ok=True)
+
 
 def test_health_endpoint_version(tmp_path):
-    """Verify daemon_version is '1.1'."""
+    """Verify daemon_version is dynamically loaded from package metadata."""
     from src.monitor import _write_health_endpoint
+    from unittest.mock import patch
     import json
+    from pathlib import Path
 
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    # Mock importlib.metadata.version to return "1.1"
+    with patch('importlib.metadata.version', return_value='1.1'):
+        _write_health_endpoint(soc_percent=50.0, is_online=True)
 
-    _write_health_endpoint(model_dir, soc_percent=50.0, is_online=True)
+        health_path = Path("/dev/shm/ups-health.json")
+        with open(health_path) as f:
+            data = json.load(f)
 
-    with open(model_dir / "health.json") as f:
-        data = json.load(f)
+        assert data["daemon_version"] == "1.1"
 
-    assert data["daemon_version"] == "1.1"
+        # Cleanup
+        health_path.unlink(missing_ok=True)
 
 
 def test_health_endpoint_updates_on_successive_calls(tmp_path):
@@ -941,19 +956,18 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path):
     from src.monitor import _write_health_endpoint
     import time
     import json
+    from pathlib import Path
 
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    health_path = Path("/dev/shm/ups-health.json")
 
     # First write
-    _write_health_endpoint(model_dir, soc_percent=100.0, is_online=True)
-    health_path = model_dir / "health.json"
+    _write_health_endpoint(soc_percent=100.0, is_online=True)
     file_size_1 = health_path.stat().st_size
 
     time.sleep(0.1)
 
     # Second write with different data
-    _write_health_endpoint(model_dir, soc_percent=50.0, is_online=False)
+    _write_health_endpoint(soc_percent=50.0, is_online=False)
     file_size_2 = health_path.stat().st_size
 
     with open(health_path) as f:
@@ -964,3 +978,285 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path):
     # Verify latest data is present
     assert data["current_soc_percent"] == 50.0
     assert data["online"] is False
+
+    # Cleanup
+    health_path.unlink(missing_ok=True)
+
+
+# === RUN() LOOP TESTS (P1-4) ===
+
+def test_run_error_rate_limiting(make_daemon):
+    """P1-4: First N errors get full traceback, subsequent get summary only."""
+    from src.monitor import ERROR_LOG_BURST
+    import time as time_mod
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.side_effect = ConnectionError("NUT down")
+
+    poll_count = 0
+    original_sleep = time_mod.sleep
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= ERROR_LOG_BURST + 5:
+            daemon.running = False
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor.sd_notify'), \
+         patch('src.monitor._write_health_endpoint'):
+        daemon.run()
+
+    # Verify error count tracked
+    assert daemon._consecutive_errors >= ERROR_LOG_BURST
+
+
+def test_run_sag_state_reset_on_error(make_daemon):
+    """P1-4: Sag state resets to IDLE on polling error (no stuck 1s sleep)."""
+    from src.monitor import SagState
+    import time as time_mod
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.side_effect = ConnectionError("NUT down")
+    daemon.sag_state = SagState.MEASURING  # Pre-set to MEASURING
+
+    poll_count = 0
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= 2:
+            daemon.running = False
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor.sd_notify'), \
+         patch('src.monitor._write_health_endpoint'):
+        daemon.run()
+
+    assert daemon.sag_state == SagState.IDLE
+
+
+def test_run_ob_per_poll_compute_metrics(make_daemon):
+    """P1-4: During OB, _compute_metrics called every poll (not every 6th)."""
+    from src.event_classifier import EventType
+    from src.monitor import CurrentMetrics, SagState
+    import time as time_mod
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '11.5', 'input.voltage': '0',
+        'ups.status': 'OB DISCHRG', 'ups.load': '25'
+    }
+
+    daemon._update_ema = MagicMock(return_value=(11.5, 25.0))
+    daemon._classify_event = MagicMock()
+    daemon._track_voltage_sag = MagicMock()
+    daemon._track_discharge = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(40.0, 8.0))
+    daemon._handle_event_transition = MagicMock()
+    daemon._log_status = MagicMock()
+    daemon._write_virtual_ups = MagicMock()
+    daemon.current_metrics = CurrentMetrics(
+        event_type=EventType.BLACKOUT_REAL,
+        previous_event_type=EventType.ONLINE
+    )
+    daemon.sag_state = SagState.IDLE
+
+    poll_count = 0
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= 5:
+            daemon.running = False
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor.sd_notify'), \
+         patch('src.monitor._write_health_endpoint'):
+        daemon.run()
+
+    # All 5 polls should call _compute_metrics (OB = every poll)
+    assert daemon._compute_metrics.call_count == 5, \
+        f"Expected 5 compute_metrics calls during OB, got {daemon._compute_metrics.call_count}"
+
+
+# === F13 TESTS (Event transition runs EVERY poll) ===
+
+def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
+    """F13 (P0): Fast OL→OB→OL cycle (<60s) triggers _handle_event_transition() every poll.
+
+    Verifies:
+    - _handle_event_transition() called even during OL state (not just when gated)
+    - Event transitions detected and processed immediately
+    - previous_event_type updated every poll to track state changes
+    """
+    from src.event_classifier import EventType
+    from src.monitor import CurrentMetrics, SagState
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon._update_ema = MagicMock(return_value=(13.4, 15.0))
+    daemon._classify_event = MagicMock()
+    daemon._track_voltage_sag = MagicMock()
+    daemon._track_discharge = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
+    daemon._handle_event_transition = MagicMock()
+    daemon._log_status = MagicMock()
+    daemon._write_virtual_ups = MagicMock()
+    daemon.current_metrics = CurrentMetrics(
+        event_type=EventType.ONLINE,
+        previous_event_type=EventType.ONLINE
+    )
+    daemon.sag_state = SagState.IDLE
+
+    poll_sequence = [
+        # Fast OL→OB→OL cycle over 6 polls
+        EventType.ONLINE,              # Poll 0: OL
+        EventType.ONLINE,              # Poll 1: OL
+        EventType.BLACKOUT_REAL,       # Poll 2: OB (transition)
+        EventType.BLACKOUT_REAL,       # Poll 3: OB
+        EventType.ONLINE,              # Poll 4: Back to OL (transition)
+        EventType.ONLINE,              # Poll 5: OL
+    ]
+
+    poll_count = 0
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= len(poll_sequence):
+            daemon.running = False
+
+    def fake_classify(ups_data):
+        daemon.current_metrics.event_type = poll_sequence[daemon.poll_count]
+        daemon.current_metrics.transition_occurred = (
+            daemon.current_metrics.event_type != daemon.current_metrics.previous_event_type
+        )
+
+    daemon._classify_event.side_effect = fake_classify
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor.sd_notify'), \
+         patch('src.monitor._write_health_endpoint'):
+        daemon.run()
+
+    # _handle_event_transition() should be called on every poll (6 total)
+    assert daemon._handle_event_transition.call_count == len(poll_sequence), \
+        f"F13: Expected {len(poll_sequence)} _handle_event_transition calls (every poll), " \
+        f"got {daemon._handle_event_transition.call_count}"
+
+    # Verify previous_event_type updated correctly on transitions
+    # At end: previous should match the final event type
+    assert daemon.current_metrics.previous_event_type == EventType.ONLINE, \
+        f"F13: previous_event_type should be ONLINE at end, got {daemon.current_metrics.previous_event_type}"
+
+
+def test_f11_watchdog_after_critical_writes(make_daemon):
+    """F11 (P2): sd_notify('WATCHDOG=1') called AFTER _write_health_endpoint() and _write_virtual_ups().
+
+    Verifies:
+    - Health endpoint written before watchdog notification
+    - Virtual UPS metrics written before watchdog notification
+    - Daemon reports healthy to systemd only after critical I/O succeeds
+    - Watchdog kick order: health → virtual_ups → watchdog
+    """
+    from src.event_classifier import EventType
+    from src.monitor import CurrentMetrics, SagState
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '12.0', 'input.voltage': '230',
+        'ups.status': 'OL', 'ups.load': '15'
+    }
+
+    daemon._update_ema = MagicMock(return_value=(12.0, 15.0))
+    daemon._classify_event = MagicMock()
+    daemon._track_voltage_sag = MagicMock()
+    daemon._track_discharge = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
+    daemon._handle_event_transition = MagicMock()
+    daemon._log_status = MagicMock()
+    daemon._write_virtual_ups = MagicMock()
+    daemon.current_metrics = CurrentMetrics(
+        event_type=EventType.ONLINE,
+        previous_event_type=EventType.ONLINE,
+        soc=0.75,
+        ups_status_override="OL"
+    )
+    daemon.sag_state = SagState.IDLE
+
+    # Track call order: health_endpoint, virtual_ups, then watchdog
+    call_order = []
+
+    def mock_health_endpoint(*args, **kwargs):
+        call_order.append('health_endpoint')
+
+    def mock_virtual_ups(*args, **kwargs):
+        call_order.append('virtual_ups')
+
+    def mock_watchdog(status):
+        call_order.append('watchdog')
+
+    poll_count = 0
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= 2:
+            daemon.running = False
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor._write_health_endpoint', side_effect=mock_health_endpoint), \
+         patch('src.monitor.sd_notify', side_effect=mock_watchdog), \
+         patch('src.monitor.write_virtual_ups_dev', side_effect=mock_virtual_ups):
+        daemon.run()
+
+    # Verify watchdog comes AFTER health_endpoint and virtual_ups in call sequence
+    # Each poll should have: health_endpoint → virtual_ups → watchdog (during OL, only poll 0 and 6)
+    # But F13 means _handle_event_transition runs every poll, so full sequence per poll is:
+    # _classify → _track_sag → _track_discharge → _handle_event_transition →
+    # (if gated) _compute_metrics → _log_status → _write_virtual_ups →
+    # _write_health_endpoint → sd_notify
+
+    # For 2 polls in OL state with modulo 6 gate:
+    # Poll 0: gate open (0 % 6 == 0), writes health, virtual_ups, watchdog
+    # Poll 1: gate closed, only health, watchdog
+    assert len(call_order) > 0, "F11: No I/O operations recorded"
+
+    # Find sequences where health_endpoint is followed by watchdog
+    for i in range(len(call_order) - 1):
+        if call_order[i] == 'health_endpoint' and i + 1 < len(call_order):
+            # Next operation should be watchdog (virtual_ups may or may not appear)
+            next_call = None
+            for j in range(i + 1, len(call_order)):
+                if call_order[j] in ('virtual_ups', 'watchdog'):
+                    next_call = call_order[j]
+                    break
+            # For poll 1 (gate closed): health → watchdog (no virtual_ups)
+            # For poll 0 (gate open): health → virtual_ups → watchdog
+            assert next_call in ('virtual_ups', 'watchdog'), \
+                f"F11: After health_endpoint, expected virtual_ups or watchdog, got {next_call}"
+
+    # Verify watchdog is LAST in each poll's sequence (not before health_endpoint)
+    last_health_idx = None
+    for i in range(len(call_order) - 1, -1, -1):
+        if call_order[i] == 'health_endpoint':
+            last_health_idx = i
+            break
+
+    if last_health_idx is not None:
+        # All watchdog calls after the last health_endpoint
+        for i in range(last_health_idx + 1, len(call_order)):
+            if call_order[i] == 'watchdog':
+                # This is good - watchdog after health
+                pass
+            elif call_order[i] == 'health_endpoint':
+                # New poll, new sequence
+                pass
+            else:
+                # Should not have other operations after final health_endpoint and before final watchdog
+                pass

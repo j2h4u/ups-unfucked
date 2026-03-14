@@ -1,0 +1,11 @@
+[project]
+name = "ups-unfucked"
+version = "1.1.0"
+description = "Datacenter-grade battery telemetry for your $30 UPS. SoH, SoC, runtime prediction, self-calibration — everything the firmware gets wrong, unfucked."
+requires-python = ">=3.11"
+dependencies = [
+    "python-systemd",
+]
+
+[project.scripts]
+ups-battery-monitor = "src.monitor:main"
