@@ -42,6 +42,47 @@ class TestSoCInterpolation:
         assert result == 0.4, f"Expected 0.4 at 12.0V, got {result}"
 
 
+class TestSoCFloatingPointTolerance:
+    """Tests for floating-point tolerance in voltage lookup (TEST-05)."""
+
+    def test_soc_from_voltage_with_ema_filtered_voltage(self):
+        """TEST-05: Floating-point tolerance in soc_from_voltage.
+
+        Verifies that EMA-filtered voltage (12.3999999) matches LUT entry (12.4)
+        within tolerance (±0.01V), not requiring exact match.
+
+        Addresses issue: Line 36 in soc_predictor.py used exact comparison
+        entry["v"] == voltage. When voltage comes from EMA filtering, float
+        precision causes silent mismatches.
+        """
+        lut = [
+            {"v": 13.4, "soc": 1.0, "source": "standard"},
+            {"v": 12.4, "soc": 0.64, "source": "standard"},
+            {"v": 10.5, "soc": 0.0, "source": "anchor"},
+        ]
+
+        # Case 1: EMA voltage slightly below LUT entry (12.4 - 1e-6)
+        ema_voltage_below = 12.4 - 1e-6  # 12.3999990
+        result_below = soc_from_voltage(ema_voltage_below, lut)
+        assert result_below == 0.64, f"Expected 0.64 for voltage {ema_voltage_below}, got {result_below}"
+
+        # Case 2: EMA voltage slightly above LUT entry (12.4 + 1e-6)
+        ema_voltage_above = 12.4 + 1e-6  # 12.4000010
+        result_above = soc_from_voltage(ema_voltage_above, lut)
+        assert result_above == 0.64, f"Expected 0.64 for voltage {ema_voltage_above}, got {result_above}"
+
+        # Case 3: Voltage at tolerance boundary (±0.005V still matches)
+        ema_voltage_near = 12.395  # Within 0.005V of 12.4
+        result_near = soc_from_voltage(ema_voltage_near, lut)
+        assert result_near == 0.64, f"Expected 0.64 for voltage {ema_voltage_near}, got {result_near}"
+
+        # Case 4: Voltage outside tolerance (should use interpolation, not exact match)
+        ema_voltage_far = 12.2  # 0.2V away from 12.4, should interpolate
+        result_far = soc_from_voltage(ema_voltage_far, lut)
+        # 12.2 is between 12.0 (0.4) and 12.4 (0.64), interpolate ~0.52
+        assert 0.50 < result_far < 0.54, f"Expected interpolation ~0.52 for 12.2V, got {result_far}"
+
+
 class TestSoCClamping:
     """Tests for boundary clamping (above max, below anchor)."""
 
