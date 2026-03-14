@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Expert Panel Review Fixes
-current_plan: Phase 11 Plan 03 Complete
+current_plan: Phase 11 Plan 02 Complete
 status: executing
-last_updated: "2026-03-15T00:18:00Z"
+last_updated: "2026-03-14T16:12:42Z"
 progress:
   total_phases: 5
   completed_phases: 4
@@ -14,9 +14,9 @@ progress:
 
 # Project State — UPS Battery Monitor v1.1
 
-**Last Updated:** 2026-03-15 after Phase 11 Plan 03 completion (LOW-05)
+**Last Updated:** 2026-03-14 after Phase 11 Plan 02 completion (LOW-03, LOW-04)
 **Milestone:** v1.1 Expert Panel Review Fixes
-**Current Focus:** Phase 11 — Polish & Future Prep (3/5 plans complete: 11-01 LOW-01/02, 11-02 LOW-03, 11-03 LOW-05)
+**Current Focus:** Phase 11 — Polish & Future Prep (2/5 plans complete: 11-01 LOW-01/02, 11-02 LOW-03/04)
 
 ---
 
@@ -36,16 +36,16 @@ progress:
 |------|-------|
 | Milestone | v1.1 Expert Panel Review Fixes |
 | Total Phases | 5 (Phase 7-11) |
-| Current Phase | 11: Polish & Future Prep (executing, 3/5 plans complete) |
-| Status | Phase 9 complete (TEST-01/02/03/04/05), Phase 10 complete (QUAL-01..05), Phase 11: 11-01 (LOW-01, LOW-02) complete, 11-02 (LOW-03) complete, 11-03 (LOW-05) complete |
-| Progress | 4/5 phases started, 18/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, QUAL-01, QUAL-02, QUAL-03, QUAL-04, QUAL-05, LOW-01, LOW-02, LOW-03, LOW-05), Phase 11 3/5 plans complete
+| Current Phase | 11: Polish & Future Prep (executing, 2/5 plans complete) |
+| Status | Phase 9 complete (TEST-01/02/03/04/05), Phase 10 complete (QUAL-01..05), Phase 11: 11-01 (LOW-01, LOW-02) complete, 11-02 (LOW-03, LOW-04) complete |
+| Progress | 4/5 phases started, 17/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, QUAL-01, QUAL-02, QUAL-03, QUAL-04, QUAL-05, LOW-01, LOW-02, LOW-03, LOW-04), Phase 11 2/5 plans complete
 
 ---
 
 ## Progress Metrics
 
 ```
-Requirements Coverage: 18/19 (94.7%)
+Requirements Coverage: 17/19 (89.5%)
 ├─ Safety (P0): SAFE-01✓, SAFE-02✓ → Phase 7 (done)
 ├─ Architecture (P1): ARCH-01✓, ARCH-02✓, ARCH-03✓ → Phase 8 (done)
 ├─ Testing (P1): TEST-01✓, TEST-02✓, TEST-03✓, TEST-04✓, TEST-05✓ → Phase 9 (complete)
@@ -228,7 +228,20 @@ Both catch and log same failure. Refactor to single handler: remove inner catch 
 
 ### Phase 11: Polish & Future Prep (LOW-01 through LOW-05)
 
-**LOW-01 (history pruning):** `soh_history` and `r_internal_history` in model.json grow unbounded.
+**Plan 11-01: History Pruning & fdatasync Optimization (COMPLETED)**
+- LOW-01: soh_history and r_internal_history pruning (keep last 30 entries)
+- LOW-02: fdatasync optimization in atomic_write_json() — 10-20% faster I/O
+- Impact: Reduced model.json bloat over time; better SSD performance; all tests pass
+
+**Plan 11-02: EMA Decoupling & Logger Cleanup (COMPLETED)**
+- LOW-03: MetricEMA generic class created — enables independent voltage/load/temperature tracking
+- LOW-03: EMAFilter refactored to use MetricEMA; full backward compatibility maintained
+- LOW-04: setup_ups_logger() wrapper removed from alerter.py
+- LOW-04: All logging uses standard Python logging.getLogger("ups-battery-monitor") directly
+- Impact: Cleaner code; prepares for v2 temperature sensor; simpler logging pattern; all 33 tests pass
+- Key achievement: Decoupled per-metric EMA enables extensibility without code changes
+
+**Remaining Phase 11 plans:** LOW-05 (health endpoint) in plan 11-03, others in subsequent plans
 - After 1 year of daily discharge: ~365 entries per list
 - Add pruning: keep last N=30 entries (1 month) or entries in last 90 days
 - Test with synthetic large model: verify pruning on save
@@ -374,8 +387,8 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 - Impact: External monitoring visibility, crash-safe file writes, zero daemon overhead
 - Test coverage: 7 new tests (file creation, timestamp formats, precision, status, version, updates), all 24 tests passing
 
-**Remaining Phase 11 plans:** 11-04 (LOW-03 done in 11-02, LOW-04 pending)
+**Remaining Phase 11 plans:** 11-03 (LOW-05), 11-04, 11-05 (remaining LOW requirements)
 
 ---
 
-*State updated: 2026-03-15T00:18:00Z after 11-03 daemon health endpoint (LOW-05)*
+*State updated: 2026-03-14T16:12:42Z after 11-02 EMA decoupling & logger cleanup (LOW-03/04)*
