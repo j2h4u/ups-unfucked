@@ -10,8 +10,9 @@ MODEL_PATH = Path.home() / '.config' / 'ups-battery-monitor' / 'model.json'
 
 def main():
     if not MODEL_PATH.exists():
-        print(f"Model not found: {MODEL_PATH}")
-        print("Is ups-battery-monitor running?")
+        print(f"No battery model at {MODEL_PATH}")
+        print("The daemon creates this file on first start. Try:")
+        print("  sudo systemctl restart ups-battery-monitor")
         sys.exit(1)
 
     m = json.loads(MODEL_PATH.read_text())

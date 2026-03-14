@@ -120,6 +120,8 @@ class MonitorDaemon:
 
         self.battery_model = BatteryModel(MODEL_PATH)
         self._validate_model()
+        if not MODEL_PATH.exists():
+            self.battery_model.save()  # Write defaults so tools (battery-health.py, MOTD) can read
         self.event_classifier = EventClassifier()
 
         # Load physics params from model
