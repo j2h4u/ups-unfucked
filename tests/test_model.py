@@ -511,3 +511,128 @@ class TestUpdateLutFromCalibration:
         assert lut[3]['source'] == 'interpolated'
         assert lut[4]['source'] == 'measured'
 
+
+class TestHistoryPruning:
+    """Test SoH and R_internal history list pruning to prevent unbounded growth."""
+
+    def test_prune_soh_history_keeps_recent_entries(self, tmp_path):
+        """Verify _prune_soh_history() keeps only last 30 entries when history > 30."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Create 50 history entries
+        for i in range(50):
+            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 1.0 - (i * 0.001))
+
+        initial_count = len(model.get_soh_history())
+        assert initial_count >= 50
+
+        # Prune
+        model._prune_soh_history(keep_count=30)
+
+        # Verify only last 30 are kept
+        history = model.get_soh_history()
+        assert len(history) == 30
+        # Verify we kept the most recent entries (last ones added)
+        assert history[-1]['soh'] == pytest.approx(1.0 - (49 * 0.001))
+
+    def test_prune_soh_history_no_change_if_small(self, tmp_path):
+        """Verify _prune_soh_history() leaves history unchanged if ≤ 30 entries."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Create only 15 entries
+        for i in range(15):
+            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
+
+        initial_history = model.get_soh_history().copy()
+
+        # Prune (should have no effect)
+        model._prune_soh_history(keep_count=30)
+
+        # Verify no change
+        assert model.get_soh_history() == initial_history
+
+    def test_prune_r_internal_history_keeps_recent_entries(self, tmp_path):
+        """Verify _prune_r_internal_history() mirrors soh pruning for r_internal_history."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Create 40 r_internal entries
+        for i in range(40):
+            model.add_r_internal_entry(
+                f'2026-03-{(i % 28) + 1:02d}',
+                0.03 + (i * 0.0001),
+                13.5 - (i * 0.01),
+                13.0,
+                15.0,
+                'TEST'
+            )
+
+        initial_count = len(model.get_r_internal_history())
+        assert initial_count >= 40
+
+        # Prune
+        model._prune_r_internal_history(keep_count=30)
+
+        # Verify only last 30 are kept
+        history = model.get_r_internal_history()
+        assert len(history) == 30
+
+    def test_pruning_is_idempotent(self, tmp_path):
+        """Verify pruning twice produces same result (idempotent)."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Create 35 history entries
+        for i in range(35):
+            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
+
+        # Prune once
+        model._prune_soh_history(keep_count=30)
+        history_after_first = model.get_soh_history().copy()
+
+        # Prune again
+        model._prune_soh_history(keep_count=30)
+        history_after_second = model.get_soh_history().copy()
+
+        # Should be identical
+        assert history_after_first == history_after_second
+
+    def test_save_automatically_prunes_history(self, tmp_path):
+        """Verify save() calls pruning automatically and persists pruned model."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Create 40 history entries
+        for i in range(40):
+            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 1.0 - (i * 0.001))
+
+        # Save (should prune internally)
+        model.save()
+
+        # Reload from disk
+        model2 = BatteryModel(model_path=model_file)
+        history = model2.get_soh_history()
+
+        # Verify history was pruned to max 30
+        assert len(history) == 30
+
+    def test_save_prunes_both_histories(self, tmp_path):
+        """Verify save() prunes both soh_history and r_internal_history."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        # Add many entries to both histories
+        for i in range(35):
+            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
+            model.add_r_internal_entry(f'2026-03-{(i % 28) + 1:02d}', 0.03, 13.5, 13.0, 15.0, 'TEST')
+
+        # Save
+        model.save()
+
+        # Reload and verify both were pruned
+        model2 = BatteryModel(model_path=model_file)
+        assert len(model2.get_soh_history()) <= 30
+        assert len(model2.get_r_internal_history()) <= 30
+

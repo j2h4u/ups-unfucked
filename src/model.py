@@ -195,12 +195,40 @@ class BatteryModel:
     def set_ir_k(self, value: float):
         self.data.setdefault('physics', {}).setdefault('ir_compensation', {})['k_volts_per_percent'] = value
 
+    def _prune_soh_history(self, keep_count: int = 30) -> None:
+        """Remove old SoH history entries; retain only most recent keep_count.
+
+        Rationale: ~365 daily entries/year. After 20 years, unbounded growth.
+        Keep 30 (~1 month) provides trend detection without disk bloat.
+
+        Args:
+            keep_count: Maximum number of entries to retain (default 30)
+        """
+        soh_hist = self.data.get('soh_history', [])
+        if len(soh_hist) > keep_count:
+            self.data['soh_history'] = soh_hist[-keep_count:]
+
+    def _prune_r_internal_history(self, keep_count: int = 30) -> None:
+        """Remove old internal resistance history entries; retain only most recent keep_count.
+
+        Mirrors soh pruning for r_internal_history list.
+
+        Args:
+            keep_count: Maximum number of entries to retain (default 30)
+        """
+        r_int_hist = self.data.get('r_internal_history', [])
+        if len(r_int_hist) > keep_count:
+            self.data['r_internal_history'] = r_int_hist[-keep_count:]
+
     def save(self):
         """
-        Atomically write model to disk.
+        Atomically write model to disk with history pruning.
 
+        Prunes soh_history and r_internal_history to prevent unbounded growth.
         Use only at discharge event completion, not on every sample.
         """
+        self._prune_soh_history()
+        self._prune_r_internal_history()
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
