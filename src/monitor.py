@@ -464,7 +464,13 @@ class MonitorDaemon:
             logger.info(f"Event transition: → {event_type.name}")
 
     def _track_voltage_sag(self, voltage):
-        """Measure voltage sag on OL→OB transition to estimate internal resistance."""
+        """Measure voltage sag on OL→OB transition to estimate internal resistance.
+
+        Uses three boolean flags (fast_poll_active, sag_collected, v_before_sag).
+        If this method grows beyond ~20 lines, or if bugs arise from flag
+        inconsistency (e.g., fast_poll_active=True while sag_collected=True),
+        replace flags with SagState enum: IDLE → ARMED → MEASURING → COMPLETE.
+        """
         event_type = self.current_metrics.get("event_type")
         if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
             # Arm sag measurement on power loss
