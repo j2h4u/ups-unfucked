@@ -6,6 +6,7 @@ import logging
 import argparse
 import tomllib
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -23,6 +24,7 @@ from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
 from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src import soh_calculator, replacement_predictor, alerter
+from src.soh_calculator import interpolate_cliff_region
 
 # === CONFIGURATION ===
 # Precedence: config.toml > code defaults. Physics params (IR_K, etc.) live in model.json.
@@ -112,8 +114,6 @@ SOH_THRESHOLD = _default_config.soh_alert_threshold
 
 MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
-
-from enum import Enum
 
 
 @dataclass
@@ -320,7 +320,6 @@ class MonitorDaemon:
 
             # Refine cliff region (10.5-11.0V) if we have measured data there.
             # No-op if <2 measured points in cliff range — safe to call on every discharge.
-            from src.soh_calculator import interpolate_cliff_region
             updated_lut = interpolate_cliff_region(self.battery_model.data['lut'])
             if updated_lut != self.battery_model.data['lut']:
                 self.battery_model.update_lut_from_calibration(updated_lut)
