@@ -616,6 +616,16 @@ class MonitorDaemon:
                 logger.error(f"Calibration write failed at index {i}: {e}")
                 break
 
+        # Batch flush: persist all accumulated points once per REPORTING_INTERVAL (60x SSD wear reduction)
+        points_written = self.calibration_last_written_index
+        if points_written > 0:
+            try:
+                self.battery_model.calibration_batch_flush()
+                logger.info(f"Batch flushed {points_written} calibration points to disk")
+            except Exception as e:
+                logger.error(f"Calibration batch flush failed: {e}")
+                raise
+
     def _compute_metrics(self):
         """Calculate SoC, charge%, and runtime from EMA values. Returns (battery_charge, time_rem)."""
         v_ema = self.ema_buffer.voltage

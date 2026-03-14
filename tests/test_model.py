@@ -366,12 +366,15 @@ class TestCalibrationWrite:
         assert count_after_third == count_after_first + 1
 
     def test_calibration_write_fsync(self, tmp_path):
-        """Verify calibration_write() calls save() for atomic write with fsync."""
+        """Verify calibration_batch_flush() persists accumulated calibration data."""
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
-        # Write calibration data
+        # Write calibration data (accumulates in memory, not persisted yet)
         model.calibration_write(voltage=12.5, soc=0.65, timestamp=1234567890.0)
+
+        # Batch flush to persist
+        model.calibration_batch_flush()
 
         # Verify file was written to disk
         assert model_file.exists()

@@ -256,18 +256,16 @@ class BatteryModel:
 
     def calibration_write(self, voltage: float, soc: float, timestamp: float):
         """
-        Write calibration datapoint to model.json with fsync during BLACKOUT_TEST.
+        Accumulate calibration datapoint in memory without persisting to disk.
 
         Called from monitor.py discharge buffer handler to capture intermediate
-        measurements in real-time (fsync cost acceptable for one-time calibration).
+        measurements. Points are accumulated in memory and persisted once per
+        REPORTING_INTERVAL via calibration_batch_flush() to reduce SSD wear by ~60x.
 
         Args:
             voltage: Measured battery voltage (V)
             soc: Calculated SoC as fraction (0.0-1.0)
             timestamp: Unix timestamp of measurement
-
-        Raises:
-            IOError: If atomic write fails
         """
         # Deduplicate by timestamp (not voltage — noise can shift voltage between retries,
         # but same timestamp means same physical measurement)
@@ -286,8 +284,19 @@ class BatteryModel:
         # Sort LUT descending by voltage (maintain consistency with save())
         self.data['lut'].sort(key=lambda x: x['v'], reverse=True)
 
-        # Atomic write with fsync
-        logger.info(f"Calibration write: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")
+        # Log point accumulation (no write yet)
+        logger.debug(f"Calibration point accumulated: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")
+
+    def calibration_batch_flush(self) -> None:
+        """Persist accumulated calibration points to disk.
+
+        Call once per REPORTING_INTERVAL, not per point. Reduces SSD wear by ~60x during testing.
+
+        Saves LUT (already sorted by calibration_write), preserves atomicity.
+
+        Side effects:
+            - Writes model.json to disk (atomic rename)
+        """
         self.save()
 
     def update_lut_from_calibration(self, new_lut: List[Dict]):
