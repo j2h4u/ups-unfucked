@@ -31,4 +31,7 @@ When the battery degrades below SoH threshold (frequent blackouts accelerate thi
    - soh_history → empty
    - r_internal_history → empty
    - Peukert exponent → default 1.2
+   - battery_install_date → reset to current date (new battery)
+   - cycle_count → 0
+   - cumulative_on_battery_sec → 0
    - What stays: config.toml, physics defaults in model structure
