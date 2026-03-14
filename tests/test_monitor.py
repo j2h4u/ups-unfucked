@@ -73,15 +73,16 @@ def test_per_poll_writes_during_blackout(make_daemon):
         EventType.ONLINE,           # Poll 11: OL (should trigger batched write at 12th)
     ]
 
-    daemon.current_metrics = {"event_type": EventType.ONLINE, "previous_event_type": EventType.ONLINE}
+    from src.monitor import CurrentMetrics
+    daemon.current_metrics = CurrentMetrics(event_type=EventType.ONLINE, previous_event_type=EventType.ONLINE)
 
     # Run 12 iterations (mock loop)
     for i in range(12):
         daemon.poll_count = i
-        daemon.current_metrics["event_type"] = event_sequence[i]
+        daemon.current_metrics.event_type = event_sequence[i]
 
         # Replicate gate logic from monitor.py
-        event_type = daemon.current_metrics.get("event_type")
+        event_type = daemon.current_metrics.event_type
         is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
         if is_discharging or daemon.poll_count % 6 == 0:
@@ -100,15 +101,16 @@ def test_per_poll_writes_during_blackout(make_daemon):
 def test_handle_event_transition_per_poll_during_ob(make_daemon):
     """SAFE-02: LB flag decision (_handle_event_transition) executes every poll during OB."""
     from src.event_classifier import EventType
+    from src.monitor import CurrentMetrics
 
     daemon = make_daemon()
     daemon._handle_event_transition = MagicMock()
-    daemon.current_metrics = {
-        "event_type": EventType.BLACKOUT_REAL,
-        "time_rem_minutes": 3.0,  # Below shutdown threshold (5 min)
-        "previous_event_type": EventType.ONLINE,
-        "shutdown_imminent": False
-    }
+    daemon.current_metrics = CurrentMetrics(
+        event_type=EventType.BLACKOUT_REAL,
+        time_rem_minutes=3.0,  # Below shutdown threshold (5 min)
+        previous_event_type=EventType.ONLINE,
+        shutdown_imminent=False
+    )
     daemon.shutdown_threshold_minutes = 5
 
     # Mock dependencies
@@ -130,9 +132,9 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
     # Simulate 4 polls during OB state
     for i in range(4):
         daemon.poll_count = i
-        daemon.current_metrics["event_type"] = EventType.BLACKOUT_REAL
+        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
 
-        event_type = daemon.current_metrics.get("event_type")
+        event_type = daemon.current_metrics.event_type
         is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
         if is_discharging or daemon.poll_count % 6 == 0:
@@ -147,6 +149,7 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
 def test_no_writes_during_online_state(make_daemon):
     """SAFE-01: No spurious writes during OL state — only on poll % 6 boundary."""
     from src.event_classifier import EventType
+    from src.monitor import CurrentMetrics
 
     daemon = make_daemon()
     daemon._write_virtual_ups = MagicMock()
@@ -164,14 +167,14 @@ def test_no_writes_during_online_state(make_daemon):
         'ups.status': 'OL',
         'ups.load': '15'
     }
-    daemon.current_metrics = {"event_type": EventType.ONLINE, "previous_event_type": EventType.ONLINE}
+    daemon.current_metrics = CurrentMetrics(event_type=EventType.ONLINE, previous_event_type=EventType.ONLINE)
 
     # Simulate 7 polls in OL state
     for i in range(7):
         daemon.poll_count = i
-        daemon.current_metrics["event_type"] = EventType.ONLINE
+        daemon.current_metrics.event_type = EventType.ONLINE
 
-        event_type = daemon.current_metrics.get("event_type")
+        event_type = daemon.current_metrics.event_type
         is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
         if is_discharging or daemon.poll_count % 6 == 0:
@@ -187,6 +190,7 @@ def test_no_writes_during_online_state(make_daemon):
 def test_lb_flag_signal_latency(make_daemon):
     """SAFE-02: LB flag written to virtual UPS within <10s of OB transition."""
     from src.event_classifier import EventType
+    from src.monitor import CurrentMetrics
     from pathlib import Path
     import tempfile
 
@@ -201,8 +205,8 @@ def test_lb_flag_signal_latency(make_daemon):
         def mock_handle_with_timestamp():
             transition_call_times.append(daemon.poll_count)
             # Also set shutdown_imminent flag if time_rem below threshold
-            if daemon.current_metrics.get("time_rem_minutes", 0) < daemon.shutdown_threshold_minutes:
-                daemon.current_metrics["shutdown_imminent"] = True
+            if (daemon.current_metrics.time_rem_minutes or 0) < daemon.shutdown_threshold_minutes:
+                daemon.current_metrics.shutdown_imminent = True
 
         daemon._handle_event_transition = mock_handle_with_timestamp
         daemon._compute_metrics = MagicMock(return_value=(30.0, 3.0))
@@ -219,21 +223,21 @@ def test_lb_flag_signal_latency(make_daemon):
             'ups.status': 'OB DISCHRG',
             'ups.load': '30'
         }
-        daemon.current_metrics = {"event_type": EventType.ONLINE, "previous_event_type": EventType.ONLINE}
+        daemon.current_metrics = CurrentMetrics(event_type=EventType.ONLINE, previous_event_type=EventType.ONLINE)
 
         # Poll 0-1: OL state
         # Poll 2: OB transition detected
         for i in range(3):
             daemon.poll_count = i
-            daemon.current_metrics["previous_event_type"] = daemon.current_metrics.get("event_type", EventType.ONLINE)
+            daemon.current_metrics.previous_event_type = daemon.current_metrics.event_type or EventType.ONLINE
 
             if i < 2:
-                daemon.current_metrics["event_type"] = EventType.ONLINE
+                daemon.current_metrics.event_type = EventType.ONLINE
             else:
-                daemon.current_metrics["event_type"] = EventType.BLACKOUT_REAL
-                daemon.current_metrics["time_rem_minutes"] = 3.0
+                daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+                daemon.current_metrics.time_rem_minutes = 3.0
 
-            event_type = daemon.current_metrics.get("event_type")
+            event_type = daemon.current_metrics.event_type
             is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
             if is_discharging or daemon.poll_count % 6 == 0:
@@ -245,7 +249,7 @@ def test_lb_flag_signal_latency(make_daemon):
             f"Expected LB decision at poll 2 (OB transition), calls were at {transition_call_times}"
 
         # Verify shutdown_imminent flag is True (time_rem 3.0 < threshold 5)
-        assert daemon.current_metrics.get("shutdown_imminent") is True, \
+        assert daemon.current_metrics.shutdown_imminent is True, \
             "Expected shutdown_imminent=True when time_rem < threshold"
 
 
@@ -405,16 +409,37 @@ def test_auto_calibration_end_to_end():
             assert sum(1 for e in reloaded.get_lut() if e['source'] == 'measured') >= 3
 
 
-def test_current_metrics_dataclass():
-    """Verify CurrentMetrics has all required fields with correct types.
+def test_current_metrics_dataclass(current_metrics_fixture):
+    """Verify CurrentMetrics dataclass instantiation and field access."""
+    from src.event_classifier import EventType
 
-    Wave 1 (ARCH-01) will implement CurrentMetrics as a dataclass with fields:
-    soc, battery_charge, time_rem_minutes, event_type, transition_occurred,
-    shutdown_imminent, ups_status_override, previous_event_type, timestamp.
+    # Fixture provides a populated instance
+    assert current_metrics_fixture.soc == 0.75
+    assert current_metrics_fixture.battery_charge == 75.0
+    assert current_metrics_fixture.time_rem_minutes == 30.0
+    assert current_metrics_fixture.event_type == EventType.ONLINE
+    assert current_metrics_fixture.transition_occurred is False
+    assert current_metrics_fixture.shutdown_imminent is False
+    assert current_metrics_fixture.ups_status_override is None
+    assert current_metrics_fixture.previous_event_type == EventType.ONLINE
+    assert current_metrics_fixture.timestamp is not None
 
-    This stub will be replaced with assertions once the dataclass exists.
-    """
-    pytest.skip("Wave 1: ARCH-01 — CurrentMetrics dataclass not yet created")
+    # Test default instantiation (no args, all defaults)
+    from src.monitor import CurrentMetrics
+    cm_default = CurrentMetrics()
+    assert cm_default.soc is None
+    assert cm_default.battery_charge is None
+    assert cm_default.time_rem_minutes is None
+    assert cm_default.event_type is None
+    assert cm_default.transition_occurred is False
+    assert cm_default.shutdown_imminent is False
+    assert cm_default.ups_status_override is None
+    assert cm_default.previous_event_type == EventType.ONLINE
+    assert cm_default.timestamp is None
+
+    # Test field mutation (should work; dataclass not frozen)
+    cm_default.soc = 0.5
+    assert cm_default.soc == 0.5
 
 
 def test_config_dataclass():

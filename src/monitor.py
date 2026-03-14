@@ -5,8 +5,10 @@ import math
 import logging
 import argparse
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 from systemd.journal import JournalHandler
 try:
     from systemd.daemon import notify as sd_notify
@@ -66,6 +68,24 @@ MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
 
 from enum import Enum
+
+
+@dataclass
+class CurrentMetrics:
+    """Current UPS battery state snapshot, updated every poll.
+
+    Fields correspond to the 9-key dict in monitor.py.__init__.
+    Type hints enable IDE autocomplete and mypy validation.
+    """
+    soc: Optional[float] = None                      # State of Charge, 0-1
+    battery_charge: Optional[float] = None           # NUT battery.charge, 0-100
+    time_rem_minutes: Optional[float] = None         # Estimated runtime, minutes
+    event_type: Optional[EventType] = None           # From EventClassifier
+    transition_occurred: bool = False                # True if state changed this poll
+    shutdown_imminent: bool = False                  # True if runtime < threshold
+    ups_status_override: Optional[str] = None        # Computed status string
+    previous_event_type: EventType = EventType.ONLINE  # Last event_type value
+    timestamp: Optional[datetime] = None             # When snapshot was taken
 
 
 class SagState(Enum):
@@ -143,17 +163,7 @@ class MonitorDaemon:
         self.ir_l_base = self.battery_model.get_ir_reference_load()
 
         # Metrics tracking for current battery state
-        self.current_metrics = {
-            "soc": None,
-            "battery_charge": None,
-            "time_rem_minutes": None,
-            "event_type": None,
-            "transition_occurred": False,
-            "shutdown_imminent": False,
-            "ups_status_override": None,
-            "previous_event_type": EventType.ONLINE,
-            "timestamp": None,
-        }
+        self.current_metrics = CurrentMetrics()
         self._last_logged_soc = None
         self._last_logged_time_rem = None
 
@@ -222,35 +232,35 @@ class MonitorDaemon:
         Implements EVT-02 (blackout), EVT-03 (test), EVT-04 (status arbiter),
         and EVT-05 (model update on discharge completion).
         """
-        event_type = self.current_metrics["event_type"]
-        previous_event_type = self.current_metrics["previous_event_type"]
+        event_type = self.current_metrics.event_type
+        previous_event_type = self.current_metrics.previous_event_type
 
         # EVT-02: Real blackout - prepare shutdown signal
         if event_type == EventType.BLACKOUT_REAL:
-            time_rem = self.current_metrics.get("time_rem_minutes")
+            time_rem = self.current_metrics.time_rem_minutes
             if time_rem is not None and time_rem < self.shutdown_threshold_minutes:
                 logger.warning(
                     f"Real blackout: time_rem={time_rem:.1f}min < threshold {self.shutdown_threshold_minutes}min; "
                     f"prepare LB flag"
                 )
-                self.current_metrics["shutdown_imminent"] = True
+                self.current_metrics.shutdown_imminent = True
             else:
-                self.current_metrics["shutdown_imminent"] = False
+                self.current_metrics.shutdown_imminent = False
 
         # EVT-03: Battery test - suppress shutdown
         if event_type == EventType.BLACKOUT_TEST:
             logger.info("Battery test detected; collecting calibration data, no shutdown")
-            self.current_metrics["shutdown_imminent"] = False
+            self.current_metrics.shutdown_imminent = False
 
         # EVT-04: Status arbitration via compute_ups_status_override()
-        self.current_metrics["ups_status_override"] = compute_ups_status_override(
+        self.current_metrics.ups_status_override = compute_ups_status_override(
             event_type,
-            self.current_metrics.get("time_rem_minutes", 0) or 0,
+            self.current_metrics.time_rem_minutes or 0,
             self.shutdown_threshold_minutes
         )
 
         # EVT-05: Model update on OB→OL transition
-        if (self.current_metrics.get("transition_occurred") and
+        if (self.current_metrics.transition_occurred and
             event_type == EventType.ONLINE and
             previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
             logger.info("Power restored; updating LUT with measured discharge points")
@@ -472,8 +482,8 @@ class MonitorDaemon:
         if ups_status is None or input_voltage is None:
             return
         event_type = self.event_classifier.classify(ups_status, input_voltage)
-        self.current_metrics["event_type"] = event_type
-        self.current_metrics["transition_occurred"] = self.event_classifier.transition_occurred
+        self.current_metrics.event_type = event_type
+        self.current_metrics.transition_occurred = self.event_classifier.transition_occurred
         if self.event_classifier.transition_occurred:
             logger.info(f"Event transition: → {event_type.name}")
 
@@ -483,7 +493,7 @@ class MonitorDaemon:
         State machine: IDLE → MEASURING → COMPLETE → IDLE.
         MEASURING enables fast polling (1s instead of 10s) for precise sag capture.
         """
-        event_type = self.current_metrics.get("event_type")
+        event_type = self.current_metrics.event_type
 
         # OL→OB: start measuring
         if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
@@ -506,7 +516,7 @@ class MonitorDaemon:
 
     def _track_discharge(self, voltage, timestamp):
         """Accumulate discharge samples and write calibration points."""
-        event_type = self.current_metrics.get("event_type")
+        event_type = self.current_metrics.event_type
         if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
             if not self.discharge_buffer['collecting']:
                 self.discharge_buffer['collecting'] = True
@@ -597,7 +607,7 @@ class MonitorDaemon:
         v_norm_str = f"{v_norm:.2f}V" if v_norm is not None else "N/A"
         charge_str = f"{battery_charge}%" if battery_charge is not None else "N/A"
         time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
-        event_type = self.current_metrics.get("event_type")
+        event_type = self.current_metrics.event_type
         event_str = event_type.name if event_type else "N/A"
         discharge_depth = len(self.discharge_buffer['voltages'])
         latency_str = f"{poll_latency_ms:.0f}ms" if poll_latency_ms is not None else "N/A"
@@ -611,7 +621,7 @@ class MonitorDaemon:
     def _write_virtual_ups(self, ups_data, battery_charge, time_rem):
         """Write computed metrics to tmpfs for NUT dummy-ups driver."""
         try:
-            ups_status_override = self.current_metrics.get("ups_status_override", "OL")
+            ups_status_override = self.current_metrics.ups_status_override or "OL"
             # Enterprise-equivalent metrics computed from discharge history
             soh = self.battery_model.get_soh()
             install_date = self.battery_model.get_battery_install_date() or ""
@@ -669,7 +679,7 @@ class MonitorDaemon:
                 self._track_discharge(voltage, timestamp)
 
                 # Extract event type after classification to determine polling frequency
-                event_type = self.current_metrics.get("event_type")
+                event_type = self.current_metrics.event_type
                 is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
                 # State-dependent gate: every poll during OB, every 6 polls during OL
@@ -677,9 +687,7 @@ class MonitorDaemon:
                     logger.debug(f"Metrics gate: is_discharging={is_discharging}, poll_count={self.poll_count}")
                     battery_charge, time_rem = self._compute_metrics()
                     self._handle_event_transition()
-                    self.current_metrics["previous_event_type"] = self.current_metrics.get(
-                        "event_type", EventType.ONLINE
-                    )
+                    self.current_metrics.previous_event_type = self.current_metrics.event_type or EventType.ONLINE
                     self._log_status(battery_charge, time_rem, poll_latency_ms)
                     self._write_virtual_ups(ups_data, battery_charge, time_rem)
 

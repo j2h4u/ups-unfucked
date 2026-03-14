@@ -152,27 +152,27 @@ def current_metrics_fixture():
     """
     Fixture returning a CurrentMetrics dataclass instance with default test values.
 
-    Provides reusable metric state across test suite. Once ARCH-01 is implemented,
-    tests will import CurrentMetrics from src.monitor. Until then, this fixture
-    returns a dict matching the expected CurrentMetrics schema.
+    Provides reusable metric state across test suite. Tests will import CurrentMetrics
+    from src.monitor and use this fixture to get populated instances.
 
     Returns:
-        dict: Current metrics with typed field values for SoC, charge, runtime, event state.
+        CurrentMetrics: Current metrics with typed field values for SoC, charge, runtime, event state.
     """
+    from src.monitor import CurrentMetrics
     from src.event_classifier import EventType
     from datetime import datetime
 
-    return {
-        "soc": 0.75,
-        "battery_charge": 75.0,
-        "time_rem_minutes": 30.0,
-        "event_type": EventType.ONLINE,
-        "transition_occurred": False,
-        "shutdown_imminent": False,
-        "ups_status_override": None,
-        "previous_event_type": EventType.ONLINE,
-        "timestamp": datetime.now(),
-    }
+    return CurrentMetrics(
+        soc=0.75,
+        battery_charge=75.0,
+        time_rem_minutes=30.0,
+        event_type=EventType.ONLINE,
+        transition_occurred=False,
+        shutdown_imminent=False,
+        ups_status_override=None,
+        previous_event_type=EventType.ONLINE,
+        timestamp=datetime.now(),
+    )
 
 
 @pytest.fixture
