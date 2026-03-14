@@ -66,9 +66,9 @@ When the battery degrades beyond useful life (SoH below threshold, replacement p
 
 Steps (planned):
 1. Replace the physical battery in the UPS
-2. Reset model.json (archive old data, restore standard VRLA curve)
-3. Run a deep battery test to kickstart calibration
-4. Verify the new battery works (check health report after first discharge)
+2. Run `./scripts/battery-reset.py` — archives old model.json and creates a fresh one with standard VRLA curve
+3. Run a deep battery test to kickstart calibration on the new battery
+4. Verify with `./scripts/battery-health.py` after first discharge
 
 ---
 
