@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Expert Panel Review Fixes
-status: unknown
-last_updated: "2026-03-14T14:55:25.999Z"
+status: active
+last_updated: "2026-03-14T15:18:00Z"
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 6
-  completed_plans: 7
+  completed_plans: 9
 ---
 
 # Project State — UPS Battery Monitor v1.1
 
-**Last Updated:** 2026-03-15 after 08-03 import consolidation implementation
+**Last Updated:** 2026-03-14 after 09-02 test coverage implementation (Peukert auto-calibration and signal handler)
 **Milestone:** v1.1 Expert Panel Review Fixes
-**Current Focus:** Phase 8 — Architecture Foundation (ARCH-01/02/03 complete)
+**Current Focus:** Phase 9 — Test Coverage (09-01 TEST-04/05 + 09-02 TEST-02/03 complete; TEST-01 remaining)
 
 ---
 
@@ -35,9 +35,9 @@ progress:
 |------|-------|
 | Milestone | v1.1 Expert Panel Review Fixes |
 | Total Phases | 5 (Phase 7-11) |
-| Current Phase | 8: Architecture Foundation |
-| Status | Plans 08-01 (ARCH-01), 08-02 (ARCH-02), 08-03 (ARCH-03) complete |
-| Progress | 2/5 phases started, 5/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03), ready for Phase 9 tests |
+| Current Phase | 9: Test Coverage (executing, 2/5 plans complete) |
+| Status | Phase 8 complete (ARCH-01/02/03), Phase 9: 09-01 (TEST-04, TEST-05) and 09-02 (TEST-02, TEST-03) done |
+| Progress | 2/5 phases started, 9/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-02, TEST-03, TEST-04, TEST-05), Phase 9 2/5 plans |
 
 ---
 
@@ -45,9 +45,9 @@ progress:
 
 ```
 Requirements Coverage: 19/19 (100%)
-├─ Safety (P0): SAFE-01, SAFE-02 → Phase 7
-├─ Architecture (P1): ARCH-01, ARCH-02, ARCH-03 → Phase 8
-├─ Testing (P1): TEST-01, TEST-02, TEST-03, TEST-04, TEST-05 → Phase 9
+├─ Safety (P0): SAFE-01, SAFE-02 → Phase 7 (done)
+├─ Architecture (P1): ARCH-01, ARCH-02, ARCH-03 → Phase 8 (done)
+├─ Testing (P1): TEST-01, TEST-02✓, TEST-03✓, TEST-04✓, TEST-05✓ → Phase 9 (in progress)
 ├─ Code Quality (P2): QUAL-01, QUAL-02, QUAL-03, QUAL-04, QUAL-05 → Phase 10
 └─ Low Priority (P3): LOW-01, LOW-02, LOW-03, LOW-04, LOW-05 → Phase 11
 
@@ -329,4 +329,4 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 
 ---
 
-*State updated: 2026-03-15 after roadmap creation for v1.1*
+*State updated: 2026-03-14 after 09-01 test infrastructure implementation*
