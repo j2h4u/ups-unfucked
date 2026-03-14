@@ -2,7 +2,7 @@
 
 import pytest
 import math
-from src.ema_filter import EMAFilter
+from src.ema_filter import EMAFilter, MetricEMA
 
 
 def fill_samples(buf, n, voltage=12.0, load=50.0):
@@ -139,3 +139,67 @@ class TestAdaptiveAlpha:
         assert buf._adaptive_alpha(13.5, 13.5) == pytest.approx(buf.alpha)  # no deviation
         assert buf._adaptive_alpha(14.5, 13.5) <= 1.0  # large deviation
         assert buf._adaptive_alpha(14.5, 13.5) > buf.alpha  # larger than base
+
+
+class TestMetricEMA:
+    """Test generic MetricEMA class for single metric tracking."""
+
+    def test_metric_ema_single_metric(self):
+        """MetricEMA initializes with metric_name and tracks single value."""
+        ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
+        assert ema.metric_name == "voltage"
+        assert ema.value is None
+        assert ema.samples_since_init == 0
+
+        # After first update
+        val = ema.update(12.5)
+        assert abs(val - 12.5) < 0.01
+        assert ema.value == val
+        assert ema.samples_since_init == 1
+
+    def test_metric_ema_multiple_independent(self):
+        """Multiple MetricEMA instances track voltage, load, temperature independently."""
+        voltage_ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
+        load_ema = MetricEMA("load", window_sec=120, poll_interval_sec=10)
+        temp_ema = MetricEMA("temperature", window_sec=120, poll_interval_sec=10)
+
+        # Update with different patterns
+        for i in range(5):
+            voltage_ema.update(12.0 + i * 0.1)
+            load_ema.update(50.0 + i * 5.0)
+            temp_ema.update(25.0 + i * 0.2)
+
+        # Each tracks independently
+        assert voltage_ema.value is not None
+        assert load_ema.value is not None
+        assert temp_ema.value is not None
+        assert voltage_ema.metric_name == "voltage"
+        assert load_ema.metric_name == "load"
+        assert temp_ema.metric_name == "temperature"
+
+    def test_ema_filter_backward_compatible(self):
+        """EMAFilter.update(v, l) returns tuple; .ema_voltage and .ema_load still work."""
+        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
+
+        # Old API: add_sample
+        buf.add_sample(12.5, 60.0)
+        assert buf.voltage == buf.ema_voltage
+        assert buf.load == buf.ema_load
+
+        # New properties still accessible
+        assert buf.ema_voltage is not None
+        assert buf.ema_load is not None
+
+    def test_metric_ema_stabilized_flag(self):
+        """MetricEMA.stabilized false for < min_samples, true after."""
+        ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
+        assert ema.stabilized is False
+
+        # Add 11 samples (< 12)
+        for _ in range(11):
+            ema.update(12.0)
+        assert ema.stabilized is False
+
+        # Add 12th sample
+        ema.update(12.0)
+        assert ema.stabilized is True
