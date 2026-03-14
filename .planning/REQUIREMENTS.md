@@ -14,9 +14,9 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 
 ### Architecture
 
-- [ ] **ARCH-01**: `current_metrics` dict refactored to `@dataclass` with typed fields — eliminates untyped 10-key god dict
-- [ ] **ARCH-02**: Module-level config (`_cfg`, `UPS_NAME`, `MODEL_DIR`) extracted into frozen dataclass passed to `__init__` — enables testing and reconfiguration
-- [ ] **ARCH-03**: Stray imports moved to module top — `from enum import Enum` at line 68, `from src.soh_calculator import interpolate_cliff_region` inside method body
+- [x] **ARCH-01**: `current_metrics` dict refactored to `@dataclass` with typed fields — eliminates untyped 10-key god dict
+- [x] **ARCH-02**: Module-level config (`_cfg`, `UPS_NAME`, `MODEL_DIR`) extracted into frozen dataclass passed to `__init__` — enables testing and reconfiguration
+- [x] **ARCH-03**: Stray imports moved to module top — `from enum import Enum` at line 68, `from src.soh_calculator import interpolate_cliff_region` inside method body
 
 ### Code Quality
 
@@ -57,9 +57,9 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 |-------------|-------|--------|
 | SAFE-01 | 7 | Complete |
 | SAFE-02 | 7 | Complete |
-| ARCH-01 | 8 | Pending |
-| ARCH-02 | 8 | Pending |
-| ARCH-03 | 8 | Pending |
+| ARCH-01 | 8 | Complete |
+| ARCH-02 | 8 | Complete |
+| ARCH-03 | 8 | Complete |
 | QUAL-01 | 10 | Pending |
 | QUAL-02 | 10 | Pending |
 | QUAL-03 | 10 | Pending |
@@ -84,4 +84,4 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 ---
 
 *Requirements defined: 2026-03-15*
-*Last updated: 2026-03-15 after roadmap creation*
+*Last updated: 2026-03-15 after Phase 8 completion (ARCH-01/02/03)*

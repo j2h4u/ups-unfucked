@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-14)
-- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (in progress)
+- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phase 8 complete, Phases 7,9-11 in progress)
 
 ## Phases
 
@@ -22,9 +22,9 @@
 <details open>
 <summary>🚧 v1.1 Expert Panel Review Fixes (Phases 7-11) — IN PROGRESS</summary>
 
-- [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout
-- [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4 plans created)
-- [ ] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest)
+- [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout (1/2 plans complete)
+- [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4/4 plans complete)
+- [ ] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (0/5 plans)
 - [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix
 - [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint
 
@@ -41,7 +41,7 @@
 | 5. Operational Setup | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 6. Calibration Mode | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 7. Safety-Critical Metrics | v1.1 | 1/2 | In progress | — |
-| 8. Architecture Foundation | v1.1 | 1/4 | Wave 0 complete, Wave 1 ready | 2026-03-15 |
+| 8. Architecture Foundation | v1.1 | 4/4 | Complete (Wave 0 + Wave 1) | 2026-03-15 |
 | 9. Test Coverage | v1.1 | 0/5 | Not started | — |
 | 10. Code Quality & Efficiency | v1.1 | 0/5 | Not started | — |
 | 11. Polish & Future Prep | v1.1 | 0/5 | Not started | — |
@@ -84,9 +84,9 @@
 
 **Plans**:
 - [x] 08-00-PLAN.md — Wave 0: Test fixtures and stubs (current_metrics_fixture, config_fixture, test stubs) — completed 2026-03-15
-- [ ] 08-01-PLAN.md — Wave 1: CurrentMetrics dataclass refactor (ARCH-01)
-- [ ] 08-02-PLAN.md — Wave 1: Config dataclass extraction (ARCH-02)
-- [ ] 08-03-PLAN.md — Wave 1: Import consolidation (ARCH-03)
+- [x] 08-01-PLAN.md — Wave 1: CurrentMetrics dataclass refactor (ARCH-01) — completed 2026-03-15
+- [x] 08-02-PLAN.md — Wave 1: Config dataclass extraction (ARCH-02) — completed 2026-03-15
+- [x] 08-03-PLAN.md — Wave 1: Import consolidation (ARCH-03) — completed 2026-03-15
 
 ---
 
