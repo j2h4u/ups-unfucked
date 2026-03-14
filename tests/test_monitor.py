@@ -608,3 +608,211 @@ def test_signal_handler_saves_model(make_daemon):
     # Should handle gracefully without double-save exception
     assert daemon.battery_model.save.call_count >= 1
     assert daemon.running is False
+
+
+def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
+    """TEST-01: Integration test for full OL→OB→OL discharge lifecycle.
+
+    Verifies:
+    - _handle_event_transition() executes on OB→OL
+    - _update_battery_health() called and SoH calculated
+    - _track_discharge() accumulates voltage/time series
+    - Model persisted to disk
+    - Discharge buffer cleared after completion
+    - Multiple cycles work correctly without state carryover
+    """
+    from src.event_classifier import EventType
+    from unittest.mock import Mock, patch
+    import time
+
+    daemon = make_daemon()
+
+    # Pre-setup: Mock soh_calculator and other dependencies to avoid complex physics
+    with patch('src.monitor.soh_calculator.calculate_soh_from_discharge') as mock_soh_calc, \
+         patch('src.monitor.replacement_predictor.linear_regression_soh') as mock_replace, \
+         patch('src.monitor.runtime_minutes') as mock_runtime, \
+         patch('src.monitor.interpolate_cliff_region') as mock_interp:
+        mock_soh_calc.return_value = 0.95  # Assume 95% SoH after discharge
+        mock_replace.return_value = None  # No replacement prediction
+        mock_runtime.return_value = 30.0  # 30 minutes runtime
+        mock_interp.return_value = [
+            {"v": 13.4, "soc": 1.0, "source": "standard"},
+            {"v": 12.4, "soc": 0.64, "source": "standard"},
+            {"v": 10.5, "soc": 0.0, "source": "anchor"},
+        ]
+
+        # Mock battery model methods
+        daemon.battery_model.get_soh = Mock(return_value=1.0)
+        daemon.battery_model.get_lut = Mock(return_value=[
+            {"v": 13.4, "soc": 1.0, "source": "standard"},
+            {"v": 12.4, "soc": 0.64, "source": "standard"},
+            {"v": 10.5, "soc": 0.0, "source": "anchor"},
+        ])
+        daemon.battery_model.get_capacity_ah = Mock(return_value=7.2)
+        daemon.battery_model.get_soh_history = Mock(return_value=[])
+        daemon.battery_model.add_soh_history_entry = Mock()
+        daemon.battery_model.save = Mock()
+        daemon.battery_model.increment_cycle_count = Mock()
+        daemon.battery_model.update_model_metadata = Mock()
+        daemon.battery_model.get_nominal_power_watts = Mock(return_value=425.0)
+        daemon.battery_model.get_nominal_voltage = Mock(return_value=12.0)
+        daemon.battery_model.get_peukert_exponent = Mock(return_value=1.2)
+        daemon.battery_model.data = {'lut': [
+            {"v": 13.4, "soc": 1.0, "source": "standard"},
+            {"v": 12.4, "soc": 0.64, "source": "standard"},
+            {"v": 10.5, "soc": 0.0, "source": "anchor"},
+        ]}
+        daemon.battery_model.update_lut_from_calibration = Mock()
+
+        # Simulate voltage/load from NUT
+        daemon.nut_client = Mock()
+        daemon.nut_client.get_ups_vars = Mock(return_value={
+            'battery.voltage': '12.0',
+            'ups.load': '25',
+            'ups.status': 'OL',
+            'input.voltage': '230',
+        })
+
+        # Setup EMA buffer
+        daemon.ema_buffer = Mock()
+        daemon.ema_buffer.stabilized = True
+        daemon.ema_buffer.voltage = 12.0
+        daemon.ema_buffer.load = 25.0
+
+        # Initialize discharge buffer
+        daemon.discharge_buffer = {
+            'voltages': [],
+            'times': [],
+            'collecting': False
+        }
+
+        # CYCLE 1: OL → OL → OB → OB → OB → OL → OL
+        current_time = time.time()
+        base_timestamp = current_time
+
+        # Poll 0: OL at 13.4V, 100% charge
+        daemon.poll_count = 0
+        daemon.current_metrics.event_type = EventType.ONLINE
+        daemon.current_metrics.transition_occurred = False
+        daemon.current_metrics.battery_charge = 100
+        daemon.ema_buffer.voltage = 13.4
+        daemon.ema_buffer.load = 2
+        # No discharge tracking in OL state
+
+        # Poll 1: OL at 13.3V, 100% charge
+        daemon.poll_count = 1
+        daemon.current_metrics.event_type = EventType.ONLINE
+        daemon.current_metrics.transition_occurred = False
+        daemon.current_metrics.battery_charge = 100
+        daemon.ema_buffer.voltage = 13.3
+        daemon.ema_buffer.load = 2
+
+        # Poll 2: OB at 12.0V, 50% charge (TRANSITION - OL→OB)
+        daemon.poll_count = 2
+        prev_event = EventType.ONLINE
+        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+        daemon.current_metrics.transition_occurred = True
+        daemon.current_metrics.previous_event_type = prev_event
+        daemon.current_metrics.battery_charge = 50
+        daemon.ema_buffer.voltage = 12.0
+        daemon.ema_buffer.load = 25
+        daemon._track_discharge(12.0, base_timestamp + 100)
+        daemon._handle_event_transition()
+        # After transition, discharge buffer should be collecting
+        assert daemon.discharge_buffer['collecting'] is True, "Buffer should start collecting on OB transition"
+
+        # Poll 3: OB at 11.5V, 30% charge (continue discharge)
+        daemon.poll_count = 3
+        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+        daemon.current_metrics.transition_occurred = False
+        daemon.current_metrics.battery_charge = 30
+        daemon.ema_buffer.voltage = 11.5
+        daemon.ema_buffer.load = 25
+        daemon._track_discharge(11.5, base_timestamp + 200)
+
+        # Poll 4: OB at 11.0V, 20% charge (continue discharge)
+        daemon.poll_count = 4
+        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+        daemon.current_metrics.transition_occurred = False
+        daemon.current_metrics.battery_charge = 20
+        daemon.ema_buffer.voltage = 11.0
+        daemon.ema_buffer.load = 25
+        daemon._track_discharge(11.0, base_timestamp + 300)
+
+        # Poll 5: OL at 13.0V, 100% charge (TRANSITION - OB→OL)
+        daemon.poll_count = 5
+        prev_event = EventType.BLACKOUT_REAL
+        daemon.current_metrics.event_type = EventType.ONLINE
+        daemon.current_metrics.transition_occurred = True
+        daemon.current_metrics.previous_event_type = prev_event
+        daemon.current_metrics.battery_charge = 100
+        daemon.ema_buffer.voltage = 13.0
+        daemon.ema_buffer.load = 2
+
+        # Verify discharge buffer BEFORE calling _handle_event_transition (which clears it)
+        assert len(daemon.discharge_buffer['voltages']) == 3, f"Expected 3 voltage samples before transition, got {len(daemon.discharge_buffer['voltages'])}"
+        assert daemon.discharge_buffer['voltages'] == [12.0, 11.5, 11.0], f"Unexpected voltage samples before transition: {daemon.discharge_buffer['voltages']}"
+
+        daemon._handle_event_transition()  # Should call _update_battery_health() and clear buffer
+
+        # Verify discharge buffer state after OB→OL (should be cleared now)
+        assert daemon.discharge_buffer['collecting'] is False, "Buffer should stop collecting after OB→OL transition"
+        assert len(daemon.discharge_buffer['voltages']) == 0, "Buffer should be cleared after _update_battery_health()"
+
+        # Verify _update_battery_health() was called
+        daemon.battery_model.add_soh_history_entry.assert_called_once()
+        daemon.battery_model.save.assert_called()  # May be called multiple times
+
+        # Poll 6: OL at 13.2V, 100% charge (stable OL)
+        daemon.poll_count = 6
+        daemon.current_metrics.event_type = EventType.ONLINE
+        daemon.current_metrics.transition_occurred = False
+        daemon.current_metrics.battery_charge = 100
+        daemon.ema_buffer.voltage = 13.2
+        daemon.ema_buffer.load = 2
+
+        # CYCLE 2: OL → OB → OL (verify second cycle works)
+        # Poll 7: OB at 12.5V, 60% charge (TRANSITION - OL→OB)
+        daemon.poll_count = 7
+        prev_event = EventType.ONLINE
+        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+        daemon.current_metrics.transition_occurred = True
+        daemon.current_metrics.previous_event_type = prev_event
+        daemon.current_metrics.battery_charge = 60
+        daemon.ema_buffer.voltage = 12.5
+        daemon.ema_buffer.load = 25
+        daemon._track_discharge(12.5, base_timestamp + 400)
+        daemon._handle_event_transition()
+        assert daemon.discharge_buffer['collecting'] is True, "Buffer should restart collecting in second OB"
+
+        # Poll 8: OB at 11.2V, 15% charge
+        daemon.poll_count = 8
+        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+        daemon.current_metrics.transition_occurred = False
+        daemon.current_metrics.battery_charge = 15
+        daemon.ema_buffer.voltage = 11.2
+        daemon.ema_buffer.load = 25
+        daemon._track_discharge(11.2, base_timestamp + 500)
+
+        # Poll 9: OL at 13.1V (TRANSITION - OB→OL)
+        daemon.poll_count = 9
+        prev_event = EventType.BLACKOUT_REAL
+        daemon.current_metrics.event_type = EventType.ONLINE
+        daemon.current_metrics.transition_occurred = True
+        daemon.current_metrics.previous_event_type = prev_event
+        daemon.current_metrics.battery_charge = 100
+        daemon.ema_buffer.voltage = 13.1
+        daemon.ema_buffer.load = 2
+
+        # Verify second cycle buffer BEFORE transition (has 2 samples)
+        assert len(daemon.discharge_buffer['voltages']) == 2, f"Expected 2 samples in second cycle, got {len(daemon.discharge_buffer['voltages'])}"
+        assert daemon.discharge_buffer['voltages'] == [12.5, 11.2], f"Second cycle unexpected: {daemon.discharge_buffer['voltages']}"
+
+        daemon._handle_event_transition()
+
+        # After transition, buffer should be cleared
+        assert daemon.discharge_buffer['collecting'] is False, "Buffer should stop collecting after second OB→OL"
+        assert len(daemon.discharge_buffer['voltages']) == 0, "Buffer should be cleared after second transition"
+
+        # Verify model updated twice (once per OB→OL)
+        assert daemon.battery_model.add_soh_history_entry.call_count == 2, f"Expected 2 SoH updates, got {daemon.battery_model.add_soh_history_entry.call_count}"
