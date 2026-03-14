@@ -116,6 +116,25 @@ MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
 
 
+def _safe_save(model: BatteryModel) -> None:
+    """Save model to disk, log errors gracefully if disk full.
+
+    Args:
+        model: BatteryModel instance to persist
+
+    Side effects:
+        - Logs to logger at ERROR level if save fails
+        - Does NOT raise exception; allows daemon to continue
+
+    Raises:
+        None; errors are logged only
+    """
+    try:
+        model.save()
+    except OSError as e:
+        logger.error(f"Failed to persist model (disk full?): {e}")
+
+
 @dataclass
 class CurrentMetrics:
     """Current UPS battery state snapshot, updated every poll.
@@ -327,10 +346,7 @@ class MonitorDaemon:
 
             # Update model.lut with source="measured" (Phase 6 implementation detail)
             # Recalculate SoH (Phase 6 implementation detail)
-            try:
-                self.battery_model.save()
-            except OSError as e:
-                logger.error(f"Failed to persist model (disk full?): {e}")
+            _safe_save(self.battery_model)
 
     def _update_battery_health(self):
         """
@@ -364,10 +380,7 @@ class MonitorDaemon:
         # Add to history
         today = datetime.now().strftime('%Y-%m-%d')
         self.battery_model.add_soh_history_entry(today, soh_new)
-        try:
-            self.battery_model.save()
-        except OSError as e:
-            logger.error(f"Failed to persist model (disk full?): {e}")
+        _safe_save(self.battery_model)
 
         logger.info(f"SoH calculated: {soh_new:.2%}")
 
@@ -478,10 +491,7 @@ class MonitorDaemon:
             logger.info(f"Peukert exponent calibrated: {current_exp:.3f} → {new_exp:.3f} "
                         f"(predicted={predicted:.1f}min, actual={actual_min:.1f}min)")
             self.battery_model.set_peukert_exponent(new_exp)
-            try:
-                self.battery_model.save()
-            except OSError as e:
-                logger.error(f"Failed to persist model (disk full?): {e}")
+            _safe_save(self.battery_model)
 
     def _record_voltage_sag(self, v_sag, event_type):
         """Record voltage sag measurement and compute internal resistance."""
@@ -495,10 +505,7 @@ class MonitorDaemon:
         r_ohm = delta_v / I_actual
         today = datetime.now().strftime('%Y-%m-%d')
         self.battery_model.add_r_internal_entry(today, r_ohm, self.v_before_sag, v_sag, load, event_type.name)
-        try:
-            self.battery_model.save()
-        except OSError as e:
-            logger.error(f"Failed to persist model (disk full?): {e}")
+        _safe_save(self.battery_model)
         logger.info(f"Voltage sag: {self.v_before_sag:.2f}V → {v_sag:.2f}V, "
                     f"R_internal={r_ohm*1000:.1f}mΩ at {load:.1f}% load")
 
