@@ -21,5 +21,18 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ups-battery-monitor
 
+# Hardening
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/dev/shm/ /home/j2h4u/.config/ups-battery-monitor/
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+RestrictNamespaces=yes
+UMask=0077
+
 [Install]
 WantedBy=multi-user.target

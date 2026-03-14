@@ -187,7 +187,7 @@ elif grep -q "cyberpower@localhost" "$UPSMON_CONF" 2>/dev/null; then
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would sed 's/cyberpower@localhost/cyberpower-virtual@localhost/' in $UPSMON_CONF"
     else
-        sed -i 's/cyberpower@localhost/cyberpower-virtual@localhost/' "$UPSMON_CONF"
+        sed -i.bak 's/cyberpower@localhost/cyberpower-virtual@localhost/' "$UPSMON_CONF"
         log_ok "upsmon.conf updated: cyberpower → cyberpower-virtual"
         systemctl restart nut-monitor
         log_ok "nut-monitor restarted with new config"
@@ -198,7 +198,7 @@ fi
 
 # === MOTD SCRIPTS ===
 
-MOTD_DIR="$(eval echo ~${SUDO_USER:-root})/scripts/motd"
+MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 
 # Install new health script
 HEALTH_SRC="$REPO_ROOT/scripts/motd/51-ups-health.sh"

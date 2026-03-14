@@ -44,7 +44,10 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
     virtual_ups_path = Path("/dev/shm/ups-virtual.dev")
 
     try:
-        # Ensure parent directory exists (may not be needed for /dev/shm, but safe)
+        # Guard against symlink attack: refuse to write through symlinks
+        if virtual_ups_path.is_symlink():
+            raise OSError(f"{virtual_ups_path} is a symlink, refusing to write")
+
         virtual_ups_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Build dummy-ups format: key: value\n per line
