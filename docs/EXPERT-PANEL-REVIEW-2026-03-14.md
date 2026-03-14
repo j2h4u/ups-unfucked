@@ -8,6 +8,18 @@ Comprehensive review: architecture, code quality, security, performance, efficie
 - **Blast radius:** `host-level` — bug can cause incorrect shutdown (data loss) or missed shutdown (hardware damage)
 - **Codebase:** ~1,856 LoC across 11 modules, 181 tests
 
+## Operating Context
+
+- **UPS:** CyberPower UT850EG (425W), VRLA lead-acid battery, connected via USB
+- **Server:** Headless Debian 13 (no monitor, no keyboard), accessible only via SSH. Unclean shutdown = potential data loss
+- **Power grid:** Unstable. **Blackouts several times per week** — mostly short (1-2 minutes), occasionally several hours
+- **Battery stress:** Frequent charge/discharge cycles accelerate degradation. Battery will degrade measurably within months, not years
+- **Key requirements:**
+  - Accurate runtime prediction during each blackout ("how many minutes until forced shutdown?")
+  - Predictive battery replacement ("order a new battery in N months") — with 100-200+ discharge events per year, statistical models have enough data
+  - Correct LB flag delivery to upsmon for timely shutdown
+- **Architecture role:** Daemon is a **data source** in the NUT stack — reads from real UPS, computes better metrics (SoC, runtime, SoH), publishes via virtual UPS. Shutdown decision belongs to upsmon, not to this daemon.
+
 ---
 
 ## 1. System Architect
