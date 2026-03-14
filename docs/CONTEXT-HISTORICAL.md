@@ -1,7 +1,10 @@
-# UPS Battery Monitor — Project Context
+# UPS Battery Monitor — Project Context (HISTORICAL)
 
-Этот документ — единственный источник истины о проекте до начала проектирования.
-Здесь: наблюдения, факты, принятые решения, открытые вопросы. Ничего финального.
+> **Archived 2026-03-14.** This was the pre-design document. All decisions have been
+> implemented. Current documentation: [README.md](../README.md), [USER-SCENARIOS.md](USER-SCENARIOS.md).
+
+Этот документ — исторический снимок проекта до начала проектирования.
+Здесь: наблюдения, факты, принятые решения, открытые вопросы. Всё реализовано.
 
 ---
 
