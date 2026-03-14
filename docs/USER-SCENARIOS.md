@@ -4,53 +4,17 @@ The monitor works fully automatically out of the box. These scenarios describe o
 
 ## Battery Health Report
 
-The daemon tracks battery health automatically from every discharge event. All data lives in `~/.config/ups-battery-monitor/model.json`.
+The daemon tracks battery health automatically from every discharge event.
 
 ```bash
-cat ~/.config/ups-battery-monitor/model.json | python3 -c "
-import json, sys
-m = json.load(sys.stdin)
-
-# State of Health
-soh = m.get('soh', 1.0)
-print(f'SoH: {soh:.0%}' + (' ⚠ below 80%' if soh < 0.80 else ''))
-
-# Capacity
-print(f'Capacity: {m.get(\"capacity_ah\", \"?\")} Ah')
-
-# LUT calibration coverage
-lut = m.get('lut', [])
-measured = sum(1 for e in lut if e.get('source') == 'measured')
-print(f'LUT: {len(lut)} points ({measured} measured, {len(lut)-measured} standard/interpolated)')
-
-# SoH history and replacement prediction
-history = m.get('soh_history', [])
-print(f'Discharge events: {len(history)}')
-if history:
-    print(f'Latest: {history[-1].get(\"date\", \"?\")} = {history[-1].get(\"soh\", 0):.0%}')
-if len(history) >= 3:
-    sys.path.insert(0, '.')
-    from src.replacement_predictor import linear_regression_soh
-    result = linear_regression_soh(history, threshold_soh=0.80)
-    if result:
-        slope, intercept, r2, date = result
-        print(f'Predicted replacement: {date} (confidence R²={r2:.2f})')
-
-# Internal resistance trend
-r_hist = m.get('r_internal_history', [])
-if r_hist:
-    latest = r_hist[-1]
-    print(f'R_internal: {latest[\"r_ohm\"]*1000:.1f}mΩ ({latest[\"date\"]})')
-    if len(r_hist) >= 3:
-        first, last = r_hist[0], r_hist[-1]
-        delta = (last['r_ohm'] - first['r_ohm']) * 1000
-        print(f'R_internal trend: {delta:+.1f}mΩ since {first[\"date\"]}')
-"
+python3 scripts/battery-health.py
 ```
 
-You can also check live metrics via NUT: `upsc cyberpower-virtual@localhost`
+Shows: SoH, capacity, LUT calibration coverage, discharge event count, replacement prediction (after 20+ events), and internal resistance trend.
 
-**When to worry:** SoH below 80%, replacement prediction within 3 months, or R_internal rising sharply — all indicate the battery should be replaced soon.
+Live metrics via NUT: `upsc cyberpower-virtual@localhost`
+
+**When to worry:** SoH below 80%, replacement prediction within 3 months, or R_internal rising sharply.
 
 ---
 
