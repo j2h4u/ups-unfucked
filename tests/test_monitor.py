@@ -51,7 +51,8 @@ def test_voltage_sag_detection(make_daemon):
     # Set up pre-sag state
     daemon.v_before_sag = 13.50
     daemon.sag_buffer = [12.80, 12.75, 12.78, 12.76, 12.77]
-    daemon.sag_collected = False
+    from src.monitor import SagState
+    daemon.sag_state = SagState.MEASURING
 
     # Record sag (median of last 3 = 12.77)
     v_sag = sorted(daemon.sag_buffer[-3:])[1]
@@ -87,8 +88,8 @@ def test_sag_init_vars(make_daemon):
     daemon = make_daemon()
     assert daemon.v_before_sag is None
     assert daemon.sag_buffer == []
-    assert daemon.sag_collected is False
-    assert daemon.fast_poll_active is False
+    from src.monitor import SagState
+    assert daemon.sag_state == SagState.IDLE
 
 
 def test_shutdown_threshold_from_config(make_daemon):

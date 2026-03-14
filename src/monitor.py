@@ -65,6 +65,16 @@ SOH_THRESHOLD = _cfg['soh_alert']
 MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
 
+from enum import Enum
+
+
+class SagState(Enum):
+    """Voltage sag measurement state machine: IDLE → ARMED → MEASURING → COMPLETE."""
+    IDLE = "idle"            # Waiting for OL→OB transition
+    MEASURING = "measuring"  # Collecting samples (fast poll active)
+    COMPLETE = "complete"    # Sag recorded, back to normal polling
+
+
 # Internal constants (not user-configurable)
 REPORTING_INTERVAL_POLLS = 6          # Log metrics every N polls (6 * 10s = 60s)
 SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of last 3 for noise rejection
@@ -154,10 +164,9 @@ class MonitorDaemon:
         self.reference_load_percent = REFERENCE_LOAD_PERCENT
 
         # Voltage sag measurement for internal resistance tracking
+        self.sag_state = SagState.IDLE
         self.v_before_sag = None
         self.sag_buffer = []
-        self.sag_collected = False
-        self.fast_poll_active = False
 
         # Phase 6: Track calibration writes
         self.calibration_last_written_index = 0
@@ -466,28 +475,29 @@ class MonitorDaemon:
     def _track_voltage_sag(self, voltage):
         """Measure voltage sag on OL→OB transition to estimate internal resistance.
 
-        Uses three boolean flags (fast_poll_active, sag_collected, v_before_sag).
-        If this method grows beyond ~20 lines, or if bugs arise from flag
-        inconsistency (e.g., fast_poll_active=True while sag_collected=True),
-        replace flags with SagState enum: IDLE → ARMED → MEASURING → COMPLETE.
+        State machine: IDLE → MEASURING → COMPLETE → IDLE.
+        MEASURING enables fast polling (1s instead of 10s) for precise sag capture.
         """
         event_type = self.current_metrics.get("event_type")
+
+        # OL→OB: start measuring
         if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
-            # Arm sag measurement on power loss
             self.v_before_sag = self.ema_buffer.voltage
             self.sag_buffer = []
-            self.sag_collected = False
-            self.fast_poll_active = True
+            self.sag_state = SagState.MEASURING
+
+        # OB→OL: cancel if still measuring (power restored before enough samples)
         if self.event_classifier.transition_occurred and event_type == EventType.ONLINE:
-            self.fast_poll_active = False
-        # Collect 5 samples, take median of last 3
-        if self.fast_poll_active and not self.sag_collected:
+            if self.sag_state == SagState.MEASURING:
+                self.sag_state = SagState.IDLE
+
+        # Collect samples during MEASURING
+        if self.sag_state == SagState.MEASURING:
             self.sag_buffer.append(voltage)
-            if len(self.sag_buffer) >= SAG_SAMPLES_REQUIRED:
+            if len(self.sag_buffer) >= SAG_SAMPLES_REQUIRED:  # 5 samples → median of last 3
                 v_sag = sorted(self.sag_buffer[-3:])[1]
                 self._record_voltage_sag(v_sag, event_type)
-                self.sag_collected = True
-                self.fast_poll_active = False
+                self.sag_state = SagState.COMPLETE
 
     def _track_discharge(self, voltage, timestamp):
         """Accumulate discharge samples and write calibration points."""
@@ -642,15 +652,15 @@ class MonitorDaemon:
                     self._write_virtual_ups(ups_data, battery_charge, time_rem)
 
                 sd_notify('WATCHDOG=1')
-                time.sleep(1 if self.fast_poll_active else POLL_INTERVAL)
+                time.sleep(1 if self.sag_state == SagState.MEASURING else POLL_INTERVAL)
 
             except KeyboardInterrupt:
                 logger.info("Interrupted by user")
                 break
             except Exception as e:
                 self._consecutive_errors += 1
-                # Reset fast poll state so we don't get stuck in 1s sleep on persistent errors
-                self.fast_poll_active = False
+                # Reset sag state so we don't get stuck in 1s sleep on persistent errors
+                self.sag_state = SagState.IDLE
                 # Rate-limit: full traceback for first 10, then summary every 6th (~60s)
                 if self._consecutive_errors <= ERROR_LOG_BURST or self._consecutive_errors % REPORTING_INTERVAL_POLLS == 0:
                     logger.error(f"Error in polling loop ({self._consecutive_errors} consecutive): {e}",
