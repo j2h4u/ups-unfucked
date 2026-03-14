@@ -121,6 +121,15 @@ class BatteryModel:
         return {
             'full_capacity_ah_ref': 7.2,  # Estimated from UT850EG 425W
             'soh': 1.0,  # State of Health (100% = new battery)
+            'physics': {
+                'peukert_exponent': 1.2,
+                'nominal_voltage': 12.0,
+                'nominal_power_watts': 425.0,
+                'ir_compensation': {
+                    'k_volts_per_percent': 0.015,
+                    'reference_load_percent': 20.0
+                }
+            },
             'lut': [
                 {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
                 {'v': 12.8, 'soc': 0.85, 'source': 'standard'},
@@ -134,6 +143,31 @@ class BatteryModel:
                 {'date': '2026-03-13', 'soh': 1.0}
             ]
         }
+
+    # --- Physics getters ---
+
+    def get_peukert_exponent(self) -> float:
+        return self.data.get('physics', {}).get('peukert_exponent', 1.2)
+
+    def get_nominal_voltage(self) -> float:
+        return self.data.get('physics', {}).get('nominal_voltage', 12.0)
+
+    def get_nominal_power_watts(self) -> float:
+        return self.data.get('physics', {}).get('nominal_power_watts', 425.0)
+
+    def get_ir_k(self) -> float:
+        return self.data.get('physics', {}).get('ir_compensation', {}).get('k_volts_per_percent', 0.015)
+
+    def get_ir_reference_load(self) -> float:
+        return self.data.get('physics', {}).get('ir_compensation', {}).get('reference_load_percent', 20.0)
+
+    # --- Physics setters ---
+
+    def set_peukert_exponent(self, value: float):
+        self.data.setdefault('physics', {})['peukert_exponent'] = value
+
+    def set_ir_k(self, value: float):
+        self.data.setdefault('physics', {}).setdefault('ir_compensation', {})['k_volts_per_percent'] = value
 
     def save(self):
         """
@@ -165,6 +199,20 @@ class BatteryModel:
     def get_soh_history(self):
         """Return list of {date, soh} entries."""
         return self.data.get('soh_history', [])
+
+    def add_r_internal_entry(self, date, r_ohm, v_before, v_sag, load_percent, event_type):
+        """Add internal resistance measurement from voltage sag."""
+        if 'r_internal_history' not in self.data:
+            self.data['r_internal_history'] = []
+        self.data['r_internal_history'].append({
+            'date': date, 'r_ohm': round(r_ohm, 4),
+            'v_before': round(v_before, 2), 'v_sag': round(v_sag, 2),
+            'load_percent': round(load_percent, 1), 'event': event_type
+        })
+
+    def get_r_internal_history(self):
+        """Return list of internal resistance measurements."""
+        return self.data.get('r_internal_history', [])
 
     def get_anchor_voltage(self):
         """Return anchor point voltage (physical cutoff, should always be 10.5V)."""

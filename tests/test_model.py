@@ -256,6 +256,75 @@ class TestBatteryModelMethods:
         assert model.get_soh() == 1.0
 
 
+class TestPhysicsSection:
+    """Test physics section in model.json."""
+
+    def test_default_has_physics(self, tmp_path):
+        """New model has physics section with defaults."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        assert model.get_peukert_exponent() == 1.2
+        assert model.get_nominal_voltage() == 12.0
+        assert model.get_nominal_power_watts() == 425.0
+        assert model.get_ir_k() == 0.015
+        assert model.get_ir_reference_load() == 20.0
+
+    def test_set_peukert_exponent(self, tmp_path):
+        """set_peukert_exponent updates the value."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.set_peukert_exponent(1.15)
+        assert model.get_peukert_exponent() == 1.15
+
+    def test_set_ir_k(self, tmp_path):
+        """set_ir_k updates the IR compensation coefficient."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.set_ir_k(0.020)
+        assert model.get_ir_k() == 0.020
+
+
+class TestRInternalHistory:
+    """Test internal resistance tracking."""
+
+    def test_add_r_internal_entry(self, tmp_path):
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.add_r_internal_entry('2026-03-14', 0.0396, 13.50, 13.22, 16.5, 'BLACKOUT_TEST')
+
+        history = model.get_r_internal_history()
+        assert len(history) == 1
+        assert history[0] == {
+            'date': '2026-03-14', 'r_ohm': 0.0396,
+            'v_before': 13.50, 'v_sag': 13.22,
+            'load_percent': 16.5, 'event': 'BLACKOUT_TEST'
+        }
+
+    def test_r_internal_history_empty_by_default(self, tmp_path):
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        assert model.get_r_internal_history() == []
+
+    def test_r_internal_history_persists(self, tmp_path):
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+        model.add_r_internal_entry('2026-03-14', 0.0396, 13.50, 13.22, 16.5, 'BLACKOUT_TEST')
+        model.save()
+
+        model2 = BatteryModel(model_path=model_file)
+        assert len(model2.get_r_internal_history()) == 1
+
+    def test_r_internal_multiple_entries(self, tmp_path):
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.add_r_internal_entry('2026-03-14', 0.0396, 13.50, 13.22, 16.5, 'BLACKOUT_TEST')
+        model.add_r_internal_entry('2026-03-15', 0.0410, 13.48, 13.19, 17.0, 'BLACKOUT_REAL')
+        assert len(model.get_r_internal_history()) == 2
+
+    def test_r_internal_rounding(self, tmp_path):
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.add_r_internal_entry('2026-03-14', 0.03961111, 13.501, 13.219, 16.55, 'BLACKOUT_TEST')
+        entry = model.get_r_internal_history()[0]
+        assert entry['r_ohm'] == 0.0396
+        assert entry['v_before'] == 13.50
+        assert entry['v_sag'] == 13.22
+        assert entry['load_percent'] == 16.6
+
+
 class TestCalibrationWrite:
     """Test BatteryModel.calibration_write() for real-time discharge data collection."""
 

@@ -20,8 +20,10 @@ This script:
 1. Validates prerequisites (Python 3, systemd, NUT)
 2. Installs systemd service unit
 3. Configures NUT dummy-ups (idempotent)
-4. Enables and starts the service
-5. Verifies virtual UPS is readable by NUT
+4. Switches upsmon to virtual UPS (idempotent)
+5. Installs MOTD health script, patches existing 51-ups.sh
+6. Enables and starts the service
+7. Verifies virtual UPS is readable by NUT
 
 Must run as root (with sudo).
 EOF
@@ -120,12 +122,19 @@ log_info "Installing systemd service file..."
 SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
 SERVICE_DST="/etc/systemd/system/ups-battery-monitor.service"
 
+DRIVER_SRC="$REPO_ROOT/systemd/ups-virtual-driver.service"
+DRIVER_DST="/etc/systemd/system/ups-virtual-driver.service"
+
 if [[ "$DRY_RUN" == "yes" ]]; then
     echo "[DRY-RUN] Would install: $SERVICE_SRC -> $SERVICE_DST"
+    echo "[DRY-RUN] Would install: $DRIVER_SRC -> $DRIVER_DST"
 else
     cp "$SERVICE_SRC" "$SERVICE_DST"
     chmod 644 "$SERVICE_DST"
     log_ok "Service file installed to $SERVICE_DST"
+    cp "$DRIVER_SRC" "$DRIVER_DST"
+    chmod 644 "$DRIVER_DST"
+    log_ok "Driver oneshot installed to $DRIVER_DST"
 fi
 
 log_info "Reloading systemd daemon..."
@@ -167,15 +176,75 @@ fi
 sleep 2
 log_ok "Services settled"
 
+# === UPSMON SWITCHOVER TO VIRTUAL UPS ===
+
+UPSMON_CONF="/etc/nut/upsmon.conf"
+
+if grep -q "cyberpower-virtual@localhost" "$UPSMON_CONF" 2>/dev/null; then
+    log_ok "upsmon already points to cyberpower-virtual (skipped)"
+elif grep -q "cyberpower@localhost" "$UPSMON_CONF" 2>/dev/null; then
+    log_info "Switching upsmon from cyberpower to cyberpower-virtual..."
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would sed 's/cyberpower@localhost/cyberpower-virtual@localhost/' in $UPSMON_CONF"
+    else
+        sed -i 's/cyberpower@localhost/cyberpower-virtual@localhost/' "$UPSMON_CONF"
+        log_ok "upsmon.conf updated: cyberpower → cyberpower-virtual"
+        systemctl restart nut-monitor
+        log_ok "nut-monitor restarted with new config"
+    fi
+else
+    log_info "No cyberpower entry found in $UPSMON_CONF (manual config may be needed)"
+fi
+
+# === MOTD SCRIPTS ===
+
+MOTD_DIR="$(eval echo ~${SUDO_USER:-root})/scripts/motd"
+
+# Install new health script
+HEALTH_SRC="$REPO_ROOT/scripts/motd/51-ups-health.sh"
+HEALTH_DST="$MOTD_DIR/51-ups-health.sh"
+
+if [[ -d "$MOTD_DIR" ]]; then
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would copy $HEALTH_SRC -> $HEALTH_DST"
+    else
+        cp "$HEALTH_SRC" "$HEALTH_DST"
+        chmod +x "$HEALTH_DST"
+        log_ok "MOTD health script installed to $HEALTH_DST"
+    fi
+
+    # Patch existing 51-ups.sh to use virtual UPS
+    UPS_MOTD="$MOTD_DIR/51-ups.sh"
+    if [[ -f "$UPS_MOTD" ]]; then
+        if grep -q "cyberpower-virtual@localhost" "$UPS_MOTD" 2>/dev/null; then
+            log_ok "51-ups.sh already uses cyberpower-virtual (skipped)"
+        elif grep -q "cyberpower@localhost" "$UPS_MOTD" 2>/dev/null; then
+            if [[ "$DRY_RUN" == "yes" ]]; then
+                echo "[DRY-RUN] Would patch 51-ups.sh: cyberpower → cyberpower-virtual"
+            else
+                sed -i 's/cyberpower@localhost/cyberpower-virtual@localhost/' "$UPS_MOTD"
+                log_ok "51-ups.sh patched: cyberpower → cyberpower-virtual"
+            fi
+        fi
+    fi
+else
+    log_info "MOTD directory $MOTD_DIR not found (skipping MOTD installation)"
+fi
+
 # === SERVICE ENABLEMENT AND STARTUP ===
 
 log_info "Enabling and starting ups-battery-monitor service..."
 
 run_cmd systemctl enable ups-battery-monitor
-log_ok "Service enabled (will auto-start on boot)"
+run_cmd systemctl enable ups-virtual-driver
+log_ok "Services enabled (will auto-start on boot)"
 
 run_cmd systemctl start ups-battery-monitor
-log_ok "Service started"
+log_ok "Monitor service started"
+
+# Driver oneshot will wait for device file, then start dummy-ups
+run_cmd systemctl start ups-virtual-driver
+log_ok "Virtual UPS driver started"
 
 # === POST-INSTALL VERIFICATION ===
 

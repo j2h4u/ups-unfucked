@@ -1,0 +1,16 @@
+[Unit]
+Description=Start dummy-ups driver after virtual UPS device file is ready
+After=ups-battery-monitor.service nut-server.service
+Requires=ups-battery-monitor.service nut-server.service
+ConditionPathExists=/run/nut/
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Wait for the device file to appear (daemon needs ~30s for EMA stabilization)
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do [ -f /dev/shm/ups-virtual.dev ] && exit 0; sleep 1; done; exit 1'
+ExecStart=/usr/sbin/upsdrvctl start cyberpower-virtual
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

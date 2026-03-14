@@ -1,96 +1,101 @@
-"""Unit tests for runtime calculator module (PRED-02)."""
+"""Unit tests for runtime calculator module — physics-based Peukert formula."""
 
 import pytest
 from src.runtime_calculator import runtime_minutes
 
 
 class TestPeukertFormula:
-    """Tests for Peukert formula with exponent 1.2."""
+    """Tests for pure-physics Peukert formula."""
 
-    def test_peukert_blackout_match(self):
-        """Test Peukert at blackout scenario: SoC=1.0, load=20% returns ~47 minutes."""
-        # From 2026-03-12 blackout: CyberPower UT850EG, capacity=7.2Ah, load=20%
-        # Expected: ~47 minutes of runtime
-        result = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        # Allow ±5% tolerance
-        assert 44.5 < result < 49.5, f"Expected ~47 min, got {result:.1f} min"
+    def test_peukert_blackout_match_n115(self):
+        """Validate: 17% load, n=1.15, 7.2Ah, 425W/12V → ~47 min (2026-03-12 blackout)."""
+        result = runtime_minutes(
+            soc=1.0, load_percent=17.0, capacity_ah=7.2, soh=1.0,
+            peukert_exponent=1.15, nominal_voltage=12.0, nominal_power_watts=425.0
+        )
+        assert 45.0 < result < 49.0, f"Expected ~47 min, got {result:.1f} min"
+
+    def test_peukert_20pct_load(self):
+        """20% load with default params gives reasonable runtime."""
+        result = runtime_minutes(soc=1.0, load_percent=20.0)
+        assert result > 20, f"Expected >20 min at 20% load, got {result:.1f}"
+        assert result < 100, f"Expected <100 min at 20% load, got {result:.1f}"
 
     def test_peukert_zero_soc(self):
-        """Test Peukert at SoC=0% returns 0 minutes."""
-        result = runtime_minutes(soc=0.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        assert result == 0, f"Expected 0 min at SoC=0, got {result}"
+        """SoC=0% returns 0 minutes."""
+        result = runtime_minutes(soc=0.0, load_percent=20.0)
+        assert result == 0.0
 
     def test_peukert_zero_load(self):
-        """Test Peukert at load=0% returns 0 minutes (safe handling)."""
-        result = runtime_minutes(soc=1.0, load_percent=0, capacity_ah=7.2, soh=1.0)
-        assert result == 0, f"Expected 0 min at load=0, got {result}"
+        """Load=0% returns 0 minutes (safe handling)."""
+        result = runtime_minutes(soc=1.0, load_percent=0.0)
+        assert result == 0.0
 
 
 class TestPeukertDegradation:
-    """Tests for SoH (state of health) scaling in Peukert formula."""
+    """Tests for SoH scaling."""
 
-    def test_peukert_with_degradation_80_percent(self):
-        """Test SoH=0.8 scales runtime by 0.8."""
-        # Full health at same conditions
-        full_health = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        degraded = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=0.8)
+    def test_soh_80_scales_runtime(self):
+        """SoH=0.8 scales runtime by 0.8."""
+        full = runtime_minutes(soc=1.0, load_percent=20.0, soh=1.0)
+        degraded = runtime_minutes(soc=1.0, load_percent=20.0, soh=0.8)
+        ratio = degraded / full
+        assert 0.78 < ratio < 0.82
 
-        # Degraded should be ~80% of full health
-        ratio = degraded / full_health
-        assert 0.78 < ratio < 0.82, f"Expected 0.8x scaling, got {ratio:.2f}x"
-
-    def test_peukert_with_degradation_50_percent(self):
-        """Test SoH=0.5 scales runtime by 0.5."""
-        full_health = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        severely_degraded = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=0.5)
-
-        ratio = severely_degraded / full_health
-        assert 0.48 < ratio < 0.52, f"Expected 0.5x scaling, got {ratio:.2f}x"
+    def test_soh_50_scales_runtime(self):
+        """SoH=0.5 scales runtime by 0.5."""
+        full = runtime_minutes(soc=1.0, load_percent=20.0, soh=1.0)
+        half = runtime_minutes(soc=1.0, load_percent=20.0, soh=0.5)
+        ratio = half / full
+        assert 0.48 < ratio < 0.52
 
 
 class TestPeukertLoadNonlinearity:
     """Tests for Peukert exponent effect on load variation."""
 
-    def test_peukert_load_nonlinearity(self):
-        """Test load 20% vs 80% shows nonlinear difference (1.2 exponent)."""
-        time_20 = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        time_80 = runtime_minutes(soc=1.0, load_percent=80, capacity_ah=7.2, soh=1.0)
-
-        # With exponent 1.2: time_20/time_80 = (load_80/load_20)^1.2 = (80/20)^1.2 ≈ 5.28
-        # Meaning time_20 should be ~5.3x longer than time_80
+    def test_load_nonlinearity(self):
+        """Load 20% vs 80% shows Peukert nonlinearity."""
+        time_20 = runtime_minutes(soc=1.0, load_percent=20.0)
+        time_80 = runtime_minutes(soc=1.0, load_percent=80.0)
+        # With exponent 1.2: ratio should be (80/20)^1.2 ≈ 5.28
         ratio = time_20 / time_80
-        expected_ratio = (80 / 20) ** 1.2
-        assert 5.0 < ratio < 5.6, f"Expected ~5.3x difference, got {ratio:.1f}x"
+        assert 5.0 < ratio < 5.6
 
-    def test_peukert_load_increase_drops_time(self):
-        """Test load increase (20% to 80%) reduces runtime sharply."""
-        time_low = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        time_high = runtime_minutes(soc=1.0, load_percent=80, capacity_ah=7.2, soh=1.0)
-
-        # Higher load should always give less runtime
-        assert time_high < time_low, f"High load ({time_high}) should be < low load ({time_low})"
-        # And the difference should be significant
-        assert time_high < (time_low / 5), f"Difference too small: {time_low} vs {time_high}"
+    def test_higher_load_less_runtime(self):
+        """Higher load always gives less runtime."""
+        time_low = runtime_minutes(soc=1.0, load_percent=20.0)
+        time_high = runtime_minutes(soc=1.0, load_percent=80.0)
+        assert time_high < time_low
+        assert time_high < (time_low / 5)
 
 
 class TestRuntimeEdgeCases:
-    """Tests for edge cases and defensive behavior."""
+    """Edge cases and defensive behavior."""
 
-    def test_runtime_partial_soc(self):
-        """Test runtime at 50% SoC."""
-        result = runtime_minutes(soc=0.5, load_percent=20, capacity_ah=7.2, soh=1.0)
-        assert result > 0, f"Expected positive runtime at SoC=0.5, got {result}"
-        assert result < runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0), \
-            "50% SoC should give less time than 100% SoC"
+    def test_partial_soc(self):
+        """50% SoC gives proportionally less runtime."""
+        full = runtime_minutes(soc=1.0, load_percent=20.0)
+        half = runtime_minutes(soc=0.5, load_percent=20.0)
+        assert half > 0
+        assert half < full
 
-    def test_runtime_no_negative_values(self):
-        """Test that runtime never returns negative values."""
+    def test_no_negative_values(self):
+        """Runtime never returns negative."""
         for soc in [0.0, 0.5, 1.0]:
             for load in [0.0, 20.0, 50.0, 100.0]:
-                result = runtime_minutes(soc=soc, load_percent=load, capacity_ah=7.2, soh=1.0)
-                assert result >= 0, f"Runtime negative at SoC={soc}, load={load}: {result}"
+                result = runtime_minutes(soc=soc, load_percent=load)
+                assert result >= 0
 
-    def test_runtime_returns_float(self):
-        """Test runtime returns float type."""
-        result = runtime_minutes(soc=1.0, load_percent=20, capacity_ah=7.2, soh=1.0)
-        assert isinstance(result, (int, float)), f"Expected numeric type, got {type(result)}"
+    def test_returns_float(self):
+        """Runtime returns float type."""
+        result = runtime_minutes(soc=1.0, load_percent=20.0)
+        assert isinstance(result, (int, float))
+
+    def test_no_const_parameter(self):
+        """Verify old 'const' parameter is removed — only physics params accepted."""
+        import inspect
+        sig = inspect.signature(runtime_minutes)
+        assert 'const' not in sig.parameters
+        assert 'peukert_exponent' in sig.parameters
+        assert 'nominal_voltage' in sig.parameters
+        assert 'nominal_power_watts' in sig.parameters

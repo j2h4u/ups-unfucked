@@ -33,12 +33,9 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
         if entry["v"] == voltage:
             return entry["soc"]
 
-    # Sort LUT by voltage (descending, highest to lowest)
-    sorted_lut = sorted(lut, key=lambda x: x["v"], reverse=True)
-
-    # Get max and min voltages
-    v_max = sorted_lut[0]["v"]
-    v_min = sorted_lut[-1]["v"]
+    # LUT is maintained sorted descending by voltage in BatteryModel
+    v_max = lut[0]["v"]
+    v_min = lut[-1]["v"]
 
     # Clamp above max voltage
     if voltage > v_max:
@@ -55,10 +52,10 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     v1_entry = None
     v2_entry = None
 
-    for i in range(len(sorted_lut) - 1):
-        if sorted_lut[i]["v"] >= voltage > sorted_lut[i + 1]["v"]:
-            v1_entry = sorted_lut[i]
-            v2_entry = sorted_lut[i + 1]
+    for i in range(len(lut) - 1):
+        if lut[i]["v"] >= voltage > lut[i + 1]["v"]:
+            v1_entry = lut[i]
+            v2_entry = lut[i + 1]
             break
 
     # If no bracket found, something went wrong (shouldn't happen given above logic)

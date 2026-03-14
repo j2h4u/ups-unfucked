@@ -1,6 +1,7 @@
 """State of Health (SoH) calculation from discharge voltage profiles."""
 
 from typing import List, Dict
+from src.runtime_calculator import peukert_runtime_hours
 
 
 
@@ -8,26 +9,35 @@ def calculate_soh_from_discharge(
     discharge_voltage_series: List[float],
     discharge_time_series: List[float],
     reference_soh: float = 1.0,
-    anchor_voltage: float = 10.5
+    anchor_voltage: float = 10.5,
+    capacity_ah: float = 7.2,
+    load_percent: float = 20.0,
+    nominal_power_watts: float = 425.0,
+    nominal_voltage: float = 12.0,
+    peukert_exponent: float = 1.2
 ) -> float:
     """
     Calculate State of Health (SoH) from measured discharge voltage profile.
 
-    Uses trapezoidal rule to integrate voltage over time. Compares measured
-    area-under-curve against baseline to estimate degradation.
+    Uses trapezoidal rule to integrate voltage over time. Reference area is
+    computed from Peukert's Law (no empirical constants).
 
     Args:
         discharge_voltage_series: Voltage readings [V] during discharge
         discharge_time_series: Time [sec] for each voltage reading (must be monotonic)
         reference_soh: Previous SoH estimate (0.0-1.0); used as baseline
         anchor_voltage: Physical cutoff voltage (typically 10.5V for VRLA)
+        capacity_ah: Full capacity in Ah
+        load_percent: Average load during discharge (%)
+        nominal_power_watts: UPS nominal power output (W)
+        nominal_voltage: Battery nominal voltage (V)
+        peukert_exponent: Peukert exponent
 
     Returns:
         Updated SoH estimate (0.0-1.0)
 
     Edge cases:
         - Empty or single-point data: returns reference_soh unchanged
-        - All voltage values same (no discharge): returns reference_soh
         - Voltage below anchor: integration stops at anchor (physical limit)
         - Computed SoH < 0 or > 1: clamped to [0, 1]
     """
@@ -44,7 +54,6 @@ def calculate_soh_from_discharge(
         trimmed_t.append(t)
 
     if len(trimmed_v) < 2:
-        # Discharged below cutoff immediately; no calibration data
         return reference_soh
 
     # Compute area-under-curve using trapezoidal rule
@@ -53,12 +62,15 @@ def calculate_soh_from_discharge(
         v1, v2 = trimmed_v[i], trimmed_v[i + 1]
         t1, t2 = trimmed_t[i], trimmed_t[i + 1]
         dt = t2 - t1
-        area_measured += (v1 + v2) / 2.0 * dt  # Voltage × time
+        area_measured += (v1 + v2) / 2.0 * dt
 
-    # Reference area: baseline discharge at new battery (SoH=1.0)
-    # Empirical from 2026-03-12 blackout: ~13.4V → 10.5V over 2820 sec @ 20% load
-    # Rough: average 12.0V over 47 minutes
-    area_reference = 12.0 * 2820
+    # Reference area from Peukert's Law (physics, no hardcoded constants)
+    T_expected_sec = peukert_runtime_hours(
+        load_percent, capacity_ah, peukert_exponent,
+        nominal_voltage, nominal_power_watts
+    ) * 3600
+    avg_voltage = sum(trimmed_v) / len(trimmed_v)
+    area_reference = avg_voltage * T_expected_sec
 
     # SoH = (measured area / reference area) × previous SoH
     degradation_ratio = area_measured / area_reference if area_reference > 0 else 1.0
