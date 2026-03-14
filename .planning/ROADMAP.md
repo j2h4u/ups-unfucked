@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-14)
-- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phase 8 complete, Phase 9 complete, Phase 10 planned, Phases 7,11 in progress)
+- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phase 8 complete, Phase 9 complete, Phase 10 started, Phases 7,11 in progress)
 
 ## Phases
 
@@ -25,7 +25,7 @@
 - [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout (1/2 plans complete)
 - [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4/4 plans complete)
 - [x] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (3/3 plans complete)
-- [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (2/2 plans planned)
+- [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (1/2 plans complete)
 - [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint
 
 </details>
@@ -43,7 +43,7 @@
 | 7. Safety-Critical Metrics | v1.1 | 1/2 | In progress | — |
 | 8. Architecture Foundation | v1.1 | 4/4 | Complete (Wave 0 + Wave 1) | 2026-03-15 |
 | 9. Test Coverage | v1.1 | 3/3 | Complete (Wave 2) | 2026-03-14 |
-| 10. Code Quality & Efficiency | v1.1 | 0/2 | Planned | — |
+| 10. Code Quality & Efficiency | v1.1 | 1/2 | In progress | 2026-03-14 |
 | 11. Polish & Future Prep | v1.1 | 0/2 | Planned | — |
 
 ---

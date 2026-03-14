@@ -20,9 +20,9 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 
 ### Code Quality
 
-- [ ] **QUAL-01**: Repeated `try/except OSError` for `model.save()` (4 occurrences in monitor.py) extracted to `_safe_save()` helper
-- [ ] **QUAL-02**: Hardcoded date `'2026-03-13'` in `_default_vrla_lut()` soh_history replaced with `datetime.now().strftime('%Y-%m-%d')`
-- [ ] **QUAL-03**: `soc_from_voltage` docstring corrected — says "binary search" but implementation is linear scan
+- [x] **QUAL-01**: Repeated `try/except OSError` for `model.save()` (4 occurrences in monitor.py) extracted to `_safe_save()` helper
+- [x] **QUAL-02**: Hardcoded date `'2026-03-13'` in `_default_vrla_lut()` soh_history replaced with `datetime.now().strftime('%Y-%m-%d')`
+- [x] **QUAL-03**: `soc_from_voltage` docstring corrected — says "binary search" but implementation is linear scan
 - [ ] **QUAL-04**: `calibration_write()` batched — accumulate points in memory, single save per REPORTING_INTERVAL instead of per-point atomic write
 - [ ] **QUAL-05**: Double error log in `virtual_ups.py` fixed — inner catch (line 90) and outer catch (line 93) both log same failure
 
@@ -60,16 +60,16 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 | ARCH-01 | 8 | Complete |
 | ARCH-02 | 8 | Complete |
 | ARCH-03 | 8 | Complete |
-| QUAL-01 | 10 | Pending |
-| QUAL-02 | 10 | Pending |
-| QUAL-03 | 10 | Pending |
+| QUAL-01 | 10 | Complete |
+| QUAL-02 | 10 | Complete |
+| QUAL-03 | 10 | Complete |
 | QUAL-04 | 10 | Pending |
 | QUAL-05 | 10 | Pending |
-| TEST-01 | 9 | Pending |
-| TEST-02 | 9 | Pending |
-| TEST-03 | 9 | Pending |
-| TEST-04 | 9 | Pending |
-| TEST-05 | 9 | Pending |
+| TEST-01 | 9 | Complete |
+| TEST-02 | 9 | Complete |
+| TEST-03 | 9 | Complete |
+| TEST-04 | 9 | Complete |
+| TEST-05 | 9 | Complete |
 | LOW-01 | 11 | Pending |
 | LOW-02 | 11 | Pending |
 | LOW-03 | 11 | Pending |
@@ -84,4 +84,4 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 ---
 
 *Requirements defined: 2026-03-15*
-*Last updated: 2026-03-15 after Phase 8 completion (ARCH-01/02/03)*
+*Last updated: 2026-03-14 after Phase 10-01 completion (QUAL-01/02/03)*
