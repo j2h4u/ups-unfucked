@@ -430,9 +430,7 @@ With frequent blackouts, verification happens naturally:
 
 ### P3 — Deferred (revisit after 3 months of data)
 
-- [ ] Monitor.py handler classes — only if adding new features requires it
 - [ ] Peukert auto-calibration hardening — require 3+ consistent >10% errors
-- [ ] Calibration mode validation — test on real hardware
 - [ ] Kaizen's 3-month verification — compare predicted vs actual runtime on 50+ events
 - [ ] Boolean flags → state enum (if bugs arise from flag inconsistency)
 
@@ -442,4 +440,20 @@ With frequent blackouts, verification happens naturally:
 - [x] /dev/shm mounted nosuid,nodev — verified
 - [x] UMask set to 0077 in service file
 - [x] MOTD uses upsc + model.json, not journald — alerter is justified (serves operators/Loki)
-- [ ] Calibration mode not yet tested on real hardware — marked as experimental in code
+- [x] Calibration mode — removed as separate mode. LUT auto-calibrates from every discharge. `--calibration-mode` flag deleted.
+
+### Beyond Action Plan (additional work from this session)
+
+- [x] NUT client: LIST VAR single-connection (6 TCP → 1)
+- [x] Adaptive EMA (DynamicAdaptiveFilterV2-inspired, fast reaction to power events)
+- [x] Time-weighted cliff interpolation (CURVE_RELEVANCE_HALF_LIFE_DAYS=90, reviewed by statistician + battery chemist)
+- [x] Auto-calibration on every discharge (removed calibration_mode gate)
+- [x] TOML config (11 env vars → 3 user-facing settings)
+- [x] Magic numbers → named constants (6 constants extracted)
+- [x] Logging deduplication (3 handlers → 1 JournalHandler, explicit identifier)
+- [x] model.json written at first startup (tools can always read it)
+- [x] battery-health.py script (human-friendly health report with UPS identity)
+- [x] User scenarios documentation (3 JTBD: health report, deep test, config)
+- [x] nut_exporter switched to virtual UPS (`?ups=cyberpower-virtual`)
+- [x] Old MOTD duplicate removed
+- [x] GSD todos: battery replacement scenario, install.sh system integration gaps
