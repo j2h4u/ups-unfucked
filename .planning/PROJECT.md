@@ -24,7 +24,14 @@
 
 ### Active
 
-(None — define in next milestone via `/gsd:new-milestone`)
+<!-- v1.1 Expert Panel Review Fixes -->
+- [ ] Per-poll metrics during blackout (P0 safety fix)
+- [ ] Refactor `current_metrics` to dataclass
+- [ ] Extract config into frozen dataclass
+- [ ] Full OL→OB→OL lifecycle tests
+- [ ] Peukert auto-calibration tests
+- [ ] Code quality fixes (imports, duplicate error handling, docstrings)
+- [ ] Batch calibration writes for efficiency
 
 ### Out of Scope
 
@@ -64,5 +71,18 @@ Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert expo
 | model.json как персистентная модель | Discharge events редки (раз в месяц), SSD не изнашивается | ✓ Good |
 | SoH через площадь под кривой voltage×time | Единственный способ посчитать деградацию без доступа к calibrate | ✓ Good |
 
+## Current Milestone: v1.1 Expert Panel Review Fixes
+
+**Goal:** Fix all findings from 2026-03-15 expert panel review (P0 through P3) — safety, architecture, code quality, tests.
+
+**Target features:**
+- P0: Per-poll virtual UPS writes during blackout (safety-critical LB flag lag)
+- P1: Architecture improvements (config dataclass, metrics dataclass, stray imports)
+- P1: Test coverage for untested critical paths (Peukert calibration, OL→OB→OL lifecycle, signal handler)
+- P2: Code quality (batch calibration writes, duplicate error handling, docstring fixes)
+- P3: Minor items (unbounded history, fsync style, health endpoint consideration)
+
+**Source:** `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`
+
 ---
-*Last updated: 2026-03-14 after v1.0 milestone*
+*Last updated: 2026-03-15 after v1.1 milestone start*
