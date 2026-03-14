@@ -1,7 +1,10 @@
 """State of Health (SoH) calculation from discharge voltage profiles."""
 
+import logging
 from typing import List, Dict
 from src.runtime_calculator import peukert_runtime_hours
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -55,6 +58,13 @@ def calculate_soh_from_discharge(
 
     if len(trimmed_v) < 2:
         return reference_soh
+
+    # Validate timestamp monotonicity (guard against clock jumps from NTP corrections)
+    for i in range(len(trimmed_t) - 1):
+        if trimmed_t[i + 1] <= trimmed_t[i]:
+            logger.warning(f"Non-monotonic timestamps in discharge data at index {i}: "
+                           f"{trimmed_t[i]} >= {trimmed_t[i+1]}, returning reference SoH")
+            return reference_soh
 
     # Compute area-under-curve using trapezoidal rule
     area_measured = 0.0

@@ -6,7 +6,8 @@ Wants=network-online.target
 ConditionPathExists=/run/nut/
 
 [Service]
-Type=simple
+Type=notify
+WatchdogSec=120
 User=j2h4u
 Group=j2h4u
 WorkingDirectory=/home/j2h4u/repos/j2h4u/ups-battery-monitor

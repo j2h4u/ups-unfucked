@@ -8,6 +8,10 @@ import tomllib
 from pathlib import Path
 from datetime import datetime
 from systemd.journal import JournalHandler
+try:
+    from systemd.daemon import notify as sd_notify
+except ImportError:
+    sd_notify = lambda status: None  # No-op when running outside systemd
 
 from src.nut_client import NUTClient
 from src.ema_filter import EMAFilter, ir_compensate
@@ -562,7 +566,7 @@ class MonitorDaemon:
 
         return battery_charge, time_rem
 
-    def _log_status(self, battery_charge, time_rem):
+    def _log_status(self, battery_charge, time_rem, poll_latency_ms=None):
         """Log periodic status line with all key metrics."""
         v_ema = self.ema_buffer.voltage
         l_ema = self.ema_buffer.load
@@ -573,10 +577,13 @@ class MonitorDaemon:
         time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
         event_type = self.current_metrics.get("event_type")
         event_str = event_type.name if event_type else "N/A"
+        discharge_depth = len(self.discharge_buffer['voltages'])
+        latency_str = f"{poll_latency_ms:.0f}ms" if poll_latency_ms is not None else "N/A"
         logger.info(
             f"Poll {self.poll_count}: V_ema={v_ema:.2f}V, L_ema={l_ema:.1f}%, "
             f"V_norm={v_norm_str}, charge={charge_str}, time_rem={time_rem_str}, "
-            f"event={event_str}, stabilized={self.ema_buffer.stabilized}"
+            f"event={event_str}, stabilized={self.ema_buffer.stabilized}, "
+            f"nut_latency={latency_str}, discharge_buf={discharge_depth}"
         )
 
     def _write_virtual_ups(self, ups_data, battery_charge, time_rem):
@@ -602,6 +609,7 @@ class MonitorDaemon:
         pipeline: EMA → event classification → sag/discharge tracking →
         metrics → virtual UPS output. Runs until SIGTERM/SIGINT.
         """
+        sd_notify('READY=1')
         logger.info("Starting main polling loop")
         self.poll_count = 0
         self._was_stabilized = False
@@ -611,6 +619,7 @@ class MonitorDaemon:
             try:
                 timestamp = time.time()
                 ups_data = self.nut_client.get_ups_vars()
+                poll_latency_ms = (time.time() - timestamp) * 1000
 
                 self._consecutive_errors = 0  # Reset on successful NUT poll
                 voltage, load = self._update_ema(ups_data)
@@ -630,9 +639,10 @@ class MonitorDaemon:
                     self.current_metrics["previous_event_type"] = self.current_metrics.get(
                         "event_type", EventType.ONLINE
                     )
-                    self._log_status(battery_charge, time_rem)
+                    self._log_status(battery_charge, time_rem, poll_latency_ms)
                     self._write_virtual_ups(ups_data, battery_charge, time_rem)
 
+                sd_notify('WATCHDOG=1')
                 time.sleep(1 if self.fast_poll_active else POLL_INTERVAL)
 
             except KeyboardInterrupt:
@@ -640,6 +650,8 @@ class MonitorDaemon:
                 break
             except Exception as e:
                 self._consecutive_errors += 1
+                # Reset fast poll state so we don't get stuck in 1s sleep on persistent errors
+                self.fast_poll_active = False
                 # Rate-limit: full traceback for first 10, then summary every 6th (~60s)
                 if self._consecutive_errors <= ERROR_LOG_BURST or self._consecutive_errors % REPORTING_INTERVAL_POLLS == 0:
                     logger.error(f"Error in polling loop ({self._consecutive_errors} consecutive): {e}",
