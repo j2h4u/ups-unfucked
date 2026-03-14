@@ -21,17 +21,16 @@
 - ✓ Алерты через MOTD и journald (деградация батареи, SoH, дата замены) — v1.0
 - ✓ Systemd-демон: установка, запуск, автозапуск после установки — v1.0
 - ✓ Режим ручной калибровки (--calibration-mode) для получения cliff region — v1.0
+- ✓ Per-poll virtual UPS writes during blackout (safety-critical LB flag fix) — v1.1
+- ✓ CurrentMetrics + Config frozen dataclasses (typed, testable architecture) — v1.1
+- ✓ Full OL→OB→OL lifecycle + Peukert + signal handler test coverage (205 tests) — v1.1
+- ✓ Batch calibration writes, _safe_save helper, consolidated error handling — v1.1
+- ✓ History pruning, fdatasync optimization, health.json endpoint — v1.1
+- ✓ MetricEMA generic class for extensible per-metric tracking — v1.1
 
 ### Active
 
-<!-- v1.1 Expert Panel Review Fixes -->
-- [ ] Per-poll metrics during blackout (P0 safety fix)
-- [ ] Refactor `current_metrics` to dataclass
-- [ ] Extract config into frozen dataclass
-- [ ] Full OL→OB→OL lifecycle tests
-- [ ] Peukert auto-calibration tests
-- [ ] Code quality fixes (imports, duplicate error handling, docstrings)
-- [ ] Batch calibration writes for efficiency
+(None — planning next milestone)
 
 ### Out of Scope
 
@@ -43,12 +42,14 @@
 
 ## Context
 
-Shipped v1.0 with 5,003 LOC Python, 160 tests, 103 commits over 2 days.
+Shipped v1.1 with 6,596 LOC Python, 205 tests, 215 commits over 2 days.
 Tech stack: Python 3.13, NUT (upsc + dummy-ups), systemd, journald.
 Hardware: CyberPower UT850EG (425W), USB, NUT usbhid-ups, Debian 13 (senbonzakura).
 
 Real blackout 2026-03-12 validated the model: 47 min actual vs ~22 min firmware prediction.
 Firmware showed 0% at minute 35 — UPS ran 12 more minutes.
+
+v1.1 addressed all 19 findings from expert panel review (P0-P3): safety-critical LB lag, architecture refactors, test coverage, code quality, polish.
 
 Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert exponent refinement (CAL2-02), Grafana metrics export (MON-01).
 
@@ -70,19 +71,9 @@ Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert expo
 | LUT + IR + Peukert вместо формул | VRLA-кривая не описывается формулой — только таблицей точек | ✓ Good |
 | model.json как персистентная модель | Discharge events редки (раз в месяц), SSD не изнашивается | ✓ Good |
 | SoH через площадь под кривой voltage×time | Единственный способ посчитать деградацию без доступа к calibrate | ✓ Good |
-
-## Current Milestone: v1.1 Expert Panel Review Fixes
-
-**Goal:** Fix all findings from 2026-03-15 expert panel review (P0 through P3) — safety, architecture, code quality, tests.
-
-**Target features:**
-- P0: Per-poll virtual UPS writes during blackout (safety-critical LB flag lag)
-- P1: Architecture improvements (config dataclass, metrics dataclass, stray imports)
-- P1: Test coverage for untested critical paths (Peukert calibration, OL→OB→OL lifecycle, signal handler)
-- P2: Code quality (batch calibration writes, duplicate error handling, docstring fixes)
-- P3: Minor items (unbounded history, fsync style, health endpoint consideration)
-
-**Source:** `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`
+| Frozen Config dataclass вместо module globals | Testability, no global state pollution, future multi-UPS ready | ✓ Good — v1.1 |
+| Per-poll writes only during OB state | Eliminates LB lag without extra SSD wear during normal ops | ✓ Good — v1.1 |
+| MetricEMA generic class | Decoupled per-metric EMA enables temperature sensor without code changes | ✓ Good — v1.1 |
 
 ---
-*Last updated: 2026-03-15 after v1.1 milestone start*
+*Last updated: 2026-03-14 after v1.1 milestone*

@@ -1,5 +1,23 @@
 # Milestones
 
+## v1.1 Expert Panel Review Fixes (Shipped: 2026-03-14)
+
+**Phases completed:** 5 phases, 14 plans, 33 tasks
+
+**Tests:** 205 passing | **LOC:** 6,596 Python | **Commits:** 111 (v1.0..HEAD)
+**Timeline:** 2 days (2026-03-13 → 2026-03-14)
+**Git range:** v1.0..61ce215
+
+**Key accomplishments:**
+- Per-poll virtual UPS writes during blackout — eliminates 60s LB flag lag (safety-critical)
+- Frozen Config dataclass (13 fields) + CurrentMetrics dataclass — replaces untyped dicts and module globals
+- Full OL→OB→OL integration test + Peukert/signal handler coverage (205 tests total)
+- Batch calibration writes (60x SSD wear reduction) + consolidated error handling
+- History pruning (30 entries max) + fdatasync optimization + health.json endpoint for external monitoring
+- MetricEMA generic class — extensible per-metric EMA for future sensors
+
+---
+
 ## v1.0 MVP (Shipped: 2026-03-14)
 
 **Delivered:** Honest battery monitoring daemon for CyberPower UT850EG — replaces unreliable firmware readings with physics-based estimation, enabling reliable automatic shutdown during blackouts.

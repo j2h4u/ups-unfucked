@@ -46,6 +46,49 @@
 
 ---
 
+## Milestone: v1.1 — Expert Panel Review Fixes
+
+**Shipped:** 2026-03-14
+**Phases:** 5 | **Plans:** 14 | **Tests:** 205
+
+### What Was Built
+- Per-poll virtual UPS writes during blackout (eliminates 60s LB flag lag)
+- Frozen Config + CurrentMetrics dataclasses replacing untyped dicts and module globals
+- Full OL→OB→OL integration test, Peukert auto-calibration tests, signal handler tests
+- Batch calibration writes (60x SSD wear reduction), _safe_save helper
+- History pruning (30 entries max), fdatasync optimization, health.json endpoint
+- MetricEMA generic class for extensible per-metric EMA tracking
+
+### What Worked
+- Expert panel review as requirements source — clear priorities (P0-P3), concrete findings, no ambiguity
+- Audit-before-complete caught stale checkboxes (LOW-03/LOW-04 marked pending but actually done)
+- Wave-based execution with parallel plans kept velocity high (5 phases in ~1 day)
+- Dataclass refactors (Phase 8) made subsequent phases easier to test and reason about
+
+### What Was Inefficient
+- SUMMARY.md one-liner extraction still inconsistent — some summaries had "Objective:" or "Problem:" instead of actual one-liner
+- Phase 7 plan 02 never explicitly completed in roadmap (showed 1/2) despite SAFE-01/02 being verified satisfied
+- STATE.md accumulated stale context from earlier phases (copy-paste from prior sessions)
+
+### Patterns Established
+- Frozen dataclass for config — passed to __init__, no module globals
+- MetricEMA as generic per-metric EMA (extensible without code changes)
+- health.json as liveness file for external monitoring (Grafana, check_mk)
+- _safe_save() helper for all model persistence calls
+
+### Key Lessons
+1. Expert panel review → requirements → phases is an efficient pipeline for improvement milestones
+2. Dataclass refactors pay for themselves immediately in test writability
+3. History pruning should be default from day 1 — unbounded lists are a ticking bomb
+4. fdatasync vs fsync is a free ~50% I/O win for JSON files where metadata doesn't matter
+
+### Cost Observations
+- Model mix: ~70% sonnet (execution), ~25% opus (planning/audit/milestone), ~5% haiku
+- Sessions: ~4-5 sessions across 1 day
+- Notable: Parallel phase execution (8+9 in same wave) kept total time short
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -53,14 +96,18 @@
 | Milestone | Phases | Plans | Key Change |
 |-----------|--------|-------|------------|
 | v1.0 | 6 | 21 | First milestone — established test-first wave pattern |
+| v1.1 | 5 | 14 | Expert panel review as requirements source; dataclass-first refactoring |
 
 ### Cumulative Quality
 
 | Milestone | Tests | LOC | Zero-Dep Additions |
 |-----------|-------|-----|-------------------|
 | v1.0 | 160 | 5,003 | All (stdlib only + NUT) |
+| v1.1 | 205 | 6,596 | All (stdlib only + NUT) |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. Physics-based estimation beats firmware readings for VRLA batteries
 2. Test-first with real data (actual blackout measurements) produces reliable models
+3. Expert panel review → concrete requirements is an efficient improvement pipeline
+4. Dataclass refactors pay for themselves immediately in testability
