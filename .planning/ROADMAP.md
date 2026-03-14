@@ -40,7 +40,7 @@
 | 4. Health Monitoring | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 5. Operational Setup | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 6. Calibration Mode | v1.0 | 2/2 | Complete | 2026-03-14 |
-| 7. Safety-Critical Metrics | v1.1 | 0/1 | Not started | — |
+| 7. Safety-Critical Metrics | v1.1 | 0/2 | Not started | — |
 | 8. Architecture Foundation | v1.1 | 0/3 | Not started | — |
 | 9. Test Coverage | v1.1 | 0/5 | Not started | — |
 | 10. Code Quality & Efficiency | v1.1 | 0/5 | Not started | — |
