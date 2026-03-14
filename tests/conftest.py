@@ -59,6 +59,41 @@ def mock_socket_timeout():
 
 
 @pytest.fixture
+def mock_socket_list_var():
+    """
+    Fixture returning mock socket with proper LIST VAR multi-line response.
+
+    Real NUT upsd format for LIST VAR command returns multi-line response:
+    VAR cyberpower battery.voltage "13.4"
+    VAR cyberpower battery.charge "85"
+    VAR cyberpower ups.status "OL"
+    VAR cyberpower ups.load "25"
+    VAR cyberpower input.voltage "230"
+    END LIST VAR cyberpower
+
+    This fixture ensures get_ups_vars() parsing works correctly.
+    """
+    response = b"""VAR cyberpower battery.voltage "13.4"
+VAR cyberpower battery.charge "85"
+VAR cyberpower ups.status "OL"
+VAR cyberpower ups.load "25"
+VAR cyberpower input.voltage "230"
+END LIST VAR cyberpower
+"""
+    mock_sock = Mock(spec=socket.socket)
+
+    def mock_recv_impl(bufsize):
+        return response
+
+    mock_sock.recv = Mock(side_effect=mock_recv_impl)
+    mock_sock.sendall = Mock(return_value=None)
+    mock_sock.connect = Mock(return_value=None)
+    mock_sock.close = Mock(return_value=None)
+
+    return mock_sock
+
+
+@pytest.fixture
 def temporary_model_path():
     """
     Pytest fixture that yields temporary file path for model.json.
