@@ -2,7 +2,7 @@
 
 import pytest
 import math
-from src.ema_ring_buffer import EMAFilter
+from src.ema_filter import EMAFilter
 
 
 def fill_samples(buf, n, voltage=12.0, load=50.0):

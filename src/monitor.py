@@ -10,7 +10,7 @@ from datetime import datetime
 from systemd.journal import JournalHandler
 
 from src.nut_client import NUTClient
-from src.ema_ring_buffer import EMAFilter, ir_compensate
+from src.ema_filter import EMAFilter, ir_compensate
 from src.model import BatteryModel
 from src.soc_predictor import soc_from_voltage, charge_percentage
 from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
@@ -19,6 +19,8 @@ from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src import soh_calculator, replacement_predictor, alerter
 
 # === INLINE CONFIGURATION (H2 fix: removed src/config.py) ===
+# Configuration precedence: model.json (physics) > env var > code default below.
+# TODO: replace env vars with centralized config file (see docs/EXPERT-PANEL-REVIEW-2026-03-14.md P1.5)
 POLL_INTERVAL = int(os.getenv('UPS_MONITOR_POLL_INTERVAL', '10'))
 MODEL_DIR = Path(os.getenv('UPS_MONITOR_MODEL_DIR', str(Path.home() / '.config' / 'ups-battery-monitor')))
 MODEL_PATH = MODEL_DIR / 'model.json'
@@ -298,17 +300,20 @@ class MonitorDaemon:
         voltages = self.discharge_buffer['voltages']
         times = self.discharge_buffer['times']
         if len(times) < 2:
+            logger.debug("Peukert calibration skipped: <2 discharge samples")
             return
 
         actual_duration_sec = times[-1] - times[0]
         if actual_duration_sec < 60:
-            return  # Too short to calibrate
+            logger.debug(f"Peukert calibration skipped: discharge too short ({actual_duration_sec:.0f}s < 60s)")
+            return
 
         actual_min = actual_duration_sec / 60.0
 
         # Estimate average load from EMA (best available)
         avg_load = self.ema_buffer.load
         if avg_load is None or avg_load <= 0:
+            logger.debug(f"Peukert calibration skipped: invalid load ({avg_load})")
             return
 
         capacity_ah = self.battery_model.get_capacity_ah()
@@ -320,6 +325,7 @@ class MonitorDaemon:
             avg_load, capacity_ah, current_exp, nominal_voltage, nominal_power_watts
         )
         if T_full_hours <= 0:
+            logger.debug(f"Peukert calibration skipped: T_full_hours={T_full_hours}")
             return
 
         predicted = T_full_hours * current_soh * 60  # minutes
@@ -330,10 +336,12 @@ class MonitorDaemon:
             ratio = I_rated / I_actual
 
             if ratio <= 0 or ratio == 1.0:
+                logger.debug(f"Peukert calibration skipped: degenerate current ratio ({ratio:.3f})")
                 return
 
             denom = math.log(ratio)
             if abs(denom) < 1e-10:
+                logger.debug("Peukert calibration skipped: log(ratio) ≈ 0")
                 return
 
             new_exp = math.log(actual_min / 60.0 / (20.0 * current_soh)) / denom
@@ -448,17 +456,17 @@ class MonitorDaemon:
                                 # Phase 6: Write calibration points every 6 polls (~60 seconds) if calibration mode
                                 if self.calibration_mode and event_type == EventType.BLACKOUT_TEST:
                                     if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index >= 6:
-                                        # Write accumulated points to model
-                                        try:
-                                            for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
+                                        # Write accumulated points to model, advancing index per successful write
+                                        for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
+                                            try:
                                                 v = self.discharge_buffer['voltages'][i]
                                                 t = self.discharge_buffer['times'][i]
-                                                # Estimate SoC from voltage using LUT
                                                 soc_est = soc_from_voltage(v, self.battery_model.get_lut())
                                                 self.battery_model.calibration_write(v, soc_est, t)
-                                            self.calibration_last_written_index = len(self.discharge_buffer['voltages'])
-                                        except Exception as e:
-                                            logger.error(f"Calibration write failed: {e}")
+                                                self.calibration_last_written_index = i + 1
+                                            except Exception as e:
+                                                logger.error(f"Calibration write failed at index {i}: {e}")
+                                                break  # Stop batch on first error, resume from this index next time
                         else:
                             # Not in blackout; clear buffer on next event transition
                             if self.discharge_buffer['collecting']:
