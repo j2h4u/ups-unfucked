@@ -61,6 +61,12 @@ SOH_THRESHOLD = _cfg['soh_alert']
 MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
 
+# Internal constants (not user-configurable)
+REPORTING_INTERVAL_POLLS = 6          # Log metrics every N polls (6 * 10s = 60s)
+SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of last 3 for noise rejection
+DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Cap at ~3 hours (1000 * 10s ≈ 2.8h), prevents unbounded memory growth
+ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
+
 # === INLINE LOGGING SETUP (H3 fix: removed src/logger.py) ===
 logger = logging.getLogger('ups-battery-monitor')
 logger.setLevel(logging.INFO)
@@ -140,9 +146,6 @@ class MonitorDaemon:
         self._last_logged_time_rem = None
 
         # Phase 4: Discharge buffer and health monitoring thresholds
-        # Cap at ~3 hours of discharge (1000 * 10s = 10,000s ≈ 2.8h).
-        # Prevents unbounded memory growth if UPS stuck in OB state.
-        self.DISCHARGE_BUFFER_MAX_SAMPLES = 1000
         self.discharge_buffer = {
             'voltages': [],      # Voltage samples during OB state
             'times': [],         # Timestamps relative to discharge start
@@ -475,7 +478,7 @@ class MonitorDaemon:
         # Collect 5 samples, take median of last 3
         if self.fast_poll_active and not self.sag_collected:
             self.sag_buffer.append(voltage)
-            if len(self.sag_buffer) >= 5:  # 5 samples → median of last 3 for noise rejection
+            if len(self.sag_buffer) >= SAG_SAMPLES_REQUIRED:
                 v_sag = sorted(self.sag_buffer[-3:])[1]
                 self._record_voltage_sag(v_sag, event_type)
                 self.sag_collected = True
@@ -491,8 +494,8 @@ class MonitorDaemon:
                 self.discharge_buffer['times'] = []
                 logger.info(f"Starting discharge buffer collection ({event_type.name})")
             if voltage is not None:
-                if len(self.discharge_buffer['voltages']) >= self.DISCHARGE_BUFFER_MAX_SAMPLES:
-                    logger.warning(f"Discharge buffer capped at {self.DISCHARGE_BUFFER_MAX_SAMPLES} samples")
+                if len(self.discharge_buffer['voltages']) >= DISCHARGE_BUFFER_MAX_SAMPLES:
+                    logger.warning(f"Discharge buffer capped at {DISCHARGE_BUFFER_MAX_SAMPLES} samples")
                 else:
                     self.discharge_buffer['voltages'].append(voltage)
                     self.discharge_buffer['times'].append(timestamp)
@@ -506,7 +509,7 @@ class MonitorDaemon:
         """In calibration mode, flush accumulated points to model every 6 polls."""
         if not (self.calibration_mode and event_type == EventType.BLACKOUT_TEST):
             return
-        if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index < 6:
+        if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index < REPORTING_INTERVAL_POLLS:
             return
         for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
             try:
@@ -621,7 +624,7 @@ class MonitorDaemon:
                 self._track_discharge(voltage, timestamp)
 
                 # Every 6 polls (~60s): compute metrics, handle events, write virtual UPS
-                if self.poll_count % 6 == 0:  # Every 6 polls ≈ 60s at 10s interval
+                if self.poll_count % REPORTING_INTERVAL_POLLS == 0:
                     battery_charge, time_rem = self._compute_metrics()
                     self._handle_event_transition()
                     self.current_metrics["previous_event_type"] = self.current_metrics.get(
@@ -638,9 +641,9 @@ class MonitorDaemon:
             except Exception as e:
                 self._consecutive_errors += 1
                 # Rate-limit: full traceback for first 10, then summary every 6th (~60s)
-                if self._consecutive_errors <= 10 or self._consecutive_errors % 6 == 0:
+                if self._consecutive_errors <= ERROR_LOG_BURST or self._consecutive_errors % REPORTING_INTERVAL_POLLS == 0:
                     logger.error(f"Error in polling loop ({self._consecutive_errors} consecutive): {e}",
-                                 exc_info=(self._consecutive_errors <= 10))
+                                 exc_info=(self._consecutive_errors <= ERROR_LOG_BURST))
                 time.sleep(POLL_INTERVAL)
 
         logger.info("Polling loop ended; daemon shutting down")

@@ -6,6 +6,11 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+# During battery test, UPS switches to battery but mains voltage stays (CyberPower shows ~220V).
+# During real blackout, input voltage drops to 0V. 100V separates the two cases.
+TEST_INPUT_VOLTAGE_THRESHOLD = 100
+
+
 class EventType(Enum):
     """Event types detected during UPS state changes."""
 
@@ -46,7 +51,7 @@ class EventClassifier:
         if category == "online":
             new_state = EventType.ONLINE
         elif category == "battery":
-            if input_voltage >= 100:  # Mains present during test (CyberPower shows ~220V); real blackout = 0V
+            if input_voltage >= TEST_INPUT_VOLTAGE_THRESHOLD:
                 new_state = EventType.BLACKOUT_TEST
             else:
                 if 0 < input_voltage < 100:

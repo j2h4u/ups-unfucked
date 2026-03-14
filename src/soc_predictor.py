@@ -5,6 +5,9 @@ from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
+# Conservative middle estimate when LUT is empty — avoids false LB flag (0.0) or false "full" (1.0)
+SOC_FALLBACK = 0.5
+
 
 def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     """
@@ -26,7 +29,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     """
     if not lut:
         logger.warning("Empty LUT provided to soc_from_voltage")
-        return 0.5  # Conservative middle estimate — avoids false LB flag (0.0) or false "full" (1.0)
+        return SOC_FALLBACK
 
     # Check for exact match first
     for entry in lut:
@@ -61,7 +64,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     # If no bracket found, something went wrong (shouldn't happen given above logic)
     if v1_entry is None or v2_entry is None:
         logger.warning(f"No LUT bracket found for voltage {voltage}")
-        return 0.5
+        return SOC_FALLBACK
 
     # Linear interpolation
     v1, soc1 = v1_entry["v"], v1_entry["soc"]
