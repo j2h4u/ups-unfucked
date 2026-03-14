@@ -117,6 +117,7 @@ class MonitorDaemon:
         )
 
         self.battery_model = BatteryModel(MODEL_PATH)
+        self._validate_model()
         self.event_classifier = EventClassifier()
 
         # Load physics params from model
@@ -167,6 +168,25 @@ class MonitorDaemon:
 
         # H1 fix: Check NUT connectivity at startup
         self._check_nut_connectivity()
+
+    def _validate_model(self):
+        """Validate battery model has minimum viable data for SoC/runtime predictions."""
+        lut = self.battery_model.get_lut()
+        if len(lut) < 2:
+            logger.warning(f"Model LUT has only {len(lut)} point(s); predictions will be inaccurate until calibration")
+
+        anchor = self.battery_model.data.get('anchor_voltage')
+        if anchor is None:
+            logger.warning("Model missing anchor_voltage; SoH calculation may fail")
+
+        soh = self.battery_model.get_soh()
+        if not (0.0 < soh <= 1.0):
+            logger.warning(f"Model SoH={soh} out of valid range (0, 1]; resetting to 1.0")
+            self.battery_model.data['soh'] = 1.0
+
+        capacity = self.battery_model.get_capacity_ah()
+        if capacity <= 0:
+            raise ValueError(f"Model capacity_ah={capacity} invalid; cannot compute runtime")
 
     def _check_nut_connectivity(self):
         """

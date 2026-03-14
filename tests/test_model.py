@@ -347,7 +347,7 @@ class TestCalibrationWrite:
         assert new_entry[0]['timestamp'] == 1234567890.0
 
     def test_calibration_write_duplicate_prevention(self, tmp_path):
-        """Verify calibration_write() skips duplicates within ±0.01V tolerance."""
+        """Verify calibration_write() skips duplicates by timestamp."""
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
@@ -355,12 +355,15 @@ class TestCalibrationWrite:
         model.calibration_write(voltage=12.5, soc=0.65, timestamp=1000.0)
         count_after_first = len(model.get_lut())
 
-        # Try to write duplicate (within ±0.01V)
-        model.calibration_write(voltage=12.505, soc=0.64, timestamp=2000.0)
+        # Same timestamp = duplicate (e.g., retry after crash recovery)
+        model.calibration_write(voltage=12.505, soc=0.64, timestamp=1000.0)
         count_after_second = len(model.get_lut())
-
-        # Count should not increase
         assert count_after_second == count_after_first
+
+        # Different timestamp = new measurement (even if voltage similar)
+        model.calibration_write(voltage=12.505, soc=0.64, timestamp=2000.0)
+        count_after_third = len(model.get_lut())
+        assert count_after_third == count_after_first + 1
 
     def test_calibration_write_fsync(self, tmp_path):
         """Verify calibration_write() calls save() for atomic write with fsync."""

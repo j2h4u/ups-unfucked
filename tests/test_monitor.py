@@ -21,7 +21,8 @@ def make_daemon():
          patch('src.monitor.BatteryModel'), \
          patch('src.monitor.EventClassifier'), \
          patch('src.monitor.alerter.setup_ups_logger'), \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'):
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
         def _make(calibration_mode=False):
             return MonitorDaemon(calibration_mode=calibration_mode)
         yield _make
@@ -137,7 +138,8 @@ def test_calibration_mode_logging():
          patch('src.monitor.EventClassifier'), \
          patch('src.monitor.alerter.setup_ups_logger'), \
          patch('src.monitor.logger') as mock_logger, \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'):
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
         MonitorDaemon(calibration_mode=True)
 
         calls = mock_logger.info.call_args_list
@@ -262,7 +264,8 @@ def test_calibration_completion_logging():
          patch('src.monitor.EventClassifier'), \
          patch('src.monitor.alerter.setup_ups_logger'), \
          patch('src.monitor.logger') as mock_logger, \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'):
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
         daemon = MonitorDaemon(calibration_mode=True)
 
         mock_model = MagicMock()
@@ -303,7 +306,8 @@ def test_calibration_mode_end_to_end():
              patch('src.monitor.EMAFilter'), \
              patch('src.monitor.EventClassifier'), \
              patch('src.monitor.alerter.setup_ups_logger'), \
-             patch.object(MonitorDaemon, '_check_nut_connectivity'):
+             patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
             daemon = MonitorDaemon(calibration_mode=True)
 
             model = BatteryModel(model_path=model_path)

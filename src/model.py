@@ -243,8 +243,9 @@ class BatteryModel:
         Raises:
             IOError: If atomic write fails
         """
-        # Check for duplicates within ±0.01V tolerance
-        existing = [e for e in self.data['lut'] if abs(e['v'] - voltage) < 0.01]
+        # Deduplicate by timestamp (not voltage — noise can shift voltage between retries,
+        # but same timestamp means same physical measurement)
+        existing = [e for e in self.data['lut'] if e.get('timestamp') == timestamp]
         if existing:
             return  # Skip duplicate
 
