@@ -227,77 +227,57 @@ Memory footprint: <100 KB total. No concerns with Python GC pauses.
 
 #### 4.1 Long Methods & Deep Nesting
 
-- `monitor.py run()`: 200+ lines, 5 nesting levels. Contains polling, EMA, events, sag tracking, discharge buffering, virtual UPS writing.
-- `monitor.py _update_battery_health()`: 80 lines mixing SoH calculation, history append, replacement prediction, alerting, Peukert calibration.
-- `monitor.py _auto_calibrate_peukert()`: 55 lines, 6 nesting levels. Physics calculation obscured by guards.
-
-**Recommendation:** Extract `_poll_once()`, `_measure_voltage_sag()`, `_accumulate_discharge_buffer()`, `_handle_soh_update()`.
+- [x] ~~run() 200+ lines, 5 nesting levels~~ — refactored to 48 lines, 8 methods extracted.
+- [ ] `_update_battery_health()` 80 lines — acceptable, each section is sequential (SoH → prediction → alerting). Would not benefit from splitting.
+- [ ] `_auto_calibrate_peukert()` 55 lines — guards are necessary for physics edge cases. Debug logs added.
 
 #### 4.2 Feature Envy
 
-- `monitor.py:449-466`: Direct manipulation of discharge buffer internals and calibration logic. Should delegate to a class.
-- `monitor.py:224-235`: Passes 10 arguments to `soh_calculator.calculate_soh_from_discharge()`.
+- [x] ~~Calibration writes~~ — extracted to `_write_calibration_points()`.
+- [ ] `soh_calculator.calculate_soh_from_discharge()` takes many args — acceptable, pure function with clear signature.
 
 #### 4.3 Boolean Flag Proliferation
 
-- `self.sag_collected`, `self.fast_poll_active`, `self.discharge_buffer['collecting']` — three separate boolean flags for sag state.
-- Easy to get state out of sync (e.g., `fast_poll_active=True` but `sag_collected=True` is contradictory).
-- `calibration_mode=False` boolean flag changes behavior deeply.
-
-**Better approach:** State enum `SagState(Enum): IDLE, ARMED, MEASURING, COMPLETE`.
+- [ ] Deferred. `sag_collected`, `fast_poll_active`, `collecting` serve different lifecycles. State enum would add abstraction without reducing bugs. Current code is clear enough after method extraction.
 
 #### 4.4 Inconsistent Error Handling
 
-Three different patterns:
-- `nut_client.py`: Silent failures (return empty dict)
-- `model.py`: Fallback to default on corrupt file
-- `monitor.py`: Log and continue on exception
-
-**Recommendation:** Establish policy: recoverable (log warning + continue), corruption (log error + fallback), critical (raise).
+- [x] ~~Disk full~~ — all model.save() wrapped in try/except OSError.
+- [x] ~~Error log flooding~~ — rate-limited.
+- [ ] Three error patterns exist (raise/return None/return {}) — acceptable. Each matches its caller's expectations. Documented in code.
 
 #### 4.5 Magic Numbers
 
-| Number | Location | Meaning |
-|--------|----------|---------|
-| 1000 | monitor.py:116 | Discharge buffer cap (~3h at 10s poll) |
-| 5 | monitor.py:425 | Sag sample count |
-| 100 | event_classifier.py:49 | Test vs real blackout voltage threshold |
-| 0.5 | soc_predictor.py:29 | Fallback SoC for empty LUT |
-| 6 | monitor.py:464,445 | Polls between calibration writes (=60s) |
-| 12 | ema_ring_buffer.py:61 | Min samples for stabilization |
+- [x] ~~All magic numbers~~ — "why" comments added: 1000, 5, 100, 0.5, 6, 1e-6.
 
 #### 4.6 Test Coverage Gaps
 
-**Missing tests:**
-- `monitor.py` polling loop: NUT unreachable at startup, EMA not stabilized, OB->OL health update, discharge buffer overflow
-- `virtual_ups.py`: No tests for `write_virtual_ups_dev()` at all
-- `alerter.py`: No tests at all
-- `replacement_predictor.py`: Non-ISO8601 date parsing, future dates >2100
+- [ ] Deferred. Current 181 tests cover critical paths. Missing integration tests for error scenarios (NUT unreachable, disk full, virtual UPS write failure) are P2 items.
 
 #### 4.7 Naming Issues
 
-- `ema_ring_buffer.py` -> should be `ema_filter.py`
-- `monitor.py:111` `self.last_soc` -> suggests "previous iteration" but used for change detection threshold
-- Comments reference "L1 fix" (monitor.py:394) without context
+- [x] ~~ema_ring_buffer.py~~ — renamed to `ema_filter.py`.
+- [x] ~~last_soc/last_time_rem~~ — renamed to `_last_logged_soc`/`_last_logged_time_rem`.
+- [x] ~~"L1 fix" comments~~ — removed during run() refactor.
 
 #### 4.8 Dead Code
 
-- `soh_calculator.py` line 3: `import logging` imported but never used.
+- [x] ~~soh_calculator.py unused import~~ — already clean (report was stale).
 
 #### 4.9 Comments Quality
 
-- Comments explain "what" not "why". Examples:
-  - `# L1 fix: Log when EMA stabilizes` — what is L1?
-  - `# Voltage sag: start fast poll` — why measure sag?
-  - `model.py:43-47` fsync on read-only FD — why read-only?
-  - `ema_ring_buffer.py:40-41` `abs(current_ema) < 1e-6` — why this guard?
+- [x] ~~All "what not why" comments~~ — rewritten with "why" explanations:
+  - fsync read-only FD in model.py
+  - epsilon guard in ema_filter.py
+  - 100V threshold in event_classifier.py
+  - 0.5 SoC fallback in soc_predictor.py
 
 #### 4.10 QA Open Questions
 
-1. Why fsync on read-only FD in model.py? Verify correctness for ext4 metadata persistence.
-2. What happens if `_recv_until()` hits timeout during valid multi-packet NUT response? 2s may be tight.
-3. Calibration mode: why interpolate cliff region only on TEST, not REAL blackout?
-4. SoC fallback 0.5: should it be 1.0 (assume charged) or 0.0 (assume drained) for safety?
+- [x] Q1: fsync on read-only FD — correct for ext4. The write FD from NamedTemporaryFile is closed; reopen read-only ensures metadata flush. Comment added.
+- [x] Q2: `_recv_until()` 2s timeout — adequate for localhost NUT. LIST VAR response is ~200 bytes, fits in single recv(). Wall-clock deadline is a safety net, not normal path.
+- [x] Q3: Cliff region interpolation only on TEST — by design. TEST is a controlled full discharge; REAL blackout may be partial (power restored early), producing incomplete cliff data.
+- [x] Q4: SoC fallback 0.5 — correct choice. 0.0 would trigger false LB flag (premature shutdown). 1.0 would suppress LB when battery is actually low. 0.5 is conservative middle. Comment added.
 
 ---
 
@@ -325,23 +305,10 @@ Three different patterns:
 
 #### 5.2 Configuration Surface — Over-engineered
 
-11 env vars in monitor.py:22-35, **none of which the user has ever configured or plans to use**:
-
-| Env Var | Default | Verdict |
-|---------|---------|---------|
-| UPS_MONITOR_POLL_INTERVAL | 10 | Move to config file |
-| UPS_MONITOR_MODEL_DIR | ~/.config/... | Move to config file |
-| UPS_MONITOR_NUT_HOST | localhost | Move to config file |
-| UPS_MONITOR_NUT_PORT | 3493 | Move to config file |
-| UPS_MONITOR_NUT_TIMEOUT | 2.0 | Move to config file |
-| UPS_MONITOR_UPS_NAME | cyberpower | Move to config file |
-| UPS_MONITOR_EMA_WINDOW | 120 | Move to config file |
-| UPS_MONITOR_IR_K | 0.015 | Move to model.json (physics param) |
-| UPS_MONITOR_IR_BASE | 20.0 | Move to model.json (physics param) |
-| UPS_MONITOR_SHUTDOWN_THRESHOLD_MIN | 5 | Move to config file |
-| UPS_MONITOR_SOH_THRESHOLD | 0.80 | Move to config file |
-
-**Recommendation:** Replace all env vars with a centralized config file (e.g., `~/.config/ups-battery-monitor/config.ini` or YAML). Physics params (IR_K, IR_L_BASE) belong in model.json (they're calibrated, not configured). Env vars are for containerized deployments — this is a bare-metal systemd service.
+- [x] ~~11 env vars~~ — eliminated entirely. Replaced with:
+  - TOML config file (`config.toml`) with 3 user-facing settings: ups_name, shutdown_minutes, soh_alert
+  - Physics params (IR_K, IR_L_BASE) live only in model.json
+  - Everything else hardcoded as implementation details
 
 #### 5.3 Fallback Shutdown — REJECTED
 
@@ -368,40 +335,32 @@ Our daemon is a **data source** (writes to virtual UPS), not a decision maker. A
 
 **Note:** `shutdown_imminent` flag in monitor.py is used for internal logging/metrics, not for triggering actions. This is correct.
 
-#### 5.4 MISSING: Startup Health Checks
+#### 5.4 Startup Health Checks
 
-Daemon starts polling immediately without validating dependencies:
-- NUT reachable? (only logs warning, doesn't fail)
-- model.json readable and valid? (falls back to defaults silently)
-- /dev/shm writable? (not checked)
-- Shutdown threshold >= 2 min? (not validated)
+- [x] ~~model.json validation~~ — `_validate_model()` checks LUT, anchor, SoH range, capacity.
+- [x] ~~NUT reachable~~ — `_check_nut_connectivity()` at startup, logs warning if unreachable. Intentionally doesn't fail — daemon should retry (NUT may start later).
+- [ ] /dev/shm writable — deferred (low risk, systemd ReadWritePaths guarantees access).
 
-**Recommendation:** Fail fast at startup if critical dependencies are unavailable. A daemon that can't reach NUT is useless and should signal failure to systemd (exit 1) rather than polling forever into error logs.
+#### 5.5 Discharge Buffer Persistence
 
-#### 5.5 MISSING: Discharge Buffer Persistence
-
-`calibration_last_written_index` lives in RAM only. If daemon crashes during BLACKOUT_TEST, index resets to 0. Previously-written calibration points get re-processed.
-
-**Recommendation:** Checkpoint buffer state to model.json during calibration mode.
+- [ ] Deferred. `calibration_last_written_index` in RAM only. Mitigated by timestamp-based dedup — restart during calibration re-processes points but duplicates are skipped.
 
 #### 5.6 Modularity Assessment
 
-With 15 test files running 181 tests, the modularity cost IS paid off. Each module has focused tests. Merging modules would reduce lines but break test isolation.
-
-**Verdict:** Keep modules separate. The cognitive load is manageable with good documentation.
+- [x] Resolved: keep modules separate. 181 tests across 15 files justify the modularity cost.
 
 #### 5.7 What Kaizen Would Still Cut
 
-1. **11 env vars -> config file** — env vars are wrong paradigm for bare-metal systemd service
-2. **Virtual UPS fsync on tmpfs** — tmpfs is RAM-backed, fsync is cargo cult. Keep atomic rename, drop fsync. Document why.
-3. **Alerter abstraction** — verify MOTD actually parses journald messages from alerter. If not, inline logging.
+- [x] ~~11 env vars~~ — replaced with 3-setting TOML config.
+- [ ] Virtual UPS fsync on tmpfs — cargo cult (tmpfs is RAM-backed, fsync is no-op). Harmless, costs nothing. Not worth changing.
+- [x] ~~Alerter abstraction~~ — verified justified. MOTD script (`51-ups-health.sh`) reads from upsc + model.json. Alerter provides structured journald warnings for operators/Grafana Loki. Different audience.
 
 #### 5.8 What Kaizen Would Add
 
-1. **Fallback shutdown** (critical, ~20 lines)
-2. **Startup health checks** (~30 lines)
-3. **Config file** replacing env vars
-4. **Discharge buffer checkpointing** in calibration mode
+- [x] ~~Config file~~ — TOML config implemented.
+- [x] ~~Startup health checks~~ — `_validate_model()` implemented.
+- [x] ~~Fallback shutdown~~ — **rejected** (violates NUT architecture, see 5.3).
+- [ ] Discharge buffer checkpointing — deferred (see 5.5).
 
 #### 5.9 Kaizen's Verification Proposal (revised)
 
@@ -425,43 +384,50 @@ With frequent blackouts, verification happens naturally:
 
 ---
 
-## Recommended Action Plan
+## Recommended Action Plan — Status
 
-### P0 — Safety & Resilience (do now)
+### P0 — Safety & Resilience — COMPLETE
 
-1. **Systemd hardening** — add ProtectSystem, NoNewPrivileges, etc. to both .service files (10 lines)
-2. **model.save() in signal handler** — persist SoH before shutdown
-3. **Verify upsmon reliability** — `systemctl is-enabled nut-monitor`, check Restart=on-failure
-4. **Rename ema_ring_buffer.py -> ema_filter.py** — name matches content
+- [x] Systemd hardening (ProtectSystem, NoNewPrivileges, UMask=0077, etc.)
+- [x] model.save() in signal handler
+- [x] Verify upsmon reliability (NUT on localhost, nut-monitor enabled)
+- [x] Rename ema_ring_buffer.py -> ema_filter.py
+- [x] Symlink guard in virtual_ups.py
+- [x] Disk full handling (all save() wrapped in try/except OSError)
 
-### P1 — Configuration & Code Quality (next session)
+### P1 — Configuration & Code Quality — COMPLETE
 
-5. **Replace env vars with config file** — centralized `~/.config/ups-battery-monitor/config.ini`, physics params to model.json. Validate at startup.
-6. **Startup health checks** — fail fast if NUT unreachable, model.json unreadable, /dev/shm unwritable
-7. **Extract methods from run()** — `_poll_once()`, `_update_sag()`, `_update_discharge_buffer()` to reduce nesting
-8. **Rate-limit error logs** — suppress after 10 repeats in 5 min window
-9. **Remove unused import** — `logging` from soh_calculator.py
-10. **Add "why" comments** to magic numbers (1000, 5, 100, 0.5)
+- [x] Replace env vars with TOML config (3 user-facing settings)
+- [x] Model validation at startup (_validate_model)
+- [x] Extract 8 methods from run() (208 → 48 lines)
+- [x] Rate-limit error logs (first 10 + summary every 60s)
+- [x] "Why" comments on all magic numbers
+- [x] Fix naming (last_soc → _last_logged_soc, ema_ring_buffer → ema_filter)
+- [x] Install script security (sed -i.bak, getent instead of eval)
+- [x] Calibration write dedup by timestamp (not voltage)
+- [x] Debug logs on all silent early returns
 
-### P2 — Security & Observability (future)
+### P2 — Observability & Edge Cases — DEFERRED
 
-11. **Symlink check** in virtual_ups.py before write
-12. **Structured logging fields** — POLL_LATENCY_MS, DISCHARGE_BUFFER_SIZE
-13. **Health check** — file-based or systemd watchdog
-14. **Disk full handling** — wrap model.save() in try/except, log ALERT priority
-15. **Discharge buffer checkpointing** in calibration mode
+- [ ] Structured logging fields (POLL_LATENCY_MS, DISCHARGE_BUFFER_SIZE)
+- [ ] Systemd watchdog / health check
+- [ ] Discharge buffer checkpointing in calibration mode
+- [ ] Clock jump guard in SoH calculator (timestamp monotonicity)
+- [ ] Fast poll recovery (reset sag state on exception)
+- [ ] Test coverage: integration tests for error scenarios
 
 ### P3 — Deferred (revisit after 3 months of data)
 
-16. **Monitor.py handler classes** — only if adding new features requires it
-17. **Peukert auto-calibration hardening** — require 3+ consistent >10% errors before adjusting
-18. **Calibration mode validation** — test on real hardware, mark as experimental until then
-19. **Kaizen's 3-month verification** — compare predicted vs actual runtime on 50+ events
+- [ ] Monitor.py handler classes — only if adding new features requires it
+- [ ] Peukert auto-calibration hardening — require 3+ consistent >10% errors
+- [ ] Calibration mode validation — test on real hardware
+- [ ] Kaizen's 3-month verification — compare predicted vs actual runtime on 50+ events
+- [ ] Boolean flags → state enum (if bugs arise from flag inconsistency)
 
-### Open Items Requiring User Input
+### Open Items — RESOLVED
 
-- Has calibration mode been tested on real hardware? If not, mark as experimental.
-- Verify: `ss -tlnp | grep 3493` — is NUT bound to localhost only?
-- Verify: `mount | grep /dev/shm` — is tmpfs mounted noexec,nosuid?
-- Verify: `systemctl show -p UMask ups-battery-monitor.service` — what umask?
-- Does MOTD (`~/scripts/motd/51-ups.sh`) parse journald messages from alerter.py? If not, alerter abstraction is unjustified.
+- [x] NUT bound to localhost only — verified (`127.0.0.1:3493`)
+- [x] /dev/shm mounted nosuid,nodev — verified
+- [x] UMask set to 0077 in service file
+- [x] MOTD uses upsc + model.json, not journald — alerter is justified (serves operators/Loki)
+- [ ] Calibration mode not yet tested on real hardware — marked as experimental in code
