@@ -398,203 +398,198 @@ class MonitorDaemon:
         logger.info(f"Received signal {signum}; shutting down")
         self.running = False
 
+    def _update_ema(self, ups_data):
+        """Feed voltage/load into EMA filter, log stabilization event."""
+        voltage = ups_data.get('battery.voltage')
+        load = ups_data.get('ups.load')
+        if voltage is None or load is None:
+            return None, None
+        self.ema_buffer.add_sample(voltage, load)
+        self.poll_count += 1
+        if self.ema_buffer.stabilized and not self._was_stabilized:
+            logger.info(f"EMA buffer stabilized after {self.poll_count} samples, IR compensation active")
+            self._was_stabilized = True
+        return voltage, load
+
+    def _classify_event(self, ups_data):
+        """Classify UPS event and log transitions."""
+        ups_status = ups_data.get('ups.status')
+        input_voltage = ups_data.get('input.voltage')
+        if ups_status is None or input_voltage is None:
+            return
+        event_type = self.event_classifier.classify(ups_status, input_voltage)
+        self.current_metrics["event_type"] = event_type
+        self.current_metrics["transition_occurred"] = self.event_classifier.transition_occurred
+        if self.event_classifier.transition_occurred:
+            logger.info(f"Event transition: → {event_type.name}")
+
+    def _track_voltage_sag(self, voltage):
+        """Measure voltage sag on OL→OB transition to estimate internal resistance."""
+        event_type = self.current_metrics.get("event_type")
+        if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
+            # Arm sag measurement on power loss
+            self.v_before_sag = self.ema_buffer.voltage
+            self.sag_buffer = []
+            self.sag_collected = False
+            self.fast_poll_active = True
+        if self.event_classifier.transition_occurred and event_type == EventType.ONLINE:
+            self.fast_poll_active = False
+        # Collect 5 samples, take median of last 3
+        if self.fast_poll_active and not self.sag_collected:
+            self.sag_buffer.append(voltage)
+            if len(self.sag_buffer) >= 5:
+                v_sag = sorted(self.sag_buffer[-3:])[1]
+                self._record_voltage_sag(v_sag, event_type)
+                self.sag_collected = True
+                self.fast_poll_active = False
+
+    def _track_discharge(self, voltage, timestamp):
+        """Accumulate discharge samples and write calibration points."""
+        event_type = self.current_metrics.get("event_type")
+        if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+            if not self.discharge_buffer['collecting']:
+                self.discharge_buffer['collecting'] = True
+                self.discharge_buffer['voltages'] = []
+                self.discharge_buffer['times'] = []
+                logger.info(f"Starting discharge buffer collection ({event_type.name})")
+            if voltage is not None:
+                if len(self.discharge_buffer['voltages']) >= self.DISCHARGE_BUFFER_MAX_SAMPLES:
+                    logger.warning(f"Discharge buffer capped at {self.DISCHARGE_BUFFER_MAX_SAMPLES} samples")
+                else:
+                    self.discharge_buffer['voltages'].append(voltage)
+                    self.discharge_buffer['times'].append(timestamp)
+                self._write_calibration_points(event_type)
+        else:
+            if self.discharge_buffer['collecting']:
+                self.discharge_buffer['collecting'] = False
+                self.calibration_last_written_index = 0
+
+    def _write_calibration_points(self, event_type):
+        """In calibration mode, flush accumulated points to model every 6 polls."""
+        if not (self.calibration_mode and event_type == EventType.BLACKOUT_TEST):
+            return
+        if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index < 6:
+            return
+        for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
+            try:
+                v = self.discharge_buffer['voltages'][i]
+                t = self.discharge_buffer['times'][i]
+                soc_est = soc_from_voltage(v, self.battery_model.get_lut())
+                self.battery_model.calibration_write(v, soc_est, t)
+                self.calibration_last_written_index = i + 1
+            except Exception as e:
+                logger.error(f"Calibration write failed at index {i}: {e}")
+                break
+
+    def _compute_metrics(self):
+        """Calculate SoC, charge%, and runtime from EMA values. Returns (battery_charge, time_rem)."""
+        v_ema = self.ema_buffer.voltage
+        l_ema = self.ema_buffer.load
+        if not self.ema_buffer.stabilized:
+            return None, None
+
+        v_norm = ir_compensate(v_ema, l_ema, self.ir_l_base, self.ir_k)
+        if v_norm is None:
+            return None, None
+
+        soc = soc_from_voltage(v_norm, self.battery_model.get_lut())
+        battery_charge = charge_percentage(soc)
+        time_rem = runtime_minutes(
+            soc, l_ema,
+            self.battery_model.get_capacity_ah(),
+            self.battery_model.get_soh(),
+            peukert_exponent=self.battery_model.get_peukert_exponent(),
+            nominal_voltage=self.battery_model.get_nominal_voltage(),
+            nominal_power_watts=self.battery_model.get_nominal_power_watts()
+        )
+
+        self.current_metrics.update(
+            soc=soc, battery_charge=battery_charge,
+            time_rem_minutes=time_rem, timestamp=time.time()
+        )
+
+        # Log significant changes
+        if self.last_soc is None or abs(soc - self.last_soc) > 0.05:
+            if self.last_soc is not None:
+                logger.info(f"SoC updated: {self.last_soc*100:.0f}% → {soc*100:.0f}%")
+            else:
+                logger.info(f"SoC initial: {soc*100:.0f}%")
+            self.last_soc = soc
+        if self.last_time_rem is None or abs(time_rem - self.last_time_rem) > 1.0:
+            logger.info(f"Remaining runtime: {time_rem:.1f} minutes")
+            self.last_time_rem = time_rem
+
+        return battery_charge, time_rem
+
+    def _log_status(self, battery_charge, time_rem):
+        """Log periodic status line with all key metrics."""
+        v_ema = self.ema_buffer.voltage
+        l_ema = self.ema_buffer.load
+        v_norm = ir_compensate(v_ema, l_ema, self.ir_l_base, self.ir_k) if self.ema_buffer.stabilized else None
+
+        v_norm_str = f"{v_norm:.2f}V" if v_norm is not None else "N/A"
+        charge_str = f"{battery_charge}%" if battery_charge is not None else "N/A"
+        time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
+        event_type = self.current_metrics.get("event_type")
+        event_str = event_type.name if event_type else "N/A"
+        logger.info(
+            f"Poll {self.poll_count}: V_ema={v_ema:.2f}V, L_ema={l_ema:.1f}%, "
+            f"V_norm={v_norm_str}, charge={charge_str}, time_rem={time_rem_str}, "
+            f"event={event_str}, stabilized={self.ema_buffer.stabilized}"
+        )
+
+    def _write_virtual_ups(self, ups_data, battery_charge, time_rem):
+        """Write computed metrics to tmpfs for NUT dummy-ups driver."""
+        try:
+            ups_status_override = self.current_metrics.get("ups_status_override", "OL")
+            virtual_metrics = {
+                "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,
+                "battery.charge": int(battery_charge) if battery_charge is not None else 0,
+                "ups.status": ups_status_override,
+                **{k: v for k, v in ups_data.items()
+                   if k not in ["battery.runtime", "battery.charge", "ups.status"]}
+            }
+            write_virtual_ups_dev(virtual_metrics)
+        except Exception as e:
+            logger.error(f"Failed to write virtual UPS metrics: {e}")
+
     def run(self):
         """
         Main polling loop.
 
-        Polls UPS every POLL_INTERVAL seconds, updates EMA, logs metrics.
-        Runs until SIGTERM or SIGINT received.
+        Polls UPS every POLL_INTERVAL seconds, processes data through the
+        pipeline: EMA → event classification → sag/discharge tracking →
+        metrics → virtual UPS output. Runs until SIGTERM/SIGINT.
         """
         logger.info("Starting main polling loop")
-        poll_count = 0
-        was_stabilized = False
+        self.poll_count = 0
+        self._was_stabilized = False
 
         while self.running:
             try:
-                # Poll UPS
                 timestamp = time.time()
                 ups_data = self.nut_client.get_ups_vars()
 
-                # Extract voltage and load
-                voltage = ups_data.get('battery.voltage')
-                load = ups_data.get('ups.load')
+                voltage, load = self._update_ema(ups_data)
+                if voltage is None:
+                    logger.warning(f"Poll {self.poll_count}: Missing voltage or load data")
+                    time.sleep(POLL_INTERVAL)
+                    continue
 
-                if voltage is not None and load is not None:
-                    # Add to EMA buffer
-                    self.ema_buffer.add_sample(voltage, load)
-                    poll_count += 1
+                self._classify_event(ups_data)
+                self._track_voltage_sag(voltage)
+                self._track_discharge(voltage, timestamp)
 
-                    # L1 fix: Log when EMA stabilizes
-                    if self.ema_buffer.stabilized and not was_stabilized:
-                        logger.info(f"EMA buffer stabilized after {poll_count} samples, IR compensation active")
-                        was_stabilized = True
+                # Every 6 polls (~60s): compute metrics, handle events, write virtual UPS
+                if self.poll_count % 6 == 0:
+                    battery_charge, time_rem = self._compute_metrics()
+                    self._handle_event_transition()
+                    self.current_metrics["previous_event_type"] = self.current_metrics.get(
+                        "event_type", EventType.ONLINE
+                    )
+                    self._log_status(battery_charge, time_rem)
+                    self._write_virtual_ups(ups_data, battery_charge, time_rem)
 
-                    # Classify event based on UPS status and input voltage
-                    ups_status = ups_data.get('ups.status')
-                    input_voltage = ups_data.get('input.voltage')
-                    if ups_status is not None and input_voltage is not None:
-                        event_type = self.event_classifier.classify(ups_status, input_voltage)
-                        self.current_metrics["event_type"] = event_type
-                        self.current_metrics["transition_occurred"] = self.event_classifier.transition_occurred
-
-                        # Log transitions
-                        if self.event_classifier.transition_occurred:
-                            logger.info(f"Event transition: → {event_type.name}")
-
-                        # Voltage sag: start fast poll on ONLINE → OB transition
-                        if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
-                            self.v_before_sag = self.ema_buffer.voltage
-                            self.sag_buffer = []
-                            self.sag_collected = False
-                            self.fast_poll_active = True
-
-                        # Voltage sag: stop fast poll on OB → ONLINE
-                        if self.event_classifier.transition_occurred and event_type == EventType.ONLINE:
-                            self.fast_poll_active = False
-
-                        # Collect sag samples during fast poll
-                        if self.fast_poll_active and not self.sag_collected:
-                            self.sag_buffer.append(voltage)
-                            if len(self.sag_buffer) >= 5:
-                                recent = sorted(self.sag_buffer[-3:])
-                                v_sag = recent[1]  # median of 3
-                                self._record_voltage_sag(v_sag, event_type)
-                                self.sag_collected = True
-                                self.fast_poll_active = False
-
-                        # Phase 6: Collect discharge data during BLACKOUT_REAL or BLACKOUT_TEST
-                        if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
-                            if not self.discharge_buffer['collecting']:
-                                self.discharge_buffer['collecting'] = True
-                                self.discharge_buffer['voltages'] = []
-                                self.discharge_buffer['times'] = []
-                                logger.info(f"Starting discharge buffer collection ({event_type.name})")
-
-                            # Append voltage and timestamp to buffer (raw voltage, not normalized)
-                            if voltage is not None:
-                                if len(self.discharge_buffer['voltages']) >= self.DISCHARGE_BUFFER_MAX_SAMPLES:
-                                    logger.warning(f"Discharge buffer capped at {self.DISCHARGE_BUFFER_MAX_SAMPLES} samples")
-                                else:
-                                    self.discharge_buffer['voltages'].append(voltage)
-                                    self.discharge_buffer['times'].append(timestamp)
-
-                                # Phase 6: Write calibration points every 6 polls (~60 seconds) if calibration mode
-                                if self.calibration_mode and event_type == EventType.BLACKOUT_TEST:
-                                    if len(self.discharge_buffer['voltages']) - self.calibration_last_written_index >= 6:
-                                        # Write accumulated points to model, advancing index per successful write
-                                        for i in range(self.calibration_last_written_index, len(self.discharge_buffer['voltages'])):
-                                            try:
-                                                v = self.discharge_buffer['voltages'][i]
-                                                t = self.discharge_buffer['times'][i]
-                                                soc_est = soc_from_voltage(v, self.battery_model.get_lut())
-                                                self.battery_model.calibration_write(v, soc_est, t)
-                                                self.calibration_last_written_index = i + 1
-                                            except Exception as e:
-                                                logger.error(f"Calibration write failed at index {i}: {e}")
-                                                break  # Stop batch on first error, resume from this index next time
-                        else:
-                            # Not in blackout; clear buffer on next event transition
-                            if self.discharge_buffer['collecting']:
-                                self.discharge_buffer['collecting'] = False
-                                self.calibration_last_written_index = 0
-
-                    # Log every 6 polls (60 seconds at 10-sec interval)
-                    if poll_count % 6 == 0:
-                        v_ema = self.ema_buffer.voltage
-                        l_ema = self.ema_buffer.load
-                        stabilized = self.ema_buffer.stabilized
-
-                        # Apply IR compensation if stabilized
-                        if stabilized:
-                            v_norm = ir_compensate(
-                                v_ema, l_ema,
-                                self.ir_l_base,
-                                self.ir_k
-                            )
-                        else:
-                            v_norm = None
-
-                        # Calculate SoC and battery charge from normalized voltage
-                        if stabilized and v_norm is not None:
-                            soc = soc_from_voltage(v_norm, self.battery_model.get_lut())
-                            battery_charge = charge_percentage(soc)
-
-                            # Calculate remaining runtime using SoC and load
-                            capacity_ah = self.battery_model.get_capacity_ah()
-                            soh = self.battery_model.get_soh()
-                            time_rem = runtime_minutes(
-                                soc, l_ema, capacity_ah, soh,
-                                peukert_exponent=self.battery_model.get_peukert_exponent(),
-                                nominal_voltage=self.battery_model.get_nominal_voltage(),
-                                nominal_power_watts=self.battery_model.get_nominal_power_watts()
-                            )
-
-                            # Store metrics
-                            self.current_metrics["soc"] = soc
-                            self.current_metrics["battery_charge"] = battery_charge
-                            self.current_metrics["time_rem_minutes"] = time_rem
-                            self.current_metrics["timestamp"] = timestamp
-
-                            # Log significant SoC changes (>5%)
-                            if self.last_soc is None or abs(soc - self.last_soc) > 0.05:
-                                if self.last_soc is not None:
-                                    logger.info(f"SoC updated: {self.last_soc*100:.0f}% → {soc*100:.0f}%")
-                                else:
-                                    logger.info(f"SoC initial: {soc*100:.0f}%")
-                                self.last_soc = soc
-
-                            # Log runtime changes
-                            if self.last_time_rem is None or abs(time_rem - self.last_time_rem) > 1.0:
-                                logger.info(f"Remaining runtime: {time_rem:.1f} minutes")
-                                self.last_time_rem = time_rem
-                        else:
-                            battery_charge = None
-                            time_rem = None
-
-                        # Handle event-driven logic
-                        self._handle_event_transition()
-
-                        # Update previous event type for transition tracking
-                        self.current_metrics["previous_event_type"] = self.current_metrics.get(
-                            "event_type", EventType.ONLINE
-                        )
-
-                        v_norm_str = f"{v_norm:.2f}V" if v_norm is not None else "N/A"
-                        charge_str = f"{battery_charge}%" if battery_charge is not None else "N/A"
-                        time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
-                        event_str = self.current_metrics.get("event_type", "UNKNOWN").name if self.current_metrics.get("event_type") else "N/A"
-                        logger.info(
-                            f"Poll {poll_count}: V_ema={v_ema:.2f}V, "
-                            f"L_ema={l_ema:.1f}%, "
-                            f"V_norm={v_norm_str}, "
-                            f"charge={charge_str}, "
-                            f"time_rem={time_rem_str}, "
-                            f"event={event_str}, "
-                            f"stabilized={stabilized}"
-                        )
-
-                        # Write virtual UPS metrics to tmpfs for NUT dummy-ups to read
-                        try:
-                            # Use cached status override from _handle_event_transition()
-                            ups_status_override = self.current_metrics.get("ups_status_override", "OL")
-
-                            # Build virtual metrics dict with overrides + passthrough fields
-                            virtual_metrics = {
-                                "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,  # seconds
-                                "battery.charge": int(battery_charge) if battery_charge is not None else 0,  # %
-                                "ups.status": ups_status_override,
-                                **{k: v for k, v in ups_data.items()
-                                   if k not in ["battery.runtime", "battery.charge", "ups.status"]}
-                            }
-
-                            # Write to tmpfs
-                            write_virtual_ups_dev(virtual_metrics)
-                        except Exception as e:
-                            logger.error(f"Failed to write virtual UPS metrics: {e}")
-                else:
-                    logger.warning(f"Poll {poll_count}: Missing voltage or load data")
-
-                # Sleep until next poll (1s during sag measurement, normal otherwise)
                 time.sleep(1 if self.fast_poll_active else POLL_INTERVAL)
 
             except KeyboardInterrupt:
