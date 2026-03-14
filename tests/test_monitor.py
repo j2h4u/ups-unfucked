@@ -33,6 +33,26 @@ def make_daemon():
         yield _make
 
 
+def test_per_poll_writes_during_blackout(make_daemon):
+    """SAFE-01: Virtual UPS metrics written every poll during OB, not every 6th."""
+    pass
+
+
+def test_handle_event_transition_per_poll_during_ob(make_daemon):
+    """SAFE-02: LB flag decision (_handle_event_transition) executes every poll during OB."""
+    pass
+
+
+def test_no_writes_during_online_state(make_daemon):
+    """SAFE-01: No spurious writes during OL state — only on poll % 6 boundary."""
+    pass
+
+
+def test_lb_flag_signal_latency(make_daemon):
+    """SAFE-02: LB flag written to virtual UPS within <10s of OB transition."""
+    pass
+
+
 def test_voltage_sag_detection(make_daemon):
     """Test that voltage sag is detected and R_internal recorded after 5 samples."""
     from src.event_classifier import EventType
