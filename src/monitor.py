@@ -97,18 +97,10 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self, calibration_mode=False):
-        """
-        Initialize daemon with inline configuration.
-
-        Args:
-            calibration_mode: If True, uses 1-minute shutdown threshold for battery discharge testing
-        """
+    def __init__(self):
+        """Initialize daemon with TOML configuration."""
         self.running = True
-        self.calibration_mode = calibration_mode
-
-        # Set shutdown threshold based on mode
-        self.shutdown_threshold_minutes = 1 if calibration_mode else SHUTDOWN_THRESHOLD_MINUTES
+        self.shutdown_threshold_minutes = SHUTDOWN_THRESHOLD_MINUTES
 
         # Create model directory
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -172,7 +164,7 @@ class MonitorDaemon:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        logger.info(f"Daemon initialized: calibration_mode={self.calibration_mode}, shutdown_threshold={self.shutdown_threshold_minutes}min, poll={POLL_INTERVAL}s, model={MODEL_PATH}, nut={NUT_HOST}:{NUT_PORT}")
+        logger.info(f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, poll={POLL_INTERVAL}s, model={MODEL_PATH}, nut={NUT_HOST}:{NUT_PORT}")
 
         # H1 fix: Check NUT connectivity at startup
         self._check_nut_connectivity()
@@ -666,16 +658,10 @@ def main():
         description="UPS Battery Monitor Daemon",
         prog="ups-battery-monitor"
     )
-    parser.add_argument(
-        '--calibration-mode',
-        action='store_true',
-        default=False,
-        help="Enable calibration mode: shorter shutdown threshold (1 min) for battery discharge testing"
-    )
-    args = parser.parse_args()
+    parser.parse_args()
 
     try:
-        daemon = MonitorDaemon(calibration_mode=args.calibration_mode)
+        daemon = MonitorDaemon()
         daemon.run()
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)

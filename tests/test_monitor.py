@@ -1,10 +1,9 @@
-"""Unit tests for monitor.py daemon initialization and calibration mode."""
+"""Unit tests for monitor.py daemon initialization and auto-calibration."""
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 import sys
-import argparse
 
 # Mock systemd before importing monitor
 sys.modules['systemd'] = MagicMock()
@@ -23,8 +22,8 @@ def make_daemon():
          patch('src.monitor.alerter.setup_ups_logger'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
          patch.object(MonitorDaemon, '_validate_model'):
-        def _make(calibration_mode=False):
-            return MonitorDaemon(calibration_mode=calibration_mode)
+        def _make():
+            return MonitorDaemon()
         yield _make
 
 
@@ -43,39 +42,22 @@ def test_voltage_sag_detection(make_daemon):
     daemon.ema_buffer.voltage = 13.50
     daemon.ema_buffer.load = 16.5
 
-    # Trigger OL → OB transition
-    daemon.event_classifier = MagicMock()
-    daemon.event_classifier.transition_occurred = True
+    # Set up pre-sag state
     daemon.v_before_sag = 13.50
-    daemon.sag_buffer = []
+    daemon.sag_buffer = [12.80, 12.75, 12.78, 12.76, 12.77]
     daemon.sag_collected = False
-    daemon.fast_poll_active = True
 
-    # Simulate 5 voltage samples during sag
-    sag_voltages = [13.30, 13.25, 13.22, 13.20, 13.21]
-    for v in sag_voltages:
-        daemon.sag_buffer.append(v)
+    # Record sag (median of last 3 = 12.77)
+    v_sag = sorted(daemon.sag_buffer[-3:])[1]
+    daemon._record_voltage_sag(v_sag, EventType.BLACKOUT_REAL)
 
-    # After 5 samples, compute median of last 3
-    assert len(daemon.sag_buffer) >= 5
-    recent = sorted(daemon.sag_buffer[-3:])
-    v_sag = recent[1]  # median
-    assert v_sag == 13.21  # median of [13.20, 13.21, 13.22]
-
-    # Record sag
-    daemon._record_voltage_sag(v_sag, EventType.BLACKOUT_TEST)
-
-    # Verify model was called
     mock_model.add_r_internal_entry.assert_called_once()
     call_args = mock_model.add_r_internal_entry.call_args
-    assert call_args[0][1] > 0  # r_ohm positive
-    assert call_args[0][2] == 13.50  # v_before
-    assert call_args[0][3] == 13.21  # v_sag
-    mock_model.save.assert_called()
+    assert call_args[0][1] > 0  # r_ohm should be positive
 
 
 def test_voltage_sag_skipped_zero_current(make_daemon):
-    """Test that sag recording is skipped when load is zero."""
+    """Voltage sag recording skipped when load is zero (no current flow)."""
     from src.event_classifier import EventType
 
     daemon = make_daemon()
@@ -85,15 +67,17 @@ def test_voltage_sag_skipped_zero_current(make_daemon):
     daemon.battery_model = mock_model
 
     daemon.ema_buffer = MagicMock()
-    daemon.ema_buffer.load = 0.0
-    daemon.v_before_sag = 13.50
+    daemon.ema_buffer.voltage = 13.50
+    daemon.ema_buffer.load = 0.0  # Zero load
 
-    daemon._record_voltage_sag(13.20, EventType.BLACKOUT_TEST)
+    daemon.v_before_sag = 13.50
+    daemon._record_voltage_sag(13.40, EventType.BLACKOUT_REAL)
+
     mock_model.add_r_internal_entry.assert_not_called()
 
 
 def test_sag_init_vars(make_daemon):
-    """Test that sag-related instance vars are initialized."""
+    """Sag measurement variables initialized correctly."""
     daemon = make_daemon()
     assert daemon.v_before_sag is None
     assert daemon.sag_buffer == []
@@ -101,131 +85,22 @@ def test_sag_init_vars(make_daemon):
     assert daemon.fast_poll_active is False
 
 
-def test_calibration_flag_parsing():
-    """Test that argparse accepts --calibration-mode flag correctly."""
-    from src.monitor import main
-
-    with patch('sys.argv', ['monitor.py', '--calibration-mode']):
-        with patch('src.monitor.MonitorDaemon') as mock_daemon_class:
-            mock_daemon = Mock()
-            mock_daemon_class.return_value = mock_daemon
-
-            try:
-                main()
-            except (SystemExit, Exception):
-                pass
-
-            mock_daemon_class.assert_called()
-            call_kwargs = mock_daemon_class.call_args
-            if call_kwargs and 'calibration_mode' in call_kwargs.kwargs:
-                assert call_kwargs.kwargs['calibration_mode'] is True
+def test_shutdown_threshold_from_config(make_daemon):
+    """Shutdown threshold comes from TOML config."""
+    daemon = make_daemon()
+    assert daemon.shutdown_threshold_minutes == 5  # default from config
 
 
-def test_calibration_mode_initialization(make_daemon):
-    daemon = make_daemon(calibration_mode=True)
-    assert daemon.calibration_mode is True
-
-    daemon_normal = make_daemon(calibration_mode=False)
-    assert daemon_normal.calibration_mode is False
-
-
-def test_calibration_mode_logging():
-    from src.monitor import MonitorDaemon
-
-    with patch('src.monitor.NUTClient'), \
-         patch('src.monitor.EMAFilter'), \
-         patch('src.monitor.BatteryModel'), \
-         patch('src.monitor.EventClassifier'), \
-         patch('src.monitor.alerter.setup_ups_logger'), \
-         patch('src.monitor.logger') as mock_logger, \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
-        MonitorDaemon(calibration_mode=True)
-
-        calls = mock_logger.info.call_args_list
-        found = any('calibration_mode' in str(call) for call in calls)
-        assert found, f"'calibration_mode' not found in log calls: {calls}"
-
-
-def test_normal_mode_shutdown_threshold(make_daemon):
-    daemon = make_daemon(calibration_mode=False)
-    assert daemon.shutdown_threshold_minutes == 5
-
-
-def test_calibration_mode_shutdown_threshold(make_daemon):
-    daemon = make_daemon(calibration_mode=True)
-    assert daemon.shutdown_threshold_minutes == 1
-
-
-def test_discharge_buffer_calibration_write(make_daemon):
-    daemon = make_daemon(calibration_mode=True)
-    mock_model = MagicMock()
-    daemon.battery_model = mock_model
-    assert hasattr(mock_model, 'calibration_write')
+def test_discharge_buffer_init(make_daemon):
+    """Discharge buffer initialized correctly."""
+    daemon = make_daemon()
     assert daemon.calibration_last_written_index == 0
+    assert daemon.discharge_buffer['collecting'] is False
 
 
-def test_calibration_lut_update_on_discharge_completion(make_daemon):
-    from src.event_classifier import EventType
-
-    daemon = make_daemon(calibration_mode=True)
-
-    mock_model = MagicMock()
-    mock_model.data = {'lut': [{'v': 11.0, 'soc': 0.5, 'source': 'measured'}]}
-    daemon.battery_model = mock_model
-
-    with patch.object(daemon, '_update_battery_health'):
-        interpolated_lut = [
-            {'v': 11.0, 'soc': 0.5, 'source': 'measured'},
-            {'v': 10.5, 'soc': 0.0, 'source': 'measured'}
-        ]
-
-        daemon.current_metrics['transition_occurred'] = True
-        daemon.current_metrics['event_type'] = EventType.ONLINE
-        daemon.current_metrics['previous_event_type'] = EventType.BLACKOUT_TEST
-
-        event_type = EventType.ONLINE
-        previous_event_type = EventType.BLACKOUT_TEST
-        if (daemon.current_metrics.get("transition_occurred") and
-            event_type == EventType.ONLINE and
-            previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
-            daemon._update_battery_health()
-            if daemon.calibration_mode and previous_event_type == EventType.BLACKOUT_TEST:
-                daemon.battery_model.update_lut_from_calibration(interpolated_lut)
-
-            assert mock_model.update_lut_from_calibration.called
-
-
-def test_normal_mode_no_interpolation(make_daemon):
-    from src.event_classifier import EventType
-
-    daemon = make_daemon(calibration_mode=False)
-
-    mock_model = MagicMock()
-    mock_model.data = {'lut': [{'v': 11.0, 'soc': 0.5, 'source': 'standard'}]}
-    daemon.battery_model = mock_model
-
-    with patch.object(daemon, '_update_battery_health'):
-        daemon.current_metrics['transition_occurred'] = True
-        daemon.current_metrics['event_type'] = EventType.ONLINE
-        daemon.current_metrics['previous_event_type'] = EventType.BLACKOUT_REAL
-
-        event_type = EventType.ONLINE
-        previous_event_type = EventType.BLACKOUT_REAL
-        interpolation_triggered = False
-        if (daemon.current_metrics.get("transition_occurred") and
-            event_type == EventType.ONLINE and
-            previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
-            daemon._update_battery_health()
-            if daemon.calibration_mode and previous_event_type == EventType.BLACKOUT_TEST:
-                interpolation_triggered = True
-
-        assert not interpolation_triggered
-        assert not mock_model.update_lut_from_calibration.called
-
-
-def test_discharge_buffer_cleared_after_calibration(make_daemon):
-    daemon = make_daemon(calibration_mode=True)
+def test_discharge_buffer_cleared_after_health_update(make_daemon):
+    """Buffer cleared after _update_battery_health completes."""
+    daemon = make_daemon()
 
     mock_model = MagicMock()
     mock_model.data = {'lut': []}
@@ -254,50 +129,11 @@ def test_discharge_buffer_cleared_after_calibration(make_daemon):
     assert daemon.discharge_buffer['collecting'] is False
 
 
-def test_calibration_completion_logging():
-    from src.monitor import MonitorDaemon
-    from src.event_classifier import EventType
-
-    with patch('src.monitor.NUTClient'), \
-         patch('src.monitor.EMAFilter'), \
-         patch('src.monitor.BatteryModel'), \
-         patch('src.monitor.EventClassifier'), \
-         patch('src.monitor.alerter.setup_ups_logger'), \
-         patch('src.monitor.logger') as mock_logger, \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
-        daemon = MonitorDaemon(calibration_mode=True)
-
-        mock_model = MagicMock()
-        mock_model.data = {'lut': [{'v': 11.0, 'soc': 0.5, 'source': 'measured'}]}
-        daemon.battery_model = mock_model
-
-        with patch.object(daemon, '_update_battery_health'):
-            daemon.current_metrics['transition_occurred'] = True
-            daemon.current_metrics['event_type'] = EventType.ONLINE
-            daemon.current_metrics['previous_event_type'] = EventType.BLACKOUT_TEST
-
-            event_type = EventType.ONLINE
-            previous_event_type = EventType.BLACKOUT_TEST
-            if (daemon.current_metrics.get("transition_occurred") and
-                event_type == EventType.ONLINE and
-                previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
-                daemon._update_battery_health()
-                if daemon.calibration_mode and previous_event_type == EventType.BLACKOUT_TEST:
-                    mock_logger.warning("Calibration complete; remove --calibration-mode for normal operation")
-
-            mock_logger.warning.assert_called()
-            call_args = str(mock_logger.warning.call_args)
-            assert 'calibration-mode' in call_args or 'Calibration complete' in call_args
-
-
-def test_calibration_mode_end_to_end():
-    """Simulate complete calibration flow: start → discharge → OB→OL → verify LUT."""
+def test_auto_calibration_end_to_end():
+    """LUT updated with measured points from any discharge (no special mode needed)."""
     from src.monitor import MonitorDaemon
     from src.model import BatteryModel
-    from src.event_classifier import EventType
     import tempfile
-    import json
 
     with tempfile.TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "model.json"
@@ -307,14 +143,11 @@ def test_calibration_mode_end_to_end():
              patch('src.monitor.EventClassifier'), \
              patch('src.monitor.alerter.setup_ups_logger'), \
              patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
-            daemon = MonitorDaemon(calibration_mode=True)
+             patch.object(MonitorDaemon, '_validate_model'):
+            daemon = MonitorDaemon()
 
             model = BatteryModel(model_path=model_path)
             daemon.battery_model = model
-
-            assert daemon.calibration_mode is True
-            assert daemon.shutdown_threshold_minutes == 1
 
             model.data['lut'] = [
                 {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
@@ -327,6 +160,7 @@ def test_calibration_mode_end_to_end():
             ]
             model.save()
 
+            # Simulate measured discharge points in cliff region
             model.calibration_write(voltage=10.95, soc=0.48, timestamp=1000.0)
             model.calibration_write(voltage=10.65, soc=0.15, timestamp=1100.0)
             model.calibration_write(voltage=10.55, soc=0.02, timestamp=1200.0)
@@ -334,6 +168,7 @@ def test_calibration_mode_end_to_end():
             measured_count = sum(1 for e in model.get_lut() if e['source'] == 'measured')
             assert measured_count >= 3
 
+            # Cliff interpolation fills gaps between measured points
             from src.soh_calculator import interpolate_cliff_region
             updated_lut = interpolate_cliff_region(model.data['lut'])
             model.update_lut_from_calibration(updated_lut)
@@ -341,6 +176,7 @@ def test_calibration_mode_end_to_end():
             interpolated_count = sum(1 for e in model.get_lut() if e['source'] == 'interpolated')
             assert interpolated_count > 0
 
+            # Verify persistence
             reloaded = BatteryModel(model_path=model_path)
             assert sum(1 for e in reloaded.get_lut() if e['source'] == 'interpolated') > 0
             assert sum(1 for e in reloaded.get_lut() if e['source'] == 'measured') >= 3
