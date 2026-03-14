@@ -26,7 +26,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     """
     if not lut:
         logger.warning("Empty LUT provided to soc_from_voltage")
-        return 0.5  # Fallback to middle estimate
+        return 0.5  # Conservative middle estimate — avoids false LB flag (0.0) or false "full" (1.0)
 
     # Check for exact match first
     for entry in lut:

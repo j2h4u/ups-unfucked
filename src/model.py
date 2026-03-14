@@ -39,7 +39,8 @@ def atomic_write_json(filepath, data):
         tmp_path = Path(tmp.name)
 
     try:
-        # Flush to disk (force kernel to write buffers)
+        # Reopen read-only for fsync: ensures both data and metadata are flushed to disk.
+        # The write FD from NamedTemporaryFile is already closed at this point.
         fd = os.open(str(tmp_path), os.O_RDONLY)
         try:
             os.fsync(fd)

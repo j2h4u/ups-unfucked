@@ -37,7 +37,7 @@ class EMAFilter:
         Small deviation → alpha_base (smooth filtering).
         Large deviation (≥ sensitivity) → approaches 1.0 (instant reaction).
         """
-        if abs(current_ema) < 1e-6:
+        if abs(current_ema) < 1e-6:  # Avoid division by zero in relative deviation calc
             return 1.0
         deviation = abs(new_value - current_ema) / abs(current_ema)
         blend = min(deviation / self.sensitivity, 1.0)

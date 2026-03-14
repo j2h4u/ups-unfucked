@@ -136,11 +136,12 @@ class MonitorDaemon:
             "previous_event_type": EventType.ONLINE,
             "timestamp": None,
         }
-        self.last_soc = None
-        self.last_time_rem = None
+        self._last_logged_soc = None
+        self._last_logged_time_rem = None
 
         # Phase 4: Discharge buffer and health monitoring thresholds
-        # Max ~3 hours of discharge at 10s poll. Prevents unbounded growth if UPS stuck in OB.
+        # Cap at ~3 hours of discharge (1000 * 10s = 10,000s ≈ 2.8h).
+        # Prevents unbounded memory growth if UPS stuck in OB state.
         self.DISCHARGE_BUFFER_MAX_SAMPLES = 1000
         self.discharge_buffer = {
             'voltages': [],      # Voltage samples during OB state
@@ -474,7 +475,7 @@ class MonitorDaemon:
         # Collect 5 samples, take median of last 3
         if self.fast_poll_active and not self.sag_collected:
             self.sag_buffer.append(voltage)
-            if len(self.sag_buffer) >= 5:
+            if len(self.sag_buffer) >= 5:  # 5 samples → median of last 3 for noise rejection
                 v_sag = sorted(self.sag_buffer[-3:])[1]
                 self._record_voltage_sag(v_sag, event_type)
                 self.sag_collected = True
@@ -546,15 +547,15 @@ class MonitorDaemon:
         )
 
         # Log significant changes
-        if self.last_soc is None or abs(soc - self.last_soc) > 0.05:
-            if self.last_soc is not None:
-                logger.info(f"SoC updated: {self.last_soc*100:.0f}% → {soc*100:.0f}%")
+        if self._last_logged_soc is None or abs(soc - self._last_logged_soc) > 0.05:
+            if self._last_logged_soc is not None:
+                logger.info(f"SoC updated: {self._last_logged_soc*100:.0f}% → {soc*100:.0f}%")
             else:
                 logger.info(f"SoC initial: {soc*100:.0f}%")
-            self.last_soc = soc
-        if self.last_time_rem is None or abs(time_rem - self.last_time_rem) > 1.0:
+            self._last_logged_soc = soc
+        if self._last_logged_time_rem is None or abs(time_rem - self._last_logged_time_rem) > 1.0:
             logger.info(f"Remaining runtime: {time_rem:.1f} minutes")
-            self.last_time_rem = time_rem
+            self._last_logged_time_rem = time_rem
 
         return battery_charge, time_rem
 
@@ -620,7 +621,7 @@ class MonitorDaemon:
                 self._track_discharge(voltage, timestamp)
 
                 # Every 6 polls (~60s): compute metrics, handle events, write virtual UPS
-                if self.poll_count % 6 == 0:
+                if self.poll_count % 6 == 0:  # Every 6 polls ≈ 60s at 10s interval
                     battery_charge, time_rem = self._compute_metrics()
                     self._handle_event_transition()
                     self.current_metrics["previous_event_type"] = self.current_metrics.get(

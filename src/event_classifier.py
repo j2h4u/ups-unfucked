@@ -46,7 +46,7 @@ class EventClassifier:
         if category == "online":
             new_state = EventType.ONLINE
         elif category == "battery":
-            if input_voltage >= 100:
+            if input_voltage >= 100:  # Mains present during test (CyberPower shows ~220V); real blackout = 0V
                 new_state = EventType.BLACKOUT_TEST
             else:
                 if 0 < input_voltage < 100:
