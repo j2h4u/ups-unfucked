@@ -14,8 +14,8 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     Predict SoC from battery voltage using LUT and linear interpolation.
 
     Algorithm:
-    1. Check for exact match in LUT first
-    2. Binary search to find LUT bracket (v1 ≤ v ≤ v2)
+    1. Check for exact match in LUT first (tolerance ±0.01V for floating-point precision)
+    2. Linear scan to find LUT bracket (v1 ≥ voltage > v2)
     3. Linear interpolation between bracketing points
     4. Clamp above max voltage to SoC=1.0
     5. Clamp below anchor to SoC=0.0
@@ -26,6 +26,11 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
 
     Returns:
         float: SoC as decimal between 0.0 and 1.0
+
+    Note:
+        LUT is assumed sorted descending by voltage. Linear scan is O(n) where n is typically
+        7-20 points; acceptable for this use case. Binary search optimization possible but
+        not implemented.
     """
     if not lut:
         logger.warning("Empty LUT provided to soc_from_voltage")
