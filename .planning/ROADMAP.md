@@ -23,7 +23,7 @@
 <summary>🚧 v1.1 Expert Panel Review Fixes (Phases 7-11) — IN PROGRESS</summary>
 
 - [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout
-- [ ] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction
+- [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4 plans created)
 - [ ] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest)
 - [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix
 - [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint
@@ -41,7 +41,7 @@
 | 5. Operational Setup | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 6. Calibration Mode | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 7. Safety-Critical Metrics | v1.1 | 1/2 | In progress | — |
-| 8. Architecture Foundation | v1.1 | 0/3 | Not started | — |
+| 8. Architecture Foundation | v1.1 | 4/4 | Plans created | — |
 | 9. Test Coverage | v1.1 | 0/5 | Not started | — |
 | 10. Code Quality & Efficiency | v1.1 | 0/5 | Not started | — |
 | 11. Polish & Future Prep | v1.1 | 0/5 | Not started | — |
@@ -64,7 +64,7 @@
 3. upsmon receives LB signal within 10s of actual out-of-battery condition (verified via systemd journal and upsmon log timing)
 4. No metric writes occur during OL state (normal operations) — writes only during OB state transition (verified via file audit log)
 
-**Plans**: TBD
+**Plans**: 1/2 complete (Phase 7 Plan 01 done, Plan 02 in progress)
 
 ---
 
@@ -77,12 +77,16 @@
 **Requirements**: ARCH-01, ARCH-02, ARCH-03
 
 **Success Criteria** (what must be TRUE):
-1. `current_metrics` dict replaced with `CurrentMetrics` dataclass with 10 typed fields (voltage, charge, status, etc.) — verified by type checking and test instantiation
-2. `_cfg`, `UPS_NAME`, `MODEL_DIR` module-level globals extracted into `Config` frozen dataclass passed to Monitor.__init__ (verified by constructor signature and no module-level state)
+1. `current_metrics` dict replaced with `CurrentMetrics` dataclass with 9 typed fields (soc, battery_charge, time_rem_minutes, event_type, transition_occurred, shutdown_imminent, ups_status_override, previous_event_type, timestamp) — verified by type checking and test instantiation
+2. `_cfg`, `UPS_NAME`, `MODEL_DIR`, `SHUTDOWN_THRESHOLD_MINUTES`, `SOH_THRESHOLD` module-level globals extracted into `Config` frozen dataclass passed to MonitorDaemon.__init__ (verified by constructor signature and no module-level state pollution)
 3. All imports (`from enum import Enum`, `from src.soh_calculator import interpolate_cliff_region`) moved to module top, no late imports in method bodies (verified via code inspection and linting)
 4. Existing tests pass without modification — dataclass refactor is internal only (verified by running test suite)
 
-**Plans**: TBD
+**Plans**:
+- [ ] 08-00-PLAN.md — Wave 0: Test fixtures and stubs (current_metrics_fixture, config_fixture, test stubs)
+- [ ] 08-01-PLAN.md — Wave 1: CurrentMetrics dataclass refactor (ARCH-01)
+- [ ] 08-02-PLAN.md — Wave 1: Config dataclass extraction (ARCH-02)
+- [ ] 08-03-PLAN.md — Wave 1: Import consolidation (ARCH-03)
 
 ---
 
@@ -143,4 +147,4 @@
 
 ---
 
-*Roadmap created: 2026-03-15 for v1.1 Expert Panel Review Fixes milestone*
+*Roadmap updated: 2026-03-15 with Phase 8 plan details*
