@@ -142,7 +142,11 @@ class BatteryModel:
             ],
             'soh_history': [
                 {'date': '2026-03-13', 'soh': 1.0}
-            ]
+            ],
+            # Enterprise-equivalent counters (accumulated over battery lifetime)
+            'battery_install_date': None,  # Set on first startup, reset on battery replacement
+            'cycle_count': 0,              # OL→OB transitions (= transfer count)
+            'cumulative_on_battery_sec': 0.0,  # Total seconds spent on battery
         }
 
     # --- Physics getters ---
@@ -161,6 +165,26 @@ class BatteryModel:
 
     def get_ir_reference_load(self) -> float:
         return self.data.get('physics', {}).get('ir_compensation', {}).get('reference_load_percent', 20.0)
+
+    # --- Enterprise-equivalent counters ---
+
+    def get_battery_install_date(self) -> str:
+        return self.data.get('battery_install_date')
+
+    def set_battery_install_date(self, date_str: str):
+        self.data['battery_install_date'] = date_str
+
+    def get_cycle_count(self) -> int:
+        return self.data.get('cycle_count', 0)
+
+    def increment_cycle_count(self):
+        self.data['cycle_count'] = self.data.get('cycle_count', 0) + 1
+
+    def get_cumulative_on_battery_sec(self) -> float:
+        return self.data.get('cumulative_on_battery_sec', 0.0)
+
+    def add_on_battery_time(self, seconds: float):
+        self.data['cumulative_on_battery_sec'] = self.data.get('cumulative_on_battery_sec', 0.0) + seconds
 
     # --- Physics setters ---
 

@@ -130,6 +130,10 @@ class MonitorDaemon:
 
         self.battery_model = BatteryModel(MODEL_PATH)
         self._validate_model()
+
+        # Set battery install date on first ever startup
+        if self.battery_model.get_battery_install_date() is None:
+            self.battery_model.set_battery_install_date(datetime.now().strftime('%Y-%m-%d'))
         if not MODEL_PATH.exists():
             self.battery_model.save()  # Write defaults so tools (battery-health.py, MOTD) can read
         self.event_classifier = EventClassifier()
@@ -159,6 +163,7 @@ class MonitorDaemon:
             'times': [],         # Timestamps relative to discharge start
             'collecting': False  # True while actively collecting (set before data arrives)
         }
+        self._discharge_start_time = None  # Timestamp when OL→OB occurred (for cumulative on-battery tracking)
         self.soh_threshold = SOH_THRESHOLD
         self.runtime_threshold_minutes = RUNTIME_THRESHOLD_MINUTES
         self.reference_load_percent = REFERENCE_LOAD_PERCENT
@@ -507,7 +512,10 @@ class MonitorDaemon:
                 self.discharge_buffer['collecting'] = True
                 self.discharge_buffer['voltages'] = []
                 self.discharge_buffer['times'] = []
-                logger.info(f"Starting discharge buffer collection ({event_type.name})")
+                self._discharge_start_time = timestamp
+                self.battery_model.increment_cycle_count()
+                logger.info(f"Starting discharge buffer collection ({event_type.name}), "
+                            f"cycle #{self.battery_model.get_cycle_count()}")
             if voltage is not None:
                 if len(self.discharge_buffer['voltages']) >= DISCHARGE_BUFFER_MAX_SAMPLES:
                     logger.warning(f"Discharge buffer capped at {DISCHARGE_BUFFER_MAX_SAMPLES} samples")
@@ -517,6 +525,11 @@ class MonitorDaemon:
                 self._write_calibration_points(event_type)
         else:
             if self.discharge_buffer['collecting']:
+                # Track cumulative on-battery time
+                if self._discharge_start_time is not None:
+                    on_battery_sec = timestamp - self._discharge_start_time
+                    self.battery_model.add_on_battery_time(on_battery_sec)
+                    self._discharge_start_time = None
                 self.discharge_buffer['collecting'] = False
                 self.calibration_last_written_index = 0
 
@@ -599,10 +612,21 @@ class MonitorDaemon:
         """Write computed metrics to tmpfs for NUT dummy-ups driver."""
         try:
             ups_status_override = self.current_metrics.get("ups_status_override", "OL")
+            # Enterprise-equivalent metrics computed from discharge history
+            soh = self.battery_model.get_soh()
+            install_date = self.battery_model.get_battery_install_date() or ""
+            cycle_count = self.battery_model.get_cycle_count()
+            cumulative_sec = self.battery_model.get_cumulative_on_battery_sec()
+
             virtual_metrics = {
                 "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,
                 "battery.charge": int(battery_charge) if battery_charge is not None else 0,
                 "ups.status": ups_status_override,
+                # Enterprise-equivalent fields
+                "battery.health": f"{soh:.0%}",            # State of Health (like APC upsAdvBatteryHealthStatus)
+                "battery.date": install_date,               # Battery install date (like APC battery.date)
+                "battery.cycle.count": cycle_count,         # OL→OB transfers (like Eaton)
+                "battery.cumulative.runtime": int(cumulative_sec),  # Total seconds on battery (like Eaton)
                 **{k: v for k, v in ups_data.items()
                    if k not in ["battery.runtime", "battery.charge", "ups.status"]}
             }

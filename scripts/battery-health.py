@@ -41,9 +41,20 @@ def main():
         print(f"  State of Health:  {soh:.0%}  (healthy)")
 
     # Rated capacity
-    capacity = m.get('capacity_ah')
+    capacity = m.get('capacity_ah') or m.get('full_capacity_ah_ref')
     if capacity:
         print(f"  Rated capacity:   {capacity} Ah")
+
+    # Battery age and cycle count
+    install_date = m.get('battery_install_date')
+    if install_date:
+        from datetime import datetime as dt
+        age_days = (dt.now() - dt.strptime(install_date, '%Y-%m-%d')).days
+        print(f"  Battery age:      {age_days} days (installed {install_date})")
+    cycle_count = m.get('cycle_count', 0)
+    cumulative_sec = m.get('cumulative_on_battery_sec', 0.0)
+    cumulative_min = cumulative_sec / 60
+    print(f"  Cycles:           {cycle_count} (total {cumulative_min:.0f} min on battery)")
 
     # LUT — how well the voltage-SoC curve is calibrated from real data
     lut = m.get('lut', [])
