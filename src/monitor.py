@@ -24,47 +24,39 @@ from src import soh_calculator, replacement_predictor, alerter
 CONFIG_DIR = Path.home() / '.config' / 'ups-battery-monitor'
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Defaults (used if config.toml is missing or incomplete)
-_DEFAULTS = {
-    'polling': {'interval_sec': 10, 'ema_window_sec': 120},
-    'nut': {'host': 'localhost', 'port': 3493, 'timeout_sec': 2.0, 'ups_name': 'cyberpower'},
-    'thresholds': {'shutdown_minutes': 5, 'soh_alert': 0.80, 'runtime_alert_minutes': 20},
-    'physics': {'reference_load_percent': 20.0},
+# Hardcoded internals (not user-facing)
+POLL_INTERVAL = 10           # seconds between polls
+EMA_WINDOW = 120             # EMA smoothing window (seconds)
+NUT_HOST = 'localhost'
+NUT_PORT = 3493
+NUT_TIMEOUT = 2.0            # socket timeout (seconds)
+RUNTIME_THRESHOLD_MINUTES = 20
+REFERENCE_LOAD_PERCENT = 20.0
+
+# User-configurable (from config.toml)
+_CONFIGURABLE_DEFAULTS = {
+    'ups_name': 'cyberpower',
+    'shutdown_minutes': 5,
+    'soh_alert': 0.80,
 }
 
 
 def _load_config():
-    """Load config from TOML file, falling back to defaults for missing keys."""
+    """Load user config from TOML, falling back to defaults for missing keys."""
     cfg = {}
-    # Search: ~/.config/ups-battery-monitor/config.toml, then repo root config.toml
     for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
         if path.is_file():
             with open(path, 'rb') as f:
                 cfg = tomllib.load(f)
             break
-
-    # Merge defaults for missing sections/keys
-    merged = {}
-    for section, defaults in _DEFAULTS.items():
-        merged[section] = {}
-        file_section = cfg.get(section, {})
-        for key, default in defaults.items():
-            merged[section][key] = file_section.get(key, default)
-    return merged
+    return {k: cfg.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
 
 
 _cfg = _load_config()
 
-POLL_INTERVAL = _cfg['polling']['interval_sec']
-EMA_WINDOW = _cfg['polling']['ema_window_sec']
-NUT_HOST = _cfg['nut']['host']
-NUT_PORT = _cfg['nut']['port']
-NUT_TIMEOUT = _cfg['nut']['timeout_sec']
-UPS_NAME = _cfg['nut']['ups_name']
-SHUTDOWN_THRESHOLD_MINUTES = _cfg['thresholds']['shutdown_minutes']
-SOH_THRESHOLD = _cfg['thresholds']['soh_alert']
-RUNTIME_THRESHOLD_MINUTES = _cfg['thresholds']['runtime_alert_minutes']
-REFERENCE_LOAD_PERCENT = _cfg['physics']['reference_load_percent']
+UPS_NAME = _cfg['ups_name']
+SHUTDOWN_THRESHOLD_MINUTES = _cfg['shutdown_minutes']
+SOH_THRESHOLD = _cfg['soh_alert']
 
 MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
