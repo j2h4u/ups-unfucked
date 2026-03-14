@@ -403,3 +403,40 @@ def test_auto_calibration_end_to_end():
             reloaded = BatteryModel(model_path=model_path)
             assert sum(1 for e in reloaded.get_lut() if e['source'] == 'interpolated') > 0
             assert sum(1 for e in reloaded.get_lut() if e['source'] == 'measured') >= 3
+
+
+def test_current_metrics_dataclass():
+    """Verify CurrentMetrics has all required fields with correct types.
+
+    Wave 1 (ARCH-01) will implement CurrentMetrics as a dataclass with fields:
+    soc, battery_charge, time_rem_minutes, event_type, transition_occurred,
+    shutdown_imminent, ups_status_override, previous_event_type, timestamp.
+
+    This stub will be replaced with assertions once the dataclass exists.
+    """
+    pytest.skip("Wave 1: ARCH-01 — CurrentMetrics dataclass not yet created")
+
+
+def test_config_dataclass():
+    """Verify Config instantiation with all required fields.
+
+    Wave 1 (ARCH-02) will implement Config as a frozen dataclass with fields:
+    ups_name, polling_interval, reporting_interval, nut_host, nut_port,
+    nut_timeout, shutdown_minutes, soh_alert_threshold, model_dir, config_dir,
+    runtime_threshold_minutes, reference_load_percent, ema_window_sec.
+
+    This stub will be replaced with assertions once the dataclass exists.
+    """
+    pytest.skip("Wave 1: ARCH-02 — Config dataclass not yet created")
+
+
+def test_config_immutability():
+    """Verify frozen=True semantics prevent field mutation on Config.
+
+    Wave 1 (ARCH-02) will implement Config with @dataclass(frozen=True).
+    This test will verify that attempting to modify a Config field raises
+    dataclasses.FrozenInstanceError.
+
+    This stub will be replaced with assertions once the dataclass exists.
+    """
+    pytest.skip("Wave 1: ARCH-02 — Config dataclass not yet created")

@@ -145,3 +145,63 @@ def sample_model_data(mock_lut_standard):
             {"date": "2026-03-12", "soh": 1.0}
         ]
     }
+
+
+@pytest.fixture
+def current_metrics_fixture():
+    """
+    Fixture returning a CurrentMetrics dataclass instance with default test values.
+
+    Provides reusable metric state across test suite. Once ARCH-01 is implemented,
+    tests will import CurrentMetrics from src.monitor. Until then, this fixture
+    returns a dict matching the expected CurrentMetrics schema.
+
+    Returns:
+        dict: Current metrics with typed field values for SoC, charge, runtime, event state.
+    """
+    from src.event_classifier import EventType
+    from datetime import datetime
+
+    return {
+        "soc": 0.75,
+        "battery_charge": 75.0,
+        "time_rem_minutes": 30.0,
+        "event_type": EventType.ONLINE,
+        "transition_occurred": False,
+        "shutdown_imminent": False,
+        "ups_status_override": None,
+        "previous_event_type": EventType.ONLINE,
+        "timestamp": datetime.now(),
+    }
+
+
+@pytest.fixture
+def config_fixture(tmp_path):
+    """
+    Fixture returning a Config dataclass instance with typical test values.
+
+    Provides reusable configuration across test suite. Once ARCH-02 is implemented,
+    tests will import Config from src.monitor. Until then, this fixture returns
+    a dict matching the expected Config schema with temporary directories.
+
+    Args:
+        tmp_path: pytest's temporary directory fixture for test isolation.
+
+    Returns:
+        dict: Configuration with UPS name, intervals, hosts, paths, thresholds, model parameters.
+    """
+    return {
+        "ups_name": "test-cyberpower",
+        "polling_interval": 10,
+        "reporting_interval": 60,
+        "nut_host": "localhost",
+        "nut_port": 3493,
+        "nut_timeout": 2.0,
+        "shutdown_minutes": 5,
+        "soh_alert_threshold": 0.80,
+        "model_dir": tmp_path / "test_model",
+        "config_dir": tmp_path / "test_config",
+        "runtime_threshold_minutes": 20,
+        "reference_load_percent": 20.0,
+        "ema_window_sec": 120,
+    }
