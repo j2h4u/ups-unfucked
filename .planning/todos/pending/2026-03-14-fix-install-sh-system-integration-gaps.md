@@ -36,3 +36,29 @@ For our specific senbonzakura setup:
 - Patches Alloy config (`metrics_path` with virtual UPS)
 - Any other senbonzakura-specific integrations
 - Lives in repo but documented as site-specific, not universal
+
+## Lessons Learned (2026-03-14)
+
+### nut_exporter не поддерживает выбор UPS через CLI флаг
+- `--nut.ups_name` не существует (проверено: `nut_exporter --help`)
+- При наличии двух UPS (cyberpower + cyberpower-virtual) exporter отказывается работать: `Multiple UPS devices were found by NUT for this scrape`
+- Решение: query string parameter в URL скрейпа: `/ups_metrics?ups=cyberpower-virtual`
+- Это патчится на стороне **scraper'а** (Alloy config), не на стороне exporter'а
+
+### Alloy config: metrics_path с query string
+- Файл: `/etc/alloy/config.alloy`
+- Было: `metrics_path = "/ups_metrics"`
+- Стало: `metrics_path = "/ups_metrics?ups=cyberpower-virtual"`
+- Секция: `prometheus.scrape "nut_metrics"`
+- Source of truth для Alloy config: `~/repos/j2h4u/grafana-config/alloy-config.alloy`
+
+### MOTD дубли
+- install.sh копировал `51-ups-health.sh` рядом со старым `51-ups.sh`
+- Оба executable → оба выполняются → две строки статуса
+- Решение: install.sh должен удалять `51-ups.sh` при установке `51-ups-health.sh`
+- `chmod -x` недостаточно — нужно `rm`, иначе мусор
+
+### Общий принцип
+- Продуктовый инсталлятор не должен знать про Alloy, nut_exporter и прочие site-specific компоненты
+- Site-specific скрипт должен аудитить систему на компоненты, ссылающиеся на `cyberpower`, и переключать их на `cyberpower-virtual`
+- При откате (удалении ups-battery-monitor) site-specific скрипт должен вернуть всё обратно
