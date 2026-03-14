@@ -55,32 +55,33 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SAFE-01 | — | Pending |
-| SAFE-02 | — | Pending |
-| ARCH-01 | — | Pending |
-| ARCH-02 | — | Pending |
-| ARCH-03 | — | Pending |
-| QUAL-01 | — | Pending |
-| QUAL-02 | — | Pending |
-| QUAL-03 | — | Pending |
-| QUAL-04 | — | Pending |
-| QUAL-05 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| TEST-05 | — | Pending |
-| LOW-01 | — | Pending |
-| LOW-02 | — | Pending |
-| LOW-03 | — | Pending |
-| LOW-04 | — | Pending |
-| LOW-05 | — | Pending |
+| SAFE-01 | 7 | Pending |
+| SAFE-02 | 7 | Pending |
+| ARCH-01 | 8 | Pending |
+| ARCH-02 | 8 | Pending |
+| ARCH-03 | 8 | Pending |
+| QUAL-01 | 10 | Pending |
+| QUAL-02 | 10 | Pending |
+| QUAL-03 | 10 | Pending |
+| QUAL-04 | 10 | Pending |
+| QUAL-05 | 10 | Pending |
+| TEST-01 | 9 | Pending |
+| TEST-02 | 9 | Pending |
+| TEST-03 | 9 | Pending |
+| TEST-04 | 9 | Pending |
+| TEST-05 | 9 | Pending |
+| LOW-01 | 11 | Pending |
+| LOW-02 | 11 | Pending |
+| LOW-03 | 11 | Pending |
+| LOW-04 | 11 | Pending |
+| LOW-05 | 11 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19 ⚠️
+- Mapped to phases: 19
+- Unmapped: 0 ✓
 
 ---
+
 *Requirements defined: 2026-03-15*
-*Last updated: 2026-03-15 after initial definition*
+*Last updated: 2026-03-15 after roadmap creation*
