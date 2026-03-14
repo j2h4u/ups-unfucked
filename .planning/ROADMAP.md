@@ -24,7 +24,7 @@
 
 - [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout (1/2 plans complete)
 - [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4/4 plans complete)
-- [ ] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (1/3 plans complete)
+- [ ] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (2/3 plans complete)
 - [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix
 - [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint
 
@@ -42,7 +42,7 @@
 | 6. Calibration Mode | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 7. Safety-Critical Metrics | v1.1 | 1/2 | In progress | — |
 | 8. Architecture Foundation | v1.1 | 4/4 | Complete (Wave 0 + Wave 1) | 2026-03-15 |
-| 9. Test Coverage | v1.1 | 1/3 | In progress | — |
+| 9. Test Coverage | v1.1 | 2/3 | In progress | — |
 | 10. Code Quality & Efficiency | v1.1 | 0/5 | Not started | — |
 | 11. Polish & Future Prep | v1.1 | 0/5 | Not started | — |
 
@@ -107,7 +107,7 @@
 
 **Plans**:
 - [x] 09-01-PLAN.md — Wave 1: Test infrastructure fix (TEST-04, TEST-05) — completed 2026-03-14
-- [ ] 09-02-PLAN.md — Wave 1: Peukert + signal handler tests (TEST-02, TEST-03) — in progress
+- [x] 09-02-PLAN.md — Wave 1: Peukert + signal handler tests (TEST-02, TEST-03) — completed 2026-03-14
 - [ ] 09-03-PLAN.md — Wave 2: OL→OB→OL integration test (TEST-01) — pending
 
 ---
@@ -151,4 +151,4 @@
 
 ---
 
-*Roadmap updated: 2026-03-14 after Phase 9 Plan 01 completion (TEST-04, TEST-05)*
+*Roadmap updated: 2026-03-14 after Phase 9 Plan 02 completion (TEST-02, TEST-03)*

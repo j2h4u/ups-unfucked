@@ -306,27 +306,21 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 
 ## Session Continuity
 
-**Next step:** Start Phase 7 planning with `/gsd:plan-phase 7`
+**Next step:** Continue Phase 9 with remaining plan (09-03 for TEST-01: OL→OB→OL integration test)
 
 **Context to preserve:**
 - All 5 phases mapped, 19 requirements assigned, 100% coverage
-- SAFE-01/02 are P0 safety-critical, must be first phase
-- ARCH-01/02/03 dataclass refactors touch monitor.py heavily — sequential commits required
-- Phase 9+ tests depend on Phase 8 dataclasses being in place
-- All v1.0 tests (160) must pass as regression check after refactors
+- Phase 7 (SAFE-01/02) and Phase 8 (ARCH-01/02/03) complete
+- Phase 9 in progress: 09-01 (TEST-04, TEST-05 conftest fixes) and 09-02 (TEST-02 Peukert calibration, TEST-03 signal handler) done
+- TEST-01 (OL→OB→OL integration test) remains as final Phase 9 plan
+- Phase 10 (QUAL-01..05) and Phase 11 (LOW-01..05) not started
+- All v1.0 tests (160+) remain passing with no regressions
 
-**Files to review before Phase 7 planning:**
-- `docs/EXPERT-PANEL-REVIEW-2026-03-15.md` (detailed findings)
-- `src/monitor.py` (main daemon, focus on lines 20-30 globals, 68 imports, 90-93 event transition)
-- `tests/conftest.py` (mock_socket_ok line ~40-50)
-- `.planning/REQUIREMENTS.md` (phase mappings for traceability)
+**Last completed:** 09-02-PLAN.md — test_auto_calibrate_peukert_math_verification (5 edge cases) + test_signal_handler_saves_model (2 scenarios), 16 tests passing total
 
-**Tools/Skills to refresh:**
-- Python @dataclass and frozen=True semantics
-- Type hints and mypy
-- Mock/patch patterns for file I/O and socket operations
-- Systemd journal timestamp formats
+**Files modified by 09-02:**
+- `tests/test_monitor.py` — +112 lines (2 new test functions with comprehensive edge case coverage)
 
 ---
 
-*State updated: 2026-03-14 after 09-01 test infrastructure implementation*
+*State updated: 2026-03-14T15:18:00Z after 09-02 test coverage implementation*
