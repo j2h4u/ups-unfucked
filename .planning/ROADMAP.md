@@ -3,7 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-14)
-- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phase 8 complete, Phase 9 complete, Phases 7,10-11 in progress)
+- 🚧 **v1.1 Expert Panel Review Fixes** — Phases 7-11 (Phase 8 complete, Phase 9 complete, Phase 10 planned, Phases 7,11 in progress)
 
 ## Phases
 
@@ -25,7 +25,7 @@
 - [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout (1/2 plans complete)
 - [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4/4 plans complete)
 - [x] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (3/3 plans complete)
-- [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix
+- [ ] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (2/2 plans planned)
 - [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint
 
 </details>
@@ -43,8 +43,8 @@
 | 7. Safety-Critical Metrics | v1.1 | 1/2 | In progress | — |
 | 8. Architecture Foundation | v1.1 | 4/4 | Complete (Wave 0 + Wave 1) | 2026-03-15 |
 | 9. Test Coverage | v1.1 | 3/3 | Complete (Wave 2) | 2026-03-14 |
-| 10. Code Quality & Efficiency | v1.1 | 0/5 | Not started | — |
-| 11. Polish & Future Prep | v1.1 | 0/5 | Not started | — |
+| 10. Code Quality & Efficiency | v1.1 | 0/2 | Planned | — |
+| 11. Polish & Future Prep | v1.1 | 0/2 | Planned | — |
 
 ---
 
@@ -128,7 +128,9 @@
 4. `calibration_write()` batches points in memory, single `model.save()` per REPORTING_INTERVAL instead of per-point atomic writes (verified by test showing N points → 1 save, and model.json mtime audit log)
 5. Double error log in `virtual_ups.py` (lines 90 and 93) eliminated — single handler logs the failure once (verified by code inspection and test with induced error)
 
-**Plans**: TBD
+**Plans**:
+- [ ] 10-01-PLAN.md — Wave 1: Helper extraction + fixes (QUAL-01, QUAL-02, QUAL-03)
+- [ ] 10-02-PLAN.md — Wave 1: Batch writes + logging (QUAL-04, QUAL-05)
 
 ---
 
@@ -151,4 +153,4 @@
 
 ---
 
-*Roadmap updated: 2026-03-14 after Phase 9 Plan 03 completion (TEST-01 integration test)*
+*Roadmap updated: 2026-03-15 after Phase 10 planning (2/2 plans created for QUAL-01/02/03/04/05)*
