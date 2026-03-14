@@ -71,19 +71,19 @@ SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of
 DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Cap at ~3 hours (1000 * 10s ≈ 2.8h), prevents unbounded memory growth
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
 
-# === INLINE LOGGING SETUP (H3 fix: removed src/logger.py) ===
+# Logging: JournalHandler when running under systemd, stderr fallback otherwise.
+# SyslogIdentifier in service file provides the prefix — no need to repeat in formatter.
 logger = logging.getLogger('ups-battery-monitor')
 logger.setLevel(logging.INFO)
 logger.handlers.clear()
 
 try:
     handler = JournalHandler()
-    handler.setFormatter(logging.Formatter('[ups-battery-monitor] %(levelname)s: %(message)s'))
+    handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
-except Exception as e:
-    # Fallback to stderr
+except Exception:
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter('[ups-battery-monitor] %(levelname)s: %(message)s'))
+    handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
 
 # Setup alerter logger (Phase 4) for health monitoring
