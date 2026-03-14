@@ -9,8 +9,8 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 
 ### Safety
 
-- [ ] **SAFE-01**: Virtual UPS metrics written every poll (10s) during OB state instead of every 60s — eliminates stale LB flag lag
-- [ ] **SAFE-02**: LB flag decision (`_handle_event_transition`) executes every poll during OB state — ensures timely shutdown signal
+- [x] **SAFE-01**: Virtual UPS metrics written every poll (10s) during OB state instead of every 60s — eliminates stale LB flag lag
+- [x] **SAFE-02**: LB flag decision (`_handle_event_transition`) executes every poll during OB state — ensures timely shutdown signal
 
 ### Architecture
 
@@ -55,8 +55,8 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SAFE-01 | 7 | Pending |
-| SAFE-02 | 7 | Pending |
+| SAFE-01 | 7 | Complete |
+| SAFE-02 | 7 | Complete |
 | ARCH-01 | 8 | Pending |
 | ARCH-02 | 8 | Pending |
 | ARCH-03 | 8 | Pending |
