@@ -17,8 +17,6 @@ def main():
 
     m = json.loads(MODEL_PATH.read_text())
 
-    print("=== UPS Battery Health ===\n")
-
     # State of Health — how much usable capacity remains vs new battery
     soh = m.get('soh', 1.0)
     if soh < 0.80:
