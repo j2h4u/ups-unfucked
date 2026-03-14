@@ -17,6 +17,20 @@ def main():
 
     m = json.loads(MODEL_PATH.read_text())
 
+    # UPS identity from NUT
+    ups_name = m.get('ups_name', 'cyberpower-virtual')
+    try:
+        import subprocess
+        nut_vars = subprocess.run(
+            ['upsc', f'{ups_name}@localhost'], capture_output=True, text=True, timeout=2
+        ).stdout
+        mfr = next((l.split(': ', 1)[1] for l in nut_vars.splitlines() if l.startswith('device.mfr:')), None)
+        model = next((l.split(': ', 1)[1] for l in nut_vars.splitlines() if l.startswith('device.model:')), None)
+        if mfr and model:
+            print(f"  UPS:              {mfr} {model}")
+    except Exception:
+        pass
+
     # State of Health — how much usable capacity remains vs new battery
     soh = m.get('soh', 1.0)
     if soh < 0.80:
