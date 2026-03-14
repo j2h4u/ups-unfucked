@@ -5,6 +5,7 @@ import os
 import tempfile
 import logging
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, Any, List
 
 
@@ -141,7 +142,7 @@ class BatteryModel:
                 {'v': 10.5, 'soc': 0.00, 'source': 'anchor'},
             ],
             'soh_history': [
-                {'date': '2026-03-13', 'soh': 1.0}
+                {'date': datetime.now().strftime('%Y-%m-%d'), 'soh': 1.0}
             ],
             # Enterprise-equivalent counters (accumulated over battery lifetime)
             'battery_install_date': None,  # Set on first startup, reset on battery replacement
