@@ -641,6 +641,9 @@ class MonitorDaemon:
         Polls UPS every POLL_INTERVAL seconds, processes data through the
         pipeline: EMA → event classification → sag/discharge tracking →
         metrics → virtual UPS output. Runs until SIGTERM/SIGINT.
+
+        Metrics write frequency is state-dependent: every poll during OB state,
+        every 6 polls (~60s) during OL state.
         """
         sd_notify('READY=1')
         logger.info("Starting main polling loop")
@@ -665,8 +668,13 @@ class MonitorDaemon:
                 self._track_voltage_sag(voltage)
                 self._track_discharge(voltage, timestamp)
 
-                # Every 6 polls (~60s): compute metrics, handle events, write virtual UPS
-                if self.poll_count % REPORTING_INTERVAL_POLLS == 0:
+                # Extract event type after classification to determine polling frequency
+                event_type = self.current_metrics.get("event_type")
+                is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
+
+                # State-dependent gate: every poll during OB, every 6 polls during OL
+                if is_discharging or self.poll_count % REPORTING_INTERVAL_POLLS == 0:
+                    logger.debug(f"Metrics gate: is_discharging={is_discharging}, poll_count={self.poll_count}")
                     battery_charge, time_rem = self._compute_metrics()
                     self._handle_event_transition()
                     self.current_metrics["previous_event_type"] = self.current_metrics.get(
