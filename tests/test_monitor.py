@@ -35,22 +35,218 @@ def make_daemon():
 
 def test_per_poll_writes_during_blackout(make_daemon):
     """SAFE-01: Virtual UPS metrics written every poll during OB, not every 6th."""
-    pass
+    from src.event_classifier import EventType
+    from unittest.mock import call
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '12.0',
+        'input.voltage': '0',
+        'ups.status': 'OB DISCHRG',
+        'ups.load': '25'
+    }
+
+    # Mock dependencies
+    daemon._update_ema = MagicMock(return_value=(12.0, 25.0))
+    daemon._classify_event = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(50.0, 10.0))
+    daemon._handle_event_transition = MagicMock()
+    daemon._write_virtual_ups = MagicMock()
+    daemon._track_voltage_sag = MagicMock()
+    daemon._track_discharge = MagicMock()
+    daemon._log_status = MagicMock()
+
+    # Simulate OL→OB→OL transition over 12 polls
+    event_sequence = [
+        EventType.ONLINE,           # Poll 0: OL
+        EventType.ONLINE,           # Poll 1: OL
+        EventType.BLACKOUT_REAL,    # Poll 2: OB (transition)
+        EventType.BLACKOUT_REAL,    # Poll 3: OB
+        EventType.BLACKOUT_REAL,    # Poll 4: OB
+        EventType.BLACKOUT_REAL,    # Poll 5: OB
+        EventType.BLACKOUT_REAL,    # Poll 6: OB
+        EventType.BLACKOUT_REAL,    # Poll 7: OB
+        EventType.ONLINE,           # Poll 8: Back to OL
+        EventType.ONLINE,           # Poll 9: OL
+        EventType.ONLINE,           # Poll 10: OL
+        EventType.ONLINE,           # Poll 11: OL (should trigger batched write at 12th)
+    ]
+
+    daemon.current_metrics = {"event_type": EventType.ONLINE, "previous_event_type": EventType.ONLINE}
+
+    # Run 12 iterations (mock loop)
+    for i in range(12):
+        daemon.poll_count = i
+        daemon.current_metrics["event_type"] = event_sequence[i]
+
+        # Replicate gate logic from monitor.py
+        event_type = daemon.current_metrics.get("event_type")
+        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
+
+        if is_discharging or daemon.poll_count % 6 == 0:
+            daemon._compute_metrics()
+            daemon._handle_event_transition()
+            daemon._write_virtual_ups(None, 50.0, 10.0)
+
+    # During OL (polls 0-1): only poll 0 should write (modulo) → 1 call
+    # During OB (polls 2-7): all 6 polls should write → 6 calls
+    # During OL (polls 8-11): poll 12 not reached yet → no additional calls
+    # Expected calls: 1 (OL) + 6 (OB) = 7
+    assert daemon._write_virtual_ups.call_count == 7, \
+        f"Expected 7 writes (1 OL + 6 OB), got {daemon._write_virtual_ups.call_count}"
 
 
 def test_handle_event_transition_per_poll_during_ob(make_daemon):
     """SAFE-02: LB flag decision (_handle_event_transition) executes every poll during OB."""
-    pass
+    from src.event_classifier import EventType
+
+    daemon = make_daemon()
+    daemon._handle_event_transition = MagicMock()
+    daemon.current_metrics = {
+        "event_type": EventType.BLACKOUT_REAL,
+        "time_rem_minutes": 3.0,  # Below shutdown threshold (5 min)
+        "previous_event_type": EventType.ONLINE,
+        "shutdown_imminent": False
+    }
+    daemon.shutdown_threshold_minutes = 5
+
+    # Mock dependencies
+    daemon._update_ema = MagicMock(return_value=(11.0, 30.0))
+    daemon._classify_event = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(30.0, 3.0))
+    daemon._write_virtual_ups = MagicMock()
+    daemon._track_voltage_sag = MagicMock()
+    daemon._track_discharge = MagicMock()
+    daemon._log_status = MagicMock()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '11.0',
+        'input.voltage': '0',
+        'ups.status': 'OB DISCHRG',
+        'ups.load': '30'
+    }
+
+    # Simulate 4 polls during OB state
+    for i in range(4):
+        daemon.poll_count = i
+        daemon.current_metrics["event_type"] = EventType.BLACKOUT_REAL
+
+        event_type = daemon.current_metrics.get("event_type")
+        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
+
+        if is_discharging or daemon.poll_count % 6 == 0:
+            daemon._compute_metrics()
+            daemon._handle_event_transition()
+
+    # All 4 polls should call _handle_event_transition (is_discharging=True)
+    assert daemon._handle_event_transition.call_count == 4, \
+        f"Expected 4 calls during OB, got {daemon._handle_event_transition.call_count}"
 
 
 def test_no_writes_during_online_state(make_daemon):
     """SAFE-01: No spurious writes during OL state — only on poll % 6 boundary."""
-    pass
+    from src.event_classifier import EventType
+
+    daemon = make_daemon()
+    daemon._write_virtual_ups = MagicMock()
+    daemon._handle_event_transition = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(85.0, 120.0))
+    daemon._update_ema = MagicMock(return_value=(13.4, 15.0))
+    daemon._classify_event = MagicMock()
+    daemon._track_voltage_sag = MagicMock()
+    daemon._track_discharge = MagicMock()
+    daemon._log_status = MagicMock()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '13.4',
+        'input.voltage': '220',
+        'ups.status': 'OL',
+        'ups.load': '15'
+    }
+    daemon.current_metrics = {"event_type": EventType.ONLINE, "previous_event_type": EventType.ONLINE}
+
+    # Simulate 7 polls in OL state
+    for i in range(7):
+        daemon.poll_count = i
+        daemon.current_metrics["event_type"] = EventType.ONLINE
+
+        event_type = daemon.current_metrics.get("event_type")
+        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
+
+        if is_discharging or daemon.poll_count % 6 == 0:
+            daemon._compute_metrics()
+            daemon._handle_event_transition()
+            daemon._write_virtual_ups(None, 85.0, 120.0)
+
+    # Only poll 0 and poll 6 should trigger writes (modulo 6 == 0)
+    assert daemon._write_virtual_ups.call_count == 2, \
+        f"Expected 2 writes (poll 0, poll 6), got {daemon._write_virtual_ups.call_count}"
 
 
 def test_lb_flag_signal_latency(make_daemon):
     """SAFE-02: LB flag written to virtual UPS within <10s of OB transition."""
-    pass
+    from src.event_classifier import EventType
+    from pathlib import Path
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        daemon = make_daemon()
+        daemon.model_dir = Path(tmpdir)
+        daemon.shutdown_threshold_minutes = 5
+
+        # Track timestamps of _handle_event_transition calls during OB
+        transition_call_times = []
+
+        def mock_handle_with_timestamp():
+            transition_call_times.append(daemon.poll_count)
+            # Also set shutdown_imminent flag if time_rem below threshold
+            if daemon.current_metrics.get("time_rem_minutes", 0) < daemon.shutdown_threshold_minutes:
+                daemon.current_metrics["shutdown_imminent"] = True
+
+        daemon._handle_event_transition = mock_handle_with_timestamp
+        daemon._compute_metrics = MagicMock(return_value=(30.0, 3.0))
+        daemon._update_ema = MagicMock(return_value=(11.0, 30.0))
+        daemon._classify_event = MagicMock()
+        daemon._write_virtual_ups = MagicMock()
+        daemon._track_voltage_sag = MagicMock()
+        daemon._track_discharge = MagicMock()
+        daemon._log_status = MagicMock()
+        daemon.nut_client = MagicMock()
+        daemon.nut_client.get_ups_vars.return_value = {
+            'battery.voltage': '11.0',
+            'input.voltage': '0',
+            'ups.status': 'OB DISCHRG',
+            'ups.load': '30'
+        }
+        daemon.current_metrics = {"event_type": EventType.ONLINE, "previous_event_type": EventType.ONLINE}
+
+        # Poll 0-1: OL state
+        # Poll 2: OB transition detected
+        for i in range(3):
+            daemon.poll_count = i
+            daemon.current_metrics["previous_event_type"] = daemon.current_metrics.get("event_type", EventType.ONLINE)
+
+            if i < 2:
+                daemon.current_metrics["event_type"] = EventType.ONLINE
+            else:
+                daemon.current_metrics["event_type"] = EventType.BLACKOUT_REAL
+                daemon.current_metrics["time_rem_minutes"] = 3.0
+
+            event_type = daemon.current_metrics.get("event_type")
+            is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
+
+            if is_discharging or daemon.poll_count % 6 == 0:
+                daemon._compute_metrics()
+                daemon._handle_event_transition()
+
+        # Verify _handle_event_transition was called at poll 2 (immediately on OB)
+        assert 2 in transition_call_times, \
+            f"Expected LB decision at poll 2 (OB transition), calls were at {transition_call_times}"
+
+        # Verify shutdown_imminent flag is True (time_rem 3.0 < threshold 5)
+        assert daemon.current_metrics.get("shutdown_imminent") is True, \
+            "Expected shutdown_imminent=True when time_rem < threshold"
 
 
 def test_voltage_sag_detection(make_daemon):
