@@ -94,6 +94,20 @@ Normal short blackouts (1-2 min) calibrate the upper part of the voltage curve. 
 
 ---
 
+## Battery Replacement
+
+> **TODO:** This scenario requires implementation — see `.planning/todos/pending/2026-03-14-battery-replacement-scenario-docs-and-implementation.md`
+
+When the battery degrades beyond useful life (SoH below threshold, replacement predictor alerts), replace it and reset the daemon's model to start fresh calibration on the new battery.
+
+Steps (planned):
+1. Replace the physical battery in the UPS
+2. Reset model.json (archive old data, restore standard VRLA curve)
+3. Run a deep battery test to kickstart calibration
+4. Verify the new battery works (check health report after first discharge)
+
+---
+
 ## Configuration
 
 All settings are in `~/.config/ups-battery-monitor/config.toml`:
