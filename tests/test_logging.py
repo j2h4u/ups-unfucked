@@ -20,11 +20,6 @@ class TestAlerterOutput:
         logger.addHandler(mock_handler)
         return logger
 
-    def test_setup_ups_logger_returns_logger(self):
-        """setup_ups_logger returns a Logger instance (shared, no extra handlers)."""
-        logger = alerter.setup_ups_logger("test-ups")
-        assert isinstance(logger, logging.Logger)
-
     def test_alert_soh_below_threshold(self, capsys):
         """SoH alert includes current value, threshold, and days to replacement."""
         logger = self._make_logger()

@@ -20,7 +20,6 @@ def make_daemon(config_fixture):
          patch('src.monitor.EMAFilter'), \
          patch('src.monitor.BatteryModel'), \
          patch('src.monitor.EventClassifier'), \
-         patch('src.monitor.alerter.setup_ups_logger'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
          patch.object(MonitorDaemon, '_validate_model'):
         # Replace mocked JournalHandler with a real stderr handler so logging works in tests
@@ -368,7 +367,6 @@ def test_auto_calibration_end_to_end(config_fixture):
         with patch('src.monitor.NUTClient'), \
              patch('src.monitor.EMAFilter'), \
              patch('src.monitor.EventClassifier'), \
-             patch('src.monitor.alerter.setup_ups_logger'), \
              patch.object(MonitorDaemon, '_check_nut_connectivity'), \
              patch.object(MonitorDaemon, '_validate_model'):
             daemon = MonitorDaemon(config_fixture)

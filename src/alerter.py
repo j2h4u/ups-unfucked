@@ -5,14 +5,8 @@ import logging.handlers
 from typing import Optional
 
 
-def setup_ups_logger(identifier: str = "ups-battery-monitor") -> logging.Logger:
-    """
-    Return the shared logger for UPS battery monitor.
-
-    Does NOT add handlers — monitor.py configures JournalHandler at startup.
-    This function exists so alerter callers get the same logger instance.
-    """
-    return logging.getLogger(identifier)
+# Direct logger instance for ups-battery-monitor
+logger = logging.getLogger("ups-battery-monitor")
 
 
 def alert_soh_below_threshold(
