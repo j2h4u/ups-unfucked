@@ -31,9 +31,9 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
         logger.warning("Empty LUT provided to soc_from_voltage")
         return SOC_FALLBACK
 
-    # Check for exact match first
+    # Check for match within tolerance (handles floating-point precision from EMA filtering)
     for entry in lut:
-        if entry["v"] == voltage:
+        if abs(entry["v"] - voltage) < 0.01:
             return entry["soc"]
 
     # LUT is maintained sorted descending by voltage in BatteryModel

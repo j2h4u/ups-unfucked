@@ -58,6 +58,7 @@ class TestSoCFloatingPointTolerance:
         lut = [
             {"v": 13.4, "soc": 1.0, "source": "standard"},
             {"v": 12.4, "soc": 0.64, "source": "standard"},
+            {"v": 12.0, "soc": 0.4, "source": "standard"},
             {"v": 10.5, "soc": 0.0, "source": "anchor"},
         ]
 
