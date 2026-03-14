@@ -1,0 +1,24 @@
+# UPS Battery Monitor configuration
+# Location: ~/.config/ups-battery-monitor/config.toml (or next to the repo)
+
+[polling]
+interval_sec = 10
+ema_window_sec = 120
+
+[nut]
+host = "localhost"
+port = 3493
+timeout_sec = 2.0
+ups_name = "cyberpower"
+
+[thresholds]
+# Initiate shutdown when runtime drops below this (minutes)
+shutdown_minutes = 5
+# Alert when SoH drops below this (0.0-1.0)
+soh_alert = 0.80
+# Alert when runtime drops below this (minutes)
+runtime_alert_minutes = 20
+
+[physics]
+# Reference load for SoH normalization (%)
+reference_load_percent = 20.0

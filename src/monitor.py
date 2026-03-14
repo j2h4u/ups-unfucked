@@ -1,10 +1,10 @@
 import time
 import signal
 import sys
-import os
 import math
 import logging
 import argparse
+import tomllib
 from pathlib import Path
 from datetime import datetime
 from systemd.journal import JournalHandler
@@ -18,23 +18,56 @@ from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src import soh_calculator, replacement_predictor, alerter
 
-# === INLINE CONFIGURATION (H2 fix: removed src/config.py) ===
-# Configuration precedence: model.json (physics) > env var > code default below.
-# TODO: replace env vars with centralized config file (see docs/EXPERT-PANEL-REVIEW-2026-03-14.md P1.5)
-POLL_INTERVAL = int(os.getenv('UPS_MONITOR_POLL_INTERVAL', '10'))
-MODEL_DIR = Path(os.getenv('UPS_MONITOR_MODEL_DIR', str(Path.home() / '.config' / 'ups-battery-monitor')))
+# === CONFIGURATION ===
+# Precedence: config.toml > code defaults. Physics params (IR_K, etc.) live in model.json.
+
+CONFIG_DIR = Path.home() / '.config' / 'ups-battery-monitor'
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Defaults (used if config.toml is missing or incomplete)
+_DEFAULTS = {
+    'polling': {'interval_sec': 10, 'ema_window_sec': 120},
+    'nut': {'host': 'localhost', 'port': 3493, 'timeout_sec': 2.0, 'ups_name': 'cyberpower'},
+    'thresholds': {'shutdown_minutes': 5, 'soh_alert': 0.80, 'runtime_alert_minutes': 20},
+    'physics': {'reference_load_percent': 20.0},
+}
+
+
+def _load_config():
+    """Load config from TOML file, falling back to defaults for missing keys."""
+    cfg = {}
+    # Search: ~/.config/ups-battery-monitor/config.toml, then repo root config.toml
+    for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
+        if path.is_file():
+            with open(path, 'rb') as f:
+                cfg = tomllib.load(f)
+            break
+
+    # Merge defaults for missing sections/keys
+    merged = {}
+    for section, defaults in _DEFAULTS.items():
+        merged[section] = {}
+        file_section = cfg.get(section, {})
+        for key, default in defaults.items():
+            merged[section][key] = file_section.get(key, default)
+    return merged
+
+
+_cfg = _load_config()
+
+POLL_INTERVAL = _cfg['polling']['interval_sec']
+EMA_WINDOW = _cfg['polling']['ema_window_sec']
+NUT_HOST = _cfg['nut']['host']
+NUT_PORT = _cfg['nut']['port']
+NUT_TIMEOUT = _cfg['nut']['timeout_sec']
+UPS_NAME = _cfg['nut']['ups_name']
+SHUTDOWN_THRESHOLD_MINUTES = _cfg['thresholds']['shutdown_minutes']
+SOH_THRESHOLD = _cfg['thresholds']['soh_alert']
+RUNTIME_THRESHOLD_MINUTES = _cfg['thresholds']['runtime_alert_minutes']
+REFERENCE_LOAD_PERCENT = _cfg['physics']['reference_load_percent']
+
+MODEL_DIR = CONFIG_DIR
 MODEL_PATH = MODEL_DIR / 'model.json'
-NUT_HOST = os.getenv('UPS_MONITOR_NUT_HOST', 'localhost')
-NUT_PORT = int(os.getenv('UPS_MONITOR_NUT_PORT', '3493'))
-NUT_TIMEOUT = float(os.getenv('UPS_MONITOR_NUT_TIMEOUT', '2.0'))
-UPS_NAME = os.getenv('UPS_MONITOR_UPS_NAME', 'cyberpower')
-EMA_WINDOW = int(os.getenv('UPS_MONITOR_EMA_WINDOW', '120'))
-IR_K_FALLBACK = float(os.getenv('UPS_MONITOR_IR_K', '0.015'))
-IR_L_BASE_FALLBACK = float(os.getenv('UPS_MONITOR_IR_BASE', '20.0'))
-SHUTDOWN_THRESHOLD_MINUTES = int(os.getenv('UPS_MONITOR_SHUTDOWN_THRESHOLD_MIN', '5'))
-SOH_THRESHOLD = float(os.getenv('UPS_MONITOR_SOH_THRESHOLD', '0.80'))
-RUNTIME_THRESHOLD_MINUTES = int(os.getenv('UPS_MONITOR_RUNTIME_THRESHOLD_MIN', '20'))
-REFERENCE_LOAD_PERCENT = float(os.getenv('UPS_MONITOR_REFERENCE_LOAD_PCT', '20.0'))
 
 # === INLINE LOGGING SETUP (H3 fix: removed src/logger.py) ===
 logger = logging.getLogger('ups-battery-monitor')
