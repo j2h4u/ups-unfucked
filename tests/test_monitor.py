@@ -816,3 +816,153 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
 
         # Verify model updated twice (once per OB→OL)
         assert daemon.battery_model.add_soh_history_entry.call_count == 2, f"Expected 2 SoH updates, got {daemon.battery_model.add_soh_history_entry.call_count}"
+
+
+# === HEALTH ENDPOINT TESTS (RED phase) ===
+
+def test_write_health_endpoint_creates_file(tmp_path):
+    """Verify health.json is created with correct structure."""
+    from src.monitor import _write_health_endpoint
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    _write_health_endpoint(model_dir, soc_percent=87.5, is_online=True)
+
+    health_path = model_dir / "health.json"
+    assert health_path.exists(), "health.json not created"
+
+    import json
+    with open(health_path) as f:
+        data = json.load(f)
+
+    assert "last_poll" in data
+    assert "last_poll_unix" in data
+    assert "current_soc_percent" in data
+    assert "online" in data
+    assert "daemon_version" in data
+    assert "model_dir" in data
+
+
+def test_health_endpoint_timestamp_format(tmp_path):
+    """Verify last_poll is ISO8601 UTC format."""
+    from src.monitor import _write_health_endpoint
+    from datetime import datetime
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    _write_health_endpoint(model_dir, soc_percent=50.0, is_online=False)
+
+    import json
+    with open(model_dir / "health.json") as f:
+        data = json.load(f)
+
+    # Should parse as ISO8601 UTC
+    last_poll_dt = datetime.fromisoformat(data["last_poll"])
+    assert last_poll_dt.tzinfo is not None, "Timestamp must be timezone-aware"
+    assert data["last_poll"].endswith("Z") or data["last_poll"].endswith("+00:00"), "ISO8601 UTC should end with 'Z' or '+00:00'"
+
+
+def test_health_endpoint_unix_timestamp(tmp_path):
+    """Verify last_poll_unix is valid Unix epoch."""
+    from src.monitor import _write_health_endpoint
+    import time
+    import json
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    before = int(time.time())
+    _write_health_endpoint(model_dir, soc_percent=75.0, is_online=True)
+    after = int(time.time())
+
+    with open(model_dir / "health.json") as f:
+        data = json.load(f)
+
+    unix_ts = data["last_poll_unix"]
+    assert isinstance(unix_ts, int)
+    assert before <= unix_ts <= after
+
+
+def test_health_endpoint_soc_precision(tmp_path):
+    """Verify SoC rounded to 1 decimal place."""
+    from src.monitor import _write_health_endpoint
+    import json
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    _write_health_endpoint(model_dir, soc_percent=87.5432, is_online=True)
+
+    with open(model_dir / "health.json") as f:
+        data = json.load(f)
+
+    assert data["current_soc_percent"] == 87.5
+
+
+def test_health_endpoint_online_status(tmp_path):
+    """Verify online status reflects UPS state."""
+    from src.monitor import _write_health_endpoint
+    import json
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    # Test OL state
+    _write_health_endpoint(model_dir, soc_percent=100.0, is_online=True)
+    with open(model_dir / "health.json") as f:
+        data = json.load(f)
+    assert data["online"] is True
+
+    # Test OB state
+    _write_health_endpoint(model_dir, soc_percent=25.0, is_online=False)
+    with open(model_dir / "health.json") as f:
+        data = json.load(f)
+    assert data["online"] is False
+
+
+def test_health_endpoint_version(tmp_path):
+    """Verify daemon_version is '1.1'."""
+    from src.monitor import _write_health_endpoint
+    import json
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    _write_health_endpoint(model_dir, soc_percent=50.0, is_online=True)
+
+    with open(model_dir / "health.json") as f:
+        data = json.load(f)
+
+    assert data["daemon_version"] == "1.1"
+
+
+def test_health_endpoint_updates_on_successive_calls(tmp_path):
+    """Verify file is replaced (not appended) on each call."""
+    from src.monitor import _write_health_endpoint
+    import time
+    import json
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+
+    # First write
+    _write_health_endpoint(model_dir, soc_percent=100.0, is_online=True)
+    health_path = model_dir / "health.json"
+    file_size_1 = health_path.stat().st_size
+
+    time.sleep(0.1)
+
+    # Second write with different data
+    _write_health_endpoint(model_dir, soc_percent=50.0, is_online=False)
+    file_size_2 = health_path.stat().st_size
+
+    with open(health_path) as f:
+        data = json.load(f)
+
+    # File should be similar size (not doubled from appending)
+    assert abs(file_size_1 - file_size_2) < 50, "File size changed dramatically; verify not appending"
+    # Verify latest data is present
+    assert data["current_soc_percent"] == 50.0
+    assert data["online"] is False

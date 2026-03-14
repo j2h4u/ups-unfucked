@@ -8,7 +8,7 @@ import tomllib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from systemd.journal import JournalHandler
 try:
@@ -18,7 +18,7 @@ except ImportError:
 
 from src.nut_client import NUTClient
 from src.ema_filter import EMAFilter, ir_compensate
-from src.model import BatteryModel
+from src.model import BatteryModel, atomic_write_json
 from src.soc_predictor import soc_from_voltage, charge_percentage
 from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
 from src.event_classifier import EventClassifier, EventType
@@ -181,7 +181,33 @@ except Exception:
     logger.addHandler(handler)
 
 # Setup alerter logger (Phase 4) for health monitoring
-ups_logger = alerter.setup_ups_logger("ups-battery-monitor")
+ups_logger = logging.getLogger("ups-battery-monitor")
+
+
+def _write_health_endpoint(model_dir: Path, soc_percent: float, is_online: bool) -> None:
+    """Write daemon health state to file for external monitoring tools.
+
+    Updates every poll (10s) with current daemon metrics. Tools like Grafana,
+    check_mk, and custom scripts can read this file to track:
+    - Daemon liveness (last_poll < 30s = healthy)
+    - Current battery state (soc_percent, online status)
+    - Daemon version tracking
+
+    Args:
+        model_dir: Path to model directory where health.json will be stored
+        soc_percent: Current state of charge as percentage (0-100)
+        is_online: True if UPS in OL state, False if OB state
+    """
+    health_data = {
+        "last_poll": datetime.now(timezone.utc).isoformat(),
+        "last_poll_unix": int(time.time()),
+        "current_soc_percent": round(soc_percent, 1),
+        "online": is_online,
+        "daemon_version": "1.1",
+        "model_dir": str(model_dir)
+    }
+    health_path = model_dir / "health.json"
+    atomic_write_json(health_path, health_data)
 
 
 class MonitorDaemon:
@@ -759,6 +785,13 @@ class MonitorDaemon:
                     self.current_metrics.previous_event_type = self.current_metrics.event_type or EventType.ONLINE
                     self._log_status(battery_charge, time_rem, poll_latency_ms)
                     self._write_virtual_ups(ups_data, battery_charge, time_rem)
+
+                # Write health endpoint for external monitoring (every poll)
+                _write_health_endpoint(
+                    self.config.model_dir,
+                    soc_percent=(self.current_metrics.soc or 0.0) * 100.0,
+                    is_online=(self.current_metrics.ups_status_override == "OL")
+                )
 
                 sd_notify('WATCHDOG=1')
                 time.sleep(1 if self.sag_state == SagState.MEASURING else self.config.polling_interval)
