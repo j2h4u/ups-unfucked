@@ -20,8 +20,19 @@ install.sh only handles its own components (systemd service, dummy-ups config, u
 
 ## Solution
 
-Add to install.sh:
-- Detect and update nut_exporter service file (add query param for virtual UPS)
-- Detect and update Alloy config (switch metrics_path)
-- Remove old `51-ups.sh` if `51-ups-health.sh` is being installed (idempotent)
-- General principle: installer should audit system for components that reference `cyberpower` and offer to switch them to `cyberpower-virtual`
+Split into two scripts with different audiences:
+
+### 1. `scripts/install.sh` — product installer (universal, ships with repo)
+For any user installing ups-battery-monitor on their system:
+- systemd service + dummy-ups config
+- upsmon switchover to virtual UPS
+- MOTD health script (replace old `51-ups.sh` if exists)
+- No assumptions about specific monitoring stack
+
+### 2. `scripts/deploy-senbonzakura.sh` — site-specific deploy (our server only, not shipped)
+For our specific senbonzakura setup:
+- Calls `install.sh` first
+- Patches nut_exporter query param (`?ups=cyberpower-virtual`)
+- Patches Alloy config (`metrics_path` with virtual UPS)
+- Any other senbonzakura-specific integrations
+- Lives in repo but documented as site-specific, not universal
