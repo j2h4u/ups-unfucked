@@ -7,6 +7,8 @@ to enable automatic recovery from NUT service restarts.
 
 import socket
 import logging
+import time
+from contextlib import contextmanager
 
 
 class NUTClient:
@@ -20,7 +22,7 @@ class NUTClient:
     - Returns dict with all requested variables; None for failed reads
     """
 
-    def __init__(self, host='localhost', port=3493, timeout=2.0, ups_name='cyberpower', socket=None):
+    def __init__(self, host='localhost', port=3493, timeout=2.0, ups_name='cyberpower'):
         """
         Initialize NUT client.
 
@@ -29,7 +31,6 @@ class NUTClient:
             port: NUT upsd port (default: 3493)
             timeout: Socket timeout in seconds (prevents hanging, default: 2.0)
             ups_name: UPS device name in NUT (typically 'cyberpower')
-            socket: Optional mock socket for testing (default: None, uses stdlib socket)
         """
         self.host = host
         self.port = port
@@ -37,16 +38,51 @@ class NUTClient:
         self.ups_name = ups_name
         self.logger = logging.getLogger(__name__)
         self.sock = None
-        self._mock_socket = socket  # For testing purposes
+
+    def _close_socket(self):
+        """Close socket, swallowing errors."""
+        try:
+            if self.sock:
+                self.sock.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _parse_var_line(line):
+        """
+        Parse a NUT VAR response line into (var_name, value).
+
+        Returns (var_name, float_or_str) or None if line is not a VAR line.
+        """
+        if not line.startswith('VAR '):
+            return None
+        words = line.split()
+        if len(words) < 3:
+            return None
+        var_name = words[2]
+        parts = line.split('"')
+        if len(parts) < 2:
+            return None
+        raw_value = parts[1]
+        try:
+            return (var_name, float(raw_value))
+        except ValueError:
+            return (var_name, raw_value)
 
     def connect(self):
         """Establish TCP connection to NUT upsd."""
-        if self._mock_socket:
-            self.sock = self._mock_socket
-        else:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(self.timeout)
-            self.sock.connect((self.host, self.port))
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect((self.host, self.port))
+
+    @contextmanager
+    def _socket_session(self):
+        """Connect, yield, close — handles cleanup on success and error."""
+        self.connect()
+        try:
+            yield
+        finally:
+            self._close_socket()
 
     def send_command(self, command):
         """
@@ -76,63 +112,67 @@ class NUTClient:
             socket.timeout: If connection times out
             socket.error: If socket communication fails
         """
-        try:
-            self.connect()
+        with self._socket_session():
             response = self.send_command(f'GET VAR {self.ups_name} {var_name}')
-
-            # Parse response: "VAR cyberpower battery.voltage 13.4"
-            parts = response.split()
-            if len(parts) >= 3 and parts[0] == 'VAR':
-                return float(parts[-1])
-            else:
-                self.logger.error(f"Unexpected NUT response: {response}")
-                return None
-        except socket.timeout:
-            self.logger.error(f"Socket timeout reading {var_name}")
-            raise
-        except socket.error as e:
-            self.logger.error(f"Socket error reading {var_name}: {e}")
-            raise
-        except ValueError as e:
-            self.logger.error(f"Failed to parse {var_name} as float: {response}")
+            parsed = self._parse_var_line(response)
+            if parsed is not None:
+                return parsed[1]
+            self.logger.error(f"Unexpected NUT response: {response}")
             return None
-        finally:
-            try:
-                if self.sock:
-                    self.sock.close()
-            except Exception:
-                pass
+
+    _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB
+
+    def _recv_until(self, delimiter):
+        """
+        Read from socket until delimiter string is found in response.
+
+        Guards against infinite loops: socket timeout covers idle connections,
+        wall-clock deadline covers slow-drip data, buffer cap covers runaway responses.
+
+        Args:
+            delimiter: String to look for (e.g., 'END LIST VAR cyberpower')
+
+        Returns:
+            Decoded response string
+
+        Raises:
+            socket.timeout: If wall-clock deadline exceeded or individual recv times out
+        """
+        buf = b''
+        delim_bytes = delimiter.encode()
+        deadline = time.monotonic() + self.timeout
+        while delim_bytes not in buf:
+            if time.monotonic() > deadline:
+                raise socket.timeout("LIST VAR response deadline exceeded")
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            if len(buf) > self._MAX_RECV_BYTES:
+                raise socket.timeout("LIST VAR response too large")
+        return buf.decode()
 
     def get_ups_vars(self):
         """
-        Fetch all relevant UPS variables as dict.
+        Fetch all UPS variables in a single connection using LIST VAR.
+
+        Uses NUT protocol's LIST VAR command to get all variables in one
+        TCP connection instead of 6 separate connections.
 
         Returns:
-            Dict {var_name: float_value or None} for all requested variables
+            Dict {var_name: value} — float where possible, string otherwise
 
         Raises:
             socket.timeout: If socket communication times out (caller should retry)
             socket.error: If socket communication fails (caller should retry)
         """
-        result = {}
-        vars_to_fetch = [
-            'battery.voltage',
-            'ups.load',
-            'ups.status',
-            'input.voltage',
-            'battery.charge',
-            'battery.runtime',
-        ]
+        with self._socket_session():
+            self.sock.sendall(f'LIST VAR {self.ups_name}\n'.encode())
+            raw = self._recv_until(f'END LIST VAR {self.ups_name}')
 
-        for var_name in vars_to_fetch:
-            try:
-                value = self.get_ups_var(var_name)
-                result[var_name] = value
-            except (socket.timeout, socket.error):
-                # Re-raise to allow daemon-level retry logic
-                raise
-            except Exception:
-                # Log other exceptions but continue (e.g., ValueError from parsing)
-                result[var_name] = None
-
-        return result
+            result = {}
+            for line in raw.splitlines():
+                parsed = self._parse_var_line(line)
+                if parsed is not None:
+                    result[parsed[0]] = parsed[1]
+            return result
