@@ -1,71 +1,65 @@
-import collections
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 
-class EMABuffer:
+class EMAFilter:
     """
-    Exponential moving average buffer with ring buffer storage.
+    Adaptive exponential moving average for voltage and load.
 
-    Maintains separate EMA tracks for voltage and load, with automatic
-    stabilization detection (after 3+ samples, safe for predictions).
+    Uses dynamic alpha that increases when input deviates significantly
+    from current EMA — fast reaction to real changes (power events,
+    battery tests), smooth filtering of sensor noise.
+
+    Inspired by DynamicAdaptiveFilterV2 (Arduino adaptive sensor filtering).
+
+    Tracks separate EMA for voltage and load, with stabilization gate
+    (requires sufficient samples before predictions are reliable).
     """
 
-    def __init__(self, window_sec=120, poll_interval_sec=10):
-        """
-        Initialize EMA buffer.
-
-        Args:
-            window_sec: EMA smoothing window in seconds (tau, ~2 min recommended)
-            poll_interval_sec: Time between polls in seconds
-        """
+    def __init__(self, window_sec=120, poll_interval_sec=10, sensitivity=0.05):
         self.window_sec = window_sec
         self.poll_interval_sec = poll_interval_sec
+        self.sensitivity = sensitivity
 
-        # Calculate alpha (smoothing factor)
-        # α = 1 - exp(-Δt/τ) where Δt = poll_interval, τ = window
+        # Base α = 1 - exp(-Δt/τ), used when signal is stable
         self.alpha = 1 - math.exp(-poll_interval_sec / window_sec)
-
-        # Ring buffer: store (timestamp, value) pairs
-        # Size: at least window_sec/poll_interval + headroom for EMA tail
-        max_samples = max(int(window_sec / poll_interval_sec) + 10, 24)
-        self.buffer_voltage = collections.deque(maxlen=max_samples)
-        self.buffer_load = collections.deque(maxlen=max_samples)
+        self._min_samples = max(12, int(window_sec / poll_interval_sec))
 
         # EMA state
         self.ema_voltage = None
         self.ema_load = None
         self.samples_since_init = 0
 
-    def add_sample(self, timestamp, voltage, load):
+    def _adaptive_alpha(self, new_value, current_ema):
         """
-        Add new voltage and load reading; update both EMA values.
+        Compute effective alpha based on deviation from current EMA.
 
-        Args:
-            timestamp: Unix timestamp of measurement
-            voltage: Battery voltage (float, volts)
-            load: UPS load (float, percent 0-100)
+        Small deviation → alpha_base (smooth filtering).
+        Large deviation (≥ sensitivity) → approaches 1.0 (instant reaction).
         """
-        self.buffer_voltage.append((timestamp, voltage))
-        self.buffer_load.append((timestamp, load))
+        if abs(current_ema) < 1e-6:
+            return 1.0
+        deviation = abs(new_value - current_ema) / abs(current_ema)
+        blend = min(deviation / self.sensitivity, 1.0)
+        return self.alpha + (1.0 - self.alpha) * blend
+
+    def _update_ema(self, new_value, current_ema):
+        """Apply adaptive EMA update; returns new EMA value."""
+        if current_ema is None:
+            return new_value
+        alpha = self._adaptive_alpha(new_value, current_ema)
+        return alpha * new_value + (1 - alpha) * current_ema
+
+    def add_sample(self, voltage, load):
+        """Add new voltage and load reading; update both EMA values."""
         self.samples_since_init += 1
-
-        # Update voltage EMA
-        if self.ema_voltage is None:
-            self.ema_voltage = voltage
-        else:
-            self.ema_voltage = self.alpha * voltage + (1 - self.alpha) * self.ema_voltage
-
-        # Update load EMA
-        if self.ema_load is None:
-            self.ema_load = load
-        else:
-            self.ema_load = self.alpha * load + (1 - self.alpha) * self.ema_load
+        self.ema_voltage = self._update_ema(voltage, self.ema_voltage)
+        self.ema_load = self._update_ema(load, self.ema_load)
 
     @property
     def stabilized(self) -> bool:
-        """True if EMA has settled (≥3 readings)."""
-        return self.samples_since_init >= 3
+        """True if EMA has settled (≥12 readings, ~2 min at default poll rate)."""
+        return self.samples_since_init >= self._min_samples
 
     @property
     def voltage(self) -> Optional[float]:
@@ -77,38 +71,15 @@ class EMABuffer:
         """Current EMA load, or None if not initialized."""
         return self.ema_load
 
-    def get_values(self) -> Tuple[Optional[float], Optional[float]]:
-        """Return (voltage, load) EMA values as tuple."""
-        return (self.ema_voltage, self.ema_load)
-
-    def buffer_size(self) -> Tuple[int, int]:
-        """Return (voltage_buffer_size, load_buffer_size) for diagnostics."""
-        return (len(self.buffer_voltage), len(self.buffer_load))
 
 
 def ir_compensate(v_ema, l_ema, l_base=20.0, k=0.015):
     """
-    Apply IR (internal resistance) compensation to normalize voltage.
-
-    Compensates for voltage drop caused by load variation, enabling
-    load-independent battery model lookup.
-
-    Args:
-        v_ema: EMA voltage (volts)
-        l_ema: EMA load (percent, 0-100)
-        l_base: Reference load for normalization (percent, default 20%)
-        k: IR compensation coefficient (V per % load, default 0.015)
-
-    Returns:
-        Normalized voltage (v_ema + k*(l_ema - l_base))
+    Apply IR compensation to normalize voltage for load-independent SoC lookup.
 
     Formula: V_norm = V_ema + k * (L_ema - L_base)
-
-    This corrects voltage to what it would be at reference load,
-    enabling accurate SoC lookup independent of current draw.
     """
     if v_ema is None or l_ema is None:
         return None
 
-    v_norm = v_ema + k * (l_ema - l_base)
-    return v_norm
+    return v_ema + k * (l_ema - l_base)
