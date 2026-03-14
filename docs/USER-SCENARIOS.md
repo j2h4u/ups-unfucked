@@ -7,7 +7,7 @@ The monitor works fully automatically out of the box. These scenarios describe o
 The daemon tracks battery health automatically from every discharge event.
 
 ```bash
-python3 scripts/battery-health.py
+./scripts/battery-health.py
 ```
 
 Shows: SoH, capacity, LUT calibration coverage, discharge event count, replacement prediction (after 20+ events), and internal resistance trend.
