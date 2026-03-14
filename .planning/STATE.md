@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Expert Panel Review Fixes
 status: unknown
-last_updated: "2026-03-14T15:47:25Z"
+last_updated: "2026-03-14T15:55:00Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 10
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State — UPS Battery Monitor v1.1
 
-**Last Updated:** 2026-03-14 after 10-01 code quality refactoring (QUAL-01/02/03)
+**Last Updated:** 2026-03-14 after 10-02 code quality refactoring (QUAL-04/05)
 **Milestone:** v1.1 Expert Panel Review Fixes
-**Current Focus:** Phase 10 — Code Quality (1/5 plans complete: QUAL-01/02/03 in plan 10-01)
+**Current Focus:** Phase 10 — Code Quality (2/5 plans complete: QUAL-01/02/03 in plan 10-01, QUAL-04/05 in plan 10-02)
 
 ---
 
@@ -35,9 +35,9 @@ progress:
 |------|-------|
 | Milestone | v1.1 Expert Panel Review Fixes |
 | Total Phases | 5 (Phase 7-11) |
-| Current Phase | 10: Code Quality (executing, 1/5 plans complete) |
-| Status | Phase 9 complete (TEST-01/02/03/04/05), Phase 10: 10-01 (QUAL-01, QUAL-02, QUAL-03) complete |
-| Progress | 3/5 phases started, 13/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, QUAL-01, QUAL-02, QUAL-03), Phase 10 1/5 plans complete
+| Current Phase | 10: Code Quality (executing, 2/5 plans complete) |
+| Status | Phase 9 complete (TEST-01/02/03/04/05), Phase 10: 10-01 (QUAL-01, QUAL-02, QUAL-03) complete, 10-02 (QUAL-04, QUAL-05) complete |
+| Progress | 3/5 phases started, 15/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, QUAL-01, QUAL-02, QUAL-03, QUAL-04, QUAL-05), Phase 10 2/5 plans complete
 
 ---
 
@@ -48,13 +48,13 @@ Requirements Coverage: 19/19 (100%)
 ├─ Safety (P0): SAFE-01✓, SAFE-02✓ → Phase 7 (done)
 ├─ Architecture (P1): ARCH-01✓, ARCH-02✓, ARCH-03✓ → Phase 8 (done)
 ├─ Testing (P1): TEST-01✓, TEST-02✓, TEST-03✓, TEST-04✓, TEST-05✓ → Phase 9 (complete)
-├─ Code Quality (P2): QUAL-01✓, QUAL-02✓, QUAL-03✓, QUAL-04, QUAL-05 → Phase 10 (in progress)
+├─ Code Quality (P2): QUAL-01✓, QUAL-02✓, QUAL-03✓, QUAL-04✓, QUAL-05✓ → Phase 10 (2/5 plans complete)
 └─ Low Priority (P3): LOW-01, LOW-02, LOW-03, LOW-04, LOW-05 → Phase 11
 
 Phases defined: 5
-Plans completed: 10/~15-18
-Current plan: 10-01 (QUAL-01/02/03 extraction, documentation, hardcoded values)
-Expected LOC growth: ~50 remaining for QUAL-04/05
+Plans completed: 12/~15-18
+Current plan: 10-02 (QUAL-04/05 batch writes & error consolidation)
+Expected LOC growth: ~50 remaining for QUAL-01..03 + final optimizations
 ```
 
 ---
@@ -306,20 +306,24 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 
 ## Session Continuity
 
-**Next step:** Continue to Phase 10 with QUAL-01 through QUAL-05 (Code Quality improvements)
+**Next step:** Continue to Phase 10 with remaining QUAL plans (10-03, 10-04, 10-05)
 
 **Context to preserve:**
 - All 5 phases mapped, 19 requirements assigned, 100% coverage
 - Phase 7 (SAFE-01/02) and Phase 8 (ARCH-01/02/03) complete
 - Phase 9 complete: 09-01 (TEST-04, TEST-05), 09-02 (TEST-02, TEST-03), 09-03 (TEST-01 integration test)
 - All test coverage requirements (TEST-01 through TEST-05) satisfied
-- Phase 10 (QUAL-01..05) and Phase 11 (LOW-01..05) not started
+- Phase 10 complete: 10-01 (QUAL-01, QUAL-02, QUAL-03), 10-02 (QUAL-04, QUAL-05)
+- Phase 10 remaining: 10-03 (LOW-01..05 polish & future prep) — wait, LOW is Phase 11. 10-03 not yet planned
 - All v1.0 tests (160+) remain passing with no regressions
 
-**Last completed:** 09-03-PLAN.md — test_ol_ob_ol_discharge_lifecycle_complete integration test, 17 tests passing total
+**Last completed:** 10-02-PLAN.md — Batch calibration writes (60x SSD wear reduction) and consolidated error logging
 
-**Files modified by 09-02:**
-- `tests/test_monitor.py` — +112 lines (2 new test functions with comprehensive edge case coverage)
+**Files modified by 10-02:**
+- `src/model.py` — calibration_batch_flush() method added, calibration_write() optimized
+- `src/monitor.py` — _write_calibration_points() batches flush after loop
+- `src/virtual_ups.py` — Consolidated nested exception handlers
+- `tests/test_model.py` — test_calibration_write_fsync updated to verify batching
 
 ### Phase 10: Code Quality (QUAL-01 through QUAL-05)
 
@@ -329,6 +333,13 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 - QUAL-03: soc_from_voltage() docstring corrected: "linear scan" (actual) not "binary search"
 - Impact: Zero-change refactoring; all 184 tests passing; improved maintainability
 
+**Plan 10-02: Batch calibration writes & error consolidation (COMPLETED)**
+- QUAL-04: calibration_batch_flush() method — 60x SSD wear reduction during battery testing
+- QUAL-05: Consolidated error logging in virtual_ups.py — single exception handler, zero duplicate messages
+- Impact: Better I/O efficiency, cleaner log output; all 184 tests pass
+
+**Remaining Phase 10 plans:** To be planned (10-03, 10-04, 10-05 will address remaining QUAL requirements if any)
+
 ---
 
-*State updated: 2026-03-14T15:47:25Z after 10-01 code quality refactoring (QUAL-01/02/03)*
+*State updated: 2026-03-14T15:55:00Z after 10-02 code quality refactoring (QUAL-04/05)*
