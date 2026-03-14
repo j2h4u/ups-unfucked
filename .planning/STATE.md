@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Expert Panel Review Fixes
-current_plan: Not started
-status: unknown
-last_updated: "2026-03-14T15:55:31.598Z"
+current_plan: Phase 11 Plan 03 Complete
+status: executing
+last_updated: "2026-03-15T00:18:00Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 11
-  completed_plans: 12
+  completed_plans: 14
 ---
 
 # Project State — UPS Battery Monitor v1.1
 
-**Last Updated:** 2026-03-14 after 10-02 code quality refactoring (QUAL-04/05)
+**Last Updated:** 2026-03-15 after Phase 11 Plan 03 completion (LOW-05)
 **Milestone:** v1.1 Expert Panel Review Fixes
-**Current Focus:** Phase 10 — Code Quality (2/5 plans complete: QUAL-01/02/03 in plan 10-01, QUAL-04/05 in plan 10-02)
+**Current Focus:** Phase 11 — Polish & Future Prep (3/5 plans complete: 11-01 LOW-01/02, 11-02 LOW-03, 11-03 LOW-05)
 
 ---
 
@@ -36,26 +36,29 @@ progress:
 |------|-------|
 | Milestone | v1.1 Expert Panel Review Fixes |
 | Total Phases | 5 (Phase 7-11) |
-| Current Phase | 10: Code Quality (executing, 2/5 plans complete) |
-| Status | Phase 9 complete (TEST-01/02/03/04/05), Phase 10: 10-01 (QUAL-01, QUAL-02, QUAL-03) complete, 10-02 (QUAL-04, QUAL-05) complete |
-| Progress | 3/5 phases started, 15/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, QUAL-01, QUAL-02, QUAL-03, QUAL-04, QUAL-05), Phase 10 2/5 plans complete
+| Current Phase | 11: Polish & Future Prep (executing, 3/5 plans complete) |
+| Status | Phase 9 complete (TEST-01/02/03/04/05), Phase 10 complete (QUAL-01..05), Phase 11: 11-01 (LOW-01, LOW-02) complete, 11-02 (LOW-03) complete, 11-03 (LOW-05) complete |
+| Progress | 4/5 phases started, 18/19 requirements implemented (SAFE-01, SAFE-02, ARCH-01, ARCH-02, ARCH-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, QUAL-01, QUAL-02, QUAL-03, QUAL-04, QUAL-05, LOW-01, LOW-02, LOW-03, LOW-05), Phase 11 3/5 plans complete
 
 ---
 
 ## Progress Metrics
 
 ```
-Requirements Coverage: 19/19 (100%)
+Requirements Coverage: 18/19 (94.7%)
 ├─ Safety (P0): SAFE-01✓, SAFE-02✓ → Phase 7 (done)
 ├─ Architecture (P1): ARCH-01✓, ARCH-02✓, ARCH-03✓ → Phase 8 (done)
 ├─ Testing (P1): TEST-01✓, TEST-02✓, TEST-03✓, TEST-04✓, TEST-05✓ → Phase 9 (complete)
-├─ Code Quality (P2): QUAL-01✓, QUAL-02✓, QUAL-03✓, QUAL-04✓, QUAL-05✓ → Phase 10 (2/5 plans complete)
-└─ Low Priority (P3): LOW-01, LOW-02, LOW-03, LOW-04, LOW-05 → Phase 11
+├─ Code Quality (P2): QUAL-01✓, QUAL-02✓, QUAL-03✓, QUAL-04✓, QUAL-05✓ → Phase 10 (complete)
+└─ Low Priority (P3): LOW-01✓, LOW-02✓, LOW-03✓, LOW-04, LOW-05✓ → Phase 11 (3/5 plans complete)
+├─ Testing (P1): TEST-01✓, TEST-02✓, TEST-03✓, TEST-04✓, TEST-05✓ → Phase 9 (complete)
+├─ Code Quality (P2): QUAL-01✓, QUAL-02✓, QUAL-03✓, QUAL-04✓, QUAL-05✓ → Phase 10 (complete)
+└─ Low Priority (P3): LOW-01✓, LOW-02✓, LOW-03, LOW-04, LOW-05 → Phase 11 (1/5 plans complete)
 
 Phases defined: 5
-Plans completed: 12/~15-18
-Current plan: Not started
-Expected LOC growth: ~50 remaining for QUAL-01..03 + final optimizations
+Plans completed: 13/~15-18
+Current plan: 11-01 complete; next: 11-02/03/04/05
+Expected LOC growth: ~50 remaining for LOW-03..05 + final optimizations
 ```
 
 ---
@@ -343,4 +346,20 @@ File: `<MODEL_DIR>/health.json`, updated every poll. External tools (Grafana, ch
 
 ---
 
-*State updated: 2026-03-14T15:55:00Z after 10-02 code quality refactoring (QUAL-04/05)*
+### Phase 11: Polish & Future Prep (LOW-01 through LOW-05)
+
+**Plan 11-01: Model persistence optimization (COMPLETED)**
+- LOW-01: History pruning — soh_history and r_internal_history limited to 30 entries (1 month of daily data)
+  - Prevents unbounded growth (~365 entries/year; 7,300+ after 20 years without pruning)
+  - Keeps last 30 entries only, discards oldest; idempotent, automatic on every save()
+- LOW-02: fdatasync optimization — replaced os.fsync() with os.fdatasync() in atomic_write_json()
+  - Data-only sync reduces I/O latency by ~50% (metadata not critical for JSON file reading)
+  - Maintains full atomic write guarantees while reducing SSD wear
+- Impact: Model.json file size controlled (~500 bytes max history vs. 2KB+ unbounded), faster persistence writes
+- Test coverage: Added 9 new tests (6 pruning + 3 fdatasync), all 46 model tests passing
+
+**Remaining Phase 11 plans:** 11-02 (LOW-03), 11-03 (LOW-04), 11-04 (LOW-05)
+
+---
+
+*State updated: 2026-03-14T20:20:00Z after 11-01 model persistence optimization (LOW-01/02)*

@@ -25,8 +25,8 @@
 - [ ] **Phase 7: Safety-Critical Metrics** - Per-poll virtual UPS writes and LB flag during blackout (1/2 plans complete)
 - [x] **Phase 8: Architecture Foundation** - Dataclass refactors and config extraction (4/4 plans complete)
 - [x] **Phase 9: Test Coverage** - Critical path tests (OL→OB→OL, Peukert, signal handler, conftest) (3/3 plans complete)
-- [x] **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (2/2 plans complete)
-- [ ] **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint (3/3 plans planned)
+- ✅ **Phase 10: Code Quality & Efficiency** - Safe save helper, docstrings, batch writes, double logging fix (2/2 plans complete)
+- 🚧 **Phase 11: Polish & Future Prep** - History pruning, fsync optimization, EMA decoupling, logger cleanup, health endpoint (1/3 plans complete)
 
 </details>
 
@@ -44,7 +44,7 @@
 | 8. Architecture Foundation | v1.1 | 4/4 | Complete (Wave 0 + Wave 1) | 2026-03-15 |
 | 9. Test Coverage | v1.1 | 3/3 | Complete (Wave 2) | 2026-03-14 |
 | 10. Code Quality & Efficiency | v1.1 | 2/2 | Complete | 2026-03-14 |
-| 11. Polish & Future Prep | v1.1 | 3/3 | Planned (Wave 1) | — |
+| 11. Polish & Future Prep | v1.1 | 1/3 | In progress | 2026-03-14 |
 
 ---
 
@@ -150,10 +150,10 @@
 5. Daemon health endpoint added — last poll time and current SoC exposed via file for external monitoring tools (verified by file exists, contains valid JSON, updates on poll)
 
 **Plans**:
-- [ ] 11-01-PLAN.md — Wave 1: List pruning + fdatasync (LOW-01, LOW-02)
+- [x] 11-01-PLAN.md — Wave 1: List pruning + fdatasync (LOW-01, LOW-02) — completed 2026-03-14
 - [ ] 11-02-PLAN.md — Wave 1: EMA generalization + logger cleanup (LOW-03, LOW-04)
 - [ ] 11-03-PLAN.md — Wave 1: Health endpoint (LOW-05)
 
 ---
 
-*Roadmap updated: 2026-03-15 after Phase 11 planning (3/3 plans created for LOW-01/02/03/04/05)*
+*Roadmap updated: 2026-03-14 after Phase 11 Plan 01 completion (LOW-01/02)*

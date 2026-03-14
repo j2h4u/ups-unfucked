@@ -23,21 +23,21 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 - [x] **QUAL-01**: Repeated `try/except OSError` for `model.save()` (4 occurrences in monitor.py) extracted to `_safe_save()` helper
 - [x] **QUAL-02**: Hardcoded date `'2026-03-13'` in `_default_vrla_lut()` soh_history replaced with `datetime.now().strftime('%Y-%m-%d')`
 - [x] **QUAL-03**: `soc_from_voltage` docstring corrected — says "binary search" but implementation is linear scan
-- [ ] **QUAL-04**: `calibration_write()` batched — accumulate points in memory, single save per REPORTING_INTERVAL instead of per-point atomic write
-- [ ] **QUAL-05**: Double error log in `virtual_ups.py` fixed — inner catch (line 90) and outer catch (line 93) both log same failure
+- [x] **QUAL-04**: `calibration_write()` batched — accumulate points in memory, single save per REPORTING_INTERVAL instead of per-point atomic write
+- [x] **QUAL-05**: Double error log in `virtual_ups.py` fixed — inner catch (line 90) and outer catch (line 93) both log same failure
 
 ### Testing
 
-- [ ] **TEST-01**: Integration test for full OL→OB→OL discharge lifecycle — `_handle_event_transition` + `_update_battery_health` + `_track_discharge` as connected flow
-- [ ] **TEST-02**: Unit tests for `_auto_calibrate_peukert` method — verify Peukert exponent recalculation math and edge cases
-- [ ] **TEST-03**: Test for `_signal_handler` — verify model save on SIGTERM
-- [ ] **TEST-04**: Fix `conftest.py` `mock_socket_ok` to return proper LIST VAR multi-line response for `get_ups_vars` testing
-- [ ] **TEST-05**: Address floating-point exact comparison `entry["v"] == voltage` in `soc_from_voltage` (line 37) — replace with tolerance-based comparison or document safety
+- [x] **TEST-01**: Integration test for full OL→OB→OL discharge lifecycle — `_handle_event_transition` + `_update_battery_health` + `_track_discharge` as connected flow
+- [x] **TEST-02**: Unit tests for `_auto_calibrate_peukert` method — verify Peukert exponent recalculation math and edge cases
+- [x] **TEST-03**: Test for `_signal_handler` — verify model save on SIGTERM
+- [x] **TEST-04**: Fix `conftest.py` `mock_socket_ok` to return proper LIST VAR multi-line response for `get_ups_vars` testing
+- [x] **TEST-05**: Address floating-point exact comparison `entry["v"] == voltage` in `soc_from_voltage` (line 37) — replace with tolerance-based comparison or document safety
 
 ### Low Priority
 
-- [ ] **LOW-01**: Add pruning for unbounded `soh_history` and `r_internal_history` lists in model.json
-- [ ] **LOW-02**: Consider `os.fdatasync` instead of `os.fsync` in `atomic_write_json` (no metadata sync needed)
+- [x] **LOW-01**: Add pruning for unbounded `soh_history` and `r_internal_history` lists in model.json
+- [x] **LOW-02**: Consider `os.fdatasync` instead of `os.fsync` in `atomic_write_json` (no metadata sync needed)
 - [ ] **LOW-03**: Decouple EMAFilter voltage/load into generic per-metric track (prepare for temperature sensor)
 - [ ] **LOW-04**: Remove `setup_ups_logger` wrapper in alerter.py — use `logging.getLogger` directly
 - [ ] **LOW-05**: Add daemon health endpoint — expose last poll time and current SoC via file for external monitoring
@@ -63,15 +63,15 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 | QUAL-01 | 10 | Complete |
 | QUAL-02 | 10 | Complete |
 | QUAL-03 | 10 | Complete |
-| QUAL-04 | 10 | Pending |
-| QUAL-05 | 10 | Pending |
+| QUAL-04 | 10 | Complete |
+| QUAL-05 | 10 | Complete |
 | TEST-01 | 9 | Complete |
 | TEST-02 | 9 | Complete |
 | TEST-03 | 9 | Complete |
 | TEST-04 | 9 | Complete |
 | TEST-05 | 9 | Complete |
-| LOW-01 | 11 | Pending |
-| LOW-02 | 11 | Pending |
+| LOW-01 | 11 | Complete |
+| LOW-02 | 11 | Complete |
 | LOW-03 | 11 | Pending |
 | LOW-04 | 11 | Pending |
 | LOW-05 | 11 | Pending |
@@ -84,4 +84,4 @@ All requirements sourced from `docs/EXPERT-PANEL-REVIEW-2026-03-15.md`.
 ---
 
 *Requirements defined: 2026-03-15*
-*Last updated: 2026-03-14 after Phase 10-01 completion (QUAL-01/02/03)*
+*Last updated: 2026-03-14 after Phase 11-01 completion (LOW-01/02)*
