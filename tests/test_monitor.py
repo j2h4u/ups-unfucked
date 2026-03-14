@@ -1,5 +1,6 @@
 """Unit tests for monitor.py daemon initialization and auto-calibration."""
 
+import logging
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
@@ -22,6 +23,11 @@ def make_daemon():
          patch('src.monitor.alerter.setup_ups_logger'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
          patch.object(MonitorDaemon, '_validate_model'):
+        # Replace mocked JournalHandler with a real stderr handler so logging works in tests
+        from src.monitor import logger as monitor_logger
+        monitor_logger.handlers.clear()
+        monitor_logger.addHandler(logging.StreamHandler())
+
         def _make():
             return MonitorDaemon()
         yield _make

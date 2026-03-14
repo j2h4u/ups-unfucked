@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Battery health report — SoH, replacement prediction, R_internal trend, LUT coverage."""
+"""Battery health report — shows current battery condition and degradation trends."""
 
 import json
 import sys
@@ -17,42 +17,59 @@ def main():
 
     m = json.loads(MODEL_PATH.read_text())
 
-    # State of Health
+    print("=== UPS Battery Health ===\n")
+
+    # State of Health — how much usable capacity remains vs new battery
     soh = m.get('soh', 1.0)
-    status = ' ⚠ below threshold' if soh < m.get('soh_threshold', 0.80) else ''
-    print(f'SoH: {soh:.0%}{status}')
+    if soh < 0.80:
+        print(f"  State of Health:  {soh:.0%}  ⚠ DEGRADED (below 80%, consider replacement)")
+    elif soh < 0.90:
+        print(f"  State of Health:  {soh:.0%}  (aging, monitor closely)")
+    else:
+        print(f"  State of Health:  {soh:.0%}  (healthy)")
 
-    # Capacity
-    print(f'Capacity: {m.get("capacity_ah", "?")} Ah')
+    # Rated capacity
+    capacity = m.get('capacity_ah')
+    if capacity:
+        print(f"  Rated capacity:   {capacity} Ah")
 
-    # LUT calibration coverage
+    # LUT — how well the voltage-SoC curve is calibrated from real data
     lut = m.get('lut', [])
     measured = sum(1 for e in lut if e.get('source') == 'measured')
-    print(f'LUT: {len(lut)} points ({measured} measured)')
+    if measured == 0:
+        print(f"  Calibration:      standard curve (no real discharge data yet)")
+    else:
+        print(f"  Calibration:      {measured} measured points, {len(lut)} total in LUT")
 
-    # SoH history
+    # Discharge history — each blackout/test contributes a SoH data point
     history = m.get('soh_history', [])
-    print(f'Discharge events: {len(history)}')
+    print(f"  Discharge events: {len(history)} recorded")
     if history:
-        print(f'Latest: {history[-1].get("date", "?")} = {history[-1].get("soh", 0):.0%}')
+        latest = history[-1]
+        print(f"  Last discharge:   {latest.get('date', '?')} (SoH was {latest.get('soh', 0):.0%})")
 
-    # Replacement prediction
+    # Replacement prediction — needs 3+ events for linear regression
     if len(history) >= 3:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from src.replacement_predictor import linear_regression_soh
         result = linear_regression_soh(history, threshold_soh=0.80)
         if result:
             slope, intercept, r2, date = result
-            print(f'Predicted replacement: {date} (confidence R²={r2:.2f})')
+            print(f"  Replace battery:  ~{date} (trend confidence R²={r2:.2f})")
+        else:
+            print(f"  Replace battery:  no degradation trend detected yet")
+    elif len(history) > 0:
+        print(f"  Replace battery:  need {3 - len(history)} more discharge events for prediction")
 
-    # Internal resistance trend
+    # Internal resistance — rising R means aging (sulfation, grid corrosion)
     r_hist = m.get('r_internal_history', [])
     if r_hist:
         latest = r_hist[-1]
-        print(f'R_internal: {latest["r_ohm"]*1000:.1f}mΩ ({latest["date"]})')
+        print(f"  R_internal:       {latest['r_ohm']*1000:.1f} mΩ (measured {latest['date']})")
         if len(r_hist) >= 3:
             delta = (r_hist[-1]['r_ohm'] - r_hist[0]['r_ohm']) * 1000
-            print(f'R_internal trend: {delta:+.1f}mΩ since {r_hist[0]["date"]}')
+            direction = "rising ⚠" if delta > 0.5 else "stable" if delta > -0.5 else "improving"
+            print(f"  R_internal trend: {delta:+.1f} mΩ since {r_hist[0]['date']} ({direction})")
 
 
 if __name__ == '__main__':

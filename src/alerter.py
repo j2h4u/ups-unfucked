@@ -7,40 +7,12 @@ from typing import Optional
 
 def setup_ups_logger(identifier: str = "ups-battery-monitor") -> logging.Logger:
     """
-    Configure logger for UPS battery monitor daemon.
+    Return the shared logger for UPS battery monitor.
 
-    Sends output to systemd journal with SyslogIdentifier.
-    Also sends to stderr for interactive debugging.
-
-    Args:
-        identifier: Syslog identifier (appears in journalctl output)
-
-    Returns:
-        Configured logger instance
+    Does NOT add handlers — monitor.py configures JournalHandler at startup.
+    This function exists so alerter callers get the same logger instance.
     """
-    logger = logging.getLogger(identifier)
-    logger.setLevel(logging.DEBUG)
-    logger.handlers = []  # Clear any existing handlers
-
-    # journald handler (systemd integration)
-    try:
-        syslog_handler = logging.handlers.SysLogHandler(address='/dev/log')
-        syslog_handler.setFormatter(
-            logging.Formatter(f'{identifier}: %(levelname)s - %(message)s')
-        )
-        logger.addHandler(syslog_handler)
-    except (FileNotFoundError, OSError):
-        # /dev/log not available (e.g., in tests); fallback to stderr
-        pass
-
-    # Stderr handler for visibility
-    stderr_handler = logging.StreamHandler()
-    stderr_handler.setFormatter(
-        logging.Formatter(f'{identifier}: %(levelname)s - %(message)s')
-    )
-    logger.addHandler(stderr_handler)
-
-    return logger
+    return logging.getLogger(identifier)
 
 
 def alert_soh_below_threshold(

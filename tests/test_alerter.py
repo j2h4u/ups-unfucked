@@ -47,12 +47,10 @@ def test_independent_thresholds(caplog):
 
 
 def test_logger_setup():
-    """setup_ups_logger() returns Logger instance with handlers."""
+    """setup_ups_logger() returns shared Logger instance (handlers added by monitor.py)."""
     logger = setup_ups_logger("test-ups")
     assert isinstance(logger, logging.Logger)
     assert logger.name == "test-ups"
-    # Should have at least one handler (stderr)
-    assert len(logger.handlers) > 0
 
 
 def test_syslog_identifier_propagation():

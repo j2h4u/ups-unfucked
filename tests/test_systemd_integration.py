@@ -186,18 +186,18 @@ def test_service_file_logging_configuration():
     """
     Test: Service logs to journald with proper tagging.
 
-    OPS-04: StandardOutput=journal, StandardError=journal,
-            SyslogIdentifier=ups-battery-monitor
+    OPS-04: StandardOutput=null (JournalHandler writes directly, stdout would duplicate),
+            StandardError=journal, SyslogIdentifier=ups-battery-monitor
     """
     config = parse_service_file(SERVICE_FILE_PATH)
 
     assert "Service" in config, "[Service] section missing"
     service = config["Service"]
 
-    # StandardOutput must be journal
+    # StandardOutput=null — JournalHandler writes to journald directly, stdout would duplicate
     assert "StandardOutput" in service, "StandardOutput missing"
-    assert service["StandardOutput"] == "journal", \
-        f"StandardOutput should be 'journal', got '{service['StandardOutput']}'"
+    assert service["StandardOutput"] == "null", \
+        f"StandardOutput should be 'null', got '{service['StandardOutput']}'"
 
     # StandardError must be journal
     assert "StandardError" in service, "StandardError missing"
