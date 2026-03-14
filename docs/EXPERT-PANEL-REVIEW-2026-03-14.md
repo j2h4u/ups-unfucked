@@ -432,7 +432,7 @@ With frequent blackouts, verification happens naturally:
 
 - [ ] Peukert auto-calibration hardening — require 3+ consistent >10% errors
 - [ ] Kaizen's 3-month verification — compare predicted vs actual runtime on 50+ events
-- [ ] Boolean flags → state enum (if bugs arise from flag inconsistency)
+- [x] ~~Boolean flags → state enum~~ — SagState enum (IDLE → MEASURING → COMPLETE) replaces 3 boolean flags
 
 ### Open Items — RESOLVED
 
