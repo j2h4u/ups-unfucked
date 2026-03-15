@@ -475,6 +475,7 @@ def test_config_dataclass(config_fixture):
         runtime_threshold_minutes=25,
         reference_load_percent=30.0,
         ema_window_sec=180,
+        capacity_ah=9.0,
     )
     assert custom_config.ups_name == 'custom-ups'
     assert custom_config.polling_interval == 15

@@ -51,6 +51,7 @@ _CONFIGURABLE_DEFAULTS = {
     'ups_name': 'cyberpower',
     'shutdown_minutes': 5,
     'soh_alert': 0.80,
+    'capacity_ah': 7.2,
 }
 
 
@@ -74,6 +75,7 @@ class Config:
     runtime_threshold_minutes: int         # 20 minutes (hardcoded constant)
     reference_load_percent: float          # 20.0% (hardcoded constant)
     ema_window_sec: int                    # 120 seconds (hardcoded constant)
+    capacity_ah: float                     # From config.toml['capacity_ah'] or default 7.2
 
 
 def _load_config() -> Config:
@@ -102,6 +104,7 @@ def _load_config() -> Config:
         model_dir=CONFIG_DIR,
         config_dir=CONFIG_DIR,
         runtime_threshold_minutes=RUNTIME_THRESHOLD_MINUTES,
+        capacity_ah=user_config['capacity_ah'],
         reference_load_percent=REFERENCE_LOAD_PERCENT,
         ema_window_sec=EMA_WINDOW,
     )
@@ -284,6 +287,7 @@ class MonitorDaemon:
 
         model_path = config.model_dir / 'model.json'
         self.battery_model = BatteryModel(model_path)
+        self.battery_model.data['full_capacity_ah_ref'] = config.capacity_ah
         self._validate_model()
 
         # Set battery install date on first ever startup

@@ -96,12 +96,13 @@ cp scripts/motd/51-ups-health.sh ~/scripts/motd/
 
 ## Configuration
 
-`~/.config/ups-battery-monitor/config.toml` — only 3 settings:
+`~/.config/ups-battery-monitor/config.toml`:
 
 ```toml
 ups_name = "cyberpower"     # Your NUT device name
 shutdown_minutes = 5         # Minutes of runtime before LB flag
 soh_alert = 0.80             # Alert when SoH drops below this
+# capacity_ah = 7.2         # Battery capacity (change if you swap in a bigger cell)
 ```
 
 Everything else is either hardcoded or stored in `model.json` and auto-calibrated from real discharge data.

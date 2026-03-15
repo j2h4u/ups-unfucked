@@ -10,3 +10,9 @@ shutdown_minutes = 5
 
 # Alert when battery health (SoH) drops below this (0.0-1.0)
 soh_alert = 0.80
+
+# Battery rated capacity in Ah. Default 7.2 matches the stock battery
+# in most 425-850W UPS units (CSB HR1234W, GP1272, etc.).
+# Change this if you swap in a higher-capacity battery of the same
+# form factor — e.g. 9.0 for a 9Ah cell.
+# capacity_ah = 7.2

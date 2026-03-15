@@ -241,4 +241,5 @@ def config_fixture(tmp_path):
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,
+        capacity_ah=7.2,
     )
