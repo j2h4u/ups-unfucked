@@ -114,6 +114,16 @@ Everything else is either hardcoded or stored in `model.json` and auto-calibrate
 - systemd (Type=notify, WatchdogSec=120)
 - `python3-systemd` package
 
+## Roadmap
+
+- [x] **v1.0 — Physics model & safe shutdown.** The daemon replaces firmware guesswork with real electrochemistry: voltage-to-SoC lookup tables, Peukert's law for runtime prediction, IR compensation for load-independent readings, State of Health tracking via discharge curve analysis, and automatic model calibration from every power event. Every blackout makes the model smarter. 212 tests, zero external dependencies beyond stdlib.
+
+- [x] **v1.1 — Expert panel hardening.** Three rounds of expert review (electrochemist, statistician, embedded systems engineer) identified edge cases in short-discharge bias, mutable state risks, and SSD write amplification. Fixes: frozen dataclasses, batched calibration writes (60x fewer disk ops), full integration test suite, extensible EMA filter architecture. The math didn't change — the engineering around it got serious.
+
+- [ ] **v2.0 — Measured capacity.** The label on your battery says 7.2Ah. Is that true? After a year of float charging at 35°C, probably not. This milestone measures actual capacity from real discharge events using coulomb counting (current × time integration), cross-validated against the voltage curve. Three deep discharges are enough to converge. Includes extracting all battery math into a pure-function kernel with a year-long simulation harness that proves the formula system doesn't diverge — because when five interdependent equations feed each other's outputs across months of operation, you want mathematical proof, not hope.
+
+- [ ] **v3.0 — Active battery care.** Right now the daemon watches your battery die and reports on the process. This milestone makes it fight back. Lead-acid batteries suffer from sulfation — crystal buildup on the plates that slowly kills capacity. Periodic deep discharges break up these crystals, but too many cycles wear the battery out. The daemon will model sulfation rate (temperature-dependent), track desulfation from natural blackouts, and schedule deep discharge tests only when the math says the benefit outweighs the wear. One metric — cycle ROI — answers: "will this discharge extend or shorten battery life?" The goal: stretch a $30 battery from 2.5 years to 4+.
+
 ## License
 
 [MIT](LICENSE)
