@@ -89,6 +89,9 @@ scripts/battery-health.py
 
 # View computed metrics
 upsc cyberpower-virtual@localhost
+
+# Optional: add MOTD module for SSH login banner
+cp scripts/motd/51-ups-health.sh ~/scripts/motd/
 ```
 
 ## Configuration

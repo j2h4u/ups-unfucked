@@ -36,7 +36,7 @@ load=$(echo "$ups_data" | grep "^ups.load:" | cut -d' ' -f2 | cut -d'.' -f1)
 
 # Read SoH and replacement date from model.json (using jq)
 soh="?"
-replacement_date="TBD"
+replacement_date=""
 
 if [[ -f "$MODEL_FILE" ]]; then
     soh=$(jq -r '.soh // empty' "$MODEL_FILE" 2>/dev/null)
@@ -44,9 +44,7 @@ if [[ -f "$MODEL_FILE" ]]; then
     # Try to read replacement_date from soh_history last entry's prediction
     # (This would be stored by monitor.py; for now, compute from history)
     if [[ -n "$soh" && "$soh" != "?" ]]; then
-        # Optionally compute replacement date from soh_history
-        # For Phase 4, assume model.json may have a 'replacement_date' field
-        replacement_date=$(jq -r '.replacement_date // "TBD"' "$MODEL_FILE" 2>/dev/null)
+        replacement_date=$(jq -r '.replacement_due // empty' "$MODEL_FILE" 2>/dev/null)
     fi
 fi
 
@@ -65,12 +63,8 @@ fi
 
 # Format and color SoH as percentage
 if [[ -n "$soh" && "$soh" != "?" ]]; then
-    # Convert float to percentage; use bc if available, else printf
-    if command -v bc &>/dev/null; then
-        soh_pct=$(echo "scale=0; $soh * 100" | bc)
-    else
-        soh_pct=$(printf "%.0f" "$(echo "$soh * 100" | awk '{print int($1)}')")
-    fi
+    # Convert float to integer percentage (e.g. 0.997 → 100%)
+    soh_pct=$(printf "%.0f" "$(awk "BEGIN {print $soh * 100}")")
     soh_fmt="${soh_pct}%"
 
     # Color based on health
@@ -101,25 +95,21 @@ else
     icon="?"
 fi
 
-# Replacement date color: red if imminent
-repl_color="$DIM"
-repl_label="$replacement_date"
-if [[ "$replacement_date" != "TBD" && "$replacement_date" != "?" ]]; then
-    # Parse YYYY-MM format (if prediction provided)
-    if [[ "$replacement_date" =~ ^[0-9]{4}-[0-9]{2}$ ]]; then
-        # Color red if within 3 months
+# Replacement date suffix (only shown when prediction exists)
+repl_suffix=""
+if [[ -n "$replacement_date" ]]; then
+    repl_color="$DIM"
+    # Color red if within 3 months
+    if [[ "$replacement_date" =~ ^[0-9]{4}-[0-9]{2} ]]; then
         current_date=$(date +%s)
-        repl_date_sec=$(date -d "$replacement_date-01" +%s 2>/dev/null || echo "$current_date")
+        repl_date_sec=$(date -d "${replacement_date%-*}-${replacement_date#*-}-01" +%s 2>/dev/null || echo "$current_date")
         days_diff=$(( ($repl_date_sec - $current_date) / 86400 ))
-
         if [[ $days_diff -le 90 ]]; then
             repl_color="$RED"
-            repl_label="${replacement_date} IMMINENT"
-        else
-            repl_color="$DIM"
         fi
     fi
+    repl_suffix=" ${DIM}·${NC} replace by ${repl_color}${replacement_date}${NC}"
 fi
 
 # Output single line
-echo -e "  ${st_color}${icon}${NC} UPS: ${st_label}${NC} ${DIM}·${NC} charge ${charge}% ${DIM}·${NC} runtime ${rt_fmt} ${DIM}·${NC} load ${load}% ${DIM}·${NC} health ${soh_color}${soh_fmt}${NC} ${DIM}[replacement ${repl_color}${repl_label}${NC}${DIM}]${NC}"
+echo -e "  ${st_color}${icon}${NC} UPS: ${st_label}${NC} ${DIM}·${NC} charge ${charge}% ${DIM}·${NC} runtime ${rt_fmt} ${DIM}·${NC} load ${load}% ${DIM}·${NC} health ${soh_color}${soh_fmt}${NC}${repl_suffix}"
