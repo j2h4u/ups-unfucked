@@ -30,7 +30,16 @@
 
 ### Active
 
-(None — planning next milestone)
+## Current Milestone: v2.0 Actual Capacity Estimation
+
+**Goal:** Measure real battery capacity (Ah) from discharge data — replace rated label value, enable accurate SoH from day one and cross-brand benchmarking.
+
+**Target features:**
+- Back-calculate actual Ah from deep discharge events
+- Statistical confidence tracking across multiple discharges
+- New battery detection (user input to separate capacity from degradation)
+- Auto-rebaseline SoH against measured capacity
+- MOTD/journald reporting of rated vs measured capacity
 
 ### Out of Scope
 
@@ -76,4 +85,4 @@ Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert expo
 | MetricEMA generic class | Decoupled per-metric EMA enables temperature sensor without code changes | ✓ Good — v1.1 |
 
 ---
-*Last updated: 2026-03-14 after v1.1 milestone*
+*Last updated: 2026-03-15 after v2.0 milestone start*
