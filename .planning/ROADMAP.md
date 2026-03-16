@@ -117,7 +117,7 @@
 28. Minimum 30s discharge for SoH update: kernel `calculate_soh` returns None for duration < 30s. Orchestrator skips SoH update but still increments cycle_count and cumulative_on_battery_sec. Prevents flicker-storm pollution of SoH history.
 29. Discharge cooldown: 60s OL before clearing discharge buffer. If OB→OL→OB within 60s, treat as continuation of same discharge event. Orchestrator-level change only.
 
-**Plans:** 2/6 plans executed
+**Plans:** 3/6 plans executed
 
 ---
 
