@@ -17,9 +17,9 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 
 ### SoH Recalibration
 
-- [ ] **SOH-01**: SoH recalculates against measured capacity instead of rated when available
-- [ ] **SOH-02**: SoH history entries are version-tagged with the capacity_ah_ref used
-- [ ] **SOH-03**: SoH regression model ignores entries from different capacity baselines
+- [x] **SOH-01**: SoH recalculates against measured capacity instead of rated when available
+- [x] **SOH-02**: SoH history entries are version-tagged with the capacity_ah_ref used
+- [x] **SOH-03**: SoH regression model ignores entries from different capacity baselines
 
 ### Reporting
 
@@ -61,9 +61,9 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 | CAP-03 | 12 | Complete |
 | CAP-04 | 12 | Complete |
 | CAP-05 | 12 | Complete |
-| SOH-01 | 13 | Pending |
-| SOH-02 | 13 | Pending |
-| SOH-03 | 13 | Pending |
+| SOH-01 | 13 | Complete |
+| SOH-02 | 13 | Complete |
+| SOH-03 | 13 | Complete |
 | RPT-01 | 14 | Pending |
 | RPT-02 | 14 | Pending |
 | RPT-03 | 14 | Pending |

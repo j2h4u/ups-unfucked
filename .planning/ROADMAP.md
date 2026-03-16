@@ -96,7 +96,7 @@
 5. MOTD clearly shows new battery detection alert and SoH recalibration event
 
 **Plans:**
-2 plans ready for execution
+2/2 plans complete
 - [ ] 13-01 — SoH formula normalization (SOH-01), history versioning (SOH-02), regression filtering (SOH-03)
 - [ ] 13-02 — New battery detection post-discharge (>10% threshold), baseline reset on CLI flag, MOTD alert
 
@@ -138,7 +138,7 @@
 | 11. Polish & Future Prep | v1.1 | 3/3 | Complete | 2026-03-14 |
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete    | 2026-03-16 |
 | 12. Deep Discharge Capacity Estimation | v2.0 | 4/4 | Complete    | 2026-03-16 |
-| 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Planning    | — |
+| 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete    | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 0/TBD | Not started | — |
 
 ---
