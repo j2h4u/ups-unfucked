@@ -723,7 +723,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 30
         daemon.ema_buffer.voltage = 11.5
         daemon.ema_buffer.load = 25
-        daemon._track_discharge(11.5, base_timestamp + 200)
+        daemon._track_discharge(11.5, base_timestamp + 250)
 
         # Poll 4: OB at 11.0V, 20% charge (continue discharge)
         daemon.poll_count = 4
@@ -732,7 +732,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 20
         daemon.ema_buffer.voltage = 11.0
         daemon.ema_buffer.load = 25
-        daemon._track_discharge(11.0, base_timestamp + 300)
+        daemon._track_discharge(11.0, base_timestamp + 500)
 
         # Poll 5: OL at 13.0V, 100% charge (TRANSITION - OB→OL)
         daemon.poll_count = 5
@@ -776,7 +776,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 60
         daemon.ema_buffer.voltage = 12.5
         daemon.ema_buffer.load = 25
-        daemon._track_discharge(12.5, base_timestamp + 400)
+        daemon._track_discharge(12.5, base_timestamp + 600)
         daemon._handle_event_transition()
         assert daemon.discharge_buffer.collecting is True, "Buffer should restart collecting in second OB"
 
@@ -787,7 +787,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 15
         daemon.ema_buffer.voltage = 11.2
         daemon.ema_buffer.load = 25
-        daemon._track_discharge(11.2, base_timestamp + 500)
+        daemon._track_discharge(11.2, base_timestamp + 1000)
 
         # Poll 9: OL at 13.1V (TRANSITION - OB→OL)
         daemon.poll_count = 9

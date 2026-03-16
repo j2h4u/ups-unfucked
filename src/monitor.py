@@ -425,6 +425,17 @@ class MonitorDaemon:
         if len(self.discharge_buffer.voltages) < 2:
             return  # No discharge detected; skip SoH update
 
+        # Skip SoH/Peukert update for micro-discharges (<5 min).
+        # Short discharges have terrible signal-to-noise: 105s discharge
+        # caused SoH to drop from 99.7% to 88.6% (incident 2026-03-16).
+        # Cycle count and on-battery time are still tracked (in _track_discharge).
+        discharge_duration = self.discharge_buffer.times[-1] - self.discharge_buffer.times[0]
+        if discharge_duration < 300:
+            logger.info(f"Discharge too short for model update ({discharge_duration:.0f}s < 300s); "
+                        f"skipping SoH/Peukert calibration")
+            self.discharge_buffer = DischargeBuffer()
+            return
+
         # Calculate average load from accumulated samples
         avg_load = (sum(self.discharge_buffer.loads) / len(self.discharge_buffer.loads)
                    if self.discharge_buffer.loads else self.reference_load_percent)
