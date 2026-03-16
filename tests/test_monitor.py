@@ -1783,3 +1783,159 @@ def test_journald_baseline_lock_event(make_daemon):
                                if call.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
         assert len(baseline_lock_calls_2) == 0, "baseline_lock should not be logged twice (deduplication flag failed)"
 
+
+def test_health_endpoint_capacity_fields(tmp_path):
+    """Phase 14 Plan 03 Task 2: Verify health endpoint includes all capacity fields.
+
+    RPT-03 - Health endpoint exposes capacity metrics for Grafana scraping.
+    """
+    import json
+    from unittest.mock import patch
+    from src.monitor import _write_health_endpoint
+
+    # Mock /dev/shm path to tmpdir for testing
+    test_health_path = tmp_path / "ups-health.json"
+
+    # Patch the health_path in _write_health_endpoint
+    with patch('src.monitor.Path') as mock_path_class:
+        # When Path("/dev/shm/ups-health.json") is called, return our test path
+        def path_side_effect(x):
+            if str(x) == "/dev/shm/ups-health.json":
+                return test_health_path
+            return __import__('pathlib').Path(x)
+
+        mock_path_class.side_effect = path_side_effect
+
+        # Also patch the parent directory logic
+        test_health_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Call with capacity metrics
+        _write_health_endpoint(
+            soc_percent=87.5,
+            is_online=True,
+            poll_latency_ms=45.2,
+            capacity_ah_measured=6.95,
+            capacity_ah_rated=7.2,
+            capacity_confidence=0.92,
+            capacity_samples_count=3,
+            capacity_converged=True
+        )
+
+    # Verify file written
+    assert test_health_path.exists(), "Health endpoint file not created"
+
+    # Parse JSON
+    data = json.loads(test_health_path.read_text())
+
+    # Verify capacity fields present and correct
+    assert 'capacity_ah_measured' in data, "capacity_ah_measured not in JSON"
+    assert 'capacity_ah_rated' in data, "capacity_ah_rated not in JSON"
+    assert 'capacity_confidence' in data, "capacity_confidence not in JSON"
+    assert 'capacity_samples_count' in data, "capacity_samples_count not in JSON"
+    assert 'capacity_converged' in data, "capacity_converged not in JSON"
+
+    # Verify values
+    assert data['capacity_ah_measured'] == 6.95, f"Expected 6.95, got {data['capacity_ah_measured']}"
+    assert data['capacity_ah_rated'] == 7.2, f"Expected 7.2, got {data['capacity_ah_rated']}"
+    assert data['capacity_confidence'] == 0.92, f"Expected 0.92, got {data['capacity_confidence']}"
+    assert data['capacity_samples_count'] == 3, f"Expected 3, got {data['capacity_samples_count']}"
+    assert data['capacity_converged'] is True, f"Expected True, got {data['capacity_converged']}"
+
+    # Verify all existing fields still present
+    assert 'last_poll' in data, "last_poll missing"
+    assert 'online' in data, "online missing"
+    assert 'daemon_version' in data, "daemon_version missing"
+    assert 'current_soc_percent' in data, "current_soc_percent missing"
+
+
+def test_health_endpoint_convergence_flag(tmp_path):
+    """Phase 14 Plan 03 Task 2: Verify convergence flag state matches input.
+
+    RPT-03 - Health endpoint reflects convergence status accurately.
+    """
+    import json
+    from unittest.mock import patch
+    from src.monitor import _write_health_endpoint
+
+    # Mock /dev/shm path to tmpdir for testing
+    test_health_path = tmp_path / "ups-health.json"
+
+    # Patch the health_path
+    with patch('src.monitor.Path') as mock_path_class:
+        def path_side_effect(x):
+            if str(x) == "/dev/shm/ups-health.json":
+                return test_health_path
+            return __import__('pathlib').Path(x)
+
+        mock_path_class.side_effect = path_side_effect
+        test_health_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Case A: Not converged (0 samples, no convergence)
+        _write_health_endpoint(
+            soc_percent=50.0,
+            is_online=False,
+            capacity_converged=False,
+            capacity_samples_count=0,
+            capacity_confidence=0.0
+        )
+
+    data_a = json.loads(test_health_path.read_text())
+    assert data_a['capacity_converged'] is False, "Case A: expected not converged"
+    assert data_a['capacity_samples_count'] == 0, "Case A: expected 0 samples"
+
+    # Case B: Converged (3 samples, high confidence)
+    test_health_path.unlink(missing_ok=True)
+    with patch('src.monitor.Path') as mock_path_class:
+        def path_side_effect(x):
+            if str(x) == "/dev/shm/ups-health.json":
+                return test_health_path
+            return __import__('pathlib').Path(x)
+
+        mock_path_class.side_effect = path_side_effect
+
+        _write_health_endpoint(
+            soc_percent=50.0,
+            is_online=False,
+            capacity_converged=True,
+            capacity_samples_count=3,
+            capacity_confidence=0.92,
+            capacity_ah_measured=6.95
+        )
+
+    data_b = json.loads(test_health_path.read_text())
+    assert data_b['capacity_converged'] is True, "Case B: expected converged"
+    assert data_b['capacity_samples_count'] == 3, "Case B: expected 3 samples"
+    assert data_b['capacity_confidence'] == 0.92, "Case B: expected confidence 0.92"
+
+
+def test_health_endpoint_null_capacity_measured(tmp_path):
+    """Phase 14 Plan 03 Task 2: Verify capacity_ah_measured is null when not measured.
+
+    Edge case: capacity_ah_measured should be null in JSON, not 0.0.
+    """
+    import json
+    from unittest.mock import patch
+    from src.monitor import _write_health_endpoint
+
+    # Mock /dev/shm path
+    test_health_path = tmp_path / "ups-health.json"
+
+    with patch('src.monitor.Path') as mock_path_class:
+        def path_side_effect(x):
+            if str(x) == "/dev/shm/ups-health.json":
+                return test_health_path
+            return __import__('pathlib').Path(x)
+
+        mock_path_class.side_effect = path_side_effect
+        test_health_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Call with None capacity_ah_measured
+        _write_health_endpoint(
+            soc_percent=75.0,
+            is_online=True,
+            capacity_ah_measured=None
+        )
+
+    data = json.loads(test_health_path.read_text())
+    assert data['capacity_ah_measured'] is None, "capacity_ah_measured should be null, not 0.0"
+
