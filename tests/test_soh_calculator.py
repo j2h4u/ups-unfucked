@@ -1,434 +1,90 @@
-"""Unit tests for SoH calculation from discharge voltage profiles."""
+"""Unit tests for soh_calculator.py orchestrator — capacity selection logic."""
 
 import pytest
+from unittest.mock import Mock, patch
 from src.soh_calculator import calculate_soh_from_discharge
 
 
-def test_calculate_soh_basic():
-    """Normal discharge: voltage drops linearly 13.4V → 10.5V over defined time."""
-    v = [13.4, 12.4, 11.4, 10.6]
-    t = [0, 10, 20, 30]
-    soh = calculate_soh_from_discharge(v, t, reference_soh=1.0, anchor_voltage=10.5,
-                                        capacity_ah=7.2, load_percent=20.0)
-    assert isinstance(soh, float)
-    assert 0.0 <= soh <= 1.0
-
-
-def test_non_uniform_time_intervals():
-    """Time intervals vary (5 sec, 10 sec, 15 sec). Area-under-curve must weight by Δt."""
-    v = [13.4, 12.9, 11.9, 10.6]
-    t = [0, 5, 15, 30]
-    soh = calculate_soh_from_discharge(v, t, reference_soh=1.0, anchor_voltage=10.5,
-                                        capacity_ah=7.2, load_percent=20.0)
-    assert isinstance(soh, float)
-    assert 0.0 <= soh <= 1.0
-
-
-def test_empty_discharge():
-    """Empty list or single voltage point returns reference_soh unchanged."""
-    soh_empty = calculate_soh_from_discharge([], [], reference_soh=1.0)
-    assert soh_empty == 1.0
-
-    soh_single = calculate_soh_from_discharge([13.0], [0], reference_soh=1.0)
-    assert soh_single == 1.0
-
-
-def test_anchor_voltage_trimming():
-    """Voltage data extends below 10.5V anchor. Integration stops at anchor."""
-    v = [13.4, 12.4, 11.4, 10.4, 9.5]
-    t = [0, 10, 20, 30, 40]
-    soh = calculate_soh_from_discharge(v, t, reference_soh=1.0, anchor_voltage=10.5,
-                                        capacity_ah=7.2, load_percent=20.0)
-    assert isinstance(soh, float)
-    assert 0.0 <= soh <= 1.0
-
-
-def test_degradation_monotonic():
-    """Multiple discharges; SoH decreases monotonically."""
-    soh = 1.0
-
-    v1 = [13.4, 12.4, 11.4, 10.6]
-    t1 = [0, 10, 20, 30]
-    soh = calculate_soh_from_discharge(v1, t1, reference_soh=soh, anchor_voltage=10.5,
-                                        capacity_ah=7.2, load_percent=20.0)
-    soh1 = soh
-
-    v2 = [13.4, 12.4, 11.4, 10.6]
-    t2 = [0, 10, 20, 30]
-    soh = calculate_soh_from_discharge(v2, t2, reference_soh=soh, anchor_voltage=10.5,
-                                        capacity_ah=7.2, load_percent=20.0)
-    soh2 = soh
-
-    assert soh2 <= soh1
-
-
-def test_reference_soh_scaling():
-    """Measured area is fraction of reference; new_soh scales proportionally."""
-    v = [13.4, 12.4, 11.4, 10.6]
-    t = [0, 10, 20, 30]
-    soh = calculate_soh_from_discharge(v, t, reference_soh=1.0, anchor_voltage=10.5,
-                                        capacity_ah=7.2, load_percent=20.0)
-    assert 0.0 <= soh <= 1.0
-
-
-def test_no_nan_result():
-    """Reference area computed from Peukert should never be zero → no NaN."""
-    v = [13.4, 12.4, 11.4, 10.6]
-    t = [0, 10, 20, 30]
-    soh = calculate_soh_from_discharge(v, t, reference_soh=1.0, capacity_ah=7.2,
-                                        load_percent=20.0)
-    assert isinstance(soh, float)
-    assert not (soh != soh)  # Not NaN
-
-
-def test_clamping_bounds():
-    """Computed SoH clamped to [0, 1]."""
-    v = [13.4, 12.4, 11.4, 10.6]
-    t = [0, 10, 20, 30]
-
-    soh_high = calculate_soh_from_discharge(v, t, reference_soh=0.99, anchor_voltage=10.5,
-                                             capacity_ah=7.2, load_percent=20.0)
-    assert soh_high <= 1.0
-
-    soh_low = calculate_soh_from_discharge(v, t, reference_soh=0.01, anchor_voltage=10.5,
-                                            capacity_ah=7.2, load_percent=20.0)
-    assert soh_low >= 0.0
-
-
-def test_no_hardcoded_reference_area():
-    """Verify old hardcoded area_reference=12.0*2820 is gone — uses physics params."""
-    import inspect
-    sig = inspect.signature(calculate_soh_from_discharge)
-    assert 'capacity_ah' in sig.parameters
-    assert 'nominal_power_watts' in sig.parameters
-    assert 'peukert_exponent' in sig.parameters
-
-
-def test_interpolate_cliff_region_basic():
-    """Two measured points 11.0V→50%, 10.5V→0% → fills with interpolated entries."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    # Measured points in cliff region
-    lut = [
-        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
-    ]
-
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Should have more entries now (interpolated between 11.0 and 10.5)
-    assert len(result) > len(lut)
-
-    # Check that interpolated entries exist
-    interpolated = [e for e in result if e['source'] == 'interpolated']
-    assert len(interpolated) > 0
-
-    # Check source field is marked correctly
-    for entry in interpolated:
-        assert entry['source'] == 'interpolated'
-
-
-def test_interpolate_cliff_region_insufficient_points():
-    """0 or 1 measured points → returns LUT unchanged."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    # LUT with no measured points in cliff region
-    lut = [
-        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-        {'v': 12.0, 'soc': 0.50, 'source': 'standard'},
-        {'v': 10.5, 'soc': 0.00, 'source': 'anchor'},
-    ]
-
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Should be unchanged
-    assert result == lut
-
-
-def test_interpolate_cliff_region_preserves_non_cliff():
-    """Entries >11.0V and <10.5V are preserved unchanged."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    lut = [
-        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},  # >11.0
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},  # cliff
-        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},  # cliff
-        {'v': 10.0, 'soc': 0.00, 'source': 'standard'},  # <10.5
-    ]
-
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Check non-cliff entries are preserved
-    result_13_4 = [e for e in result if e['v'] == 13.4]
-    assert len(result_13_4) == 1
-    assert result_13_4[0]['source'] == 'standard'
-
-    result_10_0 = [e for e in result if e['v'] == 10.0]
-    assert len(result_10_0) == 1
-    assert result_10_0[0]['source'] == 'standard'
-
-
-def test_interpolate_cliff_region_source_field():
-    """Interpolated entries marked with source='interpolated'."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    lut = [
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
-    ]
-
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # All entries should have source field
-    for entry in result:
-        assert 'source' in entry
-        assert entry['source'] in ['measured', 'interpolated']
-
-
-def test_interpolate_cliff_region_sorted():
-    """Result is sorted descending by voltage."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    lut = [
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
-        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-    ]
-
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    voltages = [e['v'] for e in result]
-    assert voltages == sorted(voltages, reverse=True)
-
-
-def test_interpolate_cliff_region_with_realistic_data():
-    """Test interpolation with measured points from 2026-03-12 blackout."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    # Setup: 3 measured points, expect many interpolated fill-ins
-    lut = [
-        {'v': 13.4, 'soc': 1.0, 'source': 'standard'},  # Non-cliff, preserved
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},  # Cliff boundary
-        {'v': 10.6, 'soc': 0.10, 'source': 'measured'},  # Cliff middle
-        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},   # Cliff anchor
-    ]
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Verify non-cliff entries preserved
-    assert any(e['v'] == 13.4 and e['source'] == 'standard' for e in result)
-
-    # Verify measured points present
-    assert any(e['v'] == 11.0 and e['source'] == 'measured' for e in result)
-    assert any(e['v'] == 10.5 and e['source'] == 'measured' for e in result)
-
-    # Verify interpolated entries exist and count
-    interpolated = [e for e in result if e['source'] == 'interpolated']
-    assert len(interpolated) >= 4  # At least 4 interpolated between measured points
-
-    # Verify sorted descending
-    assert result == sorted(result, key=lambda x: x['v'], reverse=True)
-
-
-def test_interpolate_cliff_region_removes_standard():
-    """Verify standard entries in cliff region are removed and replaced by interpolated fill."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    lut = [
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.8, 'soc': 0.40, 'source': 'standard'},  # Should be removed
-        {'v': 10.7, 'soc': 0.25, 'source': 'standard'},  # Should be removed
-        {'v': 10.6, 'soc': 0.20, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},
-    ]
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Verify old standard entries removed
-    assert not any(e['v'] == 10.8 and e['source'] == 'standard' for e in result)
-    assert not any(e['v'] == 10.7 and e['source'] == 'standard' for e in result)
-
-    # Verify new entries at those voltages are interpolated
-    assert any(e['v'] == 10.8 and e['source'] == 'interpolated' for e in result)
-    assert any(e['v'] == 10.7 and e['source'] == 'interpolated' for e in result)
-
-
-def test_interpolate_cliff_region_preserves_measured():
-    """Measured points marked with source='measured' preserved in output."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    lut = [
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},
-    ]
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Measured entries should still be there with same source
-    assert any(e['v'] == 11.0 and e['source'] == 'measured' for e in result)
-    assert any(e['v'] == 10.5 and e['source'] == 'measured' for e in result)
-
-
-def test_lut_source_field_preservation():
-    """Verify source field values are preserved and properly tracked."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    lut = [
-        {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.0, 'source': 'anchor'},
-    ]
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Non-cliff entries should be unchanged
-    assert any(e['v'] == 13.4 and e['source'] == 'standard' for e in result)
-
-    # Measured entries should stay marked as measured
-    assert any(e['v'] == 11.0 and e['source'] == 'measured' for e in result)
-
-    # Interpolated entries should be marked as interpolated
-    interpolated = [e for e in result if e['source'] == 'interpolated']
-    assert all(e['source'] == 'interpolated' for e in interpolated)
-
-
-def test_interpolate_cliff_region_linear_math():
-    """Verify linear interpolation math is correct."""
-    from src.soh_calculator import interpolate_cliff_region
-
-    # Two measured points: 11.0V→50%, 10.5V→0%
-    # Interpolation at 0.1V steps: 10.9V, 10.8V, 10.7V, 10.6V (not 10.75V)
-    lut = [
-        {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-        {'v': 10.5, 'soc': 0.0, 'source': 'measured'},
-    ]
-    result = interpolate_cliff_region(lut, anchor_voltage=10.5, cliff_start=11.0, step_mv=0.1)
-
-    # Find interpolated entry at 10.8V (should be ~0.4 or 40% SoC)
-    entry_10_8 = [e for e in result if abs(e['v'] - 10.8) < 0.01]
-    assert len(entry_10_8) > 0, f"No entry near 10.8V. Available: {[e['v'] for e in result]}"
-    soc_10_8 = entry_10_8[0]['soc']
-
-    # Should be approximately 0.4 (40% SoC) due to linear interpolation
-    # (11.0V = 0.5, 10.5V = 0.0, so 10.8V = 0.5 - 0.4 = 0.1... wait let me recalculate)
-    # Actually: slope = (0.0 - 0.5) / (10.5 - 11.0) = -0.5 / -0.5 = 1.0
-    # At 10.8V: soc = 0.5 + (10.8 - 11.0) * 1.0 = 0.5 - 0.2 = 0.3 (30%)
-    assert abs(soc_10_8 - 0.3) < 0.05, f"Expected ~0.3 at 10.8V, got {soc_10_8}"
-
-    # Find interpolated entry at 10.6V (should be ~0.1 or 10% SoC)
-    entry_10_6 = [e for e in result if abs(e['v'] - 10.6) < 0.01]
-    assert len(entry_10_6) > 0, f"No entry near 10.6V. Available: {[e['v'] for e in result]}"
-    soc_10_6 = entry_10_6[0]['soc']
-
-    # At 10.6V: soc = 0.5 + (10.6 - 11.0) * 1.0 = 0.5 - 0.4 = 0.1 (10%)
-    assert abs(soc_10_6 - 0.1) < 0.05, f"Expected ~0.1 at 10.6V, got {soc_10_6}"
-
-
-def test_short_discharge_duration_weighting():
-    """10-second test should barely change SoH (weight ≈ 0.01, not 0.004)."""
-    # Simulate 10-second test at 12-12.7V
-    v = [12.8, 12.75, 12.7]
-    t = [0, 5, 10]
-
-    soh = calculate_soh_from_discharge(
-        v, t,
-        reference_soh=0.95,
-        anchor_voltage=10.5,
-        capacity_ah=7.2,
-        load_percent=20.0,
-        peukert_exponent=1.2
-    )
-
-    # Should be very close to 0.95, not drastically lower
-    # Before fix: soh ≈ 0.0035 (catastrophic)
-    # After fix: soh ≈ 0.934 (0.6% change)
-    assert soh > 0.93, f"Expected SoH > 0.93 for short discharge, got {soh}"
-    assert soh <= 0.95, f"Expected SoH <= 0.95 (reference), got {soh}"
-
-
-def test_long_discharge_strong_update():
-    """30-minute discharge should significantly update SoH."""
-    # Simulate 30-minute discharge from 13.4V to 10.6V
-    v = [13.4, 13.0, 12.5, 12.0, 11.5, 11.0, 10.7]
-    t = [0, 300, 600, 900, 1200, 1500, 1800]
-
-    soh_initial = 0.95
-    soh = calculate_soh_from_discharge(
-        v, t,
-        reference_soh=soh_initial,
-        anchor_voltage=10.5,
-        capacity_ah=7.2,
-        load_percent=20.0,
-        peukert_exponent=1.2
-    )
-
-    # Long discharge should have weight ≈ 1.0, strong update
-    # If battery degraded, SoH should drop significantly
-    assert soh < soh_initial, f"Expected SoH to decrease, but {soh} >= {soh_initial}"
-    assert soh > 0.80, f"Expected reasonable SoH, not collapsed. Got {soh}"
-
-
-def test_duration_weighting_progression():
-    """SoH change should scale monotonically with discharge duration."""
-    v_base = [13.4, 12.4, 11.4, 10.6]  # 4-point discharge
-    soh_initial = 0.95
-
-    soh_10s = calculate_soh_from_discharge(
-        v_base[:2], [0, 10],
-        reference_soh=soh_initial, capacity_ah=7.2
-    )
-    soh_100s = calculate_soh_from_discharge(
-        v_base[:2], [0, 100],
-        reference_soh=soh_initial, capacity_ah=7.2
-    )
-    soh_1000s = calculate_soh_from_discharge(
-        v_base, [0, 300, 600, 1000],
-        reference_soh=soh_initial, capacity_ah=7.2
-    )
-
-    # SoH change should increase with discharge duration
-    # 10s: barely any change
-    # 100s: small change
-    # 1000s: larger change
-    delta_10s = abs(soh_initial - soh_10s)
-    delta_100s = abs(soh_initial - soh_100s)
-    delta_1000s = abs(soh_initial - soh_1000s)
-
-    assert delta_100s > delta_10s, "Longer discharge should change SoH more"
-    assert delta_1000s > delta_100s, "Even longer discharge should change SoH more"
-
-    # But all should be reasonable (no catastrophic collapse)
-    assert soh_10s > 0.93
-    assert soh_100s > 0.70
-    assert soh_1000s > 0.40
-
-
-def test_minimum_duration_gate_val01():
-    """VAL-01: Discharge < 30s returns reference_soh unchanged (flicker-storm protection)."""
-    short_voltage = [12.0, 11.9, 11.8]
-    short_time = [0.0, 10.0, 20.0]  # 20 seconds total < 30s minimum
-
-    result = calculate_soh_from_discharge(
-        discharge_voltage_series=short_voltage,
-        discharge_time_series=short_time,
-        reference_soh=1.0,
-        capacity_ah=7.2,
-        load_percent=25
-    )
-
-    assert result == 1.0, "Discharge < 30s must return reference_soh unchanged (VAL-01)"
-
-
-def test_minimum_duration_boundary():
-    """VAL-01 boundary: exactly 30s should be accepted."""
-    voltage = [12.0, 11.5, 11.0, 10.6]
-    time = [0.0, 10.0, 20.0, 30.0]  # Exactly 30 seconds
-
-    result = calculate_soh_from_discharge(
-        discharge_voltage_series=voltage,
-        discharge_time_series=time,
-        reference_soh=1.0,
-        capacity_ah=7.2,
-        load_percent=20
-    )
-
-    # Should not return reference_soh; should process the discharge
-    assert isinstance(result, float)
-    assert 0.0 <= result <= 1.0
+class TestSoHWithMeasuredCapacity:
+    """SOH-01: When Phase 12 capacity converges, use measured capacity."""
+
+    def test_soh_with_measured_capacity(self):
+        """When battery_model.get_convergence_status() returns converged=True,
+        use latest_ah (measured capacity) instead of rated."""
+
+        # Arrange
+        mock_battery_model = Mock()
+        mock_battery_model.get_convergence_status.return_value = {
+            'converged': True,
+            'latest_ah': 6.8,  # Measured capacity
+            'sample_count': 3,
+        }
+        mock_battery_model.get_capacity_ah.return_value = 7.2  # Rated (should not be used)
+
+        mock_voltage_series = [12.0, 11.8, 11.5, 10.8, 10.5]
+        mock_time_series = [0, 100, 200, 300, 400]
+
+        with patch('src.soh_calculator.battery_math_soh.calculate_soh_from_discharge') as mock_kernel:
+            mock_kernel.return_value = 0.92
+
+            result = calculate_soh_from_discharge(
+                discharge_voltage_series=mock_voltage_series,
+                discharge_time_series=mock_time_series,
+                reference_soh=0.95,
+                anchor_voltage=10.5,
+                battery_model=mock_battery_model,
+                load_percent=15.0,
+                nominal_power_watts=850,
+                nominal_voltage=120,
+                peukert_exponent=1.2,
+            )
+
+        # Assert
+        assert result is not None
+        soh_new, capacity_used = result
+        assert soh_new == 0.92
+        assert capacity_used == 6.8  # Measured, not rated
+        # Verify kernel was called with capacity_ah=6.8
+        mock_kernel.assert_called_once()
+        call_kwargs = mock_kernel.call_args[1]
+        assert call_kwargs['capacity_ah'] == 6.8
+
+    def test_soh_with_rated_capacity_fallback(self):
+        """When battery_model.get_convergence_status() returns converged=False,
+        use rated capacity (7.2Ah) instead of waiting for measured."""
+
+        # Arrange
+        mock_battery_model = Mock()
+        mock_battery_model.get_convergence_status.return_value = {
+            'converged': False,
+            'sample_count': 1,
+        }
+        mock_battery_model.get_capacity_ah.return_value = 7.2  # Rated (should be used)
+
+        mock_voltage_series = [12.0, 11.8, 11.5, 10.8, 10.5]
+        mock_time_series = [0, 100, 200, 300, 400]
+
+        with patch('src.soh_calculator.battery_math_soh.calculate_soh_from_discharge') as mock_kernel:
+            mock_kernel.return_value = 0.95
+
+            result = calculate_soh_from_discharge(
+                discharge_voltage_series=mock_voltage_series,
+                discharge_time_series=mock_time_series,
+                reference_soh=0.95,
+                anchor_voltage=10.5,
+                battery_model=mock_battery_model,
+                load_percent=15.0,
+                nominal_power_watts=850,
+                nominal_voltage=120,
+                peukert_exponent=1.2,
+            )
+
+        # Assert
+        assert result is not None
+        soh_new, capacity_used = result
+        assert soh_new == 0.95
+        assert capacity_used == 7.2  # Rated, not measured
+        # Verify kernel was called with capacity_ah=7.2
+        mock_kernel.assert_called_once()
+        call_kwargs = mock_kernel.call_args[1]
+        assert call_kwargs['capacity_ah'] == 7.2
