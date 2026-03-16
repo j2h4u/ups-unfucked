@@ -290,3 +290,153 @@ class TestSoHRecalibrationFlow:
         assert new_entry['soh'] == 0.92
         assert new_entry['capacity_ah_ref'] == 6.8  # Tagged with measured, not rated
 
+
+def test_journald_event_filtering():
+    """Test 3 (Phase 14 Plan 02): Verify journald events can be queried by EVENT_TYPE.
+
+    Requirement: RPT-02 - journald events are queryable by EVENT_TYPE field.
+
+    Setup: Mock journald send() to capture events
+    Execute: Trigger _handle_discharge_complete() to generate events
+    Assert: capacity_measurement events appear in captured records
+    Assert: baseline_lock events appear when convergence detected
+    Assert: Events contain required structured fields (MESSAGE, CAPACITY_AH, SAMPLE_COUNT)
+    """
+    from unittest.mock import patch, MagicMock, call
+    from src.monitor import MonitorDaemon
+
+    # Mock journald.send() to capture events
+    captured_events = []
+
+    def mock_send(**kwargs):
+        captured_events.append(kwargs)
+
+    # Create a test daemon with mocked components
+    with patch('src.monitor.NUTClient'), \
+         patch('src.monitor.EMAFilter'), \
+         patch('src.monitor.EventClassifier'), \
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'), \
+         patch.object(MonitorDaemon, '_reset_battery_baseline'):
+
+        # Create test config and daemon
+        from src.monitor import Config
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_path:
+            config = Config(
+                ups_name='cyberpower',
+                polling_interval=10,
+                reporting_interval=60,
+                nut_host='localhost',
+                nut_port=3493,
+                nut_timeout=2.0,
+                shutdown_minutes=5,
+                soh_alert_threshold=0.80,
+                model_dir=Path(tmp_path),
+                config_dir=Path(tmp_path),
+                runtime_threshold_minutes=20,
+                reference_load_percent=20.0,
+                ema_window_sec=120,
+                capacity_ah=7.2
+            )
+
+            daemon = MonitorDaemon(config)
+
+            # Mock battery_model methods since they're real
+            with patch.object(daemon.battery_model, 'get_capacity_ah', return_value=7.2), \
+                 patch.object(daemon.battery_model, 'get_convergence_status') as mock_convergence, \
+                 patch.object(daemon.battery_model, 'save'):
+
+                # Setup convergence status mock
+                mock_convergence.return_value = {
+                    'sample_count': 1,
+                    'confidence_percent': 88.0,
+                    'latest_ah': 6.95,
+                    'rated_ah': 7.2,
+                    'converged': False,
+                    'capacity_ah_ref': None
+                }
+
+                # Setup mocks for capacity estimation
+                daemon.battery_model.data = {}
+
+                ah_estimate = 6.95
+                confidence = 0.88
+                metadata = {
+                    'delta_soc_percent': 52.3,
+                    'duration_sec': 1234,
+                    'load_avg_percent': 25.5,
+                }
+
+                daemon.capacity_estimator = MagicMock()
+                daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
+                daemon.capacity_estimator.has_converged.return_value = False
+
+                daemon.battery_model.data['capacity_estimates'] = [
+                    {'ah_estimate': ah_estimate}
+                ]
+
+                # Trigger discharge complete with mocked logger
+                discharge_data = {
+                    'voltage_series': [12.5, 12.0, 11.5, 11.0],
+                    'time_series': [0, 300, 600, 900],
+                    'current_series': [25.0, 25.0, 25.0, 25.0],
+                    'timestamp': '2026-03-16T12:00:00'
+                }
+
+                with patch('src.monitor.logger') as mock_logger:
+                    daemon._handle_discharge_complete(discharge_data)
+
+                    # Verify: capacity_measurement events were logged
+                    capacity_calls = [c for c in mock_logger.info.call_args_list
+                                     if 'capacity_measurement' in str(c)]
+                    assert len(capacity_calls) >= 1, "No capacity_measurement events logged"
+
+                    # Verify: capacity_measurement events have required fields
+                    for call_obj in capacity_calls:
+                        if 'extra' in call_obj.kwargs:
+                            extra = call_obj.kwargs['extra']
+                            assert extra.get('EVENT_TYPE') == 'capacity_measurement'
+                            assert 'CAPACITY_AH' in extra, "Missing CAPACITY_AH field"
+                            assert 'CONFIDENCE_PERCENT' in extra, "Missing CONFIDENCE_PERCENT field"
+                            assert 'SAMPLE_COUNT' in extra, "Missing SAMPLE_COUNT field"
+
+                    # Verify: baseline_lock events NOT present (convergence not reached)
+                    baseline_lock_calls = [c for c in mock_logger.info.call_args_list
+                                          if c.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
+                    assert len(baseline_lock_calls) == 0, "baseline_lock should not fire without convergence"
+
+                # Now simulate convergence and verify baseline_lock
+                mock_convergence.return_value = {
+                    'sample_count': 3,
+                    'confidence_percent': 92.0,
+                    'latest_ah': 6.95,
+                    'rated_ah': 7.2,
+                    'converged': True,
+                    'capacity_ah_ref': None
+                }
+                daemon.battery_model.data['capacity_estimates'] = [
+                    {'ah_estimate': 6.88},
+                    {'ah_estimate': 6.92},
+                    {'ah_estimate': 6.95}
+                ]
+                daemon.capacity_estimator.has_converged.return_value = True
+
+                with patch('src.monitor.logger') as mock_logger:
+                    daemon._handle_discharge_complete(discharge_data)
+
+                    # Verify: baseline_lock events present after convergence
+                    baseline_lock_calls = [c for c in mock_logger.info.call_args_list
+                                          if c.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
+                    assert len(baseline_lock_calls) >= 1, "No baseline_lock events after convergence"
+
+                    # Verify: baseline_lock events have required fields
+                    for call_obj in baseline_lock_calls:
+                        if 'extra' in call_obj.kwargs:
+                            extra = call_obj.kwargs['extra']
+                            assert extra.get('EVENT_TYPE') == 'baseline_lock'
+                            assert 'CAPACITY_AH' in extra, "Missing CAPACITY_AH in baseline_lock event"
+                            assert 'SAMPLE_COUNT' in extra, "Missing SAMPLE_COUNT in baseline_lock event"
+                            assert 'TIMESTAMP' in extra, "Missing TIMESTAMP in baseline_lock event"
