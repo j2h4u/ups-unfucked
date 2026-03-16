@@ -27,9 +27,9 @@ class TestPeukertFormula:
         assert result == 0.0
 
     def test_peukert_zero_load(self):
-        """Load=0% returns 0 minutes (safe handling)."""
+        """Load=0% returns capped runtime (24h), not zero — avoids false LB flag from sensor glitch."""
         result = runtime_minutes(soc=1.0, load_percent=0.0)
-        assert result == 0.0
+        assert result == 1440.0  # 24h cap
 
 
 class TestPeukertDegradation:

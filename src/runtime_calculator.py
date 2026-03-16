@@ -25,10 +25,13 @@ def peukert_runtime_hours(
     Core Peukert calculation: full-charge runtime in hours at given load.
 
     Returns hours at SoC=1.0, SoH=1.0. Callers scale by SoC/SoH as needed.
-    Returns 0.0 if load_percent <= 0.
+    Returns 24.0h (cap) if load_percent <= 0 — zero load means no current
+    draw, so runtime is effectively infinite. Capped to avoid nonsensical
+    values from NUT sensor glitches (load=0 would otherwise cause division
+    by zero or false LB flag if returned as 0.0).
     """
     if load_percent <= 0:
-        return 0.0
+        return 24.0
 
     I_rated = capacity_ah / 20.0
     I_actual = load_percent / 100.0 * nominal_power_watts / nominal_voltage
@@ -48,7 +51,7 @@ def runtime_minutes(
     """
     Predict remaining battery runtime in minutes.
 
-    Returns 0.0 if load=0 or SoC=0.
+    Returns 0.0 if SoC=0. Returns capped value (via peukert_runtime_hours) if load=0.
     """
     if soc <= 0:
         return 0.0
