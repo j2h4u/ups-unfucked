@@ -1,9 +1,9 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-last_updated: "2026-03-16T10:08:01.724Z"
+milestone: v2.0
+milestone_name: Actual Capacity Estimation
+status: in-progress
+last_updated: "2026-03-16T15:45:00Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -13,9 +13,9 @@ progress:
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-16 after Phase 12 Plan 02 completion
-**Milestone:** v2.0 Actual Capacity Estimation — MonitorDaemon integration complete
-**Current Position:** Phase 12 Plan 02 complete (MonitorDaemon integration); ready for Phase 12 Plan 03 (validation)
+**Last Updated:** 2026-03-16 after Phase 12 Plan 04 completion
+**Milestone:** v2.0 Actual Capacity Estimation — Phase 12 complete, CLI integration done
+**Current Position:** Phase 12 COMPLETE (all 4 plans + all 7 requirements); ready for Phase 13 (SoH recalibration)
 
 ---
 
@@ -33,10 +33,10 @@ progress:
 
 ## Current Position
 
-**Phase:** 12
-**Plan:** 02 (Complete) → Next: 03
-**Milestone progress:** 8/9 plans completed → Phase 12 integration delivered, validation gates pending
-**Roadmap status:** ✓ CapacityEstimator integrated into MonitorDaemon; capacity_estimates persisted atomically
+**Phase:** 12 (COMPLETE)
+**Plan:** 04 of 04 (COMPLETE)
+**Milestone progress:** 9/9 plans completed → Phase 12 complete, all 7 requirements satisfied
+**Roadmap status:** ✓ CapacityEstimator integrated; capacity_estimates persisted; validation gates passed; CLI flag wired; Phase 12 ready for closure
 
 **Phase 12 Plan 01 (Completed 2026-03-16):**
 - Implemented CapacityEstimator class with 8 core + 4 extension methods
@@ -56,7 +56,35 @@ progress:
 - All 7 integration tests passing + 285/285 project tests passing (no regressions)
 - CAP-01, CAP-04, CAP-05 requirements fully satisfied
 
-**Blockers for Phase 12 Plan 03:** None. Ready for validation gates (coulomb error <±10%, Monte Carlo convergence, load sensitivity).
+**Phase 12 Plan 03 (Completed 2026-03-16):**
+- Added convergence_status() helper method to CapacityEstimator
+- Integrated convergence display into MOTD (motd/51-ups.sh)
+- All 3 validation gate tests passing (coulomb error, Monte Carlo convergence, load sensitivity)
+- VAL-01 validation gates implemented (discharge quality filters)
+- MOTD shows capacity measurement progress ("2/3 deep discharges collected")
+- All 288/288 project tests passing (no regressions)
+- VAL-01, VAL-02 requirements fully satisfied
+
+**Phase 12 Plan 04 (Completed 2026-03-16) — Gap Closure: CAP-05 User Signal Mechanism**
+- Added parse_args() function to handle CLI argument parsing
+- Integrated --new-battery flag with argparse (action='store_true')
+- Updated MonitorDaemon.__init__() to accept new_battery_flag parameter (default False)
+- Flag value stored in model.data['new_battery_requested'] for Phase 13 consumption
+- Flag persists in model.json across daemon restarts (atomic save)
+- Added 4 integration tests for end-to-end CLI→daemon→model.data wiring
+- All 295/295 project tests passing (no regressions)
+- CAP-05 requirement fully satisfied
+
+**Phase 12 Complete: All 7 Requirements Satisfied**
+- CAP-01 (Coulomb counting): ✓ Plan 01
+- CAP-02 (Voltage anchoring): ✓ Plan 01
+- CAP-03 (Confidence tracking): ✓ Plan 01
+- CAP-04 (Atomic persistence): ✓ Plan 02
+- CAP-05 (User signal mechanism): ✓ Plan 04
+- VAL-01 (Quality filters): ✓ Plan 03
+- VAL-02 (Peukert fixed at 1.2): ✓ Plan 01
+
+**Blockers for Phase 13:** None. Phase 12 complete; Phase 13 can now read new_battery_requested flag and implement detection.
 
 
 **Key Phase 12 constraints (locked for v2.0):**
@@ -74,17 +102,19 @@ progress:
 
 ## Roadmap Summary
 
-### Phase 12: Deep Discharge Capacity Estimation
-- **Requirements:** CAP-01, 02, 03, 04, 05, VAL-01, VAL-02 (7 requirements)
-- **Goal:** Coulomb counting + voltage anchor + confidence tracking; core measurement algorithm
-- **Success criteria:** 5 observable behaviors (measurements logged, confidence increases, filters reject bad discharges, new-battery detection, MOTD reporting)
-- **Depends on:** v1.1 discharge_buffer + voltage LUT infrastructure
+### Phase 12: Deep Discharge Capacity Estimation — COMPLETE
+- **Requirements:** CAP-01, 02, 03, 04, 05, VAL-01, VAL-02 (7 requirements) — ALL SATISFIED
+- **Goal:** Coulomb counting + voltage anchor + confidence tracking; core measurement algorithm — DELIVERED
+- **Success criteria:** 5 observable behaviors — ALL VERIFIED
+- **Status:** COMPLETE (4 plans executed, 295 tests passing, 0 regressions)
+- **Depends on:** v1.1 discharge_buffer + voltage LUT infrastructure — AVAILABLE
 
-### Phase 13: SoH Recalibration & New Battery Detection
+### Phase 13: SoH Recalibration & New Battery Detection — READY (Next)
 - **Requirements:** SOH-01, 02, 03 (3 requirements)
 - **Goal:** Separate capacity from degradation; enable new battery baseline reset
 - **Success criteria:** 5 observable behaviors (SoH normalizes to measured, history tagging, new battery detection on startup, rebaseline events logged, MOTD messaging)
-- **Depends on:** Phase 12 (measured capacity must converge)
+- **Status:** READY TO START (Phase 12 dependencies satisfied; CAP-05 user signal mechanism wired)
+- **Depends on:** Phase 12 (measured capacity must converge) — COMPLETE
 
 ### Phase 14: Capacity Reporting & Metrics
 - **Requirements:** RPT-01, 02, 03 (3 requirements)
