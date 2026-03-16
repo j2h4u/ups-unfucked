@@ -36,7 +36,7 @@
 
 - [x] **Phase 12: Deep Discharge Capacity Estimation** — Coulomb counting + voltage anchor + confidence tracking (4/4 plans + 1 inserted) — completed 2026-03-16
 - [x] **Phase 13: SoH Recalibration & New Battery Detection** — Separates capacity from degradation; enables new battery baseline detection (2/2 plans) — completed 2026-03-16
-- [ ] **Phase 14: Capacity Reporting & Metrics** — MOTD display, journald logging, Grafana scraping for capacity metrics (3 plans)
+- [x] **Phase 14: Capacity Reporting & Metrics** — MOTD display, journald logging, Grafana scraping for capacity metrics (3/3 plans) — completed 2026-03-16
 
 </details>
 
@@ -119,9 +119,9 @@
 
 **Plans:**
 3 plans
-- [ ] 14-01 — MOTD capacity display with convergence status badge and confidence % (RPT-01)
-- [ ] 14-02 — Structured journald logging for capacity events with EVENT_TYPE tagging (RPT-02)
-- [ ] 14-03 — Health endpoint extension with capacity metrics for Grafana scraping (RPT-03)
+- [x] 14-01 — MOTD capacity display with convergence status badge and confidence % (RPT-01) — completed 2026-03-16
+- [x] 14-02 — Structured journald logging for capacity events with EVENT_TYPE tagging (RPT-02) — completed 2026-03-16
+- [x] 14-03 — Health endpoint extension with capacity metrics for Grafana scraping (RPT-03) — completed 2026-03-16
 
 ---
 
@@ -143,8 +143,8 @@
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete    | 2026-03-16 |
 | 12. Deep Discharge Capacity Estimation | v2.0 | 4/4 | Complete    | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete    | 2026-03-16 |
-| 14. Capacity Reporting & Metrics | v2.0 | 0/3 | Planning    | — |
+| 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete    | 2026-03-16 |
 
 ---
 
-*Roadmap updated: 2026-03-16 after Phase 14 planning*
+*Roadmap updated: 2026-03-16 after Phase 14 Plan 03 completion*

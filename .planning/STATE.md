@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-last_updated: "2026-03-16T17:02:36Z"
+status: in-progress
+last_updated: "2026-03-16T17:35:00Z"
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 12
-  completed_plans: 13
+  total_plans: 15
+  completed_plans: 14
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-16 after Phase 14 Plan 01 completion
-**Milestone:** v2.0 Actual Capacity Estimation — Phases 12-13 complete, capacity reporting in progress
-**Current Position:** Phase 14 Plan 01 COMPLETE (1/3 plans); ready for Phase 14 Plan 02 (journald events)
+**Last Updated:** 2026-03-16 after Phase 14 Plan 03 completion
+**Milestone:** v2.0 Actual Capacity Estimation — Phases 12-13 complete, Phase 14 reporting in progress
+**Current Position:** Phase 14 Plan 03 COMPLETE (3/3 plans); ready for Phase 15 or finalization
 
 ---
 
@@ -130,6 +130,33 @@ progress:
 **Blockers for Phase 14 Plan 02:** None. Phase 14 Plan 01 complete; journald event logging can proceed.
 
 
+**Phase 14 Plan 02 (Completed 2026-03-16) — Journald Event Logging**
+- Implemented journald event logging for capacity measurement and baseline lock events
+- Events logged with structured extra fields (EVENT_TYPE, CAPACITY_AH, SAMPLE_COUNT, etc.)
+- baseline_lock event fires once when convergence threshold reached (count >= 3 AND CoV < 0.10)
+- capacity_measurement event logged on each discharge with estimates
+- Deduplication flag prevents duplicate baseline_lock logging
+- All 2 requirements fully satisfied: RPT-02
+- Tests created and passing: test_journald_capacity_measurement_events, test_journald_baseline_lock_event
+- 283/283 project tests passing (no regressions)
+
+**Blockers for Phase 14 Plan 03:** None. Phase 14 Plan 02 complete; health endpoint extension ready.
+
+**Phase 14 Plan 03 (Completed 2026-03-16) — Health Endpoint Capacity Metrics**
+- Extended _write_health_endpoint() with 5 capacity parameters: capacity_ah_measured, capacity_ah_rated, capacity_confidence, capacity_samples_count, capacity_converged
+- Updated function signature with proper type hints and defaults (backward compatible)
+- Added capacity fields to health_data JSON with correct precision (2 decimals for Ah, 3 for confidence, int for counts)
+- Updated call site to extract convergence_status from battery_model before write
+- Convert confidence_percent from 0-100 range to 0-1 range for parameter passing
+- Null handling: capacity_ah_measured set to None in JSON if not yet measured
+- Created 3 unit tests: test_health_endpoint_capacity_fields, test_health_endpoint_convergence_flag, test_health_endpoint_null_capacity_measured
+- Created 1 integration test: test_health_endpoint_capacity_persistence (validates 3 discharge cycles)
+- All 4 tests passing (100%): 345 lines of test code added
+- RPT-03 requirement fully satisfied: "Daemon exposes capacity metrics for Grafana scraping"
+- Health endpoint now provides all metrics needed for Grafana dashboards
+- 287/287 project tests passing (4 new tests + existing tests, no regressions)
+
+**Blockers for next phase:** None. All Phase 14 plans complete; v2.0 milestone ready for release preparation.
 **Key Phase 12 constraints (locked for v2.0):**
 - Peukert stays fixed at 1.2 (circular dependency avoidance)
 - Temperature compensation out of scope (indoor ±3°C, ±5% error acceptable)
