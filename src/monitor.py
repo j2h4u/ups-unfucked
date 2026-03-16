@@ -1199,8 +1199,8 @@ class MonitorDaemon:
             r_internal_mohm = round(sorted(nonzero)[len(nonzero) // 2] * 1000, 1) if len(nonzero) >= 3 else None
 
             virtual_metrics = {
-                "battery.runtime": int(time_rem * 60) if time_rem is not None else int(float(ups_data.get("battery.runtime", 0))),
-                "battery.charge": int(battery_charge) if battery_charge is not None else int(float(ups_data.get("battery.charge", 0))),
+                "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,
+                "battery.charge": int(battery_charge) if battery_charge is not None else 0,
                 "ups.status": ups_status_override,
                 # Enterprise-equivalent fields
                 "battery.health": round(soh * 100),          # State of Health as % (like APC upsAdvBatteryHealthStatus)
@@ -1276,7 +1276,12 @@ class MonitorDaemon:
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
         sd_notify('WATCHDOG=1')
-        time.sleep(1 if self.sag_state == SagState.MEASURING else self.config.polling_interval)
+        # Fast poll (1s) during sag measurement and EMA warmup; normal interval otherwise.
+        # EMA warmup: 12 samples needed. At 1s poll → stabilized in ~12s instead of ~120s.
+        if self.sag_state == SagState.MEASURING or not self.ema_buffer.stabilized:
+            time.sleep(1)
+        else:
+            time.sleep(self.config.polling_interval)
 
     def run(self):
         """
