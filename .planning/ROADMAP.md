@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-14)
 - ✅ **v1.1 Expert Panel Review Fixes** — Phases 7-11 (shipped 2026-03-14)
-- 🚀 **v2.0 Actual Capacity Estimation** — Phases 12-14 (in planning)
+- ✅ **v2.0 Actual Capacity Estimation (Phase 12)** — Phases 12-14 (Phase 12 shipped 2026-03-16)
 
 ## Phases
 
@@ -32,9 +32,9 @@
 </details>
 
 <details open>
-<summary>🚀 v2.0 Actual Capacity Estimation (Phases 12-14) — IN PLANNING</summary>
+<summary>🚀 v2.0 Actual Capacity Estimation (Phases 12-14)</summary>
 
-- [ ] **Phase 12: Deep Discharge Capacity Estimation** — Coulomb counting + voltage anchor + confidence tracking; implements core measurement algorithm (3/3 plans)
+- [x] **Phase 12: Deep Discharge Capacity Estimation** — Coulomb counting + voltage anchor + confidence tracking (4/4 plans + 1 inserted) — completed 2026-03-16
 - [ ] **Phase 13: SoH Recalibration & New Battery Detection** — Separates capacity from degradation; enables new battery baseline detection
 - [ ] **Phase 14: Capacity Reporting & Metrics** — MOTD display, journald logging, Grafana scraping for capacity metrics
 
@@ -51,16 +51,20 @@
 **Requirements:** CAP-01, CAP-02, CAP-03, CAP-04, CAP-05, VAL-01, VAL-02
 
 **Success Criteria** (what must be TRUE for users when complete):
-1. Daemon measures capacity from discharge events (>50% depth-of-discharge) and logs results to model.json with timestamp and confidence score
-2. Multiple discharge measurements accumulate via weighted averaging; confidence increases monotonically with each new valid discharge
-3. Discharge quality filters reject micro-discharges (<5 min OR <5% ΔSoC) and shallow discharges (<25% ΔSoC), ensuring only valid samples are used
-4. User can reset capacity estimation baseline via `--new-battery` flag; daemon detects when measured value differs >10% from previous estimate and prompts for confirmation
-5. MOTD shows "Capacity: X.XAh (measured) vs Y.YAh (rated), Z/3 deep discharges, confidence NNth percentile" when data is available
+1. Daemon measures capacity from discharge events (>50% depth-of-discharge) and logs results to model.json with timestamp and confidence score ✓
+2. Multiple discharge measurements accumulate via weighted averaging; confidence increases monotonically with each new valid discharge ✓
+3. Discharge quality filters reject micro-discharges (<5 min OR <5% ΔSoC) and shallow discharges (<25% ΔSoC), ensuring only valid samples are used ✓
+4. User can reset capacity estimation baseline via `--new-battery` flag; daemon detects when measured value differs >10% from previous estimate and prompts for confirmation ✓
+5. MOTD shows "Capacity: X.XAh (measured) vs Y.YAh (rated), Z/3 deep discharges, confidence NNth percentile" when data is available ✓
 
 **Plans:**
-3/3 plans complete
-- [x] 12-02 — MonitorDaemon integration + model.json persistence (Wave 2)
-- [x] 12-03 — Validation gates + MOTD display (Wave 3)
+4/4 plans complete
+- [x] 12-01 — Core algorithm: CapacityEstimator class, quality filters, convergence detection
+- [x] 12-02 — MonitorDaemon integration + model.json persistence
+- [x] 12-03 — Validation gates + MOTD display
+- [x] 12-04 — CLI flag integration (gap closure: CAP-05 user signal mechanism)
+
+**Verification:** All 7 requirements satisfied, 295 tests passing (100%), 3 validation gates closed.
 
 ---
 
@@ -175,10 +179,10 @@
 | 10. Code Quality & Efficiency | v1.1 | 2/2 | Complete | 2026-03-14 |
 | 11. Polish & Future Prep | v1.1 | 3/3 | Complete | 2026-03-14 |
 | 12.1 Math Kernel & Stability Tests | v2.0 | 5/6 | Complete    | 2026-03-16 |
-| 12. Deep Discharge Capacity Estimation | v2.0 | 3/3 | Complete   | 2026-03-16 |
+| 12. Deep Discharge Capacity Estimation | v2.0 | 4/4 | Complete    | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 0/TBD | Not started | — |
 | 14. Capacity Reporting & Metrics | v2.0 | 0/TBD | Not started | — |
 
 ---
 
-*Roadmap updated: 2026-03-15 after Phase 12 planning complete*
+*Roadmap updated: 2026-03-16 after Phase 12 Plan 04 completion and verification*

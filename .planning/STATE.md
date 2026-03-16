@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Actual Capacity Estimation
-status: in-progress
-last_updated: "2026-03-16T15:45:00Z"
+milestone: v1.0
+milestone_name: milestone
+status: planning
+last_updated: "2026-03-16T11:33:51.902Z"
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 10
+  completed_plans: 10
 ---
 
 # Project State — UPS Battery Monitor
@@ -33,8 +33,8 @@ progress:
 
 ## Current Position
 
-**Phase:** 12 (COMPLETE)
-**Plan:** 04 of 04 (COMPLETE)
+**Phase:** 12.1
+**Plan:** Not started
 **Milestone progress:** 9/9 plans completed → Phase 12 complete, all 7 requirements satisfied
 **Roadmap status:** ✓ CapacityEstimator integrated; capacity_estimates persisted; validation gates passed; CLI flag wired; Phase 12 ready for closure
 
@@ -106,7 +106,7 @@ progress:
 - **Requirements:** CAP-01, 02, 03, 04, 05, VAL-01, VAL-02 (7 requirements) — ALL SATISFIED
 - **Goal:** Coulomb counting + voltage anchor + confidence tracking; core measurement algorithm — DELIVERED
 - **Success criteria:** 5 observable behaviors — ALL VERIFIED
-- **Status:** COMPLETE (4 plans executed, 295 tests passing, 0 regressions)
+- **Status:** Ready to plan
 - **Depends on:** v1.1 discharge_buffer + voltage LUT infrastructure — AVAILABLE
 
 ### Phase 13: SoH Recalibration & New Battery Detection — READY (Next)
