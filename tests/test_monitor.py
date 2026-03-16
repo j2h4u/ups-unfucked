@@ -1297,7 +1297,15 @@ class TestCapacityEstimatorIntegration:
         # Mock dependencies
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
-        daemon.battery_model.data = {'lut': []}
+        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.get_convergence_status.return_value = {
+            'sample_count': 1,
+            'confidence_percent': 85.0,
+            'latest_ah': 7.45,
+            'rated_ah': 7.2,
+            'converged': False,
+            'capacity_ah_ref': None
+        }
 
         # Setup discharge data
         discharge_data = {
@@ -1308,7 +1316,7 @@ class TestCapacityEstimatorIntegration:
         }
 
         # Mock estimate to return success
-        daemon.capacity_estimator.estimate.return_value = (7.45, 0.85, {'delta_soc_percent': 50.0})
+        daemon.capacity_estimator.estimate.return_value = (7.45, 0.85, {'delta_soc_percent': 50.0, 'duration_sec': 900, 'load_avg_percent': 32.5})
 
         # Call handler
         daemon._handle_discharge_complete(discharge_data)
@@ -1347,7 +1355,15 @@ class TestCapacityEstimatorIntegration:
 
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
-        daemon.battery_model.data = {'lut': []}
+        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.get_convergence_status.return_value = {
+            'sample_count': 1,
+            'confidence_percent': 85.0,
+            'latest_ah': 7.45,
+            'rated_ah': 7.2,
+            'converged': False,
+            'capacity_ah_ref': None
+        }
 
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
@@ -1356,7 +1372,7 @@ class TestCapacityEstimatorIntegration:
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
-        metadata = {'delta_soc_percent': 50.0, 'duration_sec': 900, 'ir_mohms': 45.2}
+        metadata = {'delta_soc_percent': 50.0, 'duration_sec': 900, 'ir_mohms': 45.2, 'load_avg_percent': 32.5}
         daemon.capacity_estimator.estimate.return_value = (7.45, 0.85, metadata)
 
         daemon._handle_discharge_complete(discharge_data)
@@ -1377,7 +1393,15 @@ class TestCapacityEstimatorIntegration:
 
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
-        daemon.battery_model.data = {'lut': []}
+        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.get_convergence_status.return_value = {
+            'sample_count': 3,
+            'confidence_percent': 95.0,
+            'latest_ah': 7.45,
+            'rated_ah': 7.2,
+            'converged': True,
+            'capacity_ah_ref': None
+        }
 
         discharge_data = {
             'voltage_series': [12.5, 11.0],
@@ -1386,7 +1410,7 @@ class TestCapacityEstimatorIntegration:
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
-        daemon.capacity_estimator.estimate.return_value = (7.45, 0.85, {'delta_soc_percent': 50.0})
+        daemon.capacity_estimator.estimate.return_value = (7.45, 0.85, {'delta_soc_percent': 50.0, 'duration_sec': 900, 'load_avg_percent': 35.0})
         daemon.capacity_estimator.has_converged.return_value = True
 
         daemon._handle_discharge_complete(discharge_data)
@@ -1411,7 +1435,15 @@ class TestCapacityEstimatorIntegration:
         # Create real mocks for integration
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
-        daemon.battery_model.data = {'lut': []}
+        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.get_convergence_status.return_value = {
+            'sample_count': 1,
+            'confidence_percent': 82.0,
+            'latest_ah': 7.45,
+            'rated_ah': 7.2,
+            'converged': False,
+            'capacity_ah_ref': None
+        }
 
         discharge_data = {
             'voltage_series': [12.5, 12.3, 12.1, 11.9, 11.7, 11.5, 11.3, 11.1, 10.9],
