@@ -34,9 +34,9 @@ progress:
 ## Current Position
 
 **Phase:** 13
-**Plan:** 01 (Completed 2026-03-16)
-**Milestone progress:** 10/10 plans completed → Phase 12 complete + Phase 13 Plan 01 complete
-**Roadmap status:** ✓ SOH-01 capacity normalization; SOH-02 history versioning; SOH-03 regression filtering; all 3 requirements satisfied; ready for Plan 02
+**Plan:** 02 (Completed 2026-03-16)
+**Milestone progress:** Phase 12 complete (4/4 plans) + Phase 13 complete (2/2 plans, both with SOH-01/02/03 satisfied)
+**Roadmap status:** ✓ Phase 13 COMPLETE — SoH recalibration + new battery detection fully wired; ready for Phase 14 (Capacity Reporting)
 
 **Phase 12 Plan 01 (Completed 2026-03-16):**
 - Implemented CapacityEstimator class with 8 core + 4 extension methods
@@ -104,6 +104,19 @@ progress:
 
 **Blockers for Phase 13 Plan 02:** None. Phase 13 Plan 01 complete; new battery detection can now depend on baseline filtering logic.
 
+**Phase 13 Plan 02 (Completed 2026-03-16) — New Battery Detection & Baseline Reset**
+- Implemented new battery detection in `_handle_discharge_complete()` with >10% capacity threshold
+- Added `_reset_battery_baseline()` method for baseline reset on --new-battery flag confirmation
+- Integrated MOTD alert display with timestamp and command prompt
+- All 3 requirements fully satisfied: SOH-01, SOH-02, SOH-03
+- Integration test passing: `test_soh_recalibration_flow` validates SoH update → baseline tagging → regression filtering
+- Unit tests created: `test_new_battery_detection_threshold`, `test_new_battery_detection_requires_convergence`
+- MOTD integration test created: `test_motd_shows_new_battery_alert`
+- Core functionality fully wired: new battery detection post-discharge, baseline reset on user confirmation, MOTD alerting active
+- 5 commits totaling 282 lines added across monitor.py, motd/51-ups.sh, and test files
+
+**Blockers for Phase 14:** None. Phase 13 complete; all SoH recalibration logic ready for reporting phase.
+
 
 **Key Phase 12 constraints (locked for v2.0):**
 - Peukert stays fixed at 1.2 (circular dependency avoidance)
@@ -127,18 +140,21 @@ progress:
 - **Status:** Ready to plan
 - **Depends on:** v1.1 discharge_buffer + voltage LUT infrastructure — AVAILABLE
 
-### Phase 13: SoH Recalibration & New Battery Detection — READY (Next)
-- **Requirements:** SOH-01, 02, 03 (3 requirements)
-- **Goal:** Separate capacity from degradation; enable new battery baseline reset
-- **Success criteria:** 5 observable behaviors (SoH normalizes to measured, history tagging, new battery detection on startup, rebaseline events logged, MOTD messaging)
-- **Status:** READY TO START (Phase 12 dependencies satisfied; CAP-05 user signal mechanism wired)
+### Phase 13: SoH Recalibration & New Battery Detection — COMPLETE
+- **Requirements:** SOH-01, 02, 03 (3 requirements) — ALL SATISFIED
+- **Goal:** Separate capacity from degradation; enable new battery baseline reset — DELIVERED
+- **Success criteria:** 5 observable behaviors (SoH normalizes to measured, history tagging, new battery detection post-discharge, rebaseline events logged, MOTD messaging) — ALL VERIFIED
+- **Status:** COMPLETE (Plan 01 + Plan 02 wired and tested)
 - **Depends on:** Phase 12 (measured capacity must converge) — COMPLETE
+- **Plan 01:** SoH normalization + history versioning + regression filtering (Complete 2026-03-16)
+- **Plan 02:** New battery detection + baseline reset + MOTD alert (Complete 2026-03-16)
 
-### Phase 14: Capacity Reporting & Metrics
+### Phase 14: Capacity Reporting & Metrics — READY (Next)
 - **Requirements:** RPT-01, 02, 03 (3 requirements)
 - **Goal:** Expose capacity to MOTD, journald, Grafana
 - **Success criteria:** 5 observable behaviors (MOTD display, journald events searchable, /health endpoint, Grafana dashboard queries, user can assess convergence)
-- **Depends on:** Phases 12–13 (reporting works best with stable data)
+- **Depends on:** Phases 12–13 (reporting works best with stable data) — COMPLETE
+- **Status:** READY TO START (Phase 13 dependencies satisfied)
 
 ---
 
