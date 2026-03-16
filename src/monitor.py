@@ -309,6 +309,7 @@ class MonitorDaemon:
 
         self.discharge_buffer = DischargeBuffer()
         self._discharge_start_time = None  # Timestamp when OL→OB occurred (for cumulative on-battery tracking)
+        self.discharge_buffer_clear_countdown = None  # Cooldown timer (60s) before clearing buffer after OL
         self.soh_threshold = config.soh_alert_threshold
         self.runtime_threshold_minutes = config.runtime_threshold_minutes
         self.reference_load_percent = config.reference_load_percent
@@ -651,8 +652,38 @@ class MonitorDaemon:
                 self.sag_state = SagState.COMPLETE
 
     def _track_discharge(self, voltage, timestamp):
-        """Accumulate discharge samples (voltage/time/load) and write calibration points."""
+        """Accumulate discharge samples (voltage/time/load) and write calibration points.
+
+        Implements discharge cooldown logic: OB→OL→OB within 60s is treated as a single
+        discharge event, not two separate events. Only clear buffer after 60s confirmed OL.
+        """
         event_type = self.current_metrics.event_type
+        previous_event = self.event_classifier.previous_event_type
+
+        # Handle cooldown state transitions
+        if event_type not in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+            # We are now in OL (online) state
+            if previous_event in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+                # OB→OL transition detected: start cooldown
+                logger.info("Power loss detected; starting 60s discharge cooldown")
+                self.discharge_buffer_clear_countdown = 60
+
+        if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+            # We are in OB (blackout) state
+            if self.discharge_buffer_clear_countdown is not None:
+                # Power restored during cooldown
+                logger.info("Power restored during cooldown; treating as discharge continuation")
+                self.discharge_buffer_clear_countdown = None  # Cancel cooldown, keep buffer
+
+        # Count down cooldown timer on each poll (POLL_INTERVAL = config.polling_interval)
+        if self.discharge_buffer_clear_countdown is not None:
+            self.discharge_buffer_clear_countdown -= self.config.polling_interval
+            if self.discharge_buffer_clear_countdown <= 0:
+                logger.info("Cooldown expired (60s OL confirmed); clearing discharge buffer and calling _update_battery_health")
+                self._update_battery_health()  # Triggers SoH update and buffer clear
+                return  # Early exit; _update_battery_health already clears buffer
+
+        # Standard discharge collection logic
         if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
             if not self.discharge_buffer.collecting:
                 self.discharge_buffer.collecting = True
