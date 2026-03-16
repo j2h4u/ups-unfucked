@@ -1,237 +1,71 @@
-"""State of Health (SoH) calculation from discharge voltage profiles."""
+"""SoH calculation orchestrator — selects capacity baseline and calls kernel.
+
+Phase 13: When Phase 12 capacity estimation converges, use measured capacity
+instead of rated. This separates aging (SoH trend) from capacity loss.
+"""
 
 import logging
-import math
-import time
-from typing import List, Dict
-from src.runtime_calculator import peukert_runtime_hours
+from typing import Optional, Tuple
+from battery_math import soh as battery_math_soh
+from model import BatteryModel
 
 logger = logging.getLogger(__name__)
 
 
-
 def calculate_soh_from_discharge(
-    discharge_voltage_series: List[float],
-    discharge_time_series: List[float],
-    reference_soh: float = 1.0,
-    anchor_voltage: float = 10.5,
-    capacity_ah: float = 7.2,
-    load_percent: float = 20.0,
-    nominal_power_watts: float = 425.0,
-    nominal_voltage: float = 12.0,
-    peukert_exponent: float = 1.2
-) -> float:
-    """
-    Calculate State of Health (SoH) from measured discharge voltage profile.
-
-    Uses trapezoidal rule to integrate voltage over time. Reference area is
-    computed from Peukert's Law (no empirical constants).
-
-    **UPDATE (2026-03-14)**: Uses duration-weighted Bayesian blending to reduce
-    bias on short discharges. See STATISTICAL-ANALYSIS-SOH-ESTIMATOR.md.
+    discharge_voltage_series,
+    discharge_time_series,
+    reference_soh,
+    anchor_voltage,
+    battery_model: BatteryModel,
+    load_percent,
+    nominal_power_watts,
+    nominal_voltage,
+    peukert_exponent,
+) -> Optional[Tuple[float, float]]:
+    """Calculate SoH for completed discharge, using measured capacity if available.
 
     Args:
-        discharge_voltage_series: Voltage readings [V] during discharge
-        discharge_time_series: Time [sec] for each voltage reading (must be monotonic)
-        reference_soh: Previous SoH estimate (0.0-1.0); used as baseline
-        anchor_voltage: Physical cutoff voltage (typically 10.5V for VRLA)
-        capacity_ah: Full capacity in Ah
+        discharge_voltage_series: List of voltage readings (V)
+        discharge_time_series: List of time readings (s)
+        reference_soh: Current SoH estimate before update
+        anchor_voltage: Voltage floor for capacity calculation (10.5V for UT850)
+        battery_model: BatteryModel instance with convergence data
         load_percent: Average load during discharge (%)
-        nominal_power_watts: UPS nominal power output (W)
-        nominal_voltage: Battery nominal voltage (V)
-        peukert_exponent: Peukert exponent
+        nominal_power_watts: UPS rated power (850W for UT850)
+        nominal_voltage: UPS nominal voltage (120V for UT850)
+        peukert_exponent: Peukert coefficient (1.2 for Phase 13)
 
     Returns:
-        Updated SoH estimate (0.0-1.0)
-
-    Edge cases:
-        - Empty or single-point data: returns reference_soh unchanged
-        - Duration < 30s: returns reference_soh (VAL-01 flicker-storm protection)
-        - Voltage below anchor: integration stops at anchor (physical limit)
-        - Computed SoH < 0 or > 1: clamped to [0, 1]
-        - Discharge <0.1% of expected: returns reference_soh (too short to measure)
+        Tuple of (soh_new, capacity_ah_for_soh) or None if calculation failed
+        - soh_new: Updated SoH estimate [0.0, 1.0]
+        - capacity_ah_for_soh: Capacity used in calculation (measured or rated)
     """
-    if len(discharge_voltage_series) < 2:
-        return reference_soh
+    # Get convergence status from Phase 12
+    convergence = battery_model.get_convergence_status()
 
-    # VAL-01: Minimum duration gate (30s) — flicker-storm protection
-    if len(discharge_time_series) > 1:
-        duration = discharge_time_series[-1] - discharge_time_series[0]
-        if duration < 30:
-            logger.warning(f"Discharge {duration:.1f}s < 30s minimum (VAL-01); skipping SoH update")
-            return reference_soh
+    # Select capacity reference: measured if converged, else rated
+    if convergence.get('converged', False):
+        capacity_ah_for_soh = convergence.get('latest_ah')
+        logger.info(f"SoH calculation using measured capacity: {capacity_ah_for_soh:.2f}Ah")
+    else:
+        capacity_ah_for_soh = battery_model.get_capacity_ah()  # Rated (7.2Ah)
+        logger.info(f"SoH calculation using rated capacity: {capacity_ah_for_soh:.2f}Ah (measured not converged)")
 
-    # Trim data at anchor voltage (10.5V is physical limit)
-    trimmed_v = []
-    trimmed_t = []
-    for v, t in zip(discharge_voltage_series, discharge_time_series):
-        if v <= anchor_voltage:
-            break
-        trimmed_v.append(v)
-        trimmed_t.append(t)
+    # Call kernel with selected capacity
+    soh_new = battery_math_soh.calculate_soh_from_discharge(
+        voltage_series=discharge_voltage_series,
+        time_series=discharge_time_series,
+        reference_soh=reference_soh,
+        anchor_voltage=anchor_voltage,
+        capacity_ah=capacity_ah_for_soh,  # ← Measured or rated
+        load_percent=load_percent,
+        nominal_power_watts=nominal_power_watts,
+        nominal_voltage=nominal_voltage,
+        peukert_exponent=peukert_exponent,
+    )
 
-    if len(trimmed_v) < 2:
-        return reference_soh
+    if soh_new is None:
+        return None
 
-    # Validate timestamp monotonicity (guard against clock jumps from NTP corrections)
-    for i in range(len(trimmed_t) - 1):
-        if trimmed_t[i + 1] <= trimmed_t[i]:
-            logger.warning(f"Non-monotonic timestamps in discharge data at index {i}: "
-                           f"{trimmed_t[i]} >= {trimmed_t[i+1]}, returning reference SoH")
-            return reference_soh
-
-    # Compute area-under-curve using trapezoidal rule
-    area_measured = 0.0
-    for i in range(len(trimmed_v) - 1):
-        v1, v2 = trimmed_v[i], trimmed_v[i + 1]
-        t1, t2 = trimmed_t[i], trimmed_t[i + 1]
-        dt = t2 - t1
-        area_measured += (v1 + v2) / 2.0 * dt
-
-    # Reference area from Peukert's Law (physics, no hardcoded constants)
-    T_expected_sec = peukert_runtime_hours(
-        load_percent, capacity_ah, peukert_exponent,
-        nominal_voltage, nominal_power_watts
-    ) * 3600
-    avg_voltage = sum(trimmed_v) / len(trimmed_v)
-    area_reference = avg_voltage * T_expected_sec
-
-    # SoH update with duration weighting (Bayesian prior-posterior blend)
-    # See: docs/STATISTICAL-ANALYSIS-SOH-ESTIMATOR.md § Part 7
-    degradation_ratio = area_measured / area_reference if area_reference > 0 else 1.0
-
-    # Weight updates by discharge duration to reduce bias on short events
-    # discharge_weight ∈ [0, 1]: 0.01 for 10s test, 1.0 for 30min+ discharge
-    discharge_duration = trimmed_t[-1] - trimmed_t[0]  # seconds
-    discharge_weight = min(discharge_duration / (0.30 * T_expected_sec), 1.0)
-
-    if discharge_weight < 0.001:
-        # Negligible signal from micro-discharges
-        logger.debug(f"Discharge too short ({discharge_duration:.1f}s) for SoH update; "
-                     f"weight={discharge_weight:.6f}")
-        return reference_soh
-
-    # Bayesian blend: new_soh = prior * (1 - weight) + likelihood * weight
-    # This treats short discharges as weak evidence, long ones as strong evidence
-    measured_soh = reference_soh * degradation_ratio
-    new_soh = reference_soh * (1 - discharge_weight) + measured_soh * discharge_weight
-
-    logger.debug(f"SoH update: duration={discharge_duration:.1f}s, "
-                 f"weight={discharge_weight:.4f}, "
-                 f"degradation_ratio={degradation_ratio:.4f}, "
-                 f"new_soh={new_soh:.4f}")
-
-    # Clamp to [0, 1]
-    new_soh = max(0.0, min(1.0, new_soh))
-
-    return new_soh
-
-
-# Curve relevance decay: how fast old V-SoC measurements lose relevance.
-# Models electrode microstructure changes (faster than capacity loss).
-# 90 days: week-old data ≈ 0.93 weight, month-old ≈ 0.72, 6-month ≈ 0.14.
-CURVE_RELEVANCE_HALF_LIFE_DAYS = 90.0
-
-
-def _weighted_average_by_voltage(points: List[Dict], bucket_size: float = 0.05,
-                                  half_life_days: float = CURVE_RELEVANCE_HALF_LIFE_DAYS) -> List[Dict]:
-    """
-    Group measured points into voltage buckets and compute time-weighted average SoC.
-
-    Recent measurements weigh more than old ones: weight = exp(-age_days / half_life).
-    This ensures the LUT tracks battery degradation over time.
-    """
-    now = time.time()
-
-    # Group into buckets by rounding voltage to nearest bucket_size
-    buckets: Dict[float, list] = {}
-    for p in points:
-        v_bucket = round(round(p['v'] / bucket_size) * bucket_size, 2)
-        buckets.setdefault(v_bucket, []).append(p)
-
-    result = []
-    for v_bucket, entries in sorted(buckets.items()):
-        total_weight = 0.0
-        weighted_soc = 0.0
-        for e in entries:
-            if 'timestamp' not in e:
-                logger.warning(f"LUT entry at {e.get('v')}V missing timestamp, skipping from weighted average")
-                continue
-            age_days = (now - e['timestamp']) / 86400.0
-            weight = math.exp(-age_days / half_life_days)
-            weighted_soc += e['soc'] * weight
-            total_weight += weight
-        if total_weight > 1e-10:  # Guard against floating-point underflow on very old data
-            avg_soc = weighted_soc / total_weight
-        else:
-            avg_soc = sum(e['soc'] for e in entries) / len(entries)  # Unweighted fallback
-        result.append({'v': v_bucket, 'soc': round(avg_soc, 3), 'source': 'measured'})
-
-    return result
-
-
-def interpolate_cliff_region(
-    lut: List[Dict],
-    anchor_voltage: float = 10.5,
-    cliff_start: float = 11.0,
-    step_mv: float = 0.1
-) -> List[Dict]:
-    """
-    Interpolate cliff region (11.0V-10.5V) from measured calibration data.
-
-    Multiple measured points at similar voltages (from different discharge events)
-    are combined using time-weighted averaging — recent data weighs more, so the
-    LUT tracks battery degradation naturally.
-
-    Marks interpolated entries with source='interpolated'.
-    Removes old 'standard' and 'interpolated' entries in cliff region.
-
-    Args:
-        lut: Current LUT entries
-        anchor_voltage: Bottom of cliff (10.5V default)
-        cliff_start: Top of cliff (11.0V default)
-        step_mv: Interpolation resolution (0.1V = 100mV)
-
-    Returns:
-        Updated LUT with cliff region interpolated
-    """
-    # Separate cliff measured points from rest of LUT
-    cliff_measured = [e for e in lut
-                     if anchor_voltage <= e['v'] <= cliff_start
-                     and e['source'] == 'measured']
-    other_entries = [e for e in lut
-                    if e['v'] < anchor_voltage or e['v'] > cliff_start]
-
-    # Can't interpolate with <2 points
-    if len(cliff_measured) < 2:
-        return lut
-
-    # Combine multiple measurements at same voltage with time-weighted average
-    anchor_points = _weighted_average_by_voltage(cliff_measured)
-
-    # Interpolate between anchor points
-    interpolated = []
-    for i in range(len(anchor_points) - 1):
-        p1, p2 = anchor_points[i], anchor_points[i + 1]
-
-        interpolated.append(p1)
-
-        v_current = p1['v'] + step_mv
-        while v_current < p2['v']:
-            frac = (v_current - p1['v']) / (p2['v'] - p1['v'])
-            soc_interp = p1['soc'] + frac * (p2['soc'] - p1['soc'])
-            interpolated.append({
-                'v': round(v_current, 2),
-                'soc': round(soc_interp, 3),
-                'source': 'interpolated'
-            })
-            v_current += step_mv
-
-    interpolated.append(anchor_points[-1])
-
-    # Combine with non-cliff entries and re-sort
-    updated_lut = other_entries + interpolated
-    updated_lut.sort(key=lambda x: x['v'], reverse=True)
-
-    return updated_lut
-
+    return soh_new, capacity_ah_for_soh  # Return both for caller to tag history entry
