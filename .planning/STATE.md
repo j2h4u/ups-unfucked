@@ -1,21 +1,21 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-last_updated: "2026-03-16T09:14:57.370Z"
+milestone: v2.0
+milestone_name: Actual Capacity Estimation
+status: in-progress
+last_updated: "2026-03-16T10:15:00.370Z"
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 9
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-16 after Phase 12.1 Plan 05 completion
-**Milestone:** v2.0 Actual Capacity Estimation — Wave 5 complete (adversarial scenarios)
-**Current Position:** Phase 12.1 Wave 5 complete (adversarial scenarios); ready for Phase 12 detailed design
+**Last Updated:** 2026-03-16 after Phase 12 Plan 01 completion
+**Milestone:** v2.0 Actual Capacity Estimation — Phase 12 capacity measurement algorithm complete
+**Current Position:** Phase 12 Plan 01 complete (CapacityEstimator); ready for Phase 12 Plan 02 (integration)
 
 ---
 
@@ -33,18 +33,20 @@ progress:
 
 ## Current Position
 
-**Phase:** 13
-**Milestone progress:** 6/9 plans completed (Waves 1-6 all delivered) → Next: Phase 12 Design
-**Roadmap status:** ✓ Math kernel extraction + stability validation complete; Phase 12 design ready to start
+**Phase:** 12
+**Plan:** 01 (Complete) → Next: 02, 03
+**Milestone progress:** 7/9 plans completed → Phase 12 core implementation delivered
+**Roadmap status:** ✓ CapacityEstimator class complete; ready for monitor.py integration
 
-**Key Phase 12.1 outcomes:**
-- Wave 1-2: Math kernel package extracted, simulation harness built
-- Wave 3: Stability gates validated (Lyapunov, permutation invariance, fixed-point convergence)
-- Wave 4: Orchestrator wiring verified (kernel isolation confirmed)
-- Wave 5: Adversarial scenarios tested (flicker storm, spike handling, clock jumps)
-- Wave 6: Lifecycle scenarios discovered (Bayesian inertia at cliff edge, thermal robustness, instrument bias)
+**Phase 12 Plan 01 (Completed 2026-03-16):**
+- Implemented CapacityEstimator class with 8 core + 4 extension methods
+- All 20 unit tests passing (coulomb integration, quality filters, convergence)
+- VAL-01 hard rejects enforced (duration >= 300s, ΔSoC >= 25%)
+- VAL-02 Peukert parameterization locked (default 1.2, no auto-refinement)
+- CAP-01, CAP-02, CAP-03 requirements fully satisfied
+- No external dependencies added; stdlib + existing soc_predictor pattern only
 
-**Blockers for Phase 12:** None. Math kernel is stable and ready.
+**Blockers for Phase 12 Plan 02:** None. Ready for monitor.py integration.
 
 **Key Phase 12 constraints (locked for v2.0):**
 - Peukert stays fixed at 1.2 (circular dependency avoidance)
