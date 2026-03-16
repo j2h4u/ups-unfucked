@@ -7,7 +7,8 @@ from typing import Any, List, Dict, Optional, Tuple
 
 def linear_regression_soh(
     soh_history: List[Dict[str, Any]],
-    threshold_soh: float = 0.80
+    threshold_soh: float = 0.80,
+    capacity_ah_ref: Optional[float] = None
 ) -> Optional[Tuple[float, float, float, Optional[str]]]:
     """
     Fit line to SoH history and predict replacement date.
@@ -16,8 +17,10 @@ def linear_regression_soh(
     where x = days since first measurement, y = SoH (0.0-1.0)
 
     Args:
-        soh_history: List of {'date': 'YYYY-MM-DD', 'soh': float} dicts
+        soh_history: List of {'date': 'YYYY-MM-DD', 'soh': float, 'capacity_ah_ref'?: float} dicts
         threshold_soh: SoH level requiring replacement (default 80%)
+        capacity_ah_ref: If provided, use only entries with this baseline (Ah).
+                        If None, use all entries (backward compatible).
 
     Returns:
         Tuple: (slope, intercept, r_squared, replacement_date_iso8601)
@@ -32,7 +35,23 @@ def linear_regression_soh(
         - Identical dates: denominator becomes 0; returns None
         - All SoH identical: no variance; returns None
         - Slope = 0 or positive: battery not degrading; returns None
+        - Filtering by capacity_ah_ref with < 3 matching entries: returns None
     """
+    # Phase 13: Filter by capacity baseline
+    if capacity_ah_ref is not None:
+        # Keep only entries matching the baseline
+        # Default missing field to 7.2Ah (original rated capacity)
+        filtered = [
+            e for e in soh_history
+            if e.get('capacity_ah_ref', 7.2) == capacity_ah_ref
+        ]
+
+        if len(filtered) < 3:
+            # Not enough entries for this baseline; can't predict
+            return None
+
+        soh_history = filtered
+
     if len(soh_history) < 3:
         return None
 
