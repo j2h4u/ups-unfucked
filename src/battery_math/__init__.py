@@ -4,6 +4,7 @@ from .soc import soc_from_voltage
 from .soh import calculate_soh_from_discharge, interpolate_cliff_region
 from .calibration import calibrate_peukert
 from .capacity import estimate_capacity
+from .rls import ScalarRLS
 
 __all__ = [
     'BatteryState',
@@ -12,4 +13,5 @@ __all__ = [
     'soc_from_voltage',
     'calibrate_peukert',
     'estimate_capacity',
+    'ScalarRLS',
 ]

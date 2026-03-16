@@ -141,6 +141,10 @@ class BatteryModel:
                 'ir_compensation': {
                     'k_volts_per_percent': 0.015,
                     'reference_load_percent': 20.0
+                },
+                'rls_state': {
+                    'ir_k': {'theta': 0.015, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+                    'peukert': {'theta': 1.2, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
                 }
             },
             'lut': [
@@ -213,6 +217,36 @@ class BatteryModel:
 
     def set_ir_k(self, value: float):
         self.data.setdefault('physics', {}).setdefault('ir_compensation', {})['k_volts_per_percent'] = value
+
+    # --- RLS state persistence ---
+
+    _RLS_DEFAULTS = {
+        'ir_k': {'theta': 0.015, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+        'peukert': {'theta': 1.2, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+    }
+
+    def get_rls_state(self, name: str) -> dict:
+        """Get RLS estimator state by name. Returns defaults if missing (backward compat)."""
+        rls = self.data.get('physics', {}).get('rls_state', {})
+        return rls.get(name, dict(self._RLS_DEFAULTS.get(name, {'theta': 0.0, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97})))
+
+    def set_rls_state(self, name: str, theta: float, P: float, sample_count: int) -> None:
+        """Persist RLS estimator state to model.json."""
+        physics = self.data.setdefault('physics', {})
+        rls = physics.setdefault('rls_state', {})
+        existing = rls.get(name, {})
+        rls[name] = {
+            'theta': theta,
+            'P': P,
+            'sample_count': sample_count,
+            'forgetting_factor': existing.get('forgetting_factor', 0.97),
+        }
+
+    def reset_rls_state(self) -> None:
+        """Reset all RLS estimators to defaults (e.g., on battery replacement)."""
+        self.data.setdefault('physics', {})['rls_state'] = {
+            k: dict(v) for k, v in self._RLS_DEFAULTS.items()
+        }
 
     def _prune_soh_history(self, keep_count: int = 30) -> None:
         """Remove old SoH history entries; retain only most recent keep_count.
