@@ -46,12 +46,20 @@ def calculate_soh_from_discharge(
 
     Edge cases:
         - Empty or single-point data: returns reference_soh unchanged
+        - Duration < 30s: returns reference_soh (VAL-01 flicker-storm protection)
         - Voltage below anchor: integration stops at anchor (physical limit)
         - Computed SoH < 0 or > 1: clamped to [0, 1]
         - Discharge <0.1% of expected: returns reference_soh (too short to measure)
     """
     if len(discharge_voltage_series) < 2:
         return reference_soh
+
+    # VAL-01: Minimum duration gate (30s) — flicker-storm protection
+    if len(discharge_time_series) > 1:
+        duration = discharge_time_series[-1] - discharge_time_series[0]
+        if duration < 30:
+            logger.warning(f"Discharge {duration:.1f}s < 30s minimum (VAL-01); skipping SoH update")
+            return reference_soh
 
     # Trim data at anchor voltage (10.5V is physical limit)
     trimmed_v = []

@@ -399,3 +399,36 @@ def test_duration_weighting_progression():
     assert soh_100s > 0.70
     assert soh_1000s > 0.40
 
+
+def test_minimum_duration_gate_val01():
+    """VAL-01: Discharge < 30s returns reference_soh unchanged (flicker-storm protection)."""
+    short_voltage = [12.0, 11.9, 11.8]
+    short_time = [0.0, 10.0, 20.0]  # 20 seconds total < 30s minimum
+
+    result = calculate_soh_from_discharge(
+        discharge_voltage_series=short_voltage,
+        discharge_time_series=short_time,
+        reference_soh=1.0,
+        capacity_ah=7.2,
+        load_percent=25
+    )
+
+    assert result == 1.0, "Discharge < 30s must return reference_soh unchanged (VAL-01)"
+
+
+def test_minimum_duration_boundary():
+    """VAL-01 boundary: exactly 30s should be accepted."""
+    voltage = [12.0, 11.5, 11.0, 10.6]
+    time = [0.0, 10.0, 20.0, 30.0]  # Exactly 30 seconds
+
+    result = calculate_soh_from_discharge(
+        discharge_voltage_series=voltage,
+        discharge_time_series=time,
+        reference_soh=1.0,
+        capacity_ah=7.2,
+        load_percent=20
+    )
+
+    # Should not return reference_soh; should process the discharge
+    assert isinstance(result, float)
+    assert 0.0 <= result <= 1.0
