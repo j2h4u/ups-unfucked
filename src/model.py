@@ -298,11 +298,25 @@ class BatteryModel:
         """Return reference full capacity (Ah)."""
         return self.data.get('full_capacity_ah_ref', 7.2)
 
-    def add_soh_history_entry(self, date, soh):
-        """Add a SoH history entry for degradation tracking."""
+    def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
+        """Add a SoH history entry with optional capacity baseline tag.
+
+        Args:
+            date: ISO8601 date string (e.g., '2026-03-16')
+            soh: SoH estimate [0.0, 1.0]
+            capacity_ah_ref: Capacity baseline used in SoH calculation (Ah).
+                            If None, entry has no capacity_ah_ref field (backward compat).
+        """
         if 'soh_history' not in self.data:
             self.data['soh_history'] = []
-        self.data['soh_history'].append({'date': date, 'soh': soh})
+
+        entry = {'date': date, 'soh': soh}
+
+        # Phase 13: Tag with capacity baseline
+        if capacity_ah_ref is not None:
+            entry['capacity_ah_ref'] = round(capacity_ah_ref, 2)
+
+        self.data['soh_history'].append(entry)
         self.data['soh'] = soh  # Update current SoH
 
     def get_soh_history(self):
