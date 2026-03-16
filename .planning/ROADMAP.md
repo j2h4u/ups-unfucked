@@ -58,7 +58,7 @@
 5. MOTD shows "Capacity: X.XAh (measured) vs Y.YAh (rated), Z/3 deep discharges, confidence NNth percentile" when data is available
 
 **Plans:**
-- [x] 12-01 — CapacityEstimator core algorithm + unit tests (Wave 1)
+3/3 plans complete
 - [x] 12-02 — MonitorDaemon integration + model.json persistence (Wave 2)
 - [x] 12-03 — Validation gates + MOTD display (Wave 3)
 
@@ -175,7 +175,7 @@
 | 10. Code Quality & Efficiency | v1.1 | 2/2 | Complete | 2026-03-14 |
 | 11. Polish & Future Prep | v1.1 | 3/3 | Complete | 2026-03-14 |
 | 12.1 Math Kernel & Stability Tests | v2.0 | 5/6 | Complete    | 2026-03-16 |
-| 12. Deep Discharge Capacity Estimation | v2.0 | 3/3 | Planned | — |
+| 12. Deep Discharge Capacity Estimation | v2.0 | 3/3 | Complete   | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 0/TBD | Not started | — |
 | 14. Capacity Reporting & Metrics | v2.0 | 0/TBD | Not started | — |
 
