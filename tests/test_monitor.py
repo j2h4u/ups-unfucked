@@ -395,7 +395,7 @@ def test_auto_calibration_end_to_end(config_fixture):
             assert measured_count >= 3
 
             # Cliff interpolation fills gaps between measured points
-            from src.soh_calculator import interpolate_cliff_region
+            from src.battery_math.soh import interpolate_cliff_region
             updated_lut = interpolate_cliff_region(model.data['lut'])
             model.update_lut_from_calibration(updated_lut)
 
