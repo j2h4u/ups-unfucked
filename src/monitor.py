@@ -467,21 +467,29 @@ class MonitorDaemon:
         avg_load = (sum(self.discharge_buffer.loads) / len(self.discharge_buffer.loads)
                    if self.discharge_buffer.loads else self.reference_load_percent)
 
-        soh_new = soh_calculator.calculate_soh_from_discharge(
+        # Phase 13: Call orchestrator which selects measured vs. rated capacity
+        soh_result = soh_calculator.calculate_soh_from_discharge(
             discharge_voltage_series=self.discharge_buffer.voltages,
             discharge_time_series=self.discharge_buffer.times,
             reference_soh=self.battery_model.get_soh(),
             anchor_voltage=10.5,
-            capacity_ah=self.battery_model.get_capacity_ah(),
+            battery_model=self.battery_model,
             load_percent=avg_load,
             nominal_power_watts=self.battery_model.get_nominal_power_watts(),
             nominal_voltage=self.battery_model.get_nominal_voltage(),
             peukert_exponent=self.battery_model.get_peukert_exponent()
         )
 
-        # Add to history
+        if soh_result is None:
+            logger.info("SoH update returned None; skipping history entry")
+            self.discharge_buffer = DischargeBuffer()
+            return
+
+        soh_new, capacity_ah_used = soh_result
+
+        # Add to history with capacity baseline tag
         today = datetime.now().strftime('%Y-%m-%d')
-        self.battery_model.add_soh_history_entry(today, soh_new)
+        self.battery_model.add_soh_history_entry(today, soh_new, capacity_ah_ref=capacity_ah_used)
 
         logger.info(f"SoH calculated: {soh_new:.2%}")
 
