@@ -695,3 +695,125 @@ class TestFdatasyncOptimization:
         assert loaded['soh'] == 0.95
         assert loaded['full_capacity_ah_ref'] == 7.2
 
+
+class TestCapacityEstimates:
+    """Test BatteryModel capacity_estimates array for Phase 12 Plan 02."""
+
+    def test_add_capacity_estimate_creates_array_if_missing(self, tmp_path):
+        """Test 1: model.add_capacity_estimate() creates array if not present."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        assert 'capacity_estimates' not in model.data or len(model.data.get('capacity_estimates', [])) == 0
+
+        model.add_capacity_estimate(
+            ah_estimate=7.5,
+            confidence=0.85,
+            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
+            timestamp='2026-03-15T12:34:56Z'
+        )
+
+        assert 'capacity_estimates' in model.data
+        assert len(model.data['capacity_estimates']) == 1
+
+    def test_get_capacity_estimates_returns_list_latest_first(self, tmp_path):
+        """Test 2: model.get_capacity_estimates() returns list with latest first."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        # Add two estimates
+        model.add_capacity_estimate(7.4, 0.80, {'delta_soc_percent': 50.0}, '2026-03-15T10:00:00Z')
+        model.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 52.0}, '2026-03-15T11:00:00Z')
+
+        estimates = model.get_capacity_estimates()
+        assert len(estimates) == 2
+        # Latest first
+        assert estimates[0]['timestamp'] == '2026-03-15T11:00:00Z'
+        assert estimates[1]['timestamp'] == '2026-03-15T10:00:00Z'
+
+    def test_get_latest_capacity_returns_float_or_none(self, tmp_path):
+        """Test 3: model.get_latest_capacity() returns float (latest Ah) or None."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        # Empty case
+        latest = model.get_latest_capacity()
+        assert latest is None
+
+        # After adding estimate
+        model.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 50.0}, '2026-03-15T12:34:56Z')
+        latest = model.get_latest_capacity()
+        assert isinstance(latest, float)
+        assert latest == 7.5
+
+    def test_prune_capacity_estimates_keeps_30(self, tmp_path):
+        """Test 4: capacity_estimates pruned to last 30 entries (no unbounded growth)."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        # Add 35 estimates
+        for i in range(35):
+            model.add_capacity_estimate(
+                ah_estimate=7.0 + (i * 0.01),
+                confidence=0.5 + (i * 0.01),
+                metadata={'delta_soc_percent': 50.0},
+                timestamp=f'2026-03-15T{i:02d}:00:00Z'
+            )
+
+        # After adding the 35th, should be pruned to 30
+        estimates = model.data['capacity_estimates']
+        assert len(estimates) <= 30, f"Expected <= 30 estimates, got {len(estimates)}"
+
+    def test_save_persists_capacity_estimates_atomically(self, tmp_path):
+        """Test 5: model.save() writes capacity_estimates atomically."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file)
+
+        model.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 50.0}, '2026-03-15T12:34:56Z')
+        model.save()
+
+        # Verify file exists
+        assert model_file.exists()
+        with open(model_file, 'r') as f:
+            loaded = json.load(f)
+        assert 'capacity_estimates' in loaded
+        assert len(loaded['capacity_estimates']) == 1
+        assert loaded['capacity_estimates'][0]['ah_estimate'] == 7.5
+
+    def test_reload_persists_capacity_estimates(self, tmp_path):
+        """Test 6: Reload from model.json → capacity_estimates persists across daemon restarts."""
+        model_file = tmp_path / "model.json"
+        model1 = BatteryModel(model_path=model_file)
+
+        # Add estimates and save
+        model1.add_capacity_estimate(7.4, 0.80, {'delta_soc_percent': 50.0}, '2026-03-15T10:00:00Z')
+        model1.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 52.0}, '2026-03-15T11:00:00Z')
+        model1.save()
+
+        # Create new model instance, load from file
+        model2 = BatteryModel(model_path=model_file)
+        estimates = model2.get_capacity_estimates()
+        assert len(estimates) == 2
+        assert estimates[0]['ah_estimate'] == 7.5  # Latest first
+
+    def test_capacity_estimates_schema_has_required_fields(self, tmp_path):
+        """Verify capacity_estimates array elements have all required fields."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        model.add_capacity_estimate(
+            ah_estimate=7.45,
+            confidence=0.82,
+            metadata={
+                'delta_soc_percent': 52.0,
+                'duration_sec': 1234,
+                'ir_mohms': 45.2,
+                'load_avg_percent': 35.0
+            },
+            timestamp='2026-03-15T12:34:56Z'
+        )
+
+        estimate = model.data['capacity_estimates'][0]
+        assert 'timestamp' in estimate
+        assert 'ah_estimate' in estimate
+        assert 'confidence' in estimate
+        assert 'metadata' in estimate
+        assert estimate['timestamp'] == '2026-03-15T12:34:56Z'
+        assert estimate['ah_estimate'] == 7.45
+        assert estimate['confidence'] == 0.82
+        assert estimate['metadata']['delta_soc_percent'] == 52.0
+

@@ -7,7 +7,7 @@ import tempfile
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 logger = logging.getLogger(__name__)
@@ -256,6 +256,19 @@ class BatteryModel:
         if len(r_int_hist) > keep_count:
             self.data['r_internal_history'] = r_int_hist[-keep_count:]
 
+    def _prune_capacity_estimates(self, keep_count: int = 30) -> None:
+        """Remove old capacity estimate entries; retain only most recent keep_count.
+
+        Rationale: Deep discharges ~1-2 per week during active testing.
+        Keep 30 (~1-2 months) provides convergence tracking without disk bloat.
+
+        Args:
+            keep_count: Maximum number of entries to retain (default 30)
+        """
+        cap_est = self.data.get('capacity_estimates', [])
+        if len(cap_est) > keep_count:
+            self.data['capacity_estimates'] = cap_est[-keep_count:]
+
     def save(self):
         """
         Atomically write model to disk with history pruning.
@@ -266,6 +279,7 @@ class BatteryModel:
         self._prune_soh_history()
         self._prune_r_internal_history()
         self._prune_lut()
+        self._prune_capacity_estimates()
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
@@ -308,6 +322,62 @@ class BatteryModel:
     def get_r_internal_history(self):
         """Return list of internal resistance measurements."""
         return self.data.get('r_internal_history', [])
+
+    def add_capacity_estimate(self, ah_estimate: float, confidence: float, metadata: Dict, timestamp: str) -> None:
+        """
+        Add a capacity measurement to the estimates array.
+
+        Stores measured capacity with confidence metadata for convergence tracking.
+        Automatically prunes to keep last 30 entries (no unbounded growth).
+        Persists atomically to disk.
+
+        Args:
+            ah_estimate: Measured capacity in Ah (float)
+            confidence: Confidence metric [0.0, 1.0] based on CoV across measurements
+            metadata: Dict with measurement details (delta_soc_percent, duration_sec, ir_mohms, load_avg_percent, etc.)
+            timestamp: ISO8601 timestamp string
+
+        Side effects:
+            - Appends entry to model.data['capacity_estimates']
+            - Calls _prune_capacity_estimates() to limit array to 30 entries
+            - Calls self.save() for atomic persistence
+        """
+        if 'capacity_estimates' not in self.data:
+            self.data['capacity_estimates'] = []
+
+        entry = {
+            'timestamp': timestamp,
+            'ah_estimate': ah_estimate,
+            'confidence': confidence,
+            'metadata': metadata
+        }
+        self.data['capacity_estimates'].append(entry)
+        self._prune_capacity_estimates()
+        self.save()
+
+    def get_capacity_estimates(self) -> List[Dict]:
+        """
+        Get all capacity estimates, sorted by timestamp (latest first).
+
+        Returns:
+            List of {timestamp, ah_estimate, confidence, metadata} dicts,
+            ordered newest to oldest
+        """
+        estimates = self.data.get('capacity_estimates', [])
+        # Sort by timestamp descending (latest first)
+        return sorted(estimates, key=lambda x: x.get('timestamp', ''), reverse=True)
+
+    def get_latest_capacity(self) -> Optional[float]:
+        """
+        Get the latest measured capacity value.
+
+        Returns:
+            Latest Ah estimate as float, or None if no estimates exist
+        """
+        estimates = self.get_capacity_estimates()
+        if estimates:
+            return estimates[0]['ah_estimate']
+        return None
 
     def get_anchor_voltage(self):
         """Return anchor point voltage (physical cutoff, should always be 10.5V)."""
