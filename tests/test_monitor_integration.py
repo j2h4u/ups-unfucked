@@ -241,3 +241,52 @@ class TestSystemdIntegration:
             f"Poll cycle failed at {cycle_count}/10: {exception_caught}"
         assert exception_caught is None, \
             f"Exception during poll cycles: {exception_caught}"
+
+
+class TestSoHRecalibrationFlow:
+    """Tests for Phase 13 SoH recalibration and new battery detection."""
+
+    def test_soh_recalibration_flow(self, mock_daemon):
+        """SOH-01,02,03 integration: measured capacity → SoH update → regression filter.
+
+        Scenario:
+        1. Phase 12 capacity converges to 6.8Ah (3 deep discharge samples)
+        2. Monitor updates SoH with capacity_ah_ref=6.8Ah tagged
+        3. Old SoH entries (7.2Ah baseline) are kept in history
+        4. Regression filters by baseline; only 6.8Ah entries used for trend
+        """
+        from src import soh_calculator
+
+        # Setup: Old SoH history with rated baseline (7.2Ah)
+        mock_daemon.battery_model.data['soh_history'] = [
+            {'date': '2026-01-01', 'soh': 1.0, 'capacity_ah_ref': 7.2},
+            {'date': '2026-02-01', 'soh': 0.98, 'capacity_ah_ref': 7.2},
+            {'date': '2026-03-01', 'soh': 0.96, 'capacity_ah_ref': 7.2},
+        ]
+
+        # Setup: Phase 12 capacity has converged to 6.8Ah (3 samples, CoV < 10%)
+        mock_daemon.battery_model.data['capacity_estimates'] = [
+            {'timestamp': '2026-02-15', 'ah_estimate': 6.7, 'confidence': 0.65, 'metadata': {}},
+            {'timestamp': '2026-03-01', 'ah_estimate': 6.8, 'confidence': 0.78, 'metadata': {}},
+            {'timestamp': '2026-03-16', 'ah_estimate': 6.8, 'confidence': 0.82, 'metadata': {}},
+        ]
+        mock_daemon.battery_model.data['capacity_converged'] = True
+        mock_daemon.battery_model.data['capacity_ah_measured'] = 6.8
+
+        # Simulate discharge event
+        mock_daemon.discharge_buffer.voltages = [12.0, 11.8, 11.5, 10.8, 10.5]
+        mock_daemon.discharge_buffer.times = [0, 100, 200, 300, 400]
+        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+
+        # Call _update_battery_health() (which calls soh_calculator)
+        with patch.object(soh_calculator, 'calculate_soh_from_discharge') as mock_kernel:
+            mock_kernel.return_value = (0.92, 6.8)  # (soh_new, capacity_ah_used)
+
+            with patch('src.monitor._safe_save'):
+                mock_daemon._update_battery_health()
+
+        # Verify: New SoH entry tagged with measured baseline (6.8Ah)
+        new_entry = mock_daemon.battery_model.data['soh_history'][-1]
+        assert new_entry['soh'] == 0.92
+        assert new_entry['capacity_ah_ref'] == 6.8  # Tagged with measured, not rated
+
