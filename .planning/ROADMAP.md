@@ -35,8 +35,8 @@
 <summary>🚀 v2.0 Actual Capacity Estimation (Phases 12-14)</summary>
 
 - [x] **Phase 12: Deep Discharge Capacity Estimation** — Coulomb counting + voltage anchor + confidence tracking (4/4 plans + 1 inserted) — completed 2026-03-16
-- [ ] **Phase 13: SoH Recalibration & New Battery Detection** — Separates capacity from degradation; enables new battery baseline detection (2 plans)
-- [ ] **Phase 14: Capacity Reporting & Metrics** — MOTD display, journald logging, Grafana scraping for capacity metrics
+- [x] **Phase 13: SoH Recalibration & New Battery Detection** — Separates capacity from degradation; enables new battery baseline detection (2/2 plans) — completed 2026-03-16
+- [ ] **Phase 14: Capacity Reporting & Metrics** — MOTD display, journald logging, Grafana scraping for capacity metrics (3 plans)
 
 </details>
 
@@ -89,16 +89,16 @@
 **Requirements:** SOH-01, SOH-02, SOH-03
 
 **Success Criteria** (what must be TRUE for users when complete):
-1. SoH formula normalizes against measured capacity instead of rated when available, separating aging from capacity loss
-2. SoH history entries tag their capacity_ah_ref baseline; regression model for replacement date ignores entries from different baselines (no mixing old vs. new battery data)
-3. Post-discharge, daemon detects new battery by comparing measured capacity to stored baseline; if difference >10%, sets new_battery_detected flag
-4. When user confirms new battery via `--new-battery` flag, baseline resets; daemon logs "New battery event: capacity_ref reset from X.XAh to Y.YAh" with timestamp
-5. MOTD clearly shows new battery detection alert and SoH recalibration event
+1. SoH formula normalizes against measured capacity instead of rated when available, separating aging from capacity loss ✓
+2. SoH history entries tag their capacity_ah_ref baseline; regression model for replacement date ignores entries from different baselines (no mixing old vs. new battery data) ✓
+3. Post-discharge, daemon detects new battery by comparing measured capacity to stored baseline; if difference >10%, sets new_battery_detected flag ✓
+4. When user confirms new battery via `--new-battery` flag, baseline resets; daemon logs "New battery event: capacity_ref reset from X.XAh to Y.YAh" with timestamp ✓
+5. MOTD clearly shows new battery detection alert and SoH recalibration event ✓
 
 **Plans:**
 2/2 plans complete
-- [ ] 13-01 — SoH formula normalization (SOH-01), history versioning (SOH-02), regression filtering (SOH-03)
-- [ ] 13-02 — New battery detection post-discharge (>10% threshold), baseline reset on CLI flag, MOTD alert
+- [x] 13-01 — SoH formula normalization (SOH-01), history versioning (SOH-02), regression filtering (SOH-03)
+- [x] 13-02 — New battery detection post-discharge (>10% threshold), baseline reset on CLI flag, MOTD alert
 
 ---
 
@@ -117,7 +117,11 @@
 4. Grafana dashboard (or pre-built query) shows capacity convergence over time (scatter: discharge_date vs estimated_Ah, confidence band) and SoH trend (line: date vs SoH%)
 5. User can identify when capacity is still uncertain (2 samples, 60% confidence) vs. locked (3+ deep discharges, 95%+ confidence) through MOTD/Grafana combination
 
-**Plans:** TBD
+**Plans:**
+3 plans
+- [ ] 14-01 — MOTD capacity display with convergence status badge and confidence % (RPT-01)
+- [ ] 14-02 — Structured journald logging for capacity events with EVENT_TYPE tagging (RPT-02)
+- [ ] 14-03 — Health endpoint extension with capacity metrics for Grafana scraping (RPT-03)
 
 ---
 
@@ -139,8 +143,8 @@
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete    | 2026-03-16 |
 | 12. Deep Discharge Capacity Estimation | v2.0 | 4/4 | Complete    | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete    | 2026-03-16 |
-| 14. Capacity Reporting & Metrics | v2.0 | 0/TBD | Not started | — |
+| 14. Capacity Reporting & Metrics | v2.0 | 0/3 | Planning    | — |
 
 ---
 
-*Roadmap updated: 2026-03-16 after Phase 13 plan creation*
+*Roadmap updated: 2026-03-16 after Phase 14 planning*
