@@ -21,7 +21,8 @@ def make_daemon(config_fixture):
          patch('src.monitor.BatteryModel'), \
          patch('src.monitor.EventClassifier'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
+         patch.object(MonitorDaemon, '_validate_model'), \
+         patch.object(MonitorDaemon, '_reset_battery_baseline'):
         # Replace mocked JournalHandler with a real stderr handler so logging works in tests
         from src.monitor import logger as monitor_logger
         monitor_logger.handlers.clear()
@@ -1600,4 +1601,153 @@ def test_cli_new_battery_flag():
     # Test without --new-battery flag
     args_without_flag = parse_args([])
     assert args_without_flag.new_battery == False
+
+
+def test_journald_capacity_event_logged(make_daemon):
+    """Test 1 (Phase 14 Plan 02): Verify capacity_measurement event logged with structured fields.
+
+    Requirement: RPT-02 - journald logs capacity estimation events with EVENT_TYPE and custom fields.
+
+    Setup: Create MonitorDaemon instance
+    Execute: Simulate _handle_discharge_complete() with capacity_estimate
+    Assert: logger.info() called with EVENT_TYPE='capacity_measurement' and extra dict fields
+    """
+    daemon = make_daemon()
+
+    # Setup battery_model with real dict for data
+    daemon.battery_model.data = {}
+    daemon.battery_model.get_capacity_ah.return_value = 7.2
+    daemon.battery_model.get_convergence_status.return_value = {
+        'sample_count': 1,
+        'confidence_percent': 88.0,
+        'latest_ah': 6.95,
+        'rated_ah': 7.2,
+        'converged': False,
+        'capacity_ah_ref': None
+    }
+
+    # Mock the capacity_estimator to return a valid estimate
+    ah_estimate = 6.95
+    confidence = 0.88
+    metadata = {
+        'delta_soc_percent': 52.3,
+        'duration_sec': 1234,
+        'load_avg_percent': 25.5,
+    }
+
+    daemon.capacity_estimator = MagicMock()
+    daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
+    daemon.capacity_estimator.has_converged.return_value = False
+
+    # Setup real model data
+    daemon.battery_model.data['capacity_estimates'] = [
+        {'ah_estimate': ah_estimate}
+    ]
+
+    # Capture logger calls
+    with patch('src.monitor.logger') as mock_logger:
+        discharge_data = {
+            'voltage_series': [12.5, 12.0, 11.5, 11.0],
+            'time_series': [0, 300, 600, 900],
+            'current_series': [25.0, 25.0, 25.0, 25.0],
+            'timestamp': '2026-03-16T12:00:00'
+        }
+        daemon._handle_discharge_complete(discharge_data)
+
+        # Verify logger.info was called with capacity_measurement event
+        calls = [call for call in mock_logger.info.call_args_list
+                if 'capacity_measurement' in str(call)]
+        assert len(calls) >= 1, "No capacity_measurement event logged"
+
+        # Get the call with capacity_measurement
+        capacity_call = calls[0]
+        assert capacity_call is not None
+
+        # Check extra dict has required fields
+        if 'extra' in capacity_call.kwargs:
+            extra = capacity_call.kwargs['extra']
+            assert extra.get('EVENT_TYPE') == 'capacity_measurement'
+            assert 'CAPACITY_AH' in extra
+            assert 'CONFIDENCE_PERCENT' in extra
+            assert 'SAMPLE_COUNT' in extra
+            assert 'DELTA_SOC_PERCENT' in extra
+            assert 'DURATION_SEC' in extra
+            assert 'LOAD_AVG_PERCENT' in extra
+
+
+def test_journald_baseline_lock_event(make_daemon):
+    """Test 2 (Phase 14 Plan 02): Verify baseline_lock event logged once on convergence.
+
+    Requirement: RPT-02 - journald logs baseline_lock events when convergence detected.
+
+    Setup: Create MonitorDaemon with CapacityEstimator in converged state
+    Execute: Trigger _handle_discharge_complete() with convergence
+    Assert: logger.info() called with EVENT_TYPE='baseline_lock' exactly once
+    Assert: Deduplication flag prevents duplicate events
+    """
+    daemon = make_daemon()
+
+    # Setup battery_model with real dict for data
+    daemon.battery_model.data = {}
+    daemon.battery_model.get_capacity_ah.return_value = 7.2
+    daemon.battery_model.get_convergence_status.return_value = {
+        'sample_count': 3,
+        'confidence_percent': 92.0,
+        'latest_ah': 6.95,
+        'rated_ah': 7.2,
+        'converged': True,
+        'capacity_ah_ref': None
+    }
+
+    # Setup: CapacityEstimator in converged state
+    ah_estimate = 6.95
+    confidence = 0.88
+    metadata = {
+        'delta_soc_percent': 52.3,
+        'duration_sec': 1234,
+        'load_avg_percent': 25.5,
+    }
+
+    daemon.capacity_estimator = MagicMock()
+    daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
+    daemon.capacity_estimator.has_converged.return_value = True
+
+    # Setup model data with 3 converged estimates
+    daemon.battery_model.data['capacity_estimates'] = [
+        {'ah_estimate': 6.88},
+        {'ah_estimate': 6.92},
+        {'ah_estimate': 6.95}
+    ]
+
+    # Capture logger calls
+    with patch('src.monitor.logger') as mock_logger:
+        # First discharge (triggers baseline_lock)
+        discharge_data = {
+            'voltage_series': [12.5, 12.0, 11.5, 11.0],
+            'time_series': [0, 300, 600, 900],
+            'current_series': [25.0, 25.0, 25.0, 25.0],
+            'timestamp': '2026-03-16T12:00:00'
+        }
+        daemon._handle_discharge_complete(discharge_data)
+
+        # Count baseline_lock calls
+        baseline_lock_calls = [call for call in mock_logger.info.call_args_list
+                              if call.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
+        assert len(baseline_lock_calls) == 1, f"Expected 1 baseline_lock event, got {len(baseline_lock_calls)}"
+
+        # Verify baseline_lock extra fields
+        baseline_lock_extra = baseline_lock_calls[0].kwargs.get('extra', {})
+        assert baseline_lock_extra.get('EVENT_TYPE') == 'baseline_lock'
+        assert 'CAPACITY_AH' in baseline_lock_extra
+        assert 'SAMPLE_COUNT' in baseline_lock_extra
+        assert 'TIMESTAMP' in baseline_lock_extra
+
+        # Second discharge (should NOT trigger baseline_lock again due to flag)
+        mock_logger.reset_mock()
+        daemon._handle_discharge_complete(discharge_data)
+
+        # Verify baseline_lock NOT called again
+        baseline_lock_calls_2 = [call for call in mock_logger.info.call_args_list
+                               if call.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
+        assert len(baseline_lock_calls_2) == 0, "baseline_lock should not be logged twice (deduplication flag failed)"
 
