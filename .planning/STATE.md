@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Actual Capacity Estimation
-current_plan: "12.1-03"
+current_plan: "12.1-04"
 status: in_progress
 last_updated: "2026-03-16"
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 9
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-16 after Phase 12.1 Plan 02 completion
-**Milestone:** v2.0 Actual Capacity Estimation — Wave 2 complete
-**Current Position:** Phase 12.1 Wave 2 complete (simulation harness); ready for Wave 3 (stability tests)
+**Last Updated:** 2026-03-16 after Phase 12.1 Plan 04 completion
+**Milestone:** v2.0 Actual Capacity Estimation — Wave 4 complete
+**Current Position:** Phase 12.1 Wave 4 complete (orchestrator wiring); ready for Wave 5 (adversarial scenarios)
 
 ---
 
@@ -35,8 +35,8 @@ progress:
 ## Current Position
 
 **Phase:** Roadmap complete → Ready for planning
-**Milestone progress:** 0/3 phases → Next: Phase 12 Deep Discharge Capacity Estimation
-**Roadmap status:** ✓ All 13 requirements mapped to 3 phases (100% coverage)
+**Milestone progress:** 4/9 plans completed → Next: Phase 12.1 Plan 05 (adversarial scenarios)
+**Roadmap status:** ✓ Orchestrator/kernel boundary validated; clean separation of concerns
 
 **Key milestone constraints (locked for v2.0):**
 - Peukert exponent stays fixed at 1.2 (circular dependency avoidance)
