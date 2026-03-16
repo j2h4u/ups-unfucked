@@ -29,7 +29,7 @@ from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
 from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src import soh_calculator, replacement_predictor, alerter
-from src.battery_math import calibrate_peukert
+from src.battery_math import calibrate_peukert, ScalarRLS
 from src.battery_math.soh import interpolate_cliff_region
 
 # === CONFIGURATION ===
@@ -115,6 +115,16 @@ def _load_config() -> Config:
 
 def _safe_save(model: BatteryModel) -> None:
     """Save model to disk, log errors gracefully if disk full.
+
+    PERSISTENCE MODEL: Memory is source of truth. model.json is written only on
+    real events (discharge complete, battery replacement, capacity convergence,
+    graceful shutdown) — NOT on every poll or sag measurement. Between events,
+    the file can be safely edited externally; daemon picks up changes on restart.
+
+    If you need to edit model.json while daemon is running:
+        systemctl stop ups-battery-monitor
+        # edit model.json
+        systemctl start ups-battery-monitor
 
     Args:
         model: BatteryModel instance to persist
@@ -353,6 +363,13 @@ class MonitorDaemon:
         self.ir_k = self.battery_model.get_ir_k()
         self.ir_l_base = self.battery_model.get_ir_reference_load()
 
+        # RLS estimators for online parameter calibration
+        self.rls_ir_k = ScalarRLS.from_dict(
+            self.battery_model.get_rls_state('ir_k'), forgetting_factor=0.97)
+        self.rls_peukert = ScalarRLS.from_dict(
+            self.battery_model.get_rls_state('peukert'), forgetting_factor=0.97)
+        self._discharge_predicted_runtime = None  # Snapshot for prediction error logging
+
         # Metrics tracking for current battery state
         self.current_metrics = CurrentMetrics()
         self._last_logged_soc = None
@@ -462,7 +479,8 @@ class MonitorDaemon:
                 self.battery_model.update_lut_from_calibration(updated_lut)
                 logger.info("LUT cliff region updated from measured discharge data")
 
-            _safe_save(self.battery_model)
+            # No _safe_save here: _update_battery_health() and update_lut_from_calibration()
+            # already persist. Removing redundant write reduces SSD wear.
 
     def _update_battery_health(self):
         """
@@ -521,11 +539,21 @@ class MonitorDaemon:
 
         logger.info(f"SoH calculated: {soh_new:.2%}")
 
-        # Predict replacement date
-        result = replacement_predictor.linear_regression_soh(
-            soh_history=self.battery_model.get_soh_history(),
-            threshold_soh=self.soh_threshold
-        )
+        # Predict replacement date — only if capacity has converged.
+        # Why capacity convergence and not a time-span threshold (e.g., "90 days"):
+        # - Time span is a magic number that doesn't reflect actual data quality.
+        # - Capacity convergence (≥3 deep discharges, CoV < 10%) is a data-driven gate:
+        #   the system itself says "I know this battery well enough to make predictions."
+        # - Without converged capacity, SoH is computed against rated (not real) Ah,
+        #   so regression on those SoH values would extrapolate from inaccurate inputs.
+        convergence = self.battery_model.get_convergence_status()
+        if convergence.get('converged', False):
+            result = replacement_predictor.linear_regression_soh(
+                soh_history=self.battery_model.get_soh_history(),
+                threshold_soh=self.soh_threshold
+            )
+        else:
+            result = None
 
         # Persist replacement date for MOTD and telemetry
         if result:
@@ -572,11 +600,52 @@ class MonitorDaemon:
         # Auto-calibrate Peukert exponent if prediction error > 10%
         self._auto_calibrate_peukert(soh_new)
 
+        # Log prediction error before clearing buffer
+        self._log_discharge_prediction()
+
         # Single save at end after all mutations
         _safe_save(self.battery_model)
 
         # Clear discharge buffer
         self.discharge_buffer = DischargeBuffer()
+
+    def _log_discharge_prediction(self):
+        """Log prediction vs actual runtime for model accuracy tracking.
+
+        Gate: predicted runtime must exist AND discharge >= 300s.
+        Logs raw data only (predicted, actual, load, start SoC) — no error % in daemon.
+        """
+        if self._discharge_predicted_runtime is None:
+            return
+
+        times = self.discharge_buffer.times
+        if len(times) < 2:
+            self._discharge_predicted_runtime = None
+            return
+
+        discharge_duration_sec = times[-1] - times[0]
+        if discharge_duration_sec < 300:
+            self._discharge_predicted_runtime = None
+            return
+
+        actual_minutes = discharge_duration_sec / 60.0
+        avg_load = (sum(self.discharge_buffer.loads) / len(self.discharge_buffer.loads)
+                    if self.discharge_buffer.loads else 0.0)
+        start_soc = self.current_metrics.soc or 0.0
+
+        logger.info(
+            f"Discharge prediction: predicted={self._discharge_predicted_runtime:.1f}min, "
+            f"actual={actual_minutes:.1f}min, load_avg={avg_load:.1f}%",
+            extra={
+                'EVENT_TYPE': 'discharge_prediction',
+                'PREDICTED_MINUTES': f'{self._discharge_predicted_runtime:.1f}',
+                'ACTUAL_MINUTES': f'{actual_minutes:.1f}',
+                'AVG_LOAD_PERCENT': f'{avg_load:.1f}',
+                'START_SOC': f'{start_soc:.3f}',
+                'TIMESTAMP': datetime.now(timezone.utc).isoformat(),
+            })
+
+        self._discharge_predicted_runtime = None
 
     def _reset_battery_baseline(self):
         """Reset capacity estimation and SoH history baseline on battery replacement."""
@@ -602,6 +671,11 @@ class MonitorDaemon:
 
         # Reset cycle counter to indicate new battery era
         self.battery_model.data['cycle_count'] = 0
+
+        # Reset RLS estimators to defaults (new battery = fresh calibration)
+        self.battery_model.reset_rls_state()
+        self.rls_ir_k = ScalarRLS(theta=0.015, P=1.0)
+        self.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
 
         # Phase 14: Event 3 - baseline_reset: Structured journald logging
         if old_capacity is not None:
@@ -664,12 +738,27 @@ class MonitorDaemon:
             nominal_power_watts=self.battery_model.get_nominal_power_watts()
         )
 
-        # Handle kernel result
+        # Handle kernel result: RLS smoothing instead of direct set
         if new_exponent is not None:
             old_exponent = self.battery_model.get_peukert_exponent()
-            self.battery_model.set_peukert_exponent(new_exponent)
-            logger.info(f"Peukert exponent calibrated: {old_exponent:.3f} → {new_exponent:.3f}")
-            _safe_save(self.battery_model)
+            smoothed, new_P = self.rls_peukert.update(new_exponent)
+            smoothed = max(1.0, min(1.4, smoothed))  # physical bounds
+            self.battery_model.set_peukert_exponent(smoothed)
+            self.battery_model.set_rls_state(
+                'peukert', smoothed, new_P, self.rls_peukert.sample_count)
+            logger.info(
+                f"Peukert calibrated: {old_exponent:.3f} → {smoothed:.3f} "
+                f"(single-point={new_exponent:.3f}), "
+                f"confidence={self.rls_peukert.confidence:.0%}",
+                extra={
+                    'EVENT_TYPE': 'peukert_calibration',
+                    'PEUKERT_OLD': f'{old_exponent:.3f}',
+                    'PEUKERT_NEW': f'{smoothed:.3f}',
+                    'PEUKERT_RAW': f'{new_exponent:.3f}',
+                    'RLS_P': f'{new_P:.4f}',
+                    'RLS_CONFIDENCE': f'{self.rls_peukert.confidence:.3f}',
+                    'SAMPLE_COUNT': str(self.rls_peukert.sample_count),
+                })
         else:
             logger.error("Peukert calibration returned None (unexpected — math undefined?)")
 
@@ -838,7 +927,33 @@ class MonitorDaemon:
         r_ohm = delta_v / I_actual
         today = datetime.now().strftime('%Y-%m-%d')
         self.battery_model.add_r_internal_entry(today, r_ohm, self.v_before_sag, v_sag, load, event_type.name)
-        _safe_save(self.battery_model)
+
+        # RLS auto-calibration of ir_k from measured sag data
+        nominal_V = self.battery_model.get_nominal_voltage()
+        nominal_W = self.battery_model.get_nominal_power_watts()
+        if nominal_V > 0:
+            ir_k_measured = r_ohm * nominal_W / (nominal_V * 100.0)
+            new_ir_k, new_P = self.rls_ir_k.update(ir_k_measured)
+            new_ir_k = max(0.005, min(0.025, new_ir_k))  # physical bounds
+            self.ir_k = new_ir_k
+            self.battery_model.set_ir_k(new_ir_k)
+            self.battery_model.set_rls_state(
+                'ir_k', new_ir_k, new_P, self.rls_ir_k.sample_count)
+            logger.info(
+                f"ir_k calibrated: {new_ir_k:.4f} (P={new_P:.4f}, "
+                f"confidence={self.rls_ir_k.confidence:.0%}, "
+                f"measured={ir_k_measured:.4f})",
+                extra={
+                    'EVENT_TYPE': 'ir_k_calibration',
+                    'IR_K': f'{new_ir_k:.4f}',
+                    'IR_K_MEASURED': f'{ir_k_measured:.4f}',
+                    'RLS_P': f'{new_P:.4f}',
+                    'RLS_CONFIDENCE': f'{self.rls_ir_k.confidence:.3f}',
+                    'SAMPLE_COUNT': str(self.rls_ir_k.sample_count),
+                })
+
+        # No _safe_save here: sag/IR data is ephemeral — persisted on next discharge
+        # complete or graceful shutdown. Avoids unnecessary SSD write on every OL→OB.
         logger.info(f"Voltage sag: {self.v_before_sag:.2f}V → {v_sag:.2f}V, "
                     f"R_internal={r_ohm*1000:.1f}mΩ at {load:.1f}% load")
 
@@ -954,6 +1069,11 @@ class MonitorDaemon:
                 self.discharge_buffer.loads = []
                 self._discharge_start_time = timestamp
                 self.battery_model.increment_cycle_count()
+                # Snapshot predicted runtime at OB start for prediction error logging
+                if self.ema_buffer.stabilized and self.current_metrics.time_rem_minutes is not None:
+                    self._discharge_predicted_runtime = self.current_metrics.time_rem_minutes
+                else:
+                    self._discharge_predicted_runtime = None
                 logger.info(f"Starting discharge buffer collection ({event_type.name}), "
                             f"cycle #{self.battery_model.get_cycle_count()}")
             if voltage is not None:
@@ -1064,24 +1184,27 @@ class MonitorDaemon:
     def _write_virtual_ups(self, ups_data, battery_charge, time_rem):
         """Write computed metrics to tmpfs for NUT dummy-ups driver."""
         try:
-            ups_status_override = self.current_metrics.ups_status_override or "OL"
+            ups_status_override = self.current_metrics.ups_status_override or ups_data.get("ups.status", "OL")
             # Enterprise-equivalent metrics computed from discharge history
             soh = self.battery_model.get_soh()
             install_date = self.battery_model.get_battery_install_date() or ""
             cycle_count = self.battery_model.get_cycle_count()
             cumulative_sec = self.battery_model.get_cumulative_on_battery_sec()
             replacement_due = self.battery_model.get_replacement_due() or ""
+            r_internal_history = self.battery_model.get_r_internal_history()
+            r_internal = r_internal_history[-1]["r_ohm"] if r_internal_history else 0.0
 
             virtual_metrics = {
-                "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,
-                "battery.charge": int(battery_charge) if battery_charge is not None else 0,
+                "battery.runtime": int(time_rem * 60) if time_rem is not None else int(float(ups_data.get("battery.runtime", 0))),
+                "battery.charge": int(battery_charge) if battery_charge is not None else int(float(ups_data.get("battery.charge", 0))),
                 "ups.status": ups_status_override,
                 # Enterprise-equivalent fields
-                "battery.health": f"{soh:.0%}",            # State of Health (like APC upsAdvBatteryHealthStatus)
+                "battery.health": round(soh * 100),          # State of Health as % (like APC upsAdvBatteryHealthStatus)
                 "battery.date": install_date,               # Battery install date (like APC battery.date)
                 "battery.cycle.count": cycle_count,         # OL→OB transfers (like Eaton)
                 "battery.cumulative.runtime": int(cumulative_sec),  # Total seconds on battery (like Eaton)
                 "battery.replacement.due": replacement_due,           # Predicted replacement due date (regression)
+                "battery.internal_resistance": round(r_internal * 1000, 1),  # Internal resistance in mΩ
                 **{k: v for k, v in ups_data.items()
                    if k not in ["battery.runtime", "battery.charge", "ups.status"]}
             }
