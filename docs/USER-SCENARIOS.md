@@ -60,15 +60,56 @@ Normal short blackouts (1-2 min) calibrate the upper part of the voltage curve. 
 
 ## Battery Replacement
 
-> **TODO:** This scenario requires implementation — see `.planning/todos/pending/2026-03-14-battery-replacement-scenario-docs-and-implementation.md`
+When the battery degrades beyond useful life, replace it and tell the daemon to start fresh calibration.
 
-When the battery degrades beyond useful life (SoH below threshold, replacement predictor alerts), replace it and reset the daemon's model to start fresh calibration on the new battery.
+**When to replace:** SoH below 80% (MOTD alert), replacement predictor date approaching, or runtime consistently shorter than expected. The daemon auto-detects new batteries: if measured capacity jumps >10% after convergence, MOTD will show an alert prompting you to confirm.
 
-Steps (planned):
-1. Replace the physical battery in the UPS
-2. Run `./scripts/battery-reset.py` — archives old model.json and creates a fresh one with standard VRLA curve
-3. Run a deep battery test to kickstart calibration on the new battery
-4. Verify with `./scripts/battery-health.py` after first discharge
+### Steps
+
+1. **Power off the UPS and replace the physical battery.** For CyberPower UT850EG: slide the front panel down, pull the battery tray out, swap the battery, reconnect terminals (red=positive first), slide tray back.
+
+2. **Tell the daemon about the new battery:**
+
+   ```bash
+   sudo systemctl stop ups-battery-monitor
+   sudo systemctl start ups-battery-monitor --new-battery
+   ```
+
+   Or equivalently, edit the service override to pass the flag once:
+
+   ```bash
+   sudo python3 -m src.monitor --new-battery
+   # Ctrl+C after it starts, then:
+   sudo systemctl start ups-battery-monitor
+   ```
+
+3. **Run a deep test** to kickstart calibration (optional but recommended):
+
+   ```bash
+   sudo ~/scripts/cron/ups-test.sh deep
+   ```
+
+4. **Verify** after the first discharge event:
+
+   ```bash
+   ./scripts/battery-health.py
+   ```
+
+   SoH should be ~100%, Peukert back to default 1.2, cycle count 0.
+
+### What `--new-battery` resets
+
+| Field | Reset to |
+|-------|----------|
+| SoH | 1.0 (100%) |
+| SoH history | Fresh entry only |
+| Peukert exponent | 1.2 (default) |
+| RLS estimators (ir_k, Peukert) | P=1.0 (no confidence) |
+| Capacity estimates | Cleared |
+| Cycle count | 0 |
+| Battery install date | Today |
+
+What stays unchanged: LUT (standard VRLA curve entries remain), config.toml settings, R_internal history (cleared separately). Old model.json is preserved in daily borg backup if you need to compare.
 
 ---
 

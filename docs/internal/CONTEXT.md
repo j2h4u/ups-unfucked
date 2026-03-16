@@ -34,7 +34,9 @@ NUT dummy-ups → upsd → upsmon (shutdown) / Grafana (dashboards) / MOTD
 health.json (last_poll, SoC, online, version — for external monitoring)
 ```
 
-**Key principle**: Daemon is a **data source**, not a decision maker. Shutdown logic belongs to upsmon. Daemon publishes corrected metrics and LB flag through the virtual UPS.
+**Key principles**:
+- Daemon is a **data source**, not a decision maker. Shutdown logic belongs to upsmon. Daemon publishes corrected metrics and LB flag through the virtual UPS.
+- **Memory is source of truth for model.json.** Daemon loads model.json at startup and holds state in memory. Writes to disk happen only on real events (discharge complete, battery replacement, capacity convergence, graceful shutdown) — not on every poll or sag. Between events, the file is not touched. To edit model.json while daemon is running: `systemctl stop ups-battery-monitor`, edit, `systemctl start ups-battery-monitor`.
 
 ## What The Daemon Computes (vs firmware)
 
