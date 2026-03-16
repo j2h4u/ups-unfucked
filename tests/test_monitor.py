@@ -1438,3 +1438,164 @@ class TestCapacityEstimatorIntegration:
         assert call_kwargs['metadata'] == metadata
         assert call_kwargs['timestamp'] == '2026-03-15T12:34:56Z'
 
+
+# ==============================================================================
+# Task 2: Integration Tests for --new-battery CLI Flag
+# ==============================================================================
+
+def test_new_battery_flag_false(tmp_path):
+    """Test 1: MonitorDaemon(new_battery_flag=False) → model.data['new_battery_requested'] = False.
+
+    This is the default when --new-battery is NOT passed.
+    """
+    from src.monitor import MonitorDaemon, Config
+    from src.model import BatteryModel
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+    import sys
+
+    # Mock systemd before importing
+    sys.modules['systemd'] = MagicMock()
+    sys.modules['systemd.journal'] = MagicMock()
+
+    with patch('src.monitor.NUTClient'), \
+         patch('src.monitor.EMAFilter'), \
+         patch('src.monitor.EventClassifier'), \
+         patch('src.monitor.logger'), \
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
+
+        config = Config(
+            ups_name="test-cyberpower",
+            polling_interval=10,
+            reporting_interval=60,
+            nut_host="localhost",
+            nut_port=3493,
+            nut_timeout=2.0,
+            shutdown_minutes=5,
+            soh_alert_threshold=0.80,
+            model_dir=tmp_path / "test_model",
+            config_dir=tmp_path / "test_config",
+            runtime_threshold_minutes=20,
+            reference_load_percent=20.0,
+            ema_window_sec=120,
+            capacity_ah=7.2,
+        )
+
+        daemon = MonitorDaemon(config, new_battery_flag=False)
+
+        assert daemon.battery_model.data['new_battery_requested'] == False
+
+
+def test_new_battery_flag_true(tmp_path):
+    """Test 2: MonitorDaemon(new_battery_flag=True) → model.data['new_battery_requested'] = True.
+
+    This is set when user passes --new-battery CLI flag.
+    """
+    from src.monitor import MonitorDaemon, Config
+    from src.model import BatteryModel
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+    import sys
+
+    # Mock systemd before importing
+    sys.modules['systemd'] = MagicMock()
+    sys.modules['systemd.journal'] = MagicMock()
+
+    with patch('src.monitor.NUTClient'), \
+         patch('src.monitor.EMAFilter'), \
+         patch('src.monitor.EventClassifier'), \
+         patch('src.monitor.logger'), \
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
+
+        config = Config(
+            ups_name="test-cyberpower",
+            polling_interval=10,
+            reporting_interval=60,
+            nut_host="localhost",
+            nut_port=3493,
+            nut_timeout=2.0,
+            shutdown_minutes=5,
+            soh_alert_threshold=0.80,
+            model_dir=tmp_path / "test_model",
+            config_dir=tmp_path / "test_config",
+            runtime_threshold_minutes=20,
+            reference_load_percent=20.0,
+            ema_window_sec=120,
+            capacity_ah=7.2,
+        )
+
+        daemon = MonitorDaemon(config, new_battery_flag=True)
+
+        assert daemon.battery_model.data['new_battery_requested'] == True
+
+
+def test_new_battery_flag_persistence(tmp_path):
+    """Test 3: new_battery_requested flag persists in model.json across save/reload.
+
+    Ensures Phase 13 can read flag even if daemon restarts.
+    """
+    from src.monitor import MonitorDaemon, Config
+    from src.model import BatteryModel
+    from unittest.mock import patch, MagicMock
+    from pathlib import Path
+    import sys
+
+    # Mock systemd before importing
+    sys.modules['systemd'] = MagicMock()
+    sys.modules['systemd.journal'] = MagicMock()
+
+    with patch('src.monitor.NUTClient'), \
+         patch('src.monitor.EMAFilter'), \
+         patch('src.monitor.EventClassifier'), \
+         patch('src.monitor.logger'), \
+         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_validate_model'):
+
+        config = Config(
+            ups_name="test-cyberpower",
+            polling_interval=10,
+            reporting_interval=60,
+            nut_host="localhost",
+            nut_port=3493,
+            nut_timeout=2.0,
+            shutdown_minutes=5,
+            soh_alert_threshold=0.80,
+            model_dir=tmp_path / "test_model",
+            config_dir=tmp_path / "test_config",
+            runtime_threshold_minutes=20,
+            reference_load_percent=20.0,
+            ema_window_sec=120,
+            capacity_ah=7.2,
+        )
+
+        # Set flag via MonitorDaemon
+        daemon = MonitorDaemon(config, new_battery_flag=True)
+
+        # Explicitly save model (normally happens during discharge)
+        daemon.battery_model.save()
+
+        # Reload model from disk
+        reloaded_model = BatteryModel(tmp_path / 'test_model' / 'model.json')
+
+        # Flag should persist
+        assert reloaded_model.data.get('new_battery_requested', False) == True
+
+
+def test_cli_new_battery_flag():
+    """Test 4: CLI --new-battery flag is parsed correctly by argparse.
+
+    This is an end-to-end test of parse_args() argument parsing.
+    Integration test; requires src.monitor.parse_args.
+    """
+    from src.monitor import parse_args
+
+    # Test with --new-battery flag
+    args_with_flag = parse_args(['--new-battery'])
+    assert args_with_flag.new_battery == True
+
+    # Test without --new-battery flag
+    args_without_flag = parse_args([])
+    assert args_without_flag.new_battery == False
+
