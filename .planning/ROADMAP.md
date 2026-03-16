@@ -118,7 +118,7 @@
 5. User can identify when capacity is still uncertain (2 samples, 60% confidence) vs. locked (3+ deep discharges, 95%+ confidence) through MOTD/Grafana combination
 
 **Plans:**
-3 plans
+3/3 plans complete
 - [x] 14-01 — MOTD capacity display with convergence status badge and confidence % (RPT-01) — completed 2026-03-16
 - [x] 14-02 — Structured journald logging for capacity events with EVENT_TYPE tagging (RPT-02) — completed 2026-03-16
 - [x] 14-03 — Health endpoint extension with capacity metrics for Grafana scraping (RPT-03) — completed 2026-03-16

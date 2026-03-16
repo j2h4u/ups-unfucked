@@ -23,9 +23,9 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 
 ### Reporting
 
-- [ ] **RPT-01**: MOTD displays rated vs measured capacity and confidence percentage
-- [ ] **RPT-02**: journald logs capacity estimation events (new measurement, confidence change, baseline lock)
-- [ ] **RPT-03**: Daemon exposes capacity metrics for Grafana scraping
+- [x] **RPT-01**: MOTD displays rated vs measured capacity and confidence percentage
+- [x] **RPT-02**: journald logs capacity estimation events (new measurement, confidence change, baseline lock)
+- [x] **RPT-03**: Daemon exposes capacity metrics for Grafana scraping
 
 ### Validation
 
@@ -64,9 +64,9 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 | SOH-01 | 13 | Complete |
 | SOH-02 | 13 | Complete |
 | SOH-03 | 13 | Complete |
-| RPT-01 | 14 | Pending |
-| RPT-02 | 14 | Pending |
-| RPT-03 | 14 | Pending |
+| RPT-01 | 14 | Complete |
+| RPT-02 | 14 | Complete |
+| RPT-03 | 14 | Complete |
 | VAL-01 | 12 | Complete |
 | VAL-02 | 12 | Complete |
 
