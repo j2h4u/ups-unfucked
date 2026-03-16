@@ -29,6 +29,7 @@ from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src import soh_calculator, replacement_predictor, alerter
 from src.soh_calculator import interpolate_cliff_region
+from src.battery_math import calibrate_peukert
 
 # === CONFIGURATION ===
 # Precedence: config.toml > code defaults. Physics params (IR_K, etc.) live in model.json.
@@ -516,66 +517,51 @@ class MonitorDaemon:
         self.discharge_buffer = DischargeBuffer()
 
     def _auto_calibrate_peukert(self, current_soh: float):
-        """
-        Auto-calibrate Peukert exponent from actual discharge duration.
+        """Orchestrator: applies guard clauses, calls kernel, handles result.
 
-        Compares predicted runtime (at current exponent) with actual discharge,
-        and adjusts exponent if error exceeds 10%.
+        Auto-calibrate Peukert exponent from actual discharge duration.
+        Guard clauses (sample count, duration, load validity) stay here in orchestrator.
+        Pure math is delegated to kernel function.
         """
-        voltages = self.discharge_buffer.voltages
+        # Guard clause 1: Minimum discharge samples
         times = self.discharge_buffer.times
         if len(times) < 2:
             logger.debug("Peukert calibration skipped: <2 discharge samples")
             return
 
+        # Guard clause 2: Discharge duration threshold
         actual_duration_sec = times[-1] - times[0]
         if actual_duration_sec < 60:
             logger.debug(f"Peukert calibration skipped: discharge too short ({actual_duration_sec:.0f}s < 60s)")
             return
 
-        actual_min = actual_duration_sec / 60.0
-
-        # Estimate average load from EMA (best available)
-        avg_load = self.ema_buffer.load
-        if avg_load is None or avg_load <= 0:
+        # Guard clause 3: Valid average load (use raw load from discharge buffer)
+        avg_load = (sum(self.discharge_buffer.loads) / len(self.discharge_buffer.loads)
+                   if self.discharge_buffer.loads else self.reference_load_percent)
+        if avg_load is None or avg_load <= 0 or avg_load > 100:
             logger.debug(f"Peukert calibration skipped: invalid load ({avg_load})")
             return
 
-        capacity_ah = self.battery_model.get_capacity_ah()
-        current_exp = self.battery_model.get_peukert_exponent()
-        nominal_voltage = self.battery_model.get_nominal_voltage()
-        nominal_power_watts = self.battery_model.get_nominal_power_watts()
-
-        T_full_hours = peukert_runtime_hours(
-            avg_load, capacity_ah, current_exp, nominal_voltage, nominal_power_watts
+        # Data validated; call pure kernel function
+        # Use RATED capacity (self.config.capacity_ah), not measured (VAL-02)
+        new_exponent = calibrate_peukert(
+            actual_duration_sec=actual_duration_sec,
+            avg_load_percent=avg_load,
+            current_soh=current_soh,
+            capacity_ah=self.config.capacity_ah,
+            current_exponent=self.battery_model.get_peukert_exponent(),
+            nominal_voltage=self.battery_model.get_nominal_voltage(),
+            nominal_power_watts=self.battery_model.get_nominal_power_watts()
         )
-        if T_full_hours <= 0:
-            logger.debug(f"Peukert calibration skipped: T_full_hours={T_full_hours}")
-            return
 
-        predicted = T_full_hours * current_soh * 60  # minutes
-        error = abs(actual_min - predicted) / predicted
-        if error > 0.10:
-            I_rated = capacity_ah / 20.0
-            I_actual = avg_load / 100.0 * nominal_power_watts / nominal_voltage
-            ratio = I_rated / I_actual
-
-            if ratio <= 0 or ratio == 1.0:
-                logger.debug(f"Peukert calibration skipped: degenerate current ratio ({ratio:.3f})")
-                return
-
-            denom = math.log(ratio)
-            if abs(denom) < 1e-10:
-                logger.debug("Peukert calibration skipped: log(ratio) ≈ 0")
-                return
-
-            new_exp = math.log(actual_min / 60.0 / (20.0 * current_soh)) / denom
-            new_exp = max(1.0, min(1.4, new_exp))
-
-            logger.info(f"Peukert exponent calibrated: {current_exp:.3f} → {new_exp:.3f} "
-                        f"(predicted={predicted:.1f}min, actual={actual_min:.1f}min)")
-            self.battery_model.set_peukert_exponent(new_exp)
+        # Handle kernel result
+        if new_exponent is not None:
+            old_exponent = self.battery_model.get_peukert_exponent()
+            self.battery_model.set_peukert_exponent(new_exponent)
+            logger.info(f"Peukert exponent calibrated: {old_exponent:.3f} → {new_exponent:.3f}")
             _safe_save(self.battery_model)
+        else:
+            logger.error("Peukert calibration returned None (unexpected — math undefined?)")
 
     def _record_voltage_sag(self, v_sag, event_type):
         """Record voltage sag measurement and compute internal resistance."""
