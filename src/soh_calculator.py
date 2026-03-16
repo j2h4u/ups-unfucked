@@ -6,8 +6,8 @@ instead of rated. This separates aging (SoH trend) from capacity loss.
 
 import logging
 from typing import Optional, Tuple
-from battery_math import soh as battery_math_soh
-from model import BatteryModel
+from src.battery_math import soh as battery_math_soh
+from src.model import BatteryModel
 
 logger = logging.getLogger(__name__)
 
