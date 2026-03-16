@@ -29,8 +29,8 @@ from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
 from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src import soh_calculator, replacement_predictor, alerter
-from src.soh_calculator import interpolate_cliff_region
 from src.battery_math import calibrate_peukert
+from src.battery_math.soh import interpolate_cliff_region
 
 # === CONFIGURATION ===
 # Precedence: config.toml > code defaults. Physics params (IR_K, etc.) live in model.json.
