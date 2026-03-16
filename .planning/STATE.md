@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Actual Capacity Estimation
 status: in-progress
-last_updated: "2026-03-16T10:15:00.370Z"
+last_updated: "2026-03-16T14:00:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-16 after Phase 12 Plan 01 completion
-**Milestone:** v2.0 Actual Capacity Estimation — Phase 12 capacity measurement algorithm complete
-**Current Position:** Phase 12 Plan 01 complete (CapacityEstimator); ready for Phase 12 Plan 02 (integration)
+**Last Updated:** 2026-03-16 after Phase 12 Plan 02 completion
+**Milestone:** v2.0 Actual Capacity Estimation — MonitorDaemon integration complete
+**Current Position:** Phase 12 Plan 02 complete (MonitorDaemon integration); ready for Phase 12 Plan 03 (validation)
 
 ---
 
@@ -34,9 +34,9 @@ progress:
 ## Current Position
 
 **Phase:** 12
-**Plan:** 01 (Complete) → Next: 02, 03
-**Milestone progress:** 7/9 plans completed → Phase 12 core implementation delivered
-**Roadmap status:** ✓ CapacityEstimator class complete; ready for monitor.py integration
+**Plan:** 02 (Complete) → Next: 03
+**Milestone progress:** 8/9 plans completed → Phase 12 integration delivered, validation gates pending
+**Roadmap status:** ✓ CapacityEstimator integrated into MonitorDaemon; capacity_estimates persisted atomically
 
 **Phase 12 Plan 01 (Completed 2026-03-16):**
 - Implemented CapacityEstimator class with 8 core + 4 extension methods
@@ -46,7 +46,18 @@ progress:
 - CAP-01, CAP-02, CAP-03 requirements fully satisfied
 - No external dependencies added; stdlib + existing soc_predictor pattern only
 
-**Blockers for Phase 12 Plan 02:** None. Ready for monitor.py integration.
+**Phase 12 Plan 02 (Completed 2026-03-16):**
+- Implemented BatteryModel.add_capacity_estimate() with atomic persistence (CAP-04)
+- Capacity_estimates array: {timestamp, ah_estimate, confidence, metadata}, pruned to 30 entries
+- Integrated CapacityEstimator into MonitorDaemon.__init__() with historical reloading
+- Implemented _handle_discharge_complete() discharge handler
+- Quality filter rejections logged but not persisted (VAL-01 enforcement)
+- Convergence detection: count >= 3 AND CoV < 0.10 sets capacity_converged flag
+- All 7 integration tests passing + 285/285 project tests passing (no regressions)
+- CAP-01, CAP-04, CAP-05 requirements fully satisfied
+
+**Blockers for Phase 12 Plan 03:** None. Ready for validation gates (coulomb error <±10%, Monte Carlo convergence, load sensitivity).
+
 
 **Key Phase 12 constraints (locked for v2.0):**
 - Peukert stays fixed at 1.2 (circular dependency avoidance)
