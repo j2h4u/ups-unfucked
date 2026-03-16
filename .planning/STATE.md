@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Actual Capacity Estimation
-current_plan: "12.1-05"
+current_plan: "12.1-06"
 status: in_progress
 last_updated: "2026-03-16"
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 9
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State — UPS Battery Monitor
@@ -34,9 +34,24 @@ progress:
 
 ## Current Position
 
-**Phase:** Roadmap complete → Ready for planning
-**Milestone progress:** 4/9 plans completed → Next: Phase 12.1 Plan 05 (adversarial scenarios)
-**Roadmap status:** ✓ Orchestrator/kernel boundary validated; clean separation of concerns
+**Phase:** Phase 12.1 Complete — Ready for Phase 12 Planning
+**Milestone progress:** 6/9 plans completed (Waves 1-6 all delivered) → Next: Phase 12 Design
+**Roadmap status:** ✓ Math kernel extraction + stability validation complete; Phase 12 design ready to start
+
+**Key Phase 12.1 outcomes:**
+- Wave 1-2: Math kernel package extracted, simulation harness built
+- Wave 3: Stability gates validated (Lyapunov, permutation invariance, fixed-point convergence)
+- Wave 4: Orchestrator wiring verified (kernel isolation confirmed)
+- Wave 5: Adversarial scenarios tested (flicker storm, spike handling, clock jumps)
+- Wave 6: Lifecycle scenarios discovered (Bayesian inertia at cliff edge, thermal robustness, instrument bias)
+
+**Blockers for Phase 12:** None. Math kernel is stable and ready.
+
+**Key Phase 12 constraints (locked for v2.0):**
+- Peukert stays fixed at 1.2 (circular dependency avoidance)
+- Temperature compensation out of scope (indoor ±3°C, ±5% error acceptable)
+- Phase 12 success gates: coulomb error <±10%, convergence threshold 2-3 samples, load sensitivity <±3%
+- Phase 13 hard-depends on Phase 12 capacity convergence
 
 **Key milestone constraints (locked for v2.0):**
 - Peukert exponent stays fixed at 1.2 (circular dependency avoidance)
@@ -247,4 +262,5 @@ When returning to this milestone:
 ---
 
 *State created: 2026-03-15*
-*Last updated: 2026-03-15 after roadmap creation*
+*Last updated: 2026-03-16 after Phase 12.1 Wave 6 completion*
+*Phase 12.1 Status: COMPLETE — All 6 waves delivered. Phase 12 planning can proceed.*
