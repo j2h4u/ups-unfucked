@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-last_updated: "2026-03-16T13:49:39.200Z"
+last_updated: "2026-03-16T17:02:36Z"
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 12
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-16 after Phase 12 Plan 04 completion
-**Milestone:** v2.0 Actual Capacity Estimation — Phase 12 complete, CLI integration done
-**Current Position:** Phase 12 COMPLETE (all 4 plans + all 7 requirements); ready for Phase 13 (SoH recalibration)
+**Last Updated:** 2026-03-16 after Phase 14 Plan 01 completion
+**Milestone:** v2.0 Actual Capacity Estimation — Phases 12-13 complete, capacity reporting in progress
+**Current Position:** Phase 14 Plan 01 COMPLETE (1/3 plans); ready for Phase 14 Plan 02 (journald events)
 
 ---
 
@@ -117,6 +117,18 @@ progress:
 
 **Blockers for Phase 14:** None. Phase 13 complete; all SoH recalibration logic ready for reporting phase.
 
+**Phase 14 Plan 01 (Completed 2026-03-16) — Capacity Display in MOTD**
+- Extended scripts/motd/51-ups.sh with convergence status display (locked/measuring/unknown)
+- Added color-coded status badges: ✓ LOCKED (green), ⟳ MEASURING (yellow), ? UNKNOWN (dim)
+- Changed output format from "Z/3 deep discharges" to "N/3 samples" for clarity
+- Compute confidence as integer percentage (0-100%) from convergence_score = 1 - CoV
+- Graceful degradation: MOTD exits 0 even if capacity_estimates missing
+- Created 4 comprehensive tests: test_motd_capacity_displays, test_motd_handles_empty_estimates, test_motd_convergence_status_badge, test_motd_shows_new_battery_alert
+- All tests passing (4/4 green) with HOME environment override for isolation
+- RPT-01 requirement fully satisfied: MOTD displays rated vs measured capacity and confidence percentage
+
+**Blockers for Phase 14 Plan 02:** None. Phase 14 Plan 01 complete; journald event logging can proceed.
+
 
 **Key Phase 12 constraints (locked for v2.0):**
 - Peukert stays fixed at 1.2 (circular dependency avoidance)
@@ -149,12 +161,13 @@ progress:
 - **Plan 01:** SoH normalization + history versioning + regression filtering (Complete 2026-03-16)
 - **Plan 02:** New battery detection + baseline reset + MOTD alert (Complete 2026-03-16)
 
-### Phase 14: Capacity Reporting & Metrics — READY (Next)
+### Phase 14: Capacity Reporting & Metrics — IN PROGRESS (Plan 01 Complete)
 - **Requirements:** RPT-01, 02, 03 (3 requirements)
 - **Goal:** Expose capacity to MOTD, journald, Grafana
 - **Success criteria:** 5 observable behaviors (MOTD display, journald events searchable, /health endpoint, Grafana dashboard queries, user can assess convergence)
 - **Depends on:** Phases 12–13 (reporting works best with stable data) — COMPLETE
-- **Status:** READY TO START (Phase 13 dependencies satisfied)
+- **Status:** Phase 14 Plan 01 COMPLETE (Plan 02 and 03 ready to start)
+- **Plan 01:** MOTD capacity display with convergence status (Complete 2026-03-16)
 
 ---
 
@@ -165,7 +178,7 @@ progress:
 | Decision | Rationale | Implementation |
 |----------|-----------|-----------------|
 | **Peukert stays fixed at 1.2** | Avoid circular dependency (capacity ↔ exponent). v2.0 owns capacity measurement; v2.1+ owns Peukert refinement (CAL2-02). | VAL-02 constraint: CapacityEstimator uses fixed 1.2. ±3% error acceptable for v2.0. |
-| **Deep discharges first** | MVP focuses on >50% ΔSoC events (most reliable, IEEE-450 backed). Partial discharge accumulation (Phase 3, v2.1+) only if field data justifies. | Phase 12: requires ΔSoC > 50%, duration > 300s, voltage-anchored. Rejects ΔSoC < 25%. |
+| **Deep discharges first** | MVP focuses on >50% ΔSoC events (most reliable, IEEE-450 backed). Partial discharge accumulation (v2.1+ scope) only if field data justifies. | Phase 12: requires ΔSoC > 50%, duration > 300s, voltage-anchored. Rejects ΔSoC < 25%. |
 | **Confidence threshold ≈ 2–3 deep discharges** | IEEE-450 + field experience: 2–3 samples → ±5% accuracy, 95% confidence. Coefficient of variation < 10% as lockpoint. | Phase 12: convergence when count ≥ 3 AND CoV < 10%. MOTD shows progress ("2/3 deep discharges"). |
 | **Temperature out of scope** | Indoor ±3°C year-round, ±5% seasonal variation acceptable. No hardware sensor; adds change. | Phase 12: store discharge metadata (V, I, t) for post-hoc analysis if sensor added (v3+). |
 | **New battery detection on startup** | User may forget battery swap. Daemon auto-detects via >10% capacity jump, prompts for confirmation. | Phase 13: on startup, compare stored estimate vs. current discharge runtime. Prompt: "New battery installed? [y/n]" if >10% diff. |
@@ -185,9 +198,9 @@ progress:
 | Limitation | Severity | Detail | Mitigation |
 |------------|----------|--------|------------|
 | **EMA systematic bias on SoH** | Low | Adaptive EMA lags voltage by 40-60s during slow discharge. Area-under-curve systematically underestimated by 2-5%. | Discharge buffer uses raw voltage (not EMA), so SoH calculation is unaffected. Bias exists for EMA-derived real-time SoC display only. Documented, no fix needed. |
-| **Bayesian SoH inertia at cliff edge** | Medium | VRLA batteries degrade sigmoidally — "fall off cliff" after 2-3 years. Phase 12.1 Wave 6 simulation (test_cliff_edge_degradation) revealed severe inertia: at cliff edge (5-15%/month degradation), model SoH converges to 0 and stays frozen while true SoH degrades gradually (99% tracking error at months 17+). Short discharges get low Bayesian weight (≈0.001), so recovery requires many deep measurements. | Phase 2.1 candidate: adjust 0.30 Bayesian weight constant for faster convergence, add rapid-change detector (e.g., trigger when monthly SoH_change > 10%), implement Kalman filter for trending. Documented behavior acceptable for v2.0 (batteries rarely fall off cliff mid-warranty). |
-| **Thermal bias during high load** | Low | Server exhaust heats UPS by 5-8°C above ambient. VRLA capacity coefficient ≈ -0.5%/°C. At 33°C, capacity is ~4% lower than at 25°C. Phase 12.1 Wave 6 simulation (test_seasonal_thermal_variation) confirms: 12-month synthetic cycle with ±3% seasonal capacity offset converges to CoV < 10% for convergence_score. All high-load discharges systematically underestimate capacity by ~4%, but within measurement noise. | Phase 2.1+: if field data shows systematic summer/winter discrepancy in replacement prediction (>±3%), implement seasonal correction curve (linear model: capacity_adjusted = capacity_measured × (1 + 0.005 × (T_avg - 25))). For v2.0, treat thermal drift as normal variation; no hardware sensor required. |
-| **ADC quantization** | Negligible | CyberPower UT850EG: 0.1V voltage resolution, 1% load resolution. Phase 12.1 Wave 6 simulation (test_instrument_characterization) shows: quantization + EMA filtering introduces ±1-2% bias on SoH estimates from raw path. Quantization error for coulomb counting: ±0.02% (√N random walk). Combined bias well below convergence_score gate (CoV < 10%). | Non-issue for capacity estimation. Documented baseline for Phase 3.0 ADC drift compensation. If field data shows >±3% systematic error, add per-unit ADC linearity correction (lookup table of V_meas vs V_true). |
+| **Bayesian SoH inertia at cliff edge** | Medium | VRLA batteries degrade sigmoidally — "fall off cliff" after 2-3 years. Phase 12.1 Wave 6 simulation (test_cliff_edge_degradation) revealed severe inertia: at cliff edge (5-15%/month degradation), model SoH converges to 0 and stays frozen while true SoH degrades gradually (99% tracking error at months 17+). Short discharges get low Bayesian weight (≈0.001), so recovery requires many deep measurements. | v2.1 candidate: adjust 0.30 Bayesian weight constant for faster convergence, add rapid-change detector (e.g., trigger when monthly SoH_change > 10%), implement Kalman filter for trending. Documented behavior acceptable for v2.0 (batteries rarely fall off cliff mid-warranty). |
+| **Thermal bias during high load** | Low | Server exhaust heats UPS by 5-8°C above ambient. VRLA capacity coefficient ≈ -0.5%/°C. At 33°C, capacity is ~4% lower than at 25°C. Phase 12.1 Wave 6 simulation (test_seasonal_thermal_variation) confirms: 12-month synthetic cycle with ±3% seasonal capacity offset converges to CoV < 10% for convergence_score. All high-load discharges systematically underestimate capacity by ~4%, but within measurement noise. | v2.1+: if field data shows systematic summer/winter discrepancy in replacement prediction (>±3%), implement seasonal correction curve (linear model: capacity_adjusted = capacity_measured × (1 + 0.005 × (T_avg - 25))). For v2.0, treat thermal drift as normal variation; no hardware sensor required. |
+| **ADC quantization** | Negligible | CyberPower UT850EG: 0.1V voltage resolution, 1% load resolution. Phase 12.1 Wave 6 simulation (test_instrument_characterization) shows: quantization + EMA filtering introduces ±1-2% bias on SoH estimates from raw path. Quantization error for coulomb counting: ±0.02% (√N random walk). Combined bias well below convergence_score gate (CoV < 10%). | Non-issue for capacity estimation. Documented baseline for v3.0 ADC drift compensation. If field data shows >±3% systematic error, add per-unit ADC linearity correction (lookup table of V_meas vs V_true). |
 | **Sulfation recovery** | Info | VRLA can genuinely recover 2-5% capacity after deep discharge (sulfation reversal). Phase 12.1 Wave 6 simulation (test_sulfation_recovery) shows: shallow discharge sequence (3 weeks) followed by recovery event behaves gracefully — model handles SoH updates without clamping guards. Increases allowed (SoH can rise). Bayesian update symmetric: degradation and recovery use same formula. | Model handles naturally — no code change needed. Sulfation recovery unlikely in practice (requires long rest after specific discharge pattern). Documented for edge case completeness. |
 
 ### Roadmap Evolution
