@@ -29,8 +29,8 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 
 ### Validation
 
-- [ ] **VAL-01**: Discharge quality filter rejects micro-discharges (< 5 min or < 5% ΔSoC)
-- [ ] **VAL-02**: Peukert exponent is fixed at 1.2 during capacity estimation phase
+- [x] **VAL-01**: Discharge quality filter rejects micro-discharges (< 5 min or < 5% ΔSoC)
+- [x] **VAL-02**: Peukert exponent is fixed at 1.2 during capacity estimation phase
 
 ## Future Requirements
 
@@ -67,8 +67,8 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 | RPT-01 | 14 | Pending |
 | RPT-02 | 14 | Pending |
 | RPT-03 | 14 | Pending |
-| VAL-01 | 12 | Pending |
-| VAL-02 | 12 | Pending |
+| VAL-01 | 12 | Complete |
+| VAL-02 | 12 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 13 total
