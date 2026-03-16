@@ -16,7 +16,6 @@ def calculate_soh_from_discharge(
     discharge_voltage_series,
     discharge_time_series,
     reference_soh,
-    anchor_voltage,
     battery_model: BatteryModel,
     load_percent,
     nominal_power_watts,
@@ -29,7 +28,6 @@ def calculate_soh_from_discharge(
         discharge_voltage_series: List of voltage readings (V)
         discharge_time_series: List of time readings (s)
         reference_soh: Current SoH estimate before update
-        anchor_voltage: Voltage floor for capacity calculation (10.5V for UT850)
         battery_model: BatteryModel instance with convergence data
         load_percent: Average load during discharge (%)
         nominal_power_watts: UPS rated power (850W for UT850)
@@ -57,7 +55,6 @@ def calculate_soh_from_discharge(
         voltage_series=discharge_voltage_series,
         time_series=discharge_time_series,
         reference_soh=reference_soh,
-        anchor_voltage=anchor_voltage,
         capacity_ah=capacity_ah_for_soh,  # ← Measured or rated
         load_percent=load_percent,
         nominal_power_watts=nominal_power_watts,

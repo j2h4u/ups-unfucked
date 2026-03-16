@@ -472,7 +472,6 @@ class MonitorDaemon:
             discharge_voltage_series=self.discharge_buffer.voltages,
             discharge_time_series=self.discharge_buffer.times,
             reference_soh=self.battery_model.get_soh(),
-            anchor_voltage=10.5,
             battery_model=self.battery_model,
             load_percent=avg_load,
             nominal_power_watts=self.battery_model.get_nominal_power_watts(),
