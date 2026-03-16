@@ -23,6 +23,7 @@ except ImportError:
 from src.nut_client import NUTClient
 from src.ema_filter import EMAFilter, ir_compensate
 from src.model import BatteryModel
+from src.capacity_estimator import CapacityEstimator
 from src.soc_predictor import soc_from_voltage, charge_percentage
 from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
 from src.event_classifier import EventClassifier, EventType
@@ -298,6 +299,29 @@ class MonitorDaemon:
             self.battery_model.save()  # Write defaults so tools (battery-health.py, MOTD) can read
         self.event_classifier = EventClassifier()
 
+        # Initialize CapacityEstimator for Phase 12 capacity measurement (CAP-01, CAP-05)
+        self.capacity_estimator = CapacityEstimator(
+            peukert_exponent=self.battery_model.get_peukert_exponent(),
+            nominal_voltage=self.battery_model.get_nominal_voltage(),
+            nominal_power_watts=self.battery_model.get_nominal_power_watts()
+        )
+
+        # Load historical capacity estimates from model.json for convergence tracking
+        # Ensures has_converged() and get_confidence() survive daemon restarts
+        for estimate in self.battery_model.get_capacity_estimates():
+            self.capacity_estimator.add_measurement(
+                ah=estimate['ah_estimate'],
+                timestamp=estimate['timestamp'],
+                metadata=estimate['metadata']
+            )
+
+        # new_battery_requested flag for Phase 13 detection (CAP-05)
+        # Will be set by --new-battery CLI flag or cleared after Phase 13 processing
+        if not hasattr(self.config, '__dict__'):
+            # Config is frozen dataclass, can't add attributes directly
+            # Store in battery_model.data instead (Phase 13 will read from there)
+            pass
+
         # Load physics params from model
         self.ir_k = self.battery_model.get_ir_k()
         self.ir_l_base = self.battery_model.get_ir_reference_load()
@@ -563,6 +587,77 @@ class MonitorDaemon:
             _safe_save(self.battery_model)
         else:
             logger.error("Peukert calibration returned None (unexpected — math undefined?)")
+
+    def _handle_discharge_complete(self, discharge_data: dict) -> None:
+        """
+        Handle discharge completion event: measure capacity via CapacityEstimator.
+
+        Called when OB→OL transition detected. Extracts discharge_buffer data (V, t, I series),
+        calls CapacityEstimator.estimate() to measure capacity, and if successful, stores
+        result in model.json via add_capacity_estimate(). Implements CAP-01 and CAP-05.
+
+        Args:
+            discharge_data: Dict with keys:
+                - voltage_series: List[float] voltage readings (V)
+                - time_series: List[float] unix timestamps (sec)
+                - current_series: List[float] load percent (%)
+                - timestamp: str ISO8601 timestamp
+
+        Flow:
+            1. Extract discharge_buffer data
+            2. Call CapacityEstimator.estimate(V, t, I, lut)
+            3. If None (quality filter): log rejection, return
+            4. If tuple (success): call model.add_capacity_estimate()
+            5. Check has_converged(): if True, set model['capacity_converged'] flag
+            6. Log measurement with confidence
+
+        NOTE: Phase 12 does NOT modify full_capacity_ah_ref. Measured capacity lives
+        only in capacity_estimates[] array. Replacement of rated→measured is Phase 13 scope.
+        """
+        voltage_series = discharge_data.get('voltage_series', [])
+        time_series = discharge_data.get('time_series', [])
+        current_series = discharge_data.get('current_series', [])
+        timestamp = discharge_data.get('timestamp', datetime.now().isoformat())
+
+        # Guard: need at least 2 samples
+        if len(voltage_series) < 2 or len(time_series) < 2 or len(current_series) < 2:
+            logger.debug(f"Discharge data incomplete for capacity estimation: "
+                        f"{len(voltage_series)} V, {len(time_series)} t, {len(current_series)} I")
+            return
+
+        # Call CapacityEstimator
+        result = self.capacity_estimator.estimate(
+            voltage_series=voltage_series,
+            time_series=time_series,
+            current_series=current_series,
+            lut=self.battery_model.data.get('lut', [])
+        )
+
+        # Quality filter rejection (VAL-01: micro/shallow discharges rejected)
+        if result is None:
+            logger.debug("Discharge rejected by CapacityEstimator quality filter")
+            return
+
+        # Success: unpack estimate
+        ah_estimate, confidence, metadata = result
+
+        # Store in model
+        self.battery_model.add_capacity_estimate(
+            ah_estimate=ah_estimate,
+            confidence=confidence,
+            metadata=metadata,
+            timestamp=timestamp
+        )
+
+        # Log measurement
+        logger.info(f"Capacity measurement: {ah_estimate:.2f}Ah, confidence {confidence:.0%}, "
+                   f"{metadata.get('delta_soc_percent', 0):.1f}% ΔSoC")
+
+        # Check convergence: count >= 3 AND CoV < 0.10 (expert-approved)
+        if self.capacity_estimator.has_converged():
+            self.battery_model.data['capacity_converged'] = True
+            logger.info(f"Capacity converged: {ah_estimate:.2f}Ah (±10%)")
+            _safe_save(self.battery_model)
 
     def _record_voltage_sag(self, v_sag, event_type):
         """Record voltage sag measurement and compute internal resistance."""
