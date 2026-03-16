@@ -359,3 +359,217 @@ def test_battery_state_immutability():
     new_state = replace(state, soh=0.95)
     assert new_state.soh == 0.95, "replace() should create new state with updated field"
     assert state.soh == 1.0, "Original state should be unchanged"
+
+
+# ============================================================================
+# Wave 3: Stability Tests (Primary, Secondary, Path-Invariant Gates)
+# ============================================================================
+
+def test_lyapunov_stability(random_seed, initial_battery_state):
+    """Per-iteration Lyapunov stability: divergence relative to SoH stays bounded.
+
+    Primary stability gate per expert panel (Prof. Marchetti).
+    Tests that perturbations do not exponentially amplify catastrophically.
+    Measures relative divergence (divergence / max_soh) to account for Bayesian
+    updates changing absolute scale.
+
+    Note: Bayesian estimators naturally exhibit some growth in divergence as the system
+    accumulates information about capacity. The test checks that this growth is not
+    exponential (i.e., catastrophic blowup), not that divergence shrinks to zero.
+    """
+    random.seed(random_seed)
+
+    # Initial state: healthy battery
+    baseline_state = initial_battery_state
+
+    # Perturbation: ±1% capacity
+    perturbed_state = replace(
+        initial_battery_state,
+        capacity_ah_rated=initial_battery_state.capacity_ah_rated * 1.01
+    )
+
+    relative_divergence_history = []
+    baseline = baseline_state
+    perturbed = perturbed_state
+
+    # 100 iterations = ~3 months at 3 events/week
+    for iteration in range(100):
+        # Generate synthetic discharge event
+        depth = random.choice([0.2, 0.4, 0.6, 0.8])
+        duration = random.randint(300, 3600)
+        load = random.uniform(10, 40)
+
+        v_series, t_series, _ = synthetic_discharge(
+            1.0, 1.0 - depth, duration, load, baseline.lut, 10
+        )
+
+        # Update baseline
+        new_soh_baseline = calculate_soh_from_discharge(
+            voltage_series=v_series,
+            time_series=t_series,
+            reference_soh=baseline.soh,
+            capacity_ah=baseline.capacity_ah_rated,
+            load_percent=load,
+            peukert_exponent=baseline.peukert_exponent,
+            min_duration_sec=30.0,
+        )
+        if new_soh_baseline is not None:
+            baseline = replace(baseline, soh=new_soh_baseline)
+
+        baseline = replace(
+            baseline,
+            cycle_count=baseline.cycle_count + 1,
+            cumulative_on_battery_sec=baseline.cumulative_on_battery_sec + duration
+        )
+
+        # Update perturbed
+        new_soh_perturbed = calculate_soh_from_discharge(
+            voltage_series=v_series,
+            time_series=t_series,
+            reference_soh=perturbed.soh,
+            capacity_ah=perturbed.capacity_ah_rated,
+            load_percent=load,
+            peukert_exponent=perturbed.peukert_exponent,
+            min_duration_sec=30.0,
+        )
+        if new_soh_perturbed is not None:
+            perturbed = replace(perturbed, soh=new_soh_perturbed)
+
+        perturbed = replace(
+            perturbed,
+            cycle_count=perturbed.cycle_count + 1,
+            cumulative_on_battery_sec=perturbed.cumulative_on_battery_sec + duration
+        )
+
+        # Compute relative divergence (normalized by max SoH to handle scale changes)
+        abs_divergence = abs(perturbed.soh - baseline.soh)
+        max_soh = max(baseline.soh, perturbed.soh, 0.01)  # Avoid division by zero
+        relative_divergence = abs_divergence / max_soh
+        relative_divergence_history.append(relative_divergence)
+
+    # Primary gate: relative divergence stays bounded (< 30% of current SoH)
+    # For a Bayesian system with ±1% initial perturbation, divergence should not grow
+    # exponentially (e.g., 1.05^100 = 131x). A 30% bound allows for information accumulation
+    # but prevents catastrophic blowup.
+    final_relative_divergence = relative_divergence_history[-1]
+    assert final_relative_divergence < 0.30, \
+        f"Divergence unbounded: final relative divergence {final_relative_divergence:.4f} > 30%"
+
+    # Secondary check: No iteration should show > 100% divergence (would indicate NaN/infinite)
+    max_divergence = max(relative_divergence_history)
+    assert max_divergence < 1.0, \
+        f"Catastrophic divergence at some iteration: max={max_divergence:.4f}"
+
+    print(f"\nLyapunov stability (seed={random_seed}): final relative divergence={final_relative_divergence:.4f}, "
+          f"max={max_divergence:.4f}")
+
+
+def test_fixed_point_convergence(initial_battery_state):
+    """Fixed-point convergence: identical discharge repeated 20x converges.
+
+    If SoH, Peukert, capacity oscillate or drift over 20 identical discharges,
+    there's a hidden nonlinearity or coupling. Range (max-min) over last 5 < 1% of mean.
+    """
+    state = initial_battery_state
+
+    # Fixed synthetic discharge: 50% depth, 30-min duration, 25% load
+    v_series, t_series, _ = synthetic_discharge(
+        initial_soc=1.0,
+        final_soc=0.5,  # 50% depth
+        duration_sec=1800,  # 30 minutes
+        load_percent=25,
+        lut=state.lut,
+        num_samples=20
+    )
+
+    soh_history = []
+
+    for iteration in range(20):
+        new_soh = calculate_soh_from_discharge(
+            voltage_series=v_series,
+            time_series=t_series,
+            reference_soh=state.soh,
+            capacity_ah=state.capacity_ah_rated,
+            load_percent=25,
+            peukert_exponent=state.peukert_exponent,
+            min_duration_sec=30.0,
+        )
+
+        if new_soh is not None:
+            state = replace(state, soh=new_soh)
+            soh_history.append(state.soh)
+
+        state = replace(
+            state,
+            cycle_count=state.cycle_count + 1,
+            cumulative_on_battery_sec=state.cumulative_on_battery_sec + 1800
+        )
+
+    # Check convergence: range over last 5 iterations < 1% of mean
+    last_five = soh_history[-5:]
+    mean_soh = sum(last_five) / len(last_five)
+    range_soh = max(last_five) - min(last_five)
+
+    convergence_pct = (range_soh / mean_soh) * 100 if mean_soh > 0 else 0
+
+    assert convergence_pct < 1.0, \
+        f"Fixed point not converged: SoH range={range_soh:.4f}, mean={mean_soh:.4f}, {convergence_pct:.2f}% > 1%"
+
+    print(f"\nFixed-point convergence: SoH history (last 5)={[f'{s:.4f}' for s in last_five]}, range={convergence_pct:.2f}%")
+
+
+def test_permutation_invariance(initial_battery_state):
+    """Permutation invariance: 10 events in 5 random orderings agree ±2%.
+
+    Catches path-dependent bias in Bayesian SoH blending.
+    Final state SoH must not depend on discharge order.
+    """
+    # Generate 10 fixed discharge events (different depths)
+    events = []
+    depths = [0.20, 0.40, 0.60, 0.80, 0.50, 0.30, 0.70, 0.25, 0.55, 0.65]
+
+    for depth in depths:
+        v_series, t_series, _ = synthetic_discharge(
+            1.0, 1.0 - depth, 600, 25, initial_battery_state.lut, 10
+        )
+        events.append((v_series, t_series, 25))  # (voltage, time, load)
+
+    final_states = []
+
+    for shuffle_idx in range(5):
+        # Shuffle event order
+        shuffled = random.sample(events, len(events))
+        state = initial_battery_state
+
+        for v_series, t_series, load in shuffled:
+            new_soh = calculate_soh_from_discharge(
+                voltage_series=v_series,
+                time_series=t_series,
+                reference_soh=state.soh,
+                capacity_ah=state.capacity_ah_rated,
+                load_percent=load,
+                peukert_exponent=state.peukert_exponent,
+                min_duration_sec=30.0,
+            )
+
+            if new_soh is not None:
+                state = replace(state, soh=new_soh)
+
+            state = replace(
+                state,
+                cycle_count=state.cycle_count + 1,
+                cumulative_on_battery_sec=state.cumulative_on_battery_sec + 600
+            )
+
+        final_states.append(state.soh)
+
+    # All final SoH values should agree within ±2%
+    mean_soh = sum(final_states) / len(final_states)
+
+    for i, final_soh in enumerate(final_states):
+        delta_pct = abs(final_soh - mean_soh) / mean_soh * 100 if mean_soh > 0 else 0
+        assert delta_pct < 2.0, \
+            f"Permutation {i}: final SoH={final_soh:.4f} differs from mean={mean_soh:.4f} by {delta_pct:.2f}% > 2%"
+
+    print(f"\nPermutation invariance: final SoH across 5 orderings = {[f'{s:.4f}' for s in final_states]}, "
+          f"agreement within ±{(max(final_states)-min(final_states))/mean_soh*100:.2f}%")
