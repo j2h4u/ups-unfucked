@@ -261,11 +261,13 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, new_battery_flag: bool = False):
         """Initialize daemon with provided configuration.
 
         Args:
             config: Config dataclass instance with all daemon parameters.
+            new_battery_flag: Boolean flag from CLI --new-battery; indicates battery swap.
+                             When True, Phase 13 detection logic will check on next discharge.
         """
         self.running = True
         self.config = config
@@ -315,12 +317,11 @@ class MonitorDaemon:
                 metadata=estimate['metadata']
             )
 
-        # new_battery_requested flag for Phase 13 detection (CAP-05)
-        # Will be set by --new-battery CLI flag or cleared after Phase 13 processing
-        if not hasattr(self.config, '__dict__'):
-            # Config is frozen dataclass, can't add attributes directly
-            # Store in battery_model.data instead (Phase 13 will read from there)
-            pass
+        # Store new_battery_requested flag from CLI for Phase 13 detection logic
+        self.battery_model.data['new_battery_requested'] = new_battery_flag
+        if new_battery_flag:
+            # Log that flag was set (informational only)
+            logger.info("New battery flag set via --new-battery CLI; Phase 13 detection will check on next discharge")
 
         # Load physics params from model
         self.ir_k = self.battery_model.get_ir_k()
@@ -1015,17 +1016,35 @@ class MonitorDaemon:
         logger.info("Polling loop ended; daemon shutting down")
 
 
-def main():
-    """Entry point for daemon."""
+def parse_args(args=None):
+    """Parse command-line arguments.
+
+    Args:
+        args: List of arguments to parse (defaults to sys.argv[1:] if None)
+              Used by tests to inject specific argument sequences.
+
+    Returns:
+        Parsed arguments namespace.
+    """
     parser = argparse.ArgumentParser(
         description="UPS Battery Monitor Daemon",
         prog="ups-battery-monitor"
     )
-    parser.parse_args()
+    parser.add_argument(
+        '--new-battery',
+        action='store_true',
+        help='Signal that a new battery has been installed; daemon will use this for next discharge measurement'
+    )
+    return parser.parse_args(args)
+
+
+def main():
+    """Entry point for daemon."""
+    args = parse_args()
 
     try:
         config = _load_config()
-        daemon = MonitorDaemon(config)
+        daemon = MonitorDaemon(config, new_battery_flag=args.new_battery)
         daemon.run()
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)
