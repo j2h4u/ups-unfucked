@@ -1,5 +1,24 @@
 # Milestones
 
+## v2.0 Actual Capacity Estimation (Shipped: 2026-03-16)
+
+**Delivered:** Measures real battery capacity from discharge events, replaces rated label value with measured estimate, and recalibrates SoH against actual capacity — enabling accurate health tracking from day one.
+
+**Phases completed:** 4 phases, 15 plans, 23 tasks
+**Tests:** 291 passing | **LOC:** 11,602 Python | **Commits:** 96 (v1.1..HEAD)
+**Timeline:** 3 days (2026-03-14 → 2026-03-16)
+**Git range:** v1.1..190b7b1
+
+**Key accomplishments:**
+- Extracted all battery math into pure-function kernel package (`src/battery_math/`) with year-long simulation harness proving formula stability
+- Deep discharge capacity estimation with coulomb counting + voltage anchor + Peukert correction (CAP-01–04)
+- Statistical confidence tracking with CoV-based convergence detection (3+ samples, CoV<10%)
+- SoH recalibration against measured capacity with history versioning and baseline filtering (SOH-01–03)
+- New battery detection post-discharge (>10% threshold) with CLI `--new-battery` confirmation flow (CAP-05)
+- Full reporting pipeline: MOTD convergence display, structured journald events, Grafana health endpoint metrics (RPT-01–03)
+
+---
+
 ## v1.1 Expert Panel Review Fixes (Shipped: 2026-03-14)
 
 **Phases completed:** 5 phases, 14 plans, 33 tasks

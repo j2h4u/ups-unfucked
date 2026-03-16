@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Один systemd-сервис, zero manual intervention после установки.
+Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Измеряет реальную ёмкость батареи из глубоких разрядов (coulomb counting + voltage anchor), заменяет номинальное значение измеренным, и рекалибрует SoH на основе фактической ёмкости. Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Один systemd-сервис, zero manual intervention после установки.
 
 ## Core Value
 
@@ -27,19 +27,17 @@
 - ✓ Batch calibration writes, _safe_save helper, consolidated error handling — v1.1
 - ✓ History pruning, fdatasync optimization, health.json endpoint — v1.1
 - ✓ MetricEMA generic class for extensible per-metric tracking — v1.1
+- ✓ Deep discharge capacity estimation with coulomb counting + voltage anchor (CAP-01–04) — v2.0
+- ✓ Statistical confidence tracking with CoV-based convergence (CAP-03) — v2.0
+- ✓ New battery detection post-discharge + CLI --new-battery reset (CAP-05) — v2.0
+- ✓ SoH recalibration against measured capacity with baseline versioning (SOH-01–03) — v2.0
+- ✓ MOTD capacity display + journald structured events + health endpoint metrics (RPT-01–03) — v2.0
+- ✓ Discharge quality filters: micro-discharge rejection + Peukert fixed at 1.2 (VAL-01–02) — v2.0
+- ✓ Math kernel extraction to src/battery_math/ with year-long simulation harness — v2.0
 
 ### Active
 
-## Current Milestone: v2.0 Actual Capacity Estimation
-
-**Goal:** Measure real battery capacity (Ah) from discharge data — replace rated label value, enable accurate SoH from day one and cross-brand benchmarking.
-
-**Target features:**
-- Back-calculate actual Ah from deep discharge events
-- Statistical confidence tracking across multiple discharges
-- New battery detection (user input to separate capacity from degradation)
-- Auto-rebaseline SoH against measured capacity
-- MOTD/journald reporting of rated vs measured capacity
+(None — planning next milestone)
 
 ### Out of Scope
 
@@ -48,19 +46,21 @@
 - Web UI / REST API — не нужны, минимализм
 - Docker-контейнер — systemd-демон, не docker
 - Изменение конфигурации NUT — встаём поверх, не трогаем
+- Temperature compensation — indoor ±3°C, negligible variation
+- Offline mode / multi-UPS — single CyberPower UT850EG only
 
 ## Context
 
-Shipped v1.1 with 6,596 LOC Python, 205 tests, 215 commits over 2 days.
+Shipped v2.0 with 11,602 LOC Python, 291 tests, 311 commits over 4 days.
 Tech stack: Python 3.13, NUT (upsc + dummy-ups), systemd, journald.
 Hardware: CyberPower UT850EG (425W), USB, NUT usbhid-ups, Debian 13 (senbonzakura).
 
 Real blackout 2026-03-12 validated the model: 47 min actual vs ~22 min firmware prediction.
 Firmware showed 0% at minute 35 — UPS ran 12 more minutes.
 
-v1.1 addressed all 19 findings from expert panel review (P0-P3): safety-critical LB lag, architecture refactors, test coverage, code quality, polish.
+v2.0 added capacity estimation from deep discharge events (coulomb counting + voltage anchor), SoH recalibration against measured capacity, and full reporting pipeline (MOTD, journald, Grafana). Math kernel extracted to `src/battery_math/` package with year-long simulation harness proving formula stability.
 
-Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert exponent refinement (CAL2-02), Grafana metrics export (MON-01).
+Known v2.1+ candidates: Peukert exponent auto-calibration (CAL2-02), cliff-edge degradation detector, seasonal thermal correction.
 
 ## Constraints
 
@@ -83,6 +83,13 @@ Known v2 candidates: automatic IR coefficient estimation (CAL2-01), Peukert expo
 | Frozen Config dataclass вместо module globals | Testability, no global state pollution, future multi-UPS ready | ✓ Good — v1.1 |
 | Per-poll writes only during OB state | Eliminates LB lag without extra SSD wear during normal ops | ✓ Good — v1.1 |
 | MetricEMA generic class | Decoupled per-metric EMA enables temperature sensor without code changes | ✓ Good — v1.1 |
+| Math kernel as src/battery_math/ package | Formulas have different change frequencies; mixing in one file couples physics to daemon | ✓ Good — v2.0 |
+| Frozen BatteryState dataclass | Circular deps visible at type level; mutable state = hidden side channels | ✓ Good — v2.0 |
+| Peukert fixed at 1.2 for v2.0 | Avoid circular dependency (capacity ↔ exponent); v2.1+ owns refinement | ✓ Good — v2.0 |
+| CoV-based convergence (count≥3, CoV<10%) | IEEE-450 backed: 2-3 samples → ±5% accuracy. Not a confidence interval — named convergence_score | ✓ Good — v2.0 |
+| New battery detection post-discharge, not startup | Fresh measurement vs stored estimate avoids false positives from stale data | ✓ Good — v2.0 |
+| Discharge cooldown 60s | Power flicker is physically one discharge; processing as two wastes signal | ✓ Good — v2.0 |
+| 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
 
 ---
-*Last updated: 2026-03-15 after v2.0 milestone start*
+*Last updated: 2026-03-16 after v2.0 milestone*

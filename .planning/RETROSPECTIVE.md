@@ -89,6 +89,53 @@
 
 ---
 
+## Milestone: v2.0 — Actual Capacity Estimation
+
+**Shipped:** 2026-03-16
+**Phases:** 4 | **Plans:** 15 | **Tests:** 291
+
+### What Was Built
+- Deep discharge capacity estimation with coulomb counting + voltage anchor + Peukert correction
+- Statistical confidence tracking with CoV-based convergence detection (3+ samples, CoV<10%)
+- Math kernel extraction to `src/battery_math/` package with year-long simulation harness
+- SoH recalibration against measured capacity with history versioning and baseline filtering
+- New battery detection post-discharge (>10% threshold) with CLI `--new-battery` confirmation
+- Full reporting pipeline: MOTD convergence display, structured journald events, health endpoint metrics
+
+### What Worked
+- Expert panel sessions (3 panels, 2026-03-15) shaped Phase 12.1 insertion — caught circular dependency and formula stability risks before implementation
+- Phase 12.1 insertion (math kernel extraction) paid off massively: clean separation enabled year-long simulation tests that caught cliff-edge SoH inertia bug
+- Validation gates (coulomb error <±10%, Monte Carlo convergence, load sensitivity) as success criteria — concrete, testable, no ambiguity
+- Frozen BatteryState dataclass for kernel functions — made simulation harness trivial to build
+- Milestone audit before completion caught 3 test failures and verified all 13 requirements with 3-source cross-reference
+
+### What Was Inefficient
+- SUMMARY.md one-liner extraction still broken — most summaries lack structured `one_liner` frontmatter field, causing garbage in MILESTONES.md (had to manually rewrite)
+- STATE.md accumulated massive context from all plans (380+ lines) — should be pruned after each phase, not accumulated
+- Phase 12.1 was 6 plans (largest phase ever) — could have been 2 phases: kernel extraction + simulation tests
+- Nyquist validation remained partial across all 4 phases — draft VALIDATION.md files but never completed
+
+### Patterns Established
+- `src/battery_math/` as pure-function kernel package — daemon and simulator are equal orchestrators
+- Frozen BatteryState as kernel interface — circular deps become structurally visible at type level
+- Discharge cooldown (60s) to merge power flicker events into single discharge
+- Per-iteration Lyapunov stability gate (ratio < 1.0) instead of aggregate tolerance
+- CoV-based convergence score (not "confidence") — honest naming for what the metric actually measures
+
+### Key Lessons
+1. Inserted phases (12.1) should be planned as part of the original scope — the 3 expert panels that justified 12.1 could have happened before roadmap creation
+2. Circular dependency avoidance (Peukert fixed at 1.2) is a valid architectural decision — resist temptation to "solve everything at once"
+3. Year-long simulation as acceptance test catches bugs that unit tests miss (cliff-edge inertia, seasonal drift, sulfation recovery)
+4. SUMMARY.md frontmatter needs enforcement — without structured `one_liner` field, automated extraction is useless
+5. Post-discharge detection (not startup) for new battery avoids false positives from stale data
+
+### Cost Observations
+- Model mix: ~60% sonnet (execution), ~30% opus (planning/audit/milestone/panels), ~10% haiku (exploration)
+- Sessions: ~8-10 sessions across 3 days
+- Notable: 3 expert panel sessions in one day (2026-03-15) was high-value investment — shaped 6-plan phase that would have been underspecified otherwise
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -97,6 +144,7 @@
 |-----------|--------|-------|------------|
 | v1.0 | 6 | 21 | First milestone — established test-first wave pattern |
 | v1.1 | 5 | 14 | Expert panel review as requirements source; dataclass-first refactoring |
+| v2.0 | 4 | 15 | Inserted phase (12.1) from expert panels; math kernel extraction; year-long simulation as acceptance test |
 
 ### Cumulative Quality
 
@@ -104,6 +152,7 @@
 |-----------|-------|-----|-------------------|
 | v1.0 | 160 | 5,003 | All (stdlib only + NUT) |
 | v1.1 | 205 | 6,596 | All (stdlib only + NUT) |
+| v2.0 | 291 | 11,602 | All (stdlib only + NUT) |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -111,3 +160,5 @@
 2. Test-first with real data (actual blackout measurements) produces reliable models
 3. Expert panel review → concrete requirements is an efficient improvement pipeline
 4. Dataclass refactors pay for themselves immediately in testability
+5. Pure-function kernel packages enable simulation-based acceptance testing that catches bugs unit tests miss
+6. Circular dependency avoidance (fix one variable, solve the other) is a valid architectural pattern
