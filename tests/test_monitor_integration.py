@@ -442,7 +442,7 @@ def test_journald_event_filtering():
                             assert 'TIMESTAMP' in extra, "Missing TIMESTAMP in baseline_lock event"
 
 
-def test_health_endpoint_capacity_persistence(tmp_path):
+def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     """Phase 14 Plan 03 Task 3: Verify health endpoint updates capacity fields across discharge cycles.
 
     RPT-03 - Health endpoint capacity metrics persist and update correctly across multiple discharges.
@@ -452,19 +452,20 @@ def test_health_endpoint_capacity_persistence(tmp_path):
     import json
     import logging
     from unittest.mock import patch, MagicMock
-    from pathlib import Path as RealPath
     import sys
 
     # Mock systemd before importing
     sys.modules['systemd'] = MagicMock()
     sys.modules['systemd.journal'] = MagicMock()
 
+    import src.monitor
     from src.monitor import MonitorDaemon, _write_health_endpoint
     from src.model import BatteryModel
 
     # Setup test paths
     model_path = tmp_path / "model.json"
     health_file = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_file)
 
     # Create real battery model instance
     battery_model = BatteryModel(model_path)
@@ -508,26 +509,19 @@ def test_health_endpoint_capacity_persistence(tmp_path):
         daemon = MonitorDaemon(config)
         daemon.battery_model = battery_model
 
-    # Mock Path for health endpoint writes (to use tmpdir instead of /dev/shm)
-    def mock_path_factory(x):
-        if str(x) == "/dev/shm/ups-health.json":
-            return health_file
-        return RealPath(x)
-
     # Cycle 1: First discharge (0 samples, no convergence)
     battery_model.data['capacity_estimates'] = []
     battery_model.save()
 
-    with patch('src.monitor.Path', side_effect=mock_path_factory):
-        _write_health_endpoint(
-            soc_percent=50.0,
-            is_online=False,
-            capacity_ah_measured=None,
-            capacity_ah_rated=7.2,
-            capacity_confidence=0.0,
-            capacity_samples_count=0,
-            capacity_converged=False
-        )
+    _write_health_endpoint(
+        soc_percent=50.0,
+        is_online=False,
+        capacity_ah_measured=None,
+        capacity_ah_rated=7.2,
+        capacity_confidence=0.0,
+        capacity_samples_count=0,
+        capacity_converged=False
+    )
 
     # Verify health endpoint written with capacity fields
     data_cycle1 = json.loads(health_file.read_text())
@@ -543,16 +537,15 @@ def test_health_endpoint_capacity_persistence(tmp_path):
     battery_model.save()
 
     # Simulate get_convergence_status return for 1 sample
-    with patch('src.monitor.Path', side_effect=mock_path_factory):
-        _write_health_endpoint(
-            soc_percent=40.0,
-            is_online=False,
-            capacity_ah_measured=6.90,
-            capacity_ah_rated=7.2,
-            capacity_confidence=0.0,  # No confidence with < 3 samples
-            capacity_samples_count=1,
-            capacity_converged=False
-        )
+    _write_health_endpoint(
+        soc_percent=40.0,
+        is_online=False,
+        capacity_ah_measured=6.90,
+        capacity_ah_rated=7.2,
+        capacity_confidence=0.0,  # No confidence with < 3 samples
+        capacity_samples_count=1,
+        capacity_converged=False
+    )
 
     data_cycle2 = json.loads(health_file.read_text())
     assert data_cycle2['capacity_samples_count'] == 1, "Cycle 2: expected 1 sample"
@@ -575,16 +568,15 @@ def test_health_endpoint_capacity_persistence(tmp_path):
     # cov = 0.0286 / 6.917 = 0.00413 < 0.10 → converged!
     # confidence = 1 - cov = 0.99587 * 100 = 99.587%
 
-    with patch('src.monitor.Path', side_effect=mock_path_factory):
-        _write_health_endpoint(
-            soc_percent=30.0,
-            is_online=False,
-            capacity_ah_measured=6.95,
-            capacity_ah_rated=7.2,
-            capacity_confidence=0.996,  # ~99.6% (1 - 0.004 CoV)
-            capacity_samples_count=3,
-            capacity_converged=True
-        )
+    _write_health_endpoint(
+        soc_percent=30.0,
+        is_online=False,
+        capacity_ah_measured=6.95,
+        capacity_ah_rated=7.2,
+        capacity_confidence=0.996,  # ~99.6% (1 - 0.004 CoV)
+        capacity_samples_count=3,
+        capacity_converged=True
+    )
 
     data_cycle3 = json.loads(health_file.read_text())
     assert data_cycle3['capacity_samples_count'] == 3, "Cycle 3: expected 3 samples"

@@ -37,7 +37,8 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-DRY_RUN="${1:---dry-run}" && [[ "$1" == "--dry-run" ]] && DRY_RUN="yes" || DRY_RUN="no"
+DRY_RUN="no"
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN="yes"
 
 # === UTILITY FUNCTIONS ===
 
@@ -148,9 +149,24 @@ log_info "Configuring NUT dummy-ups..."
 NUT_CONFIG="/etc/nut/ups.conf"
 DUMMY_UPS_CONFIG="$REPO_ROOT/config/dummy-ups.conf"
 
-# Idempotent guard: check if already configured
-if grep -q "cyberpower-virtual" "$NUT_CONFIG" 2>/dev/null; then
-    log_ok "Dummy-ups already configured in $NUT_CONFIG (skipped)"
+NUT_NEW_PORT="port = /run/ups-battery-monitor/ups-virtual.dev"
+if grep -q "$NUT_NEW_PORT" "$NUT_CONFIG" 2>/dev/null; then
+    log_ok "Dummy-ups already configured correctly in $NUT_CONFIG (skipped)"
+elif grep -q "cyberpower-virtual" "$NUT_CONFIG" 2>/dev/null; then
+    log_info "Updating dummy-ups port path in $NUT_CONFIG (migrating from /dev/shm)..."
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would update [cyberpower-virtual] port in $NUT_CONFIG"
+    else
+        python3 -c "
+import re, sys
+content = open('$NUT_CONFIG').read()
+content = re.sub(r'\n\[cyberpower-virtual\].*?(?=\n\[|\Z)', '', content, flags=re.DOTALL)
+content = content.rstrip('\n') + '\n'
+content += open('$DUMMY_UPS_CONFIG').read()
+open('$NUT_CONFIG', 'w').write(content)
+"
+        log_ok "Updated [cyberpower-virtual] port path in $NUT_CONFIG"
+    fi
 else
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would append config from $DUMMY_UPS_CONFIG to $NUT_CONFIG"
@@ -239,12 +255,12 @@ run_cmd systemctl enable ups-battery-monitor
 run_cmd systemctl enable ups-virtual-driver
 log_ok "Services enabled (will auto-start on boot)"
 
-run_cmd systemctl start ups-battery-monitor
-log_ok "Monitor service started"
+run_cmd systemctl restart ups-battery-monitor
+log_ok "Monitor service (re)started"
 
 # Driver oneshot will wait for device file, then start dummy-ups
-run_cmd systemctl start ups-virtual-driver
-log_ok "Virtual UPS driver started"
+run_cmd systemctl restart ups-virtual-driver
+log_ok "Virtual UPS driver (re)started"
 
 # === POST-INSTALL VERIFICATION ===
 
@@ -256,15 +272,15 @@ fi
 log_info "Verifying installation..."
 
 # Wait for virtual UPS device file
-log_info "Waiting for virtual UPS device (/dev/shm/ups-virtual.dev)..."
+log_info "Waiting for virtual UPS device (/run/ups-battery-monitor/ups-virtual.dev)..."
 TIMEOUT=10
 COUNTER=0
-while [[ ! -f /dev/shm/ups-virtual.dev && $COUNTER -lt $TIMEOUT ]]; do
+while [[ ! -f /run/ups-battery-monitor/ups-virtual.dev && $COUNTER -lt $TIMEOUT ]]; do
     sleep 1
     COUNTER=$((COUNTER + 1))
 done
 
-if [[ -f /dev/shm/ups-virtual.dev ]]; then
+if [[ -f /run/ups-battery-monitor/ups-virtual.dev ]]; then
     log_ok "Virtual UPS device created"
 else
     log_error "Virtual UPS device not created after $TIMEOUT seconds"

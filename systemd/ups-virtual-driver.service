@@ -8,7 +8,7 @@ ConditionPathExists=/run/nut/
 Type=oneshot
 RemainAfterExit=yes
 # Wait for the device file to appear (daemon needs ~30s for EMA stabilization)
-ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do [ -f /dev/shm/ups-virtual.dev ] && exit 0; sleep 1; done; exit 1'
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do [ -f /run/ups-battery-monitor/ups-virtual.dev ] && exit 0; sleep 1; done; exit 1'
 ExecStart=/usr/sbin/upsdrvctl start cyberpower-virtual
 TimeoutStartSec=90
 

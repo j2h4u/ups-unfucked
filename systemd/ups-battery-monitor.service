@@ -10,6 +10,8 @@ Type=notify
 WatchdogSec=120
 User=j2h4u
 Group=j2h4u
+RuntimeDirectory=ups-battery-monitor
+RuntimeDirectoryPreserve=restart
 WorkingDirectory=/home/j2h4u/repos/j2h4u/ups-battery-monitor
 Environment="PYTHONPATH=/home/j2h4u/repos/j2h4u/ups-battery-monitor"
 ExecStart=/usr/bin/python3 -m src.monitor
@@ -25,7 +27,7 @@ SyslogIdentifier=ups-battery-monitor
 # Hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/dev/shm/ /home/j2h4u/.config/ups-battery-monitor/
+ReadWritePaths=/home/j2h4u/.config/ups-battery-monitor/
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes

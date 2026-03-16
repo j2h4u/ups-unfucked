@@ -47,6 +47,7 @@ NUT_TIMEOUT = 2.0            # socket timeout (seconds)
 RUNTIME_THRESHOLD_MINUTES = 20
 REFERENCE_LOAD_PERCENT = 20.0
 REPORTING_INTERVAL_POLLS = 6  # Log metrics every N polls (6 * 10s = 60s)
+HEALTH_ENDPOINT_PATH = Path("/run/ups-battery-monitor/ups-health.json")
 
 # User-configurable (from config.toml)
 _CONFIGURABLE_DEFAULTS = {
@@ -235,7 +236,7 @@ def _write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms:
         "capacity_samples_count": capacity_samples_count,
         "capacity_converged": capacity_converged,
     }
-    health_path = Path("/dev/shm/ups-health.json")
+    health_path = HEALTH_ENDPOINT_PATH
     tmp_path = None
 
     try:
@@ -919,7 +920,7 @@ class MonitorDaemon:
         discharge event, not two separate events. Only clear buffer after 60s confirmed OL.
         """
         event_type = self.current_metrics.event_type
-        previous_event = self.event_classifier.previous_event_type
+        previous_event = self.current_metrics.previous_event_type
 
         # Handle cooldown state transitions
         if event_type not in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):

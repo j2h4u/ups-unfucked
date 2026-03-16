@@ -19,10 +19,10 @@ class TestVirtualUPSWriting:
     """Tests for virtual UPS tmpfs writing infrastructure (VUPS-01, VUPS-02)."""
 
     def test_write_to_tmpfs(self):
-        """Test VUPS-01: Metrics written atomically to /dev/shm/ups-virtual.dev.
+        """Test VUPS-01: Metrics written atomically to /run/ups-battery-monitor/ups-virtual.dev.
 
         Validates:
-        - File is created in tmpfs (/dev/shm)
+        - File is created in tmpfs (/run/ups-battery-monitor)
         - Atomic write pattern prevents partial files on crash
         - All metrics from input dict appear in output
         - File is readable after write
@@ -272,8 +272,8 @@ class TestNUTFormatCompliance:
             "input.voltage": "230",
         }
 
-        # Act: Write to /dev/shm/ups-virtual.dev (real write)
-        with tempfile.TemporaryDirectory(dir="/dev/shm", prefix="ups_test_") as tmpdir:
+        # Act: Write to tmpfs (real write)
+        with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             virtual_ups_path = Path(tmpdir) / "ups-virtual.dev"
 
             # Patch the path inside write_virtual_ups_dev to use test location

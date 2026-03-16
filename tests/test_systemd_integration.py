@@ -94,10 +94,10 @@ def test_service_file_unit_section_required_fields():
     assert "UPS" in unit["Description"] or "Battery" in unit["Description"], \
         "Description should mention UPS or Battery"
 
-    # After must include sysinit.target (ensures /dev/shm available)
+    # After must include sysinit.target (ensures /run tmpfs is available)
     assert "After" in unit, "After directive missing"
     assert "sysinit.target" in unit["After"], \
-        "sysinit.target not in After (tmpfs /dev/shm dependency missing)"
+        "sysinit.target not in After (tmpfs /run dependency missing)"
 
     # After must include nut-server.service
     assert "nut-server.service" in unit["After"], \

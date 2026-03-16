@@ -6,9 +6,9 @@
 
 I bought a CyberPower UT850EG. Plugged it in. The firmware said 22 minutes of runtime. During a real blackout, it ran for **47 minutes**. The charge indicator hit 0% with **12 minutes of actual runtime left**. The numbers were fiction.
 
-Turns out, building an accurate electrochemical battery model used to require a battery chemistry background, six months buried in textbooks, or expensive expert consultations. Now it's a weekend. This daemon was written in **one day** — an LLM-assisted sprint from "this is bullshit" to a physics-based monitoring system with 212 tests and three rounds of expert review.
+Turns out, building an accurate electrochemical battery model used to require a battery chemistry background, six months buried in textbooks, or expensive expert consultations. Now it's a weekend. This daemon was written in **one day** — an LLM-assisted sprint from "this is bullshit" to a physics-based monitoring system with 291 tests and three rounds of expert review.
 
-It sits between your UPS and [NUT](https://networkupstools.org/), replacing firmware guesswork with a real electrochemical model — Peukert's law, IR compensation, voltage-SoC lookup tables, adaptive EMA filtering, trapezoidal integration for SoH, Bayesian prior-posterior blending for degradation tracking, linear regression for replacement prediction. The model isn't static: every blackout, every test, every 60-second power flicker feeds measured data back into the model. It auto-calibrates continuously, getting more accurate the longer it runs. After a few weeks of real-world events, the generic VRLA curve is replaced entirely by *your* battery's actual discharge characteristics.
+It sits between your UPS and [NUT](https://networkupstools.org/), replacing firmware guesswork with a real electrochemical model — Peukert's law, IR compensation, voltage-SoC lookup tables, adaptive EMA filtering, trapezoidal integration for SoH, Bayesian prior-posterior blending for degradation tracking, linear regression for replacement prediction. Since v2.0, it also measures actual battery capacity from deep discharge events using coulomb counting with voltage anchoring, replacing the rated label value with a measured estimate and recalibrating SoH against real capacity. The model isn't static: every blackout, every test, every 60-second power flicker feeds measured data back into the model. It auto-calibrates continuously, getting more accurate the longer it runs. After a few weeks of real-world events, the generic VRLA curve is replaced entirely by *your* battery's actual discharge characteristics.
 
 This gives you the telemetry that only $2,000+ rack-mount units (APC Smart-UPS, Eaton 9PX) provide — from hardware that costs less than a pizza.
 
@@ -40,6 +40,9 @@ Enterprise-equivalent metrics, computed from physics — no special hardware req
 | **Cumulative on-battery time** | Sum of discharge durations | Eaton on-battery timer |
 | **Battery age** | Install date tracking | APC `battery.date` |
 | **Low battery flag** | Physics-based, configurable threshold | Firmware fixed threshold |
+| **Measured capacity** | Coulomb counting + voltage anchor from deep discharges | APC `upsAdvBatteryCapacity` |
+| **Capacity confidence** | CoV-based convergence (3+ samples, CoV<10%) | *(not available)* |
+| **New battery detection** | >10% capacity jump post-discharge | APC `upsAdvBatteryReplaceIndicator` |
 
 All metrics self-calibrate. Every blackout — even a 60-second flicker — teaches the model your battery's real characteristics.
 
@@ -52,6 +55,7 @@ The daemon polls NUT every 10 seconds. Raw voltage and load pass through:
 3. **Voltage→SoC lookup** — maps compensated voltage to state of charge via a self-updating LUT
 4. **Peukert runtime** — physics-based runtime prediction accounting for non-linear discharge at higher currents
 5. **SoH tracking** — compares each discharge curve area against the reference to track degradation
+6. **Capacity estimation** — coulomb counting from deep discharges, voltage-anchored, with CoV-based convergence
 
 Results are published through a virtual NUT device. Your existing tools (upsmon, Grafana, MOTD scripts) see the virtual UPS — no downstream changes needed.
 
@@ -120,7 +124,7 @@ Everything else is either hardcoded or stored in `model.json` and auto-calibrate
 
 - [x] **v1.1 — Expert panel hardening.** Three rounds of expert review (electrochemist, statistician, embedded systems engineer) identified edge cases in short-discharge bias, mutable state risks, and SSD write amplification. Fixes: frozen dataclasses, batched calibration writes (60x fewer disk ops), full integration test suite, extensible EMA filter architecture. The math didn't change — the engineering around it got serious.
 
-- [ ] **v2.0 — Measured capacity.** The label on your battery says 7.2Ah. Is that true? After a year of float charging at 35°C, probably not. This milestone measures actual capacity from real discharge events using coulomb counting (current × time integration), cross-validated against the voltage curve. Three deep discharges are enough to converge. Includes extracting all battery math into a pure-function kernel with a year-long simulation harness that proves the formula system doesn't diverge — because when five interdependent equations feed each other's outputs across months of operation, you want mathematical proof, not hope.
+- [x] **v2.0 — Measured capacity.** The label on your battery says 7.2Ah. Is that true? After a year of float charging at 35°C, probably not. This milestone measures actual capacity from real discharge events using coulomb counting (current × time integration), cross-validated against the voltage curve. Three deep discharges are enough to converge. SoH recalibrates against measured capacity instead of rated, with baseline versioning so old and new battery data never mix. All battery math extracted into a pure-function kernel (`src/battery_math/`) with a year-long simulation harness that proves the formula system doesn't diverge — because when five interdependent equations feed each other's outputs across months of operation, you want mathematical proof, not hope. 291 tests.
 
 - [ ] **v3.0 — Active battery care.** Right now the daemon watches your battery die and reports on the process. This milestone makes it fight back. Lead-acid batteries suffer from sulfation — crystal buildup on the plates that slowly kills capacity. Periodic deep discharges break up these crystals, but too many cycles wear the battery out. The daemon will model sulfation rate (temperature-dependent), track desulfation from natural blackouts, and schedule deep discharge tests only when the math says the benefit outweighs the wear. One metric — cycle ROI — answers: "will this discharge extend or shorten battery life?" The goal: stretch a $30 battery from 2.5 years to 4+.
 

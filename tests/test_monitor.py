@@ -824,16 +824,16 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
 
 # === HEALTH ENDPOINT TESTS (RED phase) ===
 
-def test_write_health_endpoint_creates_file(tmp_path):
+def test_write_health_endpoint_creates_file(tmp_path, monkeypatch):
     """Verify health.json is created with correct structure."""
     from src.monitor import _write_health_endpoint
+    import src.monitor
 
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     _write_health_endpoint(soc_percent=87.5, is_online=True)
 
-    health_path = Path("/dev/shm/ups-health.json")
     assert health_path.exists(), "health.json not created"
 
     import json
@@ -847,19 +847,18 @@ def test_write_health_endpoint_creates_file(tmp_path):
     assert "daemon_version" in data
     assert "poll_latency_ms" in data
 
-    # Cleanup
-    health_path.unlink(missing_ok=True)
 
-
-def test_health_endpoint_timestamp_format(tmp_path):
+def test_health_endpoint_timestamp_format(tmp_path, monkeypatch):
     """Verify last_poll is ISO8601 UTC format."""
     from src.monitor import _write_health_endpoint
     from datetime import datetime
-    from pathlib import Path
+    import src.monitor
+
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     _write_health_endpoint(soc_percent=50.0, is_online=False)
 
-    health_path = Path("/dev/shm/ups-health.json")
     import json
     with open(health_path) as f:
         data = json.load(f)
@@ -869,22 +868,21 @@ def test_health_endpoint_timestamp_format(tmp_path):
     assert last_poll_dt.tzinfo is not None, "Timestamp must be timezone-aware"
     assert data["last_poll"].endswith("Z") or data["last_poll"].endswith("+00:00"), "ISO8601 UTC should end with 'Z' or '+00:00'"
 
-    # Cleanup
-    health_path.unlink(missing_ok=True)
 
-
-def test_health_endpoint_unix_timestamp(tmp_path):
+def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
     """Verify last_poll_unix is valid Unix epoch."""
     from src.monitor import _write_health_endpoint
     import time
     import json
-    from pathlib import Path
+    import src.monitor
+
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     before = int(time.time())
     _write_health_endpoint(soc_percent=75.0, is_online=True)
     after = int(time.time())
 
-    health_path = Path("/dev/shm/ups-health.json")
     with open(health_path) as f:
         data = json.load(f)
 
@@ -892,37 +890,35 @@ def test_health_endpoint_unix_timestamp(tmp_path):
     assert isinstance(unix_ts, int)
     assert before <= unix_ts <= after
 
-    # Cleanup
-    health_path.unlink(missing_ok=True)
 
-
-def test_health_endpoint_soc_precision(tmp_path):
+def test_health_endpoint_soc_precision(tmp_path, monkeypatch):
     """Verify SoC rounded to 1 decimal place."""
     from src.monitor import _write_health_endpoint
     import json
-    from pathlib import Path
+    import src.monitor
+
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     _write_health_endpoint(soc_percent=87.5432, is_online=True)
 
-    health_path = Path("/dev/shm/ups-health.json")
     with open(health_path) as f:
         data = json.load(f)
 
     assert data["current_soc_percent"] == 87.5
 
-    # Cleanup
-    health_path.unlink(missing_ok=True)
 
-
-def test_health_endpoint_online_status(tmp_path):
+def test_health_endpoint_online_status(tmp_path, monkeypatch):
     """Verify online status reflects UPS state."""
     from src.monitor import _write_health_endpoint
     import json
-    from pathlib import Path
+    import src.monitor
+
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # Test OL state
     _write_health_endpoint(soc_percent=100.0, is_online=True)
-    health_path = Path("/dev/shm/ups-health.json")
     with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is True
@@ -933,42 +929,36 @@ def test_health_endpoint_online_status(tmp_path):
         data = json.load(f)
     assert data["online"] is False
 
-    # Cleanup
-    health_path.unlink(missing_ok=True)
 
-    # Cleanup
-    health_path.unlink(missing_ok=True)
-
-
-def test_health_endpoint_version(tmp_path):
+def test_health_endpoint_version(tmp_path, monkeypatch):
     """Verify daemon_version is dynamically loaded from package metadata."""
     from src.monitor import _write_health_endpoint
     from unittest.mock import patch
     import json
-    from pathlib import Path
+    import src.monitor
+
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # Mock importlib.metadata.version to return "1.1"
     with patch('importlib.metadata.version', return_value='1.1'):
         _write_health_endpoint(soc_percent=50.0, is_online=True)
 
-        health_path = Path("/dev/shm/ups-health.json")
         with open(health_path) as f:
             data = json.load(f)
 
         assert data["daemon_version"] == "1.1"
 
-        # Cleanup
-        health_path.unlink(missing_ok=True)
 
-
-def test_health_endpoint_updates_on_successive_calls(tmp_path):
+def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     """Verify file is replaced (not appended) on each call."""
     from src.monitor import _write_health_endpoint
     import time
     import json
-    from pathlib import Path
+    import src.monitor
 
-    health_path = Path("/dev/shm/ups-health.json")
+    health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # First write
     _write_health_endpoint(soc_percent=100.0, is_online=True)
@@ -988,9 +978,6 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path):
     # Verify latest data is present
     assert data["current_soc_percent"] == 50.0
     assert data["online"] is False
-
-    # Cleanup
-    health_path.unlink(missing_ok=True)
 
 
 # === RUN() LOOP TESTS (P1-4) ===
@@ -1790,42 +1777,28 @@ def test_journald_baseline_lock_event(make_daemon):
         assert len(baseline_lock_calls_2) == 0, "baseline_lock should not be logged twice (deduplication flag failed)"
 
 
-def test_health_endpoint_capacity_fields(tmp_path):
+def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
     """Phase 14 Plan 03 Task 2: Verify health endpoint includes all capacity fields.
 
     RPT-03 - Health endpoint exposes capacity metrics for Grafana scraping.
     """
     import json
-    from unittest.mock import patch
     from src.monitor import _write_health_endpoint
+    import src.monitor
 
-    # Mock /dev/shm path to tmpdir for testing
     test_health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    # Patch the health_path in _write_health_endpoint
-    with patch('src.monitor.Path') as mock_path_class:
-        # When Path("/dev/shm/ups-health.json") is called, return our test path
-        def path_side_effect(x):
-            if str(x) == "/dev/shm/ups-health.json":
-                return test_health_path
-            return __import__('pathlib').Path(x)
-
-        mock_path_class.side_effect = path_side_effect
-
-        # Also patch the parent directory logic
-        test_health_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Call with capacity metrics
-        _write_health_endpoint(
-            soc_percent=87.5,
-            is_online=True,
-            poll_latency_ms=45.2,
-            capacity_ah_measured=6.95,
-            capacity_ah_rated=7.2,
-            capacity_confidence=0.92,
-            capacity_samples_count=3,
-            capacity_converged=True
-        )
+    _write_health_endpoint(
+        soc_percent=87.5,
+        is_online=True,
+        poll_latency_ms=45.2,
+        capacity_ah_measured=6.95,
+        capacity_ah_rated=7.2,
+        capacity_confidence=0.92,
+        capacity_samples_count=3,
+        capacity_converged=True
+    )
 
     # Verify file written
     assert test_health_path.exists(), "Health endpoint file not created"
@@ -1854,59 +1827,40 @@ def test_health_endpoint_capacity_fields(tmp_path):
     assert 'current_soc_percent' in data, "current_soc_percent missing"
 
 
-def test_health_endpoint_convergence_flag(tmp_path):
+def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
     """Phase 14 Plan 03 Task 2: Verify convergence flag state matches input.
 
     RPT-03 - Health endpoint reflects convergence status accurately.
     """
     import json
-    from unittest.mock import patch
     from src.monitor import _write_health_endpoint
+    import src.monitor
 
-    # Mock /dev/shm path to tmpdir for testing
     test_health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    # Patch the health_path
-    with patch('src.monitor.Path') as mock_path_class:
-        def path_side_effect(x):
-            if str(x) == "/dev/shm/ups-health.json":
-                return test_health_path
-            return __import__('pathlib').Path(x)
-
-        mock_path_class.side_effect = path_side_effect
-        test_health_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Case A: Not converged (0 samples, no convergence)
-        _write_health_endpoint(
-            soc_percent=50.0,
-            is_online=False,
-            capacity_converged=False,
-            capacity_samples_count=0,
-            capacity_confidence=0.0
-        )
+    # Case A: Not converged (0 samples, no convergence)
+    _write_health_endpoint(
+        soc_percent=50.0,
+        is_online=False,
+        capacity_converged=False,
+        capacity_samples_count=0,
+        capacity_confidence=0.0
+    )
 
     data_a = json.loads(test_health_path.read_text())
     assert data_a['capacity_converged'] is False, "Case A: expected not converged"
     assert data_a['capacity_samples_count'] == 0, "Case A: expected 0 samples"
 
     # Case B: Converged (3 samples, high confidence)
-    test_health_path.unlink(missing_ok=True)
-    with patch('src.monitor.Path') as mock_path_class:
-        def path_side_effect(x):
-            if str(x) == "/dev/shm/ups-health.json":
-                return test_health_path
-            return __import__('pathlib').Path(x)
-
-        mock_path_class.side_effect = path_side_effect
-
-        _write_health_endpoint(
-            soc_percent=50.0,
-            is_online=False,
-            capacity_converged=True,
-            capacity_samples_count=3,
-            capacity_confidence=0.92,
-            capacity_ah_measured=6.95
-        )
+    _write_health_endpoint(
+        soc_percent=50.0,
+        is_online=False,
+        capacity_converged=True,
+        capacity_samples_count=3,
+        capacity_confidence=0.92,
+        capacity_ah_measured=6.95
+    )
 
     data_b = json.loads(test_health_path.read_text())
     assert data_b['capacity_converged'] is True, "Case B: expected converged"
@@ -1914,33 +1868,23 @@ def test_health_endpoint_convergence_flag(tmp_path):
     assert data_b['capacity_confidence'] == 0.92, "Case B: expected confidence 0.92"
 
 
-def test_health_endpoint_null_capacity_measured(tmp_path):
+def test_health_endpoint_null_capacity_measured(tmp_path, monkeypatch):
     """Phase 14 Plan 03 Task 2: Verify capacity_ah_measured is null when not measured.
 
     Edge case: capacity_ah_measured should be null in JSON, not 0.0.
     """
     import json
-    from unittest.mock import patch
     from src.monitor import _write_health_endpoint
+    import src.monitor
 
-    # Mock /dev/shm path
     test_health_path = tmp_path / "ups-health.json"
+    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    with patch('src.monitor.Path') as mock_path_class:
-        def path_side_effect(x):
-            if str(x) == "/dev/shm/ups-health.json":
-                return test_health_path
-            return __import__('pathlib').Path(x)
-
-        mock_path_class.side_effect = path_side_effect
-        test_health_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Call with None capacity_ah_measured
-        _write_health_endpoint(
-            soc_percent=75.0,
-            is_online=True,
-            capacity_ah_measured=None
-        )
+    _write_health_endpoint(
+        soc_percent=75.0,
+        is_online=True,
+        capacity_ah_measured=None
+    )
 
     data = json.loads(test_health_path.read_text())
     assert data['capacity_ah_measured'] is None, "capacity_ah_measured should be null, not 0.0"

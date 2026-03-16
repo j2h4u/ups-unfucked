@@ -1,6 +1,6 @@
 """Virtual UPS module for tmpfs-based atomic metric writing and NUT format compliance.
 
-Phase 3 infrastructure: Writes metrics to /dev/shm/ups-virtual.dev in NUT format
+Phase 3 infrastructure: Writes metrics to /run/ups-battery-monitor/ups-virtual.dev in NUT format
 without SSD wear. Enables transparent data source switching for monitoring tools
 (upsmon, Grafana) by providing a virtual UPS device that reports calculated values.
 
@@ -23,9 +23,9 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
     """
     Atomically write virtual UPS metrics to tmpfs in NUT format.
 
-    Writes to /dev/shm/ups-virtual.dev using atomic pattern (tempfile + fsync + rename)
-    to prevent partial writes on crash or power loss. Uses same tmpfs mount for safety
-    and performance (no SSD wear).
+    Writes to /run/ups-battery-monitor/ups-virtual.dev using atomic pattern
+    (tempfile + fsync + rename) to prevent partial writes on crash or power loss.
+    Uses tmpfs (/run) for safety and performance (no SSD wear).
 
     Args:
         metrics: Dict of {field_name: value} to write to virtual UPS
@@ -35,13 +35,13 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
 
     Raises:
         IOError: If write, fsync, or atomic rename fails
-        OSError: If /dev/shm is unavailable or permissions insufficient
+        OSError: If /run/ups-battery-monitor is unavailable or permissions insufficient
 
     Logging:
         - Success: "Virtual UPS metrics written at {timestamp}"
         - Error: "Failed to write virtual UPS metrics: {e}"
     """
-    virtual_ups_path = Path("/dev/shm/ups-virtual.dev")
+    virtual_ups_path = Path("/run/ups-battery-monitor/ups-virtual.dev")
     tmp_path = None
 
     try:
