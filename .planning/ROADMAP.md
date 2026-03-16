@@ -35,7 +35,7 @@
 <summary>🚀 v2.0 Actual Capacity Estimation (Phases 12-14)</summary>
 
 - [x] **Phase 12: Deep Discharge Capacity Estimation** — Coulomb counting + voltage anchor + confidence tracking (4/4 plans + 1 inserted) — completed 2026-03-16
-- [ ] **Phase 13: SoH Recalibration & New Battery Detection** — Separates capacity from degradation; enables new battery baseline detection
+- [ ] **Phase 13: SoH Recalibration & New Battery Detection** — Separates capacity from degradation; enables new battery baseline detection (2 plans)
 - [ ] **Phase 14: Capacity Reporting & Metrics** — MOTD display, journald logging, Grafana scraping for capacity metrics
 
 </details>
@@ -76,51 +76,6 @@
 
 **Requirements:** VAL-01, VAL-02 (stability validation prerequisites)
 
-**Success Criteria** (what must be TRUE for users when complete):
-
-*Wave 1 — Math Kernel Package:*
-1. `src/battery_math/` package exists with focused modules: `peukert.py` (runtime formulas, stable physics), `soh.py` (SoH calculation, evolving statistics), `soc.py` (voltage→SoC interpolation), `calibration.py` (Peukert calibration, extracted from monitor.py), `capacity.py` (placeholder for Phase 12), `types.py` (frozen BatteryState dataclass). Re-exports via `__init__.py` — callers use single import path.
-2. `types.py` defines `BatteryState(frozen=True)` dataclass: `soh`, `peukert_exponent`, `capacity_ah_rated`, `capacity_ah_measured`, `lut` (as immutable tuple), `cycle_count`, `cumulative_on_battery_sec`. Every kernel function takes/returns frozen BatteryState — circular dependencies become structurally visible at type level.
-3. Each function is pure: all inputs as arguments, returns result, no access to model/self/globals, no I/O, no logging — only `math`/`statistics` stdlib. `_weighted_average_by_voltage` gets `current_time: float = None` parameter (defaults to `time.time()`) instead of calling `time.time()` internally — enables simulation without mocking.
-4. `_auto_calibrate_peukert()` in monitor.py refactored: math extracted to `battery_math.calibrate_peukert(actual_duration_sec, avg_load_percent, current_soh, capacity_ah, current_exponent, ...) → float | None`. Guard clauses (< 2 samples, < 60s, invalid load) stay in monitor.py — they're about data availability, not math. Monitor.py applies result and handles logging/persistence (orchestrator pattern).
-5. `interpolate_cliff_region` becomes pure `lut → lut` transform in kernel. Orchestrator calls it and writes result to model.
-6. All existing tests pass after extraction (zero behavior change, pure refactor). Call ordering within `_update_battery_health` preserved exactly (SoH → Peukert, not reversed).
-
-*Wave 2 — Simulation Harness:*
-7. `tests/test_year_simulation.py` exists: configurable year simulation (blackout frequency 1-5/week, depth distribution uniform/bimodal, load profile 10-40%, battery degradation rate 1-3%/month) runs full formula chain through 365 days of synthetic events in < 30 seconds.
-8. Simulation uses `battery_math` functions directly — no MonitorDaemon, no model.json, no I/O. State is a `BatteryState` frozen dataclass passed through pure functions, new state returned after each discharge event.
-9. Simulation runs with 5 different random seeds; results at same iteration count agree within 1%. If not — noise model dominates signal and must be tuned before stability tests are meaningful.
-
-*Wave 3 — Stability Tests:*
-10. Fixed-point convergence: 20 identical discharges → SoH, Peukert, capacity all converge (range over last 5 < 1% of mean).
-11. Per-iteration Lyapunov stability: ±1% capacity_ah perturbation → compute `divergence[i] / divergence[i-1]` for each step → ratio < 1.0 for all iterations after warmup period (first 3). This is the primary stability gate. Secondary smoke test: aggregate divergence after 10 iterations < ±3%.
-12. Permutation test: 10 discharge events of varying depth (20%, 40%, 60%, 80%) run in 5 random orderings → final state (SoH, Peukert) agrees within ±2% regardless of ordering. Catches path-dependent bias in Bayesian SoH blending.
-13. Year simulation invariants: SoH ∈ [0.60, 1.0], Peukert ∈ [1.0, 1.4], no parameter oscillation (max-min over last 10 iterations < 5% of mean).
-14. Degradation scenario: battery degrades 2%/month for 12 months → SoH reaches ~0.76, Peukert drifts < 0.05, no divergence.
-
-*Wave 4 — Orchestrator Wiring Tests:*
-15. 3+ orchestrator-level tests that verify monitor.py passes correct arguments to kernel functions: (a) `capacity_ah` passed to SoH calculator is `full_capacity_ah_ref` (rated), never measured; (b) `avg_load` passed to Peukert calibration is discharge-average, not current poll value; (c) `calibrate_peukert` result applied to model only when non-None.
-16. Call-order test: assert SoH updates *before* Peukert calibration within `_update_battery_health` (the new SoH feeds into `current_soh` parameter of calibration — reversing order changes math).
-17. Systemd watchdog survival: daemon runs 10 poll cycles under systemd after refactoring without watchdog kill.
-
-*Wave 5 — Adversarial Simulation Scenarios (from Panel 3: QA):*
-18. Flicker storm: 20 × 3-second OB/OL transitions in 1 hour → assert SoH unchanged (weight too low to matter), cycle_count increments correctly, SoH history not polluted with noise entries.
-19. Interrupted discharge: 300s OB → 5s OL → 295s OB → assert combined capacity estimate within ±5% of single 600s discharge. Tests discharge cooldown logic (60s OL threshold before clearing buffer).
-20. Voltage spike: one poll at 8.5V during normal OB discharge → LUT not corrupted, sample skipped. Tests tightened discharge-mode voltage floor (10.0V during OB).
-21. Stale ADC: 50 seconds of identical 12.4V readings during OB → SoH not inflated, discharge flagged as suspect.
-22. NTP timestamp jump: timestamp decreases by 2 seconds mid-discharge → integration handles gracefully (skip negative dt intervals).
-
-*Wave 6 — Lifecycle & Instrument Scenarios (from Panel 3: Battery Expert + Metrologist):*
-23. Cliff-edge degradation: months 1-24 at 1.5%/month, months 25-30 at 5%/month, months 31-33 at 15%/month → assert model SoH tracks true SoH within ±15% at all times. **Expected: may fail with current Bayesian blending params** — that's a documented finding, not a bug to fix in this phase. Log result to STATE.md.
-24. Sulfation recovery: after 4 weeks without discharge, battery recovers 3% capacity → SoH increases smoothly from 0.85 to ~0.88, no guards triggered, no clamping artifacts.
-25. Seasonal thermal variation: "summer months" have 3% lower true capacity than "winter months" → convergence_score still works (seasonal variation within CoV < 10%), capacity estimates reflect seasonal pattern without divergence.
-26. Instrument characterization: same synthetic discharge fed through two paths — (a) raw values, (b) values quantized to 0.1V/1% load then EMA-filtered → compare SoH and capacity deltas. Documents systematic instrument bias. If SoH delta > 3%, add note to STATE.md.
-
-*Wave 5-6 Orchestrator Fixes (zero behavior change for existing tests):*
-27. Discharge buffer stores raw `ups.load` instead of EMA-filtered load (monitor.py line 676). One-line change — improves coulomb counting accuracy for variable-load discharges.
-28. Minimum 30s discharge for SoH update: kernel `calculate_soh` returns None for duration < 30s. Orchestrator skips SoH update but still increments cycle_count and cumulative_on_battery_sec. Prevents flicker-storm pollution of SoH history.
-29. Discharge cooldown: 60s OL before clearing discharge buffer. If OB→OL→OB within 60s, treat as continuation of same discharge event. Orchestrator-level change only.
-
 **Plans:** 6/6 plans complete
 
 ---
@@ -136,11 +91,14 @@
 **Success Criteria** (what must be TRUE for users when complete):
 1. SoH formula normalizes against measured capacity instead of rated when available, separating aging from capacity loss
 2. SoH history entries tag their capacity_ah_ref baseline; regression model for replacement date ignores entries from different baselines (no mixing old vs. new battery data)
-3. On startup, daemon detects new battery by comparing stored capacity estimate to current discharge runtime estimate; if difference >10%, prompts user with "New battery installed? [y/n]"
-4. When user confirms new battery, baseline resets; daemon logs "New battery event: capacity_ref reset from X.XAh to current discharge measurement" with timestamp
-5. MOTD clearly shows SoH recalibration event with before/after values and explanation that aging clock has been reset
+3. Post-discharge, daemon detects new battery by comparing measured capacity to stored baseline; if difference >10%, sets new_battery_detected flag
+4. When user confirms new battery via `--new-battery` flag, baseline resets; daemon logs "New battery event: capacity_ref reset from X.XAh to Y.YAh" with timestamp
+5. MOTD clearly shows new battery detection alert and SoH recalibration event
 
-**Plans:** TBD
+**Plans:**
+2 plans ready for execution
+- [ ] 13-01 — SoH formula normalization (SOH-01), history versioning (SOH-02), regression filtering (SOH-03)
+- [ ] 13-02 — New battery detection post-discharge (>10% threshold), baseline reset on CLI flag, MOTD alert
 
 ---
 
@@ -178,11 +136,11 @@
 | 9. Test Coverage | v1.1 | 3/3 | Complete | 2026-03-14 |
 | 10. Code Quality & Efficiency | v1.1 | 2/2 | Complete | 2026-03-14 |
 | 11. Polish & Future Prep | v1.1 | 3/3 | Complete | 2026-03-14 |
-| 12.1 Math Kernel & Stability Tests | v2.0 | 5/6 | Complete    | 2026-03-16 |
+| 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete    | 2026-03-16 |
 | 12. Deep Discharge Capacity Estimation | v2.0 | 4/4 | Complete    | 2026-03-16 |
-| 13. SoH Recalibration & New Battery | v2.0 | 0/TBD | Not started | — |
+| 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Planning    | — |
 | 14. Capacity Reporting & Metrics | v2.0 | 0/TBD | Not started | — |
 
 ---
 
-*Roadmap updated: 2026-03-16 after Phase 12 Plan 04 completion and verification*
+*Roadmap updated: 2026-03-16 after Phase 13 plan creation*
