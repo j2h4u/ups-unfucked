@@ -32,32 +32,29 @@ class TestEMAConvergence:
 
 
 class TestStabilizationGate:
-    """Test stabilized property — requires 12 samples (2 min at default rate)."""
+    """Test stabilized property — requires elapsed time >= window_sec."""
 
-    def test_stabilization_false_before_12_samples(self):
-        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
-        fill_samples(buf, 11)
-        assert buf.stabilized is False
-
-    def test_stabilization_true_at_12_samples(self):
-        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
-        for i in range(12):
-            buf.add_sample(12.0 + i * 0.05, 50.0)
-        assert buf.stabilized is True
-
-    def test_stabilization_remains_true(self):
+    def test_stabilization_false_before_window(self):
         buf = EMAFilter(window_sec=120, poll_interval_sec=10)
         fill_samples(buf, 20)
-        assert buf.stabilized is True
-
-    def test_stabilization_adapts_to_window(self):
-        """With larger window/poll ratio, min_samples = window/poll if > 12."""
-        buf = EMAFilter(window_sec=200, poll_interval_sec=10)
-        fill_samples(buf, 19)
+        # Samples added instantly — no real time elapsed
         assert buf.stabilized is False
 
+    def test_stabilization_true_after_window(self, monkeypatch):
+        """Stabilized after window_sec of real time has elapsed."""
+        import time as time_mod
+        t0 = time_mod.monotonic()
+        monkeypatch.setattr(time_mod, 'monotonic', lambda: t0 + 121)
+        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
+        # Fake that first sample was 121s ago
+        buf.voltage_ema._first_sample_time = t0
+        buf.load_ema._first_sample_time = t0
         buf.add_sample(12.0, 50.0)
         assert buf.stabilized is True
+
+    def test_stabilization_false_without_samples(self):
+        buf = EMAFilter(window_sec=120, poll_interval_sec=10)
+        assert buf.stabilized is False
 
 
 class TestEMAAlphaFactor:
@@ -97,13 +94,14 @@ class TestEMAProperties:
         assert buf.load is None
         assert buf.stabilized is False
 
-    def test_samples_since_init_counter(self):
+    def test_first_sample_time_tracked(self):
         buf = EMAFilter()
-        assert buf.voltage_ema.samples_since_init == 0
+        assert buf.voltage_ema._first_sample_time is None
         buf.add_sample(12.0, 50.0)
-        assert buf.voltage_ema.samples_since_init == 1
+        assert buf.voltage_ema._first_sample_time is not None
+        first = buf.voltage_ema._first_sample_time
         buf.add_sample(12.1, 51.0)
-        assert buf.voltage_ema.samples_since_init == 2
+        assert buf.voltage_ema._first_sample_time == first  # doesn't change
 
 
 class TestAdaptiveAlpha:
@@ -149,13 +147,13 @@ class TestMetricEMA:
         ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
         assert ema.metric_name == "voltage"
         assert ema.value is None
-        assert ema.samples_since_init == 0
+        assert ema._first_sample_time is None
 
         # After first update
         val = ema.update(12.5)
         assert abs(val - 12.5) < 0.01
         assert ema.value == val
-        assert ema.samples_since_init == 1
+        assert ema._first_sample_time is not None
 
     def test_metric_ema_multiple_independent(self):
         """Multiple MetricEMA instances track voltage, load, temperature independently."""
@@ -177,16 +175,18 @@ class TestMetricEMA:
         assert load_ema.metric_name == "load"
         assert temp_ema.metric_name == "temperature"
 
-    def test_metric_ema_stabilized_flag(self):
-        """MetricEMA.stabilized false for < min_samples, true after."""
+    def test_metric_ema_stabilized_flag(self, monkeypatch):
+        """MetricEMA.stabilized is time-based, not sample-count."""
+        import time as time_mod
+        t0 = time_mod.monotonic()
+
         ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
         assert ema.stabilized is False
 
-        # Add 11 samples (< 12)
-        for _ in range(11):
-            ema.update(12.0)
+        ema.update(12.0)
+        # Just started — not stabilized
         assert ema.stabilized is False
 
-        # Add 12th sample
-        ema.update(12.0)
+        # Simulate 121s elapsed
+        monkeypatch.setattr(time_mod, 'monotonic', lambda: t0 + 121)
         assert ema.stabilized is True

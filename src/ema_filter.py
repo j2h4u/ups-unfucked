@@ -1,4 +1,5 @@
 import math
+import time
 from typing import Optional
 
 
@@ -27,15 +28,15 @@ class MetricEMA:
 
         # Base α = 1 - exp(-Δt/τ), used when signal is stable
         self.alpha = 1 - math.exp(-poll_interval_sec / window_sec)
-        self._min_samples = max(12, int(window_sec / poll_interval_sec))
 
         # EMA state
         self.ema_value: Optional[float] = None
-        self.samples_since_init = 0
+        self._first_sample_time: Optional[float] = None
 
     def update(self, new_value: float) -> float:
         """Update EMA with new value; return smoothed value."""
-        self.samples_since_init += 1
+        if self._first_sample_time is None:
+            self._first_sample_time = time.monotonic()
         self.ema_value = self._update_ema(new_value, self.ema_value)
         return self.ema_value
 
@@ -60,8 +61,10 @@ class MetricEMA:
 
     @property
     def stabilized(self) -> bool:
-        """True if EMA has settled (≥12 readings, ~2 min at default poll rate)."""
-        return self.samples_since_init >= self._min_samples
+        """True if enough real time has elapsed for EMA to converge (≥ window_sec)."""
+        if self._first_sample_time is None:
+            return False
+        return (time.monotonic() - self._first_sample_time) >= self.window_sec
 
     @property
     def value(self) -> Optional[float]:
@@ -94,7 +97,6 @@ class EMAFilter:
 
         # Expose alpha for backward compatibility
         self.alpha = self.voltage_ema.alpha
-        self._min_samples = self.voltage_ema._min_samples
 
     def add_sample(self, voltage, load):
         """Add new voltage and load reading; update both EMA values."""

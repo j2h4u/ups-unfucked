@@ -1276,12 +1276,7 @@ class MonitorDaemon:
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
         sd_notify('WATCHDOG=1')
-        # Fast poll (1s) during sag measurement and EMA warmup; normal interval otherwise.
-        # EMA warmup: 12 samples needed. At 1s poll → stabilized in ~12s instead of ~120s.
-        if self.sag_state == SagState.MEASURING or not self.ema_buffer.stabilized:
-            time.sleep(1)
-        else:
-            time.sleep(self.config.polling_interval)
+        time.sleep(1 if self.sag_state == SagState.MEASURING else self.config.polling_interval)
 
     def run(self):
         """
