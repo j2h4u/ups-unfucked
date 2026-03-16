@@ -355,6 +355,9 @@ class MonitorDaemon:
 
         self.calibration_last_written_index = 0
 
+        # Phase 14: Track if baseline_lock event has been logged (prevent duplicates)
+        self.capacity_locked_previously = False
+
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -563,6 +566,7 @@ class MonitorDaemon:
 
         old_capacity = self.battery_model.data.get('capacity_ah_measured')
         old_soh = self.battery_model.data.get('soh', 1.0)
+        new_capacity = self.battery_model.get_capacity_ah()  # 7.2Ah (rated)
 
         # Clear capacity estimates (will rebuild from next deep discharge)
         self.battery_model.data['capacity_estimates'] = []
@@ -576,21 +580,31 @@ class MonitorDaemon:
         self.battery_model.add_soh_history_entry(
             date=today,
             soh=1.0,
-            capacity_ah_ref=self.battery_model.get_capacity_ah()  # 7.2Ah (rated, fresh baseline)
+            capacity_ah_ref=new_capacity  # 7.2Ah (rated, fresh baseline)
         )
 
         # Reset cycle counter to indicate new battery era
         self.battery_model.data['cycle_count'] = 0
 
-        # Log event
+        # Phase 14: Event 3 - baseline_reset: Structured journald logging
         if old_capacity is not None:
             logger.info(
-                f"New battery event: capacity reset from {old_capacity:.2f}Ah; "
-                f"aging clock reset; SoH baseline reset to 1.0 with capacity_ah_ref=7.2Ah"
+                f"baseline_reset: capacity baseline reset from {old_capacity:.2f}Ah to {new_capacity:.2f}Ah",
+                extra={
+                    'EVENT_TYPE': 'baseline_reset',
+                    'CAPACITY_AH_OLD': f'{old_capacity:.2f}',
+                    'CAPACITY_AH_NEW': f'{new_capacity:.2f}',
+                    'TIMESTAMP': datetime.now(timezone.utc).isoformat(),
+                }
             )
         else:
             logger.info(
-                f"New battery event: aging clock reset; SoH baseline reset to 1.0 with capacity_ah_ref=7.2Ah"
+                f"baseline_reset: capacity baseline initialized to {new_capacity:.2f}Ah (first reset)",
+                extra={
+                    'EVENT_TYPE': 'baseline_reset',
+                    'CAPACITY_AH_NEW': f'{new_capacity:.2f}',
+                    'TIMESTAMP': datetime.now(timezone.utc).isoformat(),
+                }
             )
 
         self.battery_model.save()
@@ -703,14 +717,61 @@ class MonitorDaemon:
             timestamp=timestamp
         )
 
-        # Log measurement
-        logger.info(f"Capacity measurement: {ah_estimate:.2f}Ah, confidence {confidence:.0%}, "
-                   f"{metadata.get('delta_soc_percent', 0):.1f}% ΔSoC")
+        # Phase 14: Event 1 - capacity_measurement: Structured journald logging
+        # Get convergence status to compute CoV and sample count
+        convergence_status = self.battery_model.get_convergence_status()
+        sample_count = convergence_status['sample_count']
 
+        # Compute CoV for human-readable message
+        estimates = self.battery_model.data.get('capacity_estimates', [])
+        ah_values = [e['ah_estimate'] for e in estimates]
+        if len(ah_values) >= 2:
+            mean_ah = sum(ah_values) / len(ah_values)
+            std_ah = (sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)) ** 0.5
+            cov = std_ah / mean_ah if mean_ah > 0 else 0.0
+        else:
+            std_ah = 0.0
+            cov = 0.0
+
+        confidence_pct = int(confidence * 100) if confidence else 0
+
+        # Extract metadata fields with safe defaults
+        delta_soc_percent = metadata.get('delta_soc_percent', 0.0)
+        duration_sec = metadata.get('duration_sec', 0)
+        load_avg_percent = metadata.get('load_avg_percent', 0.0)
+
+        logger.info(
+            f"capacity_measurement: {ah_estimate:.2f}Ah (±{std_ah:.2f}), CoV={cov:.3f} "
+            f"({sample_count} samples, {confidence_pct}% confidence)",
+            extra={
+                'EVENT_TYPE': 'capacity_measurement',
+                'CAPACITY_AH': f'{ah_estimate:.2f}',
+                'CONFIDENCE_PERCENT': str(confidence_pct),
+                'SAMPLE_COUNT': str(sample_count),
+                'DELTA_SOC_PERCENT': f'{delta_soc_percent:.1f}',
+                'DURATION_SEC': str(int(duration_sec)),
+                'LOAD_AVG_PERCENT': f'{load_avg_percent:.1f}',
+            }
+        )
+
+        # Phase 14: Event 2 - baseline_lock: When convergence detected
         # Check convergence: count >= 3 AND CoV < 0.10 (expert-approved)
         if self.capacity_estimator.has_converged():
             self.battery_model.data['capacity_converged'] = True
-            logger.info(f"Capacity converged: {ah_estimate:.2f}Ah (±10%)")
+
+            # Log baseline_lock event only once per convergence (use flag to deduplicate)
+            if not self.capacity_locked_previously:
+                logger.info(
+                    f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
+                    extra={
+                        'EVENT_TYPE': 'baseline_lock',
+                        'CAPACITY_AH': f'{convergence_status["latest_ah"]:.2f}',
+                        'SAMPLE_COUNT': str(convergence_status['sample_count']),
+                        'TIMESTAMP': datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                self.capacity_locked_previously = True
+
             _safe_save(self.battery_model)
 
         # Phase 13: NEW BATTERY DETECTION (post-discharge)
