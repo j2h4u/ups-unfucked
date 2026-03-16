@@ -817,3 +817,69 @@ class TestCapacityEstimates:
         assert estimate['confidence'] == 0.82
         assert estimate['metadata']['delta_soc_percent'] == 52.0
 
+    def test_get_convergence_status_empty_model(self, tmp_path):
+        """Test: get_convergence_status() returns zeros for empty model."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        status = model.get_convergence_status()
+        assert status['sample_count'] == 0
+        assert status['confidence_percent'] == 0.0
+        assert status['latest_ah'] is None
+        assert status['rated_ah'] == 7.2
+        assert status['converged'] is False
+        assert status['capacity_ah_ref'] is None
+
+    def test_get_convergence_status_two_measurements(self, tmp_path):
+        """Test: get_convergence_status() with 2 measurements (not converged)."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        model.add_capacity_estimate(
+            ah_estimate=7.0,
+            confidence=0.0,
+            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
+            timestamp='2026-03-16T10:00:00Z'
+        )
+        model.add_capacity_estimate(
+            ah_estimate=7.2,
+            confidence=0.0,
+            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
+            timestamp='2026-03-16T11:00:00Z'
+        )
+
+        status = model.get_convergence_status()
+        assert status['sample_count'] == 2
+        assert status['confidence_percent'] == 0.0  # < 3 samples = 0% confidence
+        assert status['latest_ah'] == 7.2
+        assert status['rated_ah'] == 7.2
+        assert status['converged'] is False  # Need >= 3 samples
+
+    def test_get_convergence_status_three_consistent_measurements(self, tmp_path):
+        """Test: get_convergence_status() with 3 consistent measurements (converged)."""
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        # Add 3 measurements with low variance (CoV < 0.10)
+        model.add_capacity_estimate(
+            ah_estimate=7.0,
+            confidence=0.0,
+            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
+            timestamp='2026-03-16T10:00:00Z'
+        )
+        model.add_capacity_estimate(
+            ah_estimate=7.2,
+            confidence=0.0,
+            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
+            timestamp='2026-03-16T11:00:00Z'
+        )
+        model.add_capacity_estimate(
+            ah_estimate=7.1,
+            confidence=0.86,
+            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
+            timestamp='2026-03-16T12:00:00Z'
+        )
+
+        status = model.get_convergence_status()
+        assert status['sample_count'] == 3
+        assert status['latest_ah'] == 7.1
+        assert status['rated_ah'] == 7.2
+        assert status['converged'] is True  # 3 samples + low CoV
+        assert status['confidence_percent'] > 80  # High confidence with consistent estimates

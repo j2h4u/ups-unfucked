@@ -379,6 +379,56 @@ class BatteryModel:
             return estimates[0]['ah_estimate']
         return None
 
+    def get_convergence_status(self) -> Dict[str, Any]:
+        """
+        Return convergence status for MOTD + reporting.
+
+        Computes coefficient of variation (CoV) from capacity estimates to track
+        measurement stability. Returns status dict for display and integration.
+
+        Returns:
+            {
+                'sample_count': int,  # Number of capacity measurements
+                'confidence_percent': float,  # 0–100%
+                'latest_ah': float | None,  # Latest measured capacity
+                'rated_ah': float,  # Firmware rated capacity (7.2 for UT850)
+                'converged': bool,  # True if count >= 3 AND CoV < 0.10
+                'capacity_ah_ref': float | None  # Reference capacity (for new battery detection, Phase 13)
+            }
+        """
+        estimates = self.data.get('capacity_estimates', [])
+
+        if not estimates:
+            return {
+                'sample_count': 0,
+                'confidence_percent': 0.0,
+                'latest_ah': None,
+                'rated_ah': 7.2,
+                'converged': False,
+                'capacity_ah_ref': None
+            }
+
+        # Compute CoV from all estimates
+        ah_values = [e['ah_estimate'] for e in estimates]
+        mean_ah = sum(ah_values) / len(ah_values)
+        variance = sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)
+        std_ah = variance ** 0.5
+        cov = std_ah / mean_ah if mean_ah > 0 else 1.0
+
+        # Confidence: 0.0 for < 3 measurements, else 1 - CoV clamped to [0, 1]
+        # (convergence_score = 1 - CoV; 0.0 for n<3 per design)
+        confidence = 0.0 if len(ah_values) < 3 else max(0.0, min(1.0, 1.0 - cov))
+
+        return {
+            'sample_count': len(estimates),
+            'confidence_percent': confidence * 100,
+            'latest_ah': ah_values[-1],
+            'rated_ah': 7.2,
+            'converged': len(estimates) >= 3 and cov < 0.10,
+            'capacity_ah_ref': self.data.get('capacity_ah_ref', None)
+        }
+
+
     def get_anchor_voltage(self):
         """Return anchor point voltage (physical cutoff, should always be 10.5V)."""
         lut = self.get_lut()
