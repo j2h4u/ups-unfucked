@@ -2,21 +2,21 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Actual Capacity Estimation
-current_plan: —
-status: roadmap_complete
-last_updated: "2026-03-15"
+current_plan: "12.1-01"
+status: in_progress
+last_updated: "2026-03-16"
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 9
+  completed_plans: 1
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-15 after v2.0 roadmap creation
-**Milestone:** v2.0 Actual Capacity Estimation — Roadmap complete
-**Current Position:** Ready for Phase 12 planning
+**Last Updated:** 2026-03-16 after Phase 12.1 Plan 01 completion
+**Milestone:** v2.0 Actual Capacity Estimation — Wave 1 complete
+**Current Position:** Phase 12.1 Wave 1 complete; ready for Wave 2 (simulation harness)
 
 ---
 
