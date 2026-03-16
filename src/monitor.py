@@ -187,7 +187,12 @@ except Exception:
 
 
 
-def _write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms: Optional[float] = None) -> None:
+def _write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms: Optional[float] = None,
+                           capacity_ah_measured: Optional[float] = None,
+                           capacity_ah_rated: float = 7.2,
+                           capacity_confidence: float = 0.0,
+                           capacity_samples_count: int = 0,
+                           capacity_converged: bool = False) -> None:
     """Write daemon health state to file for external monitoring tools.
 
     Updates every poll (10s) with current daemon metrics. Tools like Grafana,
@@ -196,6 +201,7 @@ def _write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms:
     - Current battery state (soc_percent, online status)
     - Poll latency for performance monitoring
     - Daemon version tracking
+    - Phase 14: capacity metrics (measured Ah, confidence, convergence status)
 
     Uses atomic write pattern (tempfile + fdatasync + rename) to prevent
     partial writes on crash or power loss.
@@ -204,6 +210,11 @@ def _write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms:
         soc_percent: Current state of charge as percentage (0-100)
         is_online: True if UPS in OL state, False if OB state
         poll_latency_ms: NUT poll latency in milliseconds (optional)
+        capacity_ah_measured: Measured capacity in Ah from CapacityEstimator (None if not yet estimated)
+        capacity_ah_rated: Rated capacity in Ah (default 7.2)
+        capacity_confidence: Convergence score 0-1 (displayed as 0-100%)
+        capacity_samples_count: Number of capacity measurements collected
+        capacity_converged: True if convergence threshold met (count >= 3 AND CoV < 0.10)
     """
     try:
         daemon_version = importlib.metadata.version('ups-unfucked')
@@ -216,7 +227,13 @@ def _write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms:
         "current_soc_percent": round(soc_percent, 1),
         "online": is_online,
         "daemon_version": daemon_version,
-        "poll_latency_ms": round(poll_latency_ms, 1) if poll_latency_ms is not None else None
+        "poll_latency_ms": round(poll_latency_ms, 1) if poll_latency_ms is not None else None,
+        # Phase 14: capacity metrics
+        "capacity_ah_measured": round(capacity_ah_measured, 2) if capacity_ah_measured else None,
+        "capacity_ah_rated": round(capacity_ah_rated, 2),
+        "capacity_confidence": round(capacity_confidence, 3),
+        "capacity_samples_count": capacity_samples_count,
+        "capacity_converged": capacity_converged,
     }
     health_path = Path("/dev/shm/ups-health.json")
     tmp_path = None
@@ -1117,10 +1134,17 @@ class MonitorDaemon:
             self._write_virtual_ups(ups_data, battery_charge, time_rem)
 
         # Write health endpoint for external monitoring (every poll)
+        # Extract capacity metrics from battery model for Phase 14 reporting
+        convergence_status = self.battery_model.get_convergence_status()
         _write_health_endpoint(
             soc_percent=(self.current_metrics.soc or 0.0) * 100.0,
             is_online=(self.current_metrics.ups_status_override == "OL"),
-            poll_latency_ms=poll_latency_ms
+            poll_latency_ms=poll_latency_ms,
+            capacity_ah_measured=convergence_status.get('latest_ah'),
+            capacity_ah_rated=convergence_status.get('rated_ah', 7.2),
+            capacity_confidence=convergence_status.get('confidence_percent', 0.0) / 100.0,  # Convert % to 0–1 range
+            capacity_samples_count=convergence_status.get('sample_count', 0),
+            capacity_converged=convergence_status.get('converged', False)
         )
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
