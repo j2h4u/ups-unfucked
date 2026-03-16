@@ -1191,8 +1191,12 @@ class MonitorDaemon:
             cycle_count = self.battery_model.get_cycle_count()
             cumulative_sec = self.battery_model.get_cumulative_on_battery_sec()
             replacement_due = self.battery_model.get_replacement_due() or ""
+            # R_internal: export only after ≥3 non-zero measurements (noise rejection).
+            # Early sag readings often show 0.0mΩ (no delta) or outliers from quick tests.
+            # Before enough data: omit field entirely (nut_exporter exports missing fields as 0).
             r_internal_history = self.battery_model.get_r_internal_history()
-            r_internal = r_internal_history[-1]["r_ohm"] if r_internal_history else 0.0
+            nonzero = [e["r_ohm"] for e in r_internal_history if e["r_ohm"] > 0]
+            r_internal_mohm = round(sorted(nonzero)[len(nonzero) // 2] * 1000, 1) if len(nonzero) >= 3 else None
 
             virtual_metrics = {
                 "battery.runtime": int(time_rem * 60) if time_rem is not None else int(float(ups_data.get("battery.runtime", 0))),
@@ -1204,7 +1208,7 @@ class MonitorDaemon:
                 "battery.cycle.count": cycle_count,         # OL→OB transfers (like Eaton)
                 "battery.cumulative.runtime": int(cumulative_sec),  # Total seconds on battery (like Eaton)
                 "battery.replacement.due": replacement_due,           # Predicted replacement due date (regression)
-                "battery.internal_resistance": round(r_internal * 1000, 1),  # Internal resistance in mΩ
+                **({"battery.internal_resistance": r_internal_mohm} if r_internal_mohm is not None else {}),
                 **{k: v for k, v in ups_data.items()
                    if k not in ["battery.runtime", "battery.charge", "ups.status"]}
             }
