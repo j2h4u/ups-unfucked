@@ -344,8 +344,7 @@ class MonitorDaemon:
         if new_battery_flag or self.battery_model.data.get('new_battery_requested', False):
             self._reset_battery_baseline()
 
-        # Clear the flags after processing
-        self.battery_model.data['new_battery_requested'] = False
+        # Clear auto-detection flag after user confirmed via --new-battery
         self.battery_model.data['new_battery_detected'] = False
         self.battery_model.save()
 
