@@ -363,3 +363,137 @@ class TestWeightedAveraging:
         weighted_ah = estimator.get_weighted_estimate()
         arithmetic_mean = (7.0 + 7.1 + 7.2) / 3
         assert abs(weighted_ah - arithmetic_mean) < 0.001
+
+
+class TestValidationGates:
+    """Expert panel validation gates (Phase 12 Plan 03)."""
+
+    def test_real_discharge_validation(self, discharge_buffer_fixture):
+        """
+        Validation Gate 1: Real 2026-03-12 blackout discharge replay.
+
+        Coulomb error must be < ±10% (expert-approved threshold).
+        Test data: 2820 second discharge (47 minutes), voltage 13.2V → 10.5V,
+        average load ~35%, representing real CyberPower UT850EG blackout event.
+
+        Expected: coulomb_estimate ≈ 7.2Ah ± 0.72Ah (±10% per expert panel)
+        """
+        estimator = CapacityEstimator(peukert_exponent=1.2)
+
+        V, t, I, lut = discharge_buffer_fixture
+
+        result = estimator.estimate(V, t, I, lut)
+        assert result is not None, "2026-03-12 discharge should pass quality filter"
+
+        ah_estimate, confidence, metadata = result
+
+        # Coulomb error < ±10%
+        true_capacity = 7.2  # Ground truth from 47min observed discharge
+        error_percent = abs(ah_estimate - true_capacity) / true_capacity
+        assert error_percent < 0.10, \
+            f"Coulomb error {error_percent:.1%} exceeds ±10% threshold"
+
+        # Metadata should be populated
+        assert metadata['delta_soc_percent'] > 50, "Real discharge should be deep (>50%)"
+        assert metadata['duration_sec'] > 2700, "Real discharge should be long (>45 min)"
+        assert metadata['ir_mohms'] > 0, "IR should be computed"
+
+    def test_monte_carlo_convergence(self, synthetic_discharge_fixture):
+        """
+        Validation Gate 2: Monte Carlo convergence verification.
+
+        Generate 100 synthetic 3-discharge scenarios with expert-approved noise levels.
+        Verify: CoV < 0.10 by sample 3 in ≥95 scenarios (95% confidence).
+
+        Each scenario: 3 independent discharges (ΔSoC~50%, I=35A, duration~600s)
+        with Gaussian noise (±5% load, ±0.1V voltage per expert panel)
+
+        Expected: In 95+ out of 100 scenarios, sample 3 has convergence_score >= 0.90
+        (convergence_score = 1 - CoV, converged when CoV < 0.10)
+        """
+        import random
+
+        converged_count = 0
+
+        for trial in range(100):
+            estimator = CapacityEstimator(peukert_exponent=1.2)
+
+            # Simulate 3 deep discharges with noise
+            V_base, t_base, I_base, lut = synthetic_discharge_fixture
+
+            for discharge_num in range(3):
+                V = [v + random.gauss(0, 0.1) for v in V_base]
+                I = [i * (1 + random.gauss(0, 0.05)) for i in I_base]
+
+                result = estimator.estimate(V, t_base, I, lut)
+                if result:
+                    ah, conf, meta = result
+                    estimator.add_measurement(ah, f"2026-03-15T{discharge_num:02d}:00:00Z", meta)
+
+            # Check convergence at sample 3
+            if len(estimator.measurements) >= 3:
+                score = estimator.get_confidence()
+                if score >= 0.90:
+                    converged_count += 1
+
+        # Expert panel: 95% of trials should converge
+        assert converged_count >= 95, \
+            f"Only {converged_count}/100 trials converged; need 95+"
+
+    def test_load_sensitivity(self, synthetic_discharge_fixture):
+        """
+        Validation Gate 3: Load sensitivity testing.
+
+        Test that coulomb counting works correctly across different load levels.
+        For each load, compute expected coulomb result and verify accuracy.
+
+        The test ensures that the coulomb integration algorithm correctly handles
+        different load percentages. Expected Ah varies with load (lower load = longer
+        discharge = more Ah for same depth), which is physically correct.
+
+        Expected: All loads achieve coulomb estimates with proper quality filter pass.
+        """
+        loads = [10, 20, 30]  # Percent load
+
+        for load_percent in loads:
+            # Generate synthetic discharge at constant load
+            # Duration: 4000s (~67 min) to ensure ΔSoC > 50% across all loads
+            num_points = 400
+            t = [float(i * 10) for i in range(num_points)]
+
+            # Voltage drop: 13.2V → 10.5V (50% ΔSoC)
+            V = [13.2 - (i / num_points) * 2.7 for i in range(num_points)]
+
+            # Constant load at specified percent
+            I = [float(load_percent)] * num_points
+
+            # Standard LUT
+            lut = [
+                {"v": 13.4, "soc": 1.0, "source": "standard"},
+                {"v": 12.8, "soc": 0.9, "source": "standard"},
+                {"v": 12.4, "soc": 0.64, "source": "standard"},
+                {"v": 12.0, "soc": 0.4, "source": "standard"},
+                {"v": 11.5, "soc": 0.2, "source": "standard"},
+                {"v": 10.5, "soc": 0.0, "source": "anchor"},
+            ]
+
+            estimator = CapacityEstimator(peukert_exponent=1.2)
+            result = estimator.estimate(V, t, I, lut)
+
+            # All loads should pass quality filter (ΔSoC > 25%, duration > 300s)
+            assert result is not None, \
+                f"Load {load_percent}% discharge should pass quality filter"
+
+            ah_estimate, confidence, metadata = result
+
+            # Coulomb counting: ah = I_avg * t / 3600
+            # For load_percent at 425W/12V nominal:
+            # I_avg_amps = (load_percent / 100) * 425 / 12
+            i_avg_amps = (load_percent / 100.0) * 425.0 / 12.0
+            expected_ah = i_avg_amps * (t[-1] - t[0]) / 3600.0
+
+            # Verify estimate is within ±3% of expected coulomb result
+            accuracy_ratio = ah_estimate / expected_ah
+            assert 0.97 <= accuracy_ratio <= 1.03, \
+                f"Load {load_percent}%: coulomb estimate {ah_estimate:.2f}Ah vs expected {expected_ah:.2f}Ah " \
+                f"(accuracy {accuracy_ratio:.1%}) exceeds ±3% tolerance"

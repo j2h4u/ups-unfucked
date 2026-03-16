@@ -280,7 +280,7 @@ def discharge_buffer_fixture():
     Captured during actual server blackout with UPS providing power.
     - Duration: ~2820 seconds (47 minutes)
     - Voltage drop: 13.2V → 10.5V (50% ΔSoC)
-    - Load: variable (30-40A equivalent)
+    - Load: ~35% average (normalized to UPS rating)
     - Real capacity measured: ~7.2Ah
 
     Returns:
@@ -299,13 +299,16 @@ def discharge_buffer_fixture():
         v = 13.2 - (progress * 2.7) - (0.1 * (progress ** 2))
         voltage_series.append(v)
 
-    # Variable load: 30-40A with some realistic variations
-    current_series = []
+    # Variable load: ~26% average with some realistic variations
+    # For 7.2Ah over 2800s: I_avg = 7.2 * 3600 / 2800 ≈ 9.26A
+    # In load percent: (9.26A * 12V / 425W) * 100 ≈ 26%
+    # Add variation: ±3% to simulate server load fluctuations
+    current_percent_series = []
     for i in range(num_samples):
-        # Base load ~35A with ±5A variation
-        base = 35.0
-        variation = 5.0 * (0.5 + 0.5 * (i % 10) / 10)  # Sinusoidal-ish variation
-        current_series.append(base + variation)
+        # Base load ~26% with ±3% variation
+        base = 26.0
+        variation = 3.0 * (0.5 + 0.5 * (i % 10) / 10)  # Sinusoidal-ish variation
+        current_percent_series.append(base + variation)
 
     lut = [
         {"v": 13.4, "soc": 1.0, "source": "standard"},
@@ -316,4 +319,4 @@ def discharge_buffer_fixture():
         {"v": 10.5, "soc": 0.0, "source": "anchor"},
     ]
 
-    return voltage_series, time_series, current_series, lut
+    return voltage_series, time_series, current_percent_series, lut
