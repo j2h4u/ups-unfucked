@@ -883,3 +883,65 @@ class TestCapacityEstimates:
         assert status['rated_ah'] == 7.2
         assert status['converged'] is True  # 3 samples + low CoV
         assert status['confidence_percent'] > 80  # High confidence with consistent estimates
+
+
+class TestSoHHistoryVersioning:
+    """SOH-02: SoH history versioning with capacity_ah_ref field."""
+
+    def test_soh_history_entry_with_baseline(self, tmp_path):
+        """SOH-02: add_soh_history_entry() stores capacity_ah_ref field when provided."""
+        model_path = tmp_path / "model.json"
+        model = BatteryModel(model_path)
+
+        # Add entry with capacity baseline
+        model.add_soh_history_entry(
+            date='2026-03-16',
+            soh=0.92,
+            capacity_ah_ref=6.8
+        )
+
+        # Verify entry contains baseline tag
+        entry = model.data['soh_history'][-1]
+        assert entry['date'] == '2026-03-16'
+        assert entry['soh'] == 0.92
+        assert entry['capacity_ah_ref'] == 6.8  # Tagged
+
+    def test_soh_history_entry_backward_compat(self, tmp_path):
+        """SOH-02: add_soh_history_entry() without capacity_ah_ref is backward compatible."""
+        model_path = tmp_path / "model.json"
+        model = BatteryModel(model_path)
+
+        # Add entry without capacity baseline (old-style)
+        model.add_soh_history_entry(
+            date='2026-03-15',
+            soh=0.95
+        )
+
+        # Verify entry exists but has no capacity_ah_ref field
+        entry = model.data['soh_history'][-1]
+        assert entry['date'] == '2026-03-15'
+        assert entry['soh'] == 0.95
+        assert 'capacity_ah_ref' not in entry  # Not tagged (backward compat)
+
+    def test_mixed_baseline_entries(self, tmp_path):
+        """SOH-02: soh_history can contain entries with and without capacity_ah_ref field."""
+        model_path = tmp_path / "model.json"
+        model = BatteryModel(model_path)
+        # Clear default entry
+        model.data['soh_history'] = []
+
+        # Add old-style entry (no baseline tag)
+        model.add_soh_history_entry('2026-03-14', 0.97)
+
+        # Add new-style entry with measured baseline
+        model.add_soh_history_entry('2026-03-15', 0.95, capacity_ah_ref=6.8)
+
+        # Add another new-style entry with different baseline (after battery replaced)
+        model.add_soh_history_entry('2026-03-16', 0.92, capacity_ah_ref=6.9)
+
+        # Verify history contains mixed entries
+        history = model.data['soh_history']
+        assert len(history) == 3
+        assert 'capacity_ah_ref' not in history[0]  # Old entry
+        assert history[1]['capacity_ah_ref'] == 6.8
+        assert history[2]['capacity_ah_ref'] == 6.9
