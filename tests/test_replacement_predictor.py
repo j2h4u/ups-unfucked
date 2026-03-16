@@ -6,13 +6,13 @@ from src.replacement_predictor import linear_regression_soh
 
 
 def test_linear_regression_basic():
-    """5 SoH points over 20 days, degrading linearly. Returns (slope, intercept, r², replacement_date)."""
+    """5 SoH points over 120 days, degrading linearly. Returns (slope, intercept, r², replacement_date)."""
     history = [
-        {'date': '2026-03-10', 'soh': 1.00},
-        {'date': '2026-03-12', 'soh': 0.98},
-        {'date': '2026-03-14', 'soh': 0.96},
-        {'date': '2026-03-16', 'soh': 0.94},
-        {'date': '2026-03-18', 'soh': 0.92},
+        {'date': '2025-11-01', 'soh': 1.00},
+        {'date': '2025-12-01', 'soh': 0.98},
+        {'date': '2026-01-01', 'soh': 0.96},
+        {'date': '2026-02-01', 'soh': 0.94},
+        {'date': '2026-03-01', 'soh': 0.92},
     ]
     result = linear_regression_soh(history, threshold_soh=0.80)
     assert result is not None

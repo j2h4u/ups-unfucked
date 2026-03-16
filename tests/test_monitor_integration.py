@@ -9,15 +9,20 @@ Verifies:
 2. Correct argument selection (average load, not current EMA)
 3. Call ordering (SoH before Peukert)
 4. Systemd watchdog integration survival
+5. _poll_once full call chain: _classify_event → _track_discharge → _handle_event_transition
 """
 
+import time
+
 import pytest
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import patch, MagicMock, Mock, call
 from pathlib import Path
 import tempfile
 
 from src.monitor import MonitorDaemon, Config, DischargeBuffer
+from src.event_classifier import EventType
 from src.model import BatteryModel
+from src.battery_math.rls import ScalarRLS
 
 
 @pytest.fixture
@@ -594,3 +599,336 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         ]
         for field in required_fields:
             assert field in data, f"Cycle {cycle_num}: missing field {field}"
+
+
+class TestPollOnceCallChain:
+    """Integration: _poll_once → _classify_event → _track_discharge → _handle_event_transition.
+
+    Regression for previous_event_type AttributeError (commit 8f211fa).
+    Real internal method chain; only external I/O and downstream subsystems mocked.
+
+    What runs for real: _update_ema, _classify_event, _track_voltage_sag,
+    _track_discharge, _handle_event_transition, _compute_metrics, _log_status.
+
+    What is mocked: NUTClient (external), sd_notify (systemd), time.sleep,
+    _write_health_endpoint (file I/O), write_virtual_ups_dev (file I/O),
+    _safe_save (disk), _update_battery_health (complex subsystem with own tests),
+    _write_calibration_points (disk I/O through battery_model).
+    """
+
+    @pytest.fixture
+    def daemon(self, tmp_path):
+        """Daemon with real EventClassifier, EMAFilter, CurrentMetrics."""
+        config = Config(
+            ups_name='cyberpower',
+            polling_interval=10,
+            reporting_interval=60,
+            nut_host='localhost',
+            nut_port=3493,
+            nut_timeout=2.0,
+            shutdown_minutes=5,
+            soh_alert_threshold=0.80,
+            model_dir=tmp_path,
+            config_dir=tmp_path,
+            runtime_threshold_minutes=20,
+            reference_load_percent=20.0,
+            ema_window_sec=120,
+            capacity_ah=7.2,
+        )
+
+        with patch('src.monitor.NUTClient') as mock_nut_cls:
+            # NUTClient returns floats for numeric values, strings for status
+            mock_nut_cls.return_value.get_ups_vars.return_value = {
+                'battery.voltage': 13.0,
+                'input.voltage': 230.0,
+                'ups.status': 'OL',
+                'ups.load': 20.0,
+            }
+            d = MonitorDaemon(config)
+
+        # Attributes normally initialized in run(), needed by _poll_once
+        d.poll_count = 0
+        d._was_stabilized = False
+        d._consecutive_errors = 0
+        d._startup_time = time.monotonic()
+
+        # Mock downstream subsystems (own test coverage, complex I/O).
+        # Side effect mimics real _update_battery_health buffer cleanup.
+        def _fake_health_update():
+            d.discharge_buffer = DischargeBuffer()
+            d.discharge_buffer_clear_countdown = None
+            d.calibration_last_written_index = 0
+
+        d._update_battery_health = MagicMock(side_effect=_fake_health_update)
+        d._write_calibration_points = MagicMock()
+
+        return d
+
+    def _poll(self, daemon, status='OL', voltage=13.0, input_voltage=230.0, load=20.0):
+        """Execute one _poll_once with controlled UPS data, mocked external I/O."""
+        daemon.nut_client.get_ups_vars.return_value = {
+            'battery.voltage': voltage,
+            'input.voltage': input_voltage,
+            'ups.status': status,
+            'ups.load': load,
+        }
+        with patch('src.monitor.sd_notify'), \
+             patch('time.sleep'), \
+             patch('src.monitor._write_health_endpoint'), \
+             patch('src.monitor.write_virtual_ups_dev'), \
+             patch('src.monitor._safe_save'):
+            daemon._poll_once()
+
+    def test_previous_event_type_regression(self, daemon):
+        """Regression: previous_event_type must not AttributeError.
+
+        Bug (commit 8f211fa): _track_discharge accessed event_classifier.previous_event_type
+        (doesn't exist). Fixed to use current_metrics.previous_event_type.
+        Full chain without mocking _track_discharge catches this.
+        """
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        # OL→OB: _track_discharge reads previous_event_type — original crash site
+        self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
+        # OB→OL: another transition through the same code path
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        # Survived without AttributeError
+        assert daemon.current_metrics.previous_event_type == EventType.ONLINE
+
+    def test_previous_event_type_threads_across_transitions(self, daemon):
+        """previous_event_type correctly tracks state across multiple transitions."""
+        transitions = [
+            ('OL', 13.0, 230.0, EventType.ONLINE),
+            ('OB DISCHRG', 12.0, 0.0, EventType.BLACKOUT_REAL),
+            ('OL', 13.0, 230.0, EventType.ONLINE),
+            ('OB DISCHRG', 12.5, 220.0, EventType.BLACKOUT_TEST),
+            ('OL', 13.0, 230.0, EventType.ONLINE),
+        ]
+        for status, voltage, input_v, expected_type in transitions:
+            self._poll(daemon, status=status, voltage=voltage, input_voltage=input_v)
+            assert daemon.current_metrics.event_type == expected_type
+            # previous_event_type is set to current at end of each poll (line 1126)
+            assert daemon.current_metrics.previous_event_type == expected_type
+
+    def test_ol_steady_state(self, daemon):
+        """Steady OL: previous_event_type stays ONLINE, no discharge collection."""
+        for _ in range(5):
+            self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+
+        assert daemon.current_metrics.event_type == EventType.ONLINE
+        assert daemon.current_metrics.previous_event_type == EventType.ONLINE
+        assert not daemon.discharge_buffer.collecting
+        assert len(daemon.discharge_buffer.voltages) == 0
+
+    def test_ol_to_ob_starts_discharge(self, daemon):
+        """OL→OB: discharge collection starts, cycle count increments."""
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        initial_cycles = daemon.battery_model.get_cycle_count()
+
+        self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
+
+        assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
+        assert daemon.discharge_buffer.collecting
+        assert len(daemon.discharge_buffer.voltages) == 1
+        assert daemon.battery_model.get_cycle_count() == initial_cycles + 1
+
+    def test_ob_accumulates_samples(self, daemon):
+        """Multiple OB polls accumulate discharge voltage/time/load samples."""
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+
+        ob_voltages = [12.0, 11.8, 11.5, 11.2]
+        for v in ob_voltages:
+            self._poll(daemon, status='OB DISCHRG', voltage=v, input_voltage=0.0)
+
+        assert len(daemon.discharge_buffer.voltages) == len(ob_voltages)
+        assert len(daemon.discharge_buffer.times) == len(ob_voltages)
+        assert len(daemon.discharge_buffer.loads) == len(ob_voltages)
+        assert daemon.discharge_buffer.collecting
+        assert daemon._write_calibration_points.call_count == len(ob_voltages)
+
+    def test_full_blackout_cycle(self, daemon):
+        """OL→OB→OL: transitions correct, EVT-05 fires _update_battery_health."""
+        # OL baseline
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        assert daemon.current_metrics.previous_event_type == EventType.ONLINE
+
+        # OB phase (3 polls)
+        for v in [12.0, 11.8, 11.5]:
+            self._poll(daemon, status='OB DISCHRG', voltage=v, input_voltage=0.0)
+
+        assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
+        assert daemon.discharge_buffer.collecting
+
+        # Power restored (OB→OL)
+        daemon._update_battery_health.reset_mock()
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+
+        assert daemon.current_metrics.event_type == EventType.ONLINE
+        assert daemon.current_metrics.previous_event_type == EventType.ONLINE
+        # EVT-05: _handle_event_transition triggers health update on OB→OL
+        daemon._update_battery_health.assert_called()
+
+    def test_ob_ol_ob_resumes_collection(self, daemon):
+        """OB→OL→OB: new collection starts after brief power restoration."""
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
+        self._poll(daemon, status='OB DISCHRG', voltage=11.8, input_voltage=0.0)
+
+        # OB→OL: EVT-05 fires, mock clears discharge state
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+
+        # OL→OB again
+        self._poll(daemon, status='OB DISCHRG', voltage=11.5, input_voltage=0.0)
+
+        assert daemon.discharge_buffer_clear_countdown is None
+        assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
+        assert daemon.discharge_buffer.collecting
+
+    def test_battery_test_classified_correctly(self, daemon):
+        """Battery test (OB with mains voltage) → BLACKOUT_TEST, no shutdown."""
+        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        # Battery test: UPS goes OB but input voltage stays high (mains present)
+        self._poll(daemon, status='OB DISCHRG', voltage=12.5, input_voltage=220.0)
+
+        assert daemon.current_metrics.event_type == EventType.BLACKOUT_TEST
+        # EVT-03: battery test suppresses shutdown
+        assert not daemon.current_metrics.shutdown_imminent
+
+
+class TestRLSCalibrationIntegration:
+    """Integration tests for RLS auto-calibration of ir_k and Peukert."""
+
+    def test_ir_k_updated_after_sag(self, mock_daemon):
+        """Sag measurement → ir_k updated in model via RLS."""
+        # Setup: known voltage sag scenario
+        mock_daemon.v_before_sag = 13.0
+        mock_daemon.ema_buffer = MagicMock()
+        mock_daemon.ema_buffer.load = 25.0
+
+        old_ir_k = mock_daemon.ir_k
+
+        with patch('src.monitor._safe_save'):
+            mock_daemon._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
+
+        # ir_k should have been updated
+        assert mock_daemon.ir_k != old_ir_k
+        assert mock_daemon.battery_model.get_ir_k() == mock_daemon.ir_k
+        # RLS sample count incremented
+        assert mock_daemon.rls_ir_k.sample_count == 1
+        # ir_k within physical bounds
+        assert 0.005 <= mock_daemon.ir_k <= 0.025
+
+    def test_peukert_smoothed_via_rls(self, mock_daemon):
+        """Discharge → Peukert updated with RLS smoothing, not raw value."""
+        # Setup: valid discharge buffer
+        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+
+        with patch('src.monitor.calibrate_peukert') as mock_calibrate:
+            mock_calibrate.return_value = 1.25  # Raw kernel result
+
+            mock_daemon._auto_calibrate_peukert(current_soh=0.95)
+
+            # Peukert should be set via RLS smoothing (not raw 1.25)
+            actual = mock_daemon.battery_model.get_peukert_exponent()
+            # First sample with P=1.0: RLS will move theta from 1.2 partway toward 1.25
+            assert 1.0 <= actual <= 1.4  # Physical bounds
+            assert mock_daemon.rls_peukert.sample_count == 1
+
+    def test_rls_state_persists_across_save_load(self, mock_daemon):
+        """Save model, reload, RLS state preserved."""
+        # Feed some data to RLS
+        mock_daemon.rls_ir_k.update(0.018)
+        mock_daemon.rls_ir_k.update(0.017)
+        mock_daemon.battery_model.set_rls_state(
+            'ir_k',
+            mock_daemon.rls_ir_k.theta,
+            mock_daemon.rls_ir_k.P,
+            mock_daemon.rls_ir_k.sample_count)
+
+        # Save and reload
+        mock_daemon.battery_model.save()
+        reloaded = BatteryModel(mock_daemon.battery_model.model_path)
+
+        state = reloaded.get_rls_state('ir_k')
+        assert state['sample_count'] == 2
+        assert abs(state['theta'] - mock_daemon.rls_ir_k.theta) < 1e-10
+
+        # Restore RLS from saved state
+        restored = ScalarRLS.from_dict(state)
+        assert restored.sample_count == 2
+        assert abs(restored.theta - mock_daemon.rls_ir_k.theta) < 1e-10
+
+    def test_battery_replacement_resets_rls(self, mock_daemon):
+        """_reset_battery_baseline → RLS P back to 1.0."""
+        # Feed data to build confidence
+        for _ in range(10):
+            mock_daemon.rls_ir_k.update(0.018)
+            mock_daemon.rls_peukert.update(1.22)
+
+        assert mock_daemon.rls_ir_k.P < 0.5  # Has some confidence
+        assert mock_daemon.rls_peukert.P < 0.5
+
+        mock_daemon._reset_battery_baseline()
+
+        # After reset: fresh RLS instances with P=1.0
+        assert mock_daemon.rls_ir_k.P == 1.0
+        assert mock_daemon.rls_ir_k.theta == 0.015
+        assert mock_daemon.rls_ir_k.sample_count == 0
+        assert mock_daemon.rls_peukert.P == 1.0
+        assert mock_daemon.rls_peukert.theta == 1.2
+        assert mock_daemon.rls_peukert.sample_count == 0
+
+        # Model state also reset
+        ir_k_state = mock_daemon.battery_model.get_rls_state('ir_k')
+        assert ir_k_state['P'] == 1.0
+        assert ir_k_state['sample_count'] == 0
+
+    def test_prediction_error_logged(self, mock_daemon):
+        """OL→OB→OL cycle with sufficient duration → discharge_prediction event logged."""
+        # Setup: simulate a discharge that already happened
+        mock_daemon._discharge_predicted_runtime = 15.0  # Predicted 15 min at OB start
+        mock_daemon.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
+        mock_daemon.discharge_buffer.loads = [20, 22, 21, 20, 19]
+        mock_daemon.current_metrics.soc = 0.80
+
+        with patch('src.monitor.logger') as mock_logger:
+            mock_daemon._log_discharge_prediction()
+
+            # Find the discharge_prediction event
+            prediction_calls = [c for c in mock_logger.info.call_args_list
+                                if c.kwargs.get('extra', {}).get('EVENT_TYPE') == 'discharge_prediction']
+            assert len(prediction_calls) == 1
+
+            extra = prediction_calls[0].kwargs['extra']
+            assert extra['PREDICTED_MINUTES'] == '15.0'
+            assert float(extra['ACTUAL_MINUTES']) == pytest.approx(400.0 / 60.0, abs=0.1)
+
+        # Prediction cleared after logging
+        assert mock_daemon._discharge_predicted_runtime is None
+
+    def test_prediction_error_gated_by_duration(self, mock_daemon):
+        """Short discharge (<300s) → no prediction logged."""
+        mock_daemon._discharge_predicted_runtime = 15.0
+        mock_daemon.discharge_buffer.times = [0.0, 100.0]  # Only 100s
+        mock_daemon.discharge_buffer.loads = [20, 20]
+
+        with patch('src.monitor.logger') as mock_logger:
+            mock_daemon._log_discharge_prediction()
+
+            prediction_calls = [c for c in mock_logger.info.call_args_list
+                                if c.kwargs.get('extra', {}).get('EVENT_TYPE') == 'discharge_prediction']
+            assert len(prediction_calls) == 0
+
+    def test_prediction_error_gated_by_snapshot(self, mock_daemon):
+        """No prediction snapshot → no prediction logged even with long discharge."""
+        mock_daemon._discharge_predicted_runtime = None  # No snapshot (EMA not stabilized)
+        mock_daemon.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
+        mock_daemon.discharge_buffer.loads = [20, 20, 20, 20, 20]
+
+        with patch('src.monitor.logger') as mock_logger:
+            mock_daemon._log_discharge_prediction()
+
+            prediction_calls = [c for c in mock_logger.info.call_args_list
+                                if c.kwargs.get('extra', {}).get('EVENT_TYPE') == 'discharge_prediction']
+            assert len(prediction_calls) == 0
