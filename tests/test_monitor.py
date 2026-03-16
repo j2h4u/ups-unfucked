@@ -337,6 +337,8 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     mock_model.get_peukert_exponent.return_value = 1.2
     mock_model.get_nominal_voltage.return_value = 12.0
     mock_model.get_nominal_power_watts.return_value = 425.0
+    # Phase 13: Mock convergence status (measured capacity not converged by default)
+    mock_model.get_convergence_status.return_value = {'converged': False, 'sample_count': 1}
     daemon.battery_model = mock_model
 
     daemon.ema_buffer = MagicMock()
