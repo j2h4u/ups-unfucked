@@ -67,3 +67,10 @@ if [[ -n "$latest_ah" && "$latest_ah" != "null" ]]; then
     # Format: "Capacity: 7.2Ah (measured) vs 7.2Ah (rated), 2/3 deep discharges, 45% confidence"
     echo "  Capacity: ${latest_ah}Ah (measured) vs ${rated_ah}Ah (rated), ${sample_count}/3 deep discharges, ${confidence_percent}% confidence"
 fi
+
+# Phase 13: Check for new battery detection flag
+if [[ "$(jq -r '.new_battery_detected // false' "$MODEL_FILE")" == "true" ]]; then
+    TIMESTAMP=$(jq -r '.new_battery_detected_timestamp // "unknown"' "$MODEL_FILE")
+    echo "  ⚠️  Possible new battery detected (flagged at $TIMESTAMP)"
+    echo "      Run: ups-battery-monitor --new-battery"
+fi
