@@ -323,6 +323,15 @@ class MonitorDaemon:
             # Log that flag was set (informational only)
             logger.info("New battery flag set via --new-battery CLI; Phase 13 detection will check on next discharge")
 
+        # Phase 13: If user signals --new-battery, reset baseline
+        if new_battery_flag or self.battery_model.data.get('new_battery_requested', False):
+            self._reset_battery_baseline()
+
+        # Clear the flags after processing
+        self.battery_model.data['new_battery_requested'] = False
+        self.battery_model.data['new_battery_detected'] = False
+        self.battery_model.save()
+
         # Load physics params from model
         self.ir_k = self.battery_model.get_ir_k()
         self.ir_l_base = self.battery_model.get_ir_reference_load()
@@ -549,6 +558,43 @@ class MonitorDaemon:
         # Clear discharge buffer
         self.discharge_buffer = DischargeBuffer()
 
+    def _reset_battery_baseline(self):
+        """Reset capacity estimation and SoH history baseline on battery replacement."""
+
+        old_capacity = self.battery_model.data.get('capacity_ah_measured')
+        old_soh = self.battery_model.data.get('soh', 1.0)
+
+        # Clear capacity estimates (will rebuild from next deep discharge)
+        self.battery_model.data['capacity_estimates'] = []
+
+        # Clear capacity_ah_measured (will be set when new measurements converge)
+        self.battery_model.data['capacity_ah_measured'] = None
+
+        # Add fresh SoH entry with new baseline (old entries stay in history for record, but excluded by filtering)
+        today = datetime.now().strftime('%Y-%m-%d')
+        self.battery_model.data['soh'] = 1.0  # New battery assumed 100% SoH
+        self.battery_model.add_soh_history_entry(
+            date=today,
+            soh=1.0,
+            capacity_ah_ref=self.battery_model.get_capacity_ah()  # 7.2Ah (rated, fresh baseline)
+        )
+
+        # Reset cycle counter to indicate new battery era
+        self.battery_model.data['cycle_count'] = 0
+
+        # Log event
+        if old_capacity is not None:
+            logger.info(
+                f"New battery event: capacity reset from {old_capacity:.2f}Ah; "
+                f"aging clock reset; SoH baseline reset to 1.0 with capacity_ah_ref=7.2Ah"
+            )
+        else:
+            logger.info(
+                f"New battery event: aging clock reset; SoH baseline reset to 1.0 with capacity_ah_ref=7.2Ah"
+            )
+
+        self.battery_model.save()
+
     def _auto_calibrate_peukert(self, current_soh: float):
         """Orchestrator: applies guard clauses, calls kernel, handles result.
 
@@ -666,6 +712,41 @@ class MonitorDaemon:
             self.battery_model.data['capacity_converged'] = True
             logger.info(f"Capacity converged: {ah_estimate:.2f}Ah (±10%)")
             _safe_save(self.battery_model)
+
+        # Phase 13: NEW BATTERY DETECTION (post-discharge)
+        # Compare fresh capacity measurement to stored baseline
+        convergence = self.battery_model.get_convergence_status()
+
+        if convergence.get('converged', False):
+            # Capacity estimation has stabilized; we have a reliable baseline
+            current_measured = convergence.get('latest_ah')
+            stored_baseline = self.battery_model.data.get('capacity_ah_measured', None)
+
+            if stored_baseline is not None:
+                # Compare current measurement to last stored baseline
+                delta_ah = abs(current_measured - stored_baseline)
+                delta_percent = (delta_ah / stored_baseline) * 100
+
+                if delta_percent > 10.0:  # >10% threshold
+                    logger.warning(
+                        f"New battery detection: measured capacity {current_measured:.2f}Ah "
+                        f"differs from baseline {stored_baseline:.2f}Ah ({delta_percent:.1f}% > 10% threshold)"
+                    )
+
+                    # Set flag for MOTD and user to acknowledge
+                    self.battery_model.data['new_battery_detected'] = True
+                    self.battery_model.data['new_battery_detected_timestamp'] = datetime.now().isoformat()
+                    self.battery_model.save()
+
+                    logger.info(
+                        "New battery flag set; MOTD will show alert next shell session. "
+                        "User can confirm with: ups-battery-monitor --new-battery"
+                    )
+            else:
+                # First time convergence; store as baseline for future comparisons
+                self.battery_model.data['capacity_ah_measured'] = current_measured
+                self.battery_model.save()
+                logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
 
     def _record_voltage_sag(self, v_sag, event_type):
         """Record voltage sag measurement and compute internal resistance."""
