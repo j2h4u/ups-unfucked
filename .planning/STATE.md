@@ -33,10 +33,10 @@ progress:
 
 ## Current Position
 
-**Phase:** 12.1
-**Plan:** Not started
-**Milestone progress:** 9/9 plans completed → Phase 12 complete, all 7 requirements satisfied
-**Roadmap status:** ✓ CapacityEstimator integrated; capacity_estimates persisted; validation gates passed; CLI flag wired; Phase 12 ready for closure
+**Phase:** 13
+**Plan:** 01 (Completed 2026-03-16)
+**Milestone progress:** 10/10 plans completed → Phase 12 complete + Phase 13 Plan 01 complete
+**Roadmap status:** ✓ SOH-01 capacity normalization; SOH-02 history versioning; SOH-03 regression filtering; all 3 requirements satisfied; ready for Plan 02
 
 **Phase 12 Plan 01 (Completed 2026-03-16):**
 - Implemented CapacityEstimator class with 8 core + 4 extension methods
@@ -85,6 +85,24 @@ progress:
 - VAL-02 (Peukert fixed at 1.2): ✓ Plan 01
 
 **Blockers for Phase 13:** None. Phase 12 complete; Phase 13 can now read new_battery_requested flag and implement detection.
+
+**Phase 13 Plan 01 (Completed 2026-03-16) — SoH Normalization & History Versioning**
+- Implemented src/soh_calculator.py orchestrator layer for capacity selection
+- Extended model.py:add_soh_history_entry() with optional capacity_ah_ref parameter
+- Extended replacement_predictor.py:linear_regression_soh() with capacity_ah_ref filtering
+- Orchestrator reads battery_model.get_convergence_status() to decide measured vs. rated capacity
+- When Phase 12 capacity converges: SoH calculation uses measured capacity (separates aging from loss)
+- When not converged: SoH calculation uses rated capacity (7.2Ah) as fallback
+- History entries tagged with capacity_ah_ref for baseline filtering during regression
+- Old entries without capacity_ah_ref default to 7.2Ah for backward compatibility
+- Regression model filters by baseline: only same-capacity entries contribute to trend
+- Battery replacement (new capacity) automatically excludes old entries from prediction
+- All 8 unit tests passing: SOH-01 (2), SOH-02 (3), SOH-03 (3)
+- Integration tests passing: test_discharge_buffer_cleared_after_health_update, test_ol_ob_ol_discharge_lifecycle_complete
+- 278/279 full test suite passing (1 pre-existing failure unrelated to Phase 13)
+- All 3 requirements fully satisfied: SOH-01, SOH-02, SOH-03
+
+**Blockers for Phase 13 Plan 02:** None. Phase 13 Plan 01 complete; new battery detection can now depend on baseline filtering logic.
 
 
 **Key Phase 12 constraints (locked for v2.0):**
