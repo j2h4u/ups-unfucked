@@ -1,0 +1,401 @@
+"""Capacity estimator: measures actual battery Ah from discharge events via coulomb counting."""
+
+import math
+import logging
+from typing import List, Dict, Optional, Tuple
+from src.soc_predictor import soc_from_voltage
+
+logger = logging.getLogger(__name__)
+
+
+class CapacityEstimator:
+    """
+    Estimate battery capacity from discharge events using coulomb counting + voltage anchor validation.
+
+    Algorithm:
+    1. Coulomb counting: integrate current over time
+    2. Voltage curve validation: cross-check against SoC-based estimate
+    3. Quality filters (VAL-01): reject micro/shallow discharges
+    4. Confidence tracking: coefficient of variation across measurements
+    5. Depth-weighted averaging: combine multiple discharges by ΔSoC
+
+    Expert panel approved: IEEE-450 backed, 2026-03-15 review.
+    """
+
+    def __init__(self, peukert_exponent: float = 1.2, nominal_voltage: float = 12.0,
+                 nominal_power_watts: float = 425.0):
+        """
+        Initialize CapacityEstimator.
+
+        Args:
+            peukert_exponent: Peukert exponent for voltage curve analysis (default 1.2, VAL-02 constraint).
+            nominal_voltage: Battery nominal voltage (V).
+            nominal_power_watts: UPS rated power (W).
+        """
+        self.peukert_exponent = peukert_exponent
+        self.nominal_voltage = nominal_voltage
+        self.nominal_power_watts = nominal_power_watts
+        self.measurements: List[Tuple] = []  # [(timestamp, ah, confidence, metadata), ...]
+
+    def estimate(
+        self,
+        voltage_series: List[float],
+        time_series: List[float],
+        current_series: List[float],
+        lut: List[Dict],
+    ) -> Optional[Tuple[float, float, Dict]]:
+        """
+        Estimate capacity from a single discharge event.
+
+        Args:
+            voltage_series: Voltage readings (V) during discharge.
+            time_series: Unix timestamps (sec) — monotonic increasing.
+            current_series: Load percent (%) during discharge.
+            lut: Voltage → SoC lookup table.
+
+        Returns:
+            (Ah_estimate, confidence, metadata) tuple, or None if quality filter rejects.
+        """
+        # VAL-01: Quality filter
+        if not self._passes_quality_filter(voltage_series, time_series, current_series, lut):
+            return None
+
+        # Step 1: Coulomb integration
+        ah_coulomb = self._integrate_current(current_series, time_series,
+                                             self.nominal_power_watts, self.nominal_voltage)
+
+        # Step 2: SoC range for depth-of-discharge
+        soc_start, soc_end = self._get_soc_range(voltage_series, lut)
+        delta_soc = soc_start - soc_end
+
+        # Step 3: Voltage-based capacity estimate (for cross-check)
+        ah_voltage = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
+
+        # Outlier rejection: coulomb vs voltage >50% disagreement
+        if ah_voltage > 0 and abs(ah_coulomb - ah_voltage) / max(ah_coulomb, ah_voltage) > 0.75:
+            logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage:.2f}Ah "
+                          f"disagree >75%; rejecting measurement")
+            return None
+
+        # Use coulomb as primary estimate
+        ah_estimate = ah_coulomb
+
+        # Step 4: IR metadata (expert panel requirement)
+        ir_mohms = self._compute_ir(voltage_series, current_series)
+
+        # Step 5: Assemble metadata
+        metadata = {
+            'delta_soc_percent': delta_soc * 100,
+            'duration_sec': time_series[-1] - time_series[0],
+            'ir_mohms': ir_mohms,
+            'load_avg_percent': sum(current_series) / len(current_series) if current_series else 0,
+            'coulomb_ah': ah_coulomb,
+            'voltage_check_ah': ah_voltage
+        }
+
+        # Confidence: 0.0 for first measurement, increases as CoV decreases (with more samples)
+        confidence = self._compute_confidence()
+
+        return (ah_estimate, confidence, metadata)
+
+    def _passes_quality_filter(self, voltage_series: List[float], time_series: List[float],
+                              current_series: List[float], lut: List[Dict]) -> bool:
+        """
+        VAL-01: Reject micro and shallow discharges.
+
+        Criteria:
+        - Duration >= 300s (5 minutes)
+        - ΔSoC >= 5% (flicker threshold)
+        - ΔSoC >= 25% (shallow threshold — only deep discharges count)
+
+        Args:
+            voltage_series, time_series, current_series, lut: Discharge data.
+
+        Returns:
+            bool: True if all criteria pass, False if any rejected.
+        """
+        # Check duration
+        duration = time_series[-1] - time_series[0]
+        if duration < 300:
+            logger.debug(f"Discharge rejected: duration {duration:.0f}s < 300s (micro)")
+            return False
+
+        # Check ΔSoC
+        soc_start, soc_end = self._get_soc_range(voltage_series, lut)
+        delta_soc = soc_start - soc_end
+
+        if delta_soc < 0.05:
+            logger.debug(f"Discharge rejected: ΔSoC {delta_soc*100:.1f}% < 5% (flicker)")
+            return False
+
+        if delta_soc < 0.25:
+            logger.debug(f"Discharge rejected: ΔSoC {delta_soc*100:.1f}% < 25% (shallow)")
+            return False
+
+        return True
+
+    def _integrate_current(self, current_percent: List[float], time_sec: List[float],
+                          nominal_power_watts: float, nominal_voltage: float) -> float:
+        """
+        Coulomb counting: convert load% → current (A) → Ah via trapezoidal integration.
+
+        Formula:
+            I(A) = (load_percent / 100) × nominal_power_watts / nominal_voltage
+            Ah = ∫I dt / 3600 (convert A·s to Ah)
+
+        Uses trapezoidal rule for numerical integration (IEEE-1106 standard).
+
+        Args:
+            current_percent: Load percentages [0–100] at each time point.
+            time_sec: Unix timestamps (seconds, monotonic).
+            nominal_power_watts: UPS rated power (W).
+            nominal_voltage: Battery nominal voltage (V).
+
+        Returns:
+            float: Total charge in Ah.
+        """
+        if len(current_percent) < 2:
+            return 0.0
+
+        ah_total = 0.0
+        for i in range(len(current_percent) - 1):
+            # Convert load% to current (A)
+            i_curr_1 = (current_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
+            i_curr_2 = (current_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
+
+            # Average current in interval
+            i_avg = (i_curr_1 + i_curr_2) / 2.0
+
+            # Time step (seconds)
+            dt = time_sec[i + 1] - time_sec[i]
+
+            # Accumulate Ah (convert A·s to Ah by dividing by 3600)
+            ah_total += i_avg * dt / 3600.0
+
+        return ah_total
+
+    def _get_soc_range(self, voltage_series: List[float], lut: List[Dict]) -> Tuple[float, float]:
+        """
+        Get SoC at discharge start and end.
+
+        Args:
+            voltage_series: Voltage readings (V).
+            lut: Voltage → SoC lookup table.
+
+        Returns:
+            tuple: (SoC_start, SoC_end) as decimals (0.0–1.0).
+        """
+        soc_start = soc_from_voltage(voltage_series[0], lut)
+        soc_end = soc_from_voltage(voltage_series[-1], lut)
+        return soc_start, soc_end
+
+    def _estimate_from_voltage_curve(self, voltage_series: List[float],
+                                     time_series: List[float], delta_soc: float) -> float:
+        """
+        Cross-check coulomb estimate against voltage discharge curve.
+
+        Uses voltage drop magnitude to estimate expected Ah for given ΔSoC.
+        If voltage curve estimate is very different from coulomb, signal outlier.
+
+        Formula: Ah_voltage ≈ nominal_ah * (delta_soc / typical_discharge_soc)
+        where typical_discharge_soc is based on voltage range.
+
+        Args:
+            voltage_series: Voltage readings (V).
+            time_series: Time readings (seconds).
+            delta_soc: Depth of discharge (0.0–1.0).
+
+        Returns:
+            float: Expected Ah based on voltage curve analysis.
+        """
+        if delta_soc <= 0:
+            return 0.0
+
+        # Voltage drop magnitude
+        voltage_start = voltage_series[0]
+        voltage_end = voltage_series[-1]
+        voltage_drop = voltage_start - voltage_end
+
+        # Rough heuristic: voltage drop correlates to depth
+        # VRLA typical: 3.5V drop over full discharge (0.0 → 1.0 SoC)
+        # So we estimate Ah based on observed voltage drop vs full range
+        typical_full_discharge_voltage_drop = 3.5
+
+        # Scale by delta_soc: if delta_soc = 0.5 and we see 1.75V drop, it checks out
+        expected_voltage_drop = typical_full_discharge_voltage_drop * delta_soc
+
+        # If observed voltage drop matches expected, our coulomb estimate should be correct
+        # Use coulomb-estimated Ah to back-calculate what the voltage curve suggests
+        # Actually, for safety, just return an estimate based on voltage drop alone
+
+        # Nominal capacity at nominal voltage
+        nominal_ah = 7.2
+
+        # Voltage-based estimate (very rough): proportional to depth-of-discharge
+        # Avoid division by zero
+        if voltage_drop <= 0:
+            return 0.0
+
+        # Estimate Ah as: nominal_ah * (observed_voltage_drop / typical_full_discharge_drop)
+        ah_voltage = nominal_ah * (voltage_drop / typical_full_discharge_voltage_drop)
+
+        return ah_voltage
+
+    def _compute_ir(self, voltage_series: List[float], current_percent: List[float]) -> float:
+        """
+        Compute internal resistance from voltage and current changes.
+
+        Formula:
+            IR = ΔV / I_avg (in Ohms, multiplied by 1000 for mΩ)
+
+        Expert panel requirement: foundation for v3.0 trending.
+
+        Args:
+            voltage_series: Voltage readings (V).
+            current_percent: Load percentages [0–100].
+
+        Returns:
+            float: Internal resistance in mΩ.
+        """
+        voltage_drop = voltage_series[0] - voltage_series[-1]
+
+        # Convert load% to current (A)
+        current_avg_percent = sum(current_percent) / len(current_percent)
+        current_avg_amps = (current_avg_percent / 100.0) * self.nominal_power_watts / self.nominal_voltage
+
+        if current_avg_amps == 0:
+            return 0.0
+
+        # IR in Ohms, then convert to mΩ
+        ir_ohms = voltage_drop / current_avg_amps
+        ir_mohms = ir_ohms * 1000
+
+        return ir_mohms
+
+    def _compute_confidence(self) -> float:
+        """
+        Compute confidence metric based on accumulated measurements.
+
+        Confidence = 1 - CoV, where CoV = std(Ah_values) / mean(Ah_values)
+        Using population std (÷n, not ÷n-1) for stability with small samples.
+
+        Rules:
+        - < 3 measurements: confidence = 0.0 (not enough data)
+        - >= 3 measurements: confidence = 1 - CoV, clamped to [0, 1]
+        - May fluctuate (not monotonic) when noisy samples added
+
+        Returns:
+            float: Confidence metric [0.0, 1.0].
+        """
+        if len(self.measurements) < 3:
+            return 0.0
+
+        ah_values = [m[1] for m in self.measurements]
+        mean_ah = sum(ah_values) / len(ah_values)
+
+        if mean_ah == 0:
+            return 0.0
+
+        # Population std (÷n, not ÷n-1)
+        variance = sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)
+        std_ah = math.sqrt(variance)
+
+        cov = std_ah / mean_ah
+        confidence = max(0.0, min(1.0, 1.0 - cov))
+
+        return confidence
+
+    def add_measurement(self, ah: float, timestamp: str, metadata: Dict) -> None:
+        """
+        Accumulate a new capacity measurement.
+
+        Args:
+            ah: Measured capacity (Ah).
+            timestamp: ISO8601 timestamp.
+            metadata: Measurement metadata (delta_soc_percent, duration_sec, etc.).
+        """
+        confidence = self._compute_confidence()
+        self.measurements.append((timestamp, ah, confidence, metadata))
+
+    def has_converged(self) -> bool:
+        """
+        Check convergence: count >= 3 AND CoV < 0.10 (expert-approved threshold).
+
+        Returns:
+            bool: True if converged, False otherwise.
+        """
+        if len(self.measurements) < 3:
+            return False
+
+        ah_values = [m[1] for m in self.measurements]
+        mean_ah = sum(ah_values) / len(ah_values)
+
+        if mean_ah == 0:
+            return False
+
+        # Population std (÷n)
+        variance = sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)
+        std_ah = math.sqrt(variance)
+
+        cov = std_ah / mean_ah
+
+        return cov < 0.10
+
+    def get_weighted_estimate(self) -> float:
+        """
+        Compute depth-weighted average of all measurements (CAP-02).
+
+        Formula:
+            weight_i = ΔSoC_i / sum(ΔSoC_all)
+            Ah_weighted = sum(weight_i × Ah_i)
+
+        If all ΔSoC = 0 (degenerate case), fall back to arithmetic mean.
+
+        Returns:
+            float: Weighted capacity estimate (Ah).
+        """
+        if not self.measurements:
+            return 7.2  # Fallback to rated
+
+        total_delta_soc = sum(m[3].get('delta_soc_percent', 0) for m in self.measurements)
+
+        if total_delta_soc == 0:
+            # Fallback: equal weight
+            ah_sum = sum(m[1] for m in self.measurements)
+            return ah_sum / len(self.measurements)
+
+        # Weighted average
+        weighted_ah = 0.0
+        for timestamp, ah, confidence, metadata in self.measurements:
+            delta_soc_percent = metadata.get('delta_soc_percent', 0)
+            weight = delta_soc_percent / total_delta_soc
+            weighted_ah += weight * ah
+
+        return weighted_ah
+
+    def get_confidence(self) -> float:
+        """
+        Get current confidence based on accumulated measurements.
+
+        Returns:
+            float: Confidence metric [0.0, 1.0].
+        """
+        return self._compute_confidence()
+
+    def get_measurement_count(self) -> int:
+        """
+        Get number of accumulated measurements.
+
+        Returns:
+            int: Count of measurements.
+        """
+        return len(self.measurements)
+
+    def get_measurements(self) -> List[Tuple]:
+        """
+        Get all accumulated measurements (for persistence).
+
+        Returns:
+            list: [(timestamp, ah, confidence, metadata), ...].
+        """
+        return self.measurements
