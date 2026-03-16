@@ -9,10 +9,10 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 
 ### Capacity Estimation
 
-- [ ] **CAP-01**: Daemon measures actual battery capacity (Ah) from deep discharge events (ΔSoC > 50%)
-- [ ] **CAP-02**: Daemon accumulates capacity estimates from partial discharges via depth-weighted averaging
-- [ ] **CAP-03**: Daemon tracks statistical confidence across multiple discharge measurements
-- [ ] **CAP-04**: Daemon replaces rated capacity_ah with measured value when confidence exceeds threshold
+- [x] **CAP-01**: Daemon measures actual battery capacity (Ah) from deep discharge events (ΔSoC > 50%)
+- [x] **CAP-02**: Daemon accumulates capacity estimates from partial discharges via depth-weighted averaging
+- [x] **CAP-03**: Daemon tracks statistical confidence across multiple discharge measurements
+- [x] **CAP-04**: Daemon replaces rated capacity_ah with measured value when confidence exceeds threshold
 - [ ] **CAP-05**: User can signal "new battery installed" to reset capacity estimation baseline
 
 ### SoH Recalibration
@@ -56,10 +56,10 @@ Requirements for v2.0 Actual Capacity Estimation. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CAP-01 | 12 | Pending |
-| CAP-02 | 12 | Pending |
-| CAP-03 | 12 | Pending |
-| CAP-04 | 12 | Pending |
+| CAP-01 | 12 | Complete |
+| CAP-02 | 12 | Complete |
+| CAP-03 | 12 | Complete |
+| CAP-04 | 12 | Complete |
 | CAP-05 | 12 | Pending |
 | SOH-01 | 13 | Pending |
 | SOH-02 | 13 | Pending |
