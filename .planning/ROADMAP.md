@@ -117,7 +117,7 @@
 28. Minimum 30s discharge for SoH update: kernel `calculate_soh` returns None for duration < 30s. Orchestrator skips SoH update but still increments cycle_count and cumulative_on_battery_sec. Prevents flicker-storm pollution of SoH history.
 29. Discharge cooldown: 60s OL before clearing discharge buffer. If OB→OL→OB within 60s, treat as continuation of same discharge event. Orchestrator-level change only.
 
-**Plans:** 3/6 plans executed
+**Plans:** 5/6 plans executed
 
 ---
 
@@ -174,6 +174,7 @@
 | 9. Test Coverage | v1.1 | 3/3 | Complete | 2026-03-14 |
 | 10. Code Quality & Efficiency | v1.1 | 2/2 | Complete | 2026-03-14 |
 | 11. Polish & Future Prep | v1.1 | 3/3 | Complete | 2026-03-14 |
+| 12.1 Math Kernel & Stability Tests | v2.0 | 5/6 | In Progress | — |
 | 12. Deep Discharge Capacity Estimation | v2.0 | 3/3 | Planned | — |
 | 13. SoH Recalibration & New Battery | v2.0 | 0/TBD | Not started | — |
 | 14. Capacity Reporting & Metrics | v2.0 | 0/TBD | Not started | — |
