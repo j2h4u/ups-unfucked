@@ -450,6 +450,7 @@ def test_health_endpoint_capacity_persistence(tmp_path):
     from BatteryModel.get_convergence_status() across discharge lifecycle.
     """
     import json
+    import logging
     from unittest.mock import patch, MagicMock
     from pathlib import Path as RealPath
     import sys
@@ -497,6 +498,12 @@ def test_health_endpoint_capacity_persistence(tmp_path):
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
          patch.object(MonitorDaemon, '_validate_model'), \
          patch.object(MonitorDaemon, '_reset_battery_baseline'):
+
+        # Setup logger to avoid MagicMock issues
+        from src.monitor import logger as monitor_logger
+        monitor_logger.handlers.clear()
+        monitor_logger.addHandler(logging.StreamHandler())
+        monitor_logger.setLevel(logging.INFO)
 
         daemon = MonitorDaemon(config)
         daemon.battery_model = battery_model
