@@ -633,7 +633,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
          patch('src.monitor.replacement_predictor.linear_regression_soh') as mock_replace, \
          patch('src.monitor.runtime_minutes') as mock_runtime, \
          patch('src.monitor.interpolate_cliff_region') as mock_interp:
-        mock_soh_calc.return_value = 0.95  # Assume 95% SoH after discharge
+        mock_soh_calc.return_value = (0.95, 7.2)  # Assume 95% SoH after discharge, using rated capacity
         mock_replace.return_value = None  # No replacement prediction
         mock_runtime.return_value = 30.0  # 30 minutes runtime
         mock_interp.return_value = [
