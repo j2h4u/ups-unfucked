@@ -39,7 +39,12 @@ class TestDischargeClassification:
         upscmd_time = datetime.now(timezone.utc)
         model.data['last_upscmd_timestamp'] = upscmd_time.isoformat()
 
-        buffer = Mock(spec=DischargeBuffer)
+        # Buffer with times starting 30s after upscmd
+        buffer = DischargeBuffer()
+        buffer_start = upscmd_time.timestamp() + 30
+        buffer.times = [buffer_start, buffer_start + 10, buffer_start + 20]
+        buffer.voltages = [13.0, 12.8, 12.6]
+        buffer.loads = [20, 20, 20]
 
         # Create handler
         config = Mock()
@@ -53,13 +58,7 @@ class TestDischargeClassification:
             soh_threshold=0.80,
         )
 
-        # Mock datetime.now() to return time just after upscmd
-        with patch('src.discharge_handler.datetime') as mock_dt:
-            mock_dt.now.return_value = upscmd_time + timedelta(seconds=30)
-            mock_dt.fromisoformat = datetime.fromisoformat
-            mock_dt.utc = timezone.utc
-            reason = handler._classify_event_reason(buffer)
-
+        reason = handler._classify_event_reason(buffer)
         assert reason == 'test_initiated'
 
     def test_classify_natural_old_upscmd(self, temporary_model_path):

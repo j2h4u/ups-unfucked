@@ -41,9 +41,7 @@ def test_r_squared_validation():
         {'date': '2026-03-18', 'soh': 0.80},
     ]
     result = linear_regression_soh(history, threshold_soh=0.80)
-    # This may return None due to poor fit
-    if result is not None:
-        assert result[2] < 0.5  # Low R²
+    assert result is None, "Scattered data with low R² should be rejected"
 
 
 def test_soh_already_below_threshold():
@@ -58,7 +56,7 @@ def test_soh_already_below_threshold():
     slope, intercept, r2, replacement_date = result
     # Should return today's date since already below threshold
     today = datetime.now().strftime('%Y-%m-%d')
-    assert replacement_date == today or replacement_date is not None
+    assert replacement_date == today
 
 
 def test_no_degradation():

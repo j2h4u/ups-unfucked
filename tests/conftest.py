@@ -193,7 +193,7 @@ def current_metrics_fixture():
     Returns:
         CurrentMetrics: Current metrics with typed field values for SoC, charge, runtime, event state.
     """
-    from src.monitor import CurrentMetrics
+    from src.monitor_config import CurrentMetrics
     from src.event_classifier import EventType
     from datetime import datetime
 
@@ -224,7 +224,7 @@ def config_fixture(tmp_path):
     Returns:
         Config: Configuration dataclass with UPS name, intervals, hosts, paths, thresholds, model parameters.
     """
-    from src.monitor import Config
+    from src.monitor_config import Config
     from pathlib import Path
 
     return Config(

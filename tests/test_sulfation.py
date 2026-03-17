@@ -14,12 +14,13 @@ class TestComputeSulfationScore:
         recovery_delta = 0.08
         temp_celsius = 35.0
 
-        score = compute_sulfation_score(
+        state = compute_sulfation_score(
             days_since_deep=days_since_deep,
             ir_trend_rate=ir_trend_rate,
             recovery_delta=recovery_delta,
             temperature_celsius=temp_celsius,
         )
+        score = state.score
 
         assert score < 0.3, f"Expected score < 0.3 for healthy battery, got {score:.3f}"
         assert 0.0 <= score <= 1.0, f"Score must be in [0.0, 1.0], got {score:.3f}"
@@ -31,12 +32,13 @@ class TestComputeSulfationScore:
         recovery_delta = 0.02
         temp_celsius = 40.0
 
-        score = compute_sulfation_score(
+        state = compute_sulfation_score(
             days_since_deep=days_since_deep,
             ir_trend_rate=ir_trend_rate,
             recovery_delta=recovery_delta,
             temperature_celsius=temp_celsius,
         )
+        score = state.score
 
         assert score > 0.4, f"Expected score > 0.4 for old idle battery, got {score:.3f}"
         assert 0.0 <= score <= 1.0, f"Score must be in [0.0, 1.0], got {score:.3f}"
@@ -48,12 +50,13 @@ class TestComputeSulfationScore:
         recovery_delta = 0.05
         temp_celsius = 35.0
 
-        score = compute_sulfation_score(
+        state = compute_sulfation_score(
             days_since_deep=days_since_deep,
             ir_trend_rate=ir_trend_rate,
             recovery_delta=recovery_delta,
             temperature_celsius=temp_celsius,
         )
+        score = state.score
 
         assert score > 0.4, f"Expected score > 0.4 for high IR drift, got {score:.3f}"
         assert 0.0 <= score <= 1.0, f"Score must be in [0.0, 1.0], got {score:.3f}"
@@ -65,12 +68,13 @@ class TestComputeSulfationScore:
         recovery_delta = 1.0
         temp_celsius = 50.0
 
-        score = compute_sulfation_score(
+        state = compute_sulfation_score(
             days_since_deep=days_since_deep,
             ir_trend_rate=ir_trend_rate,
             recovery_delta=recovery_delta,
             temperature_celsius=temp_celsius,
         )
+        score = state.score
 
         assert 0.0 <= score <= 1.0, f"Score must be clamped to [0.0, 1.0], got {score:.3f}"
 
@@ -85,14 +89,14 @@ class TestComputeSulfationScore:
             ir_trend_rate=ir_trend_rate,
             recovery_delta=recovery_delta,
             temperature_celsius=25.0,
-        )
+        ).score
 
         score_warm = compute_sulfation_score(
             days_since_deep=days_since_deep,
             ir_trend_rate=ir_trend_rate,
             recovery_delta=recovery_delta,
             temperature_celsius=40.0,
-        )
+        ).score
 
         assert score_warm > score_cool, (
             f"Expected score(40°C)={score_warm:.3f} > score(25°C)={score_cool:.3f}"

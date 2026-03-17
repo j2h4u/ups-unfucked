@@ -180,7 +180,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action='propose_test',
             test_type='quick',
-            reason_code='sulfation_0.52_ir_measure',
+            reason_code='sulfation_0.52',
         )
 
         # Call dispatch

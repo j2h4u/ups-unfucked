@@ -117,7 +117,7 @@ def _compute_sulfation_for_scenario(
         ir_trend_rate=ir_trend_rate,
         recovery_delta=recovery_delta,
         temperature_celsius=temperature_celsius,
-    )
+    ).score
 
 
 # ============================================================================

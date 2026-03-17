@@ -25,18 +25,6 @@ def test_alert_runtime_below_threshold(caplog):
     assert "18" in caplog.text
 
 
-def test_structured_fields(caplog):
-    """Alert includes extra dict with BATTERY_SOH, THRESHOLD, DAYS_TO_REPLACEMENT."""
-    logger = logging.getLogger("test-ups")
-    with caplog.at_level(logging.WARNING):
-        alerter.alert_soh_below_threshold(logger, 0.78, 0.80, 45)
-    assert len(caplog.records) > 0
-    record = caplog.records[0]
-    # Check if extra fields are set (they may not be in caplog.text directly)
-    # but should exist in the record
-    assert hasattr(record, '__dict__')
-
-
 def test_independent_thresholds(caplog):
     """SoH below threshold but runtime above: only SoH alert fires."""
     logger = logging.getLogger("test-ups")
@@ -44,25 +32,6 @@ def test_independent_thresholds(caplog):
         alerter.alert_soh_below_threshold(logger, 0.75, 0.80, 45)
     # SoH alert should fire
     assert len(caplog.records) > 0
-
-
-def test_logger_setup():
-    """logging.getLogger("ups-battery-monitor") returns shared Logger instance."""
-    logger = logging.getLogger("test-ups")
-    assert isinstance(logger, logging.Logger)
-    assert logger.name == "test-ups"
-
-
-def test_syslog_identifier_propagation():
-    """Logger name identifies the component."""
-    logger = logging.getLogger("custom-identifier")
-    assert logger.name == "custom-identifier"
-    # Handlers should format with identifier
-    for handler in logger.handlers:
-        if hasattr(handler, 'formatter') and handler.formatter:
-            fmt = handler.formatter._fmt if hasattr(handler.formatter, '_fmt') else str(handler.formatter)
-            # Check that identifier is used in formatter
-            assert "custom-identifier" in fmt or "%(levelname)s" in fmt
 
 
 def test_none_days_to_replacement(caplog):

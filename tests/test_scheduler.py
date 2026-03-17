@@ -20,20 +20,19 @@ class TestSchedulerDecision:
 
 
 class TestSoHFloorGate:
-    """SoH floor gate (SCHED-05): blocks test if SoH < threshold."""
+    """SoH floor gate (SCHED-05): blocks test if SoH < SOH_FLOOR (0.60)."""
 
-    def test_soh_floor_blocks_at_threshold(self):
-        """SoH at exactly 60% threshold: blocks (hard block)."""
+    def test_soh_floor_blocks_below_threshold(self):
+        """SoH below 60%: blocks (hard block)."""
         decision = evaluate_test_scheduling(
             sulfation_score=0.72,
             cycle_roi=0.4,
-            soh_percent=0.59,  # Just below 60% default
+            soh_percent=0.59,  # Below 60% constant
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            soh_floor_threshold=0.60,
         )
         assert decision.action == 'block_test'
         assert 'soh_floor' in decision.reason_code
@@ -50,31 +49,14 @@ class TestSoHFloorGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            soh_floor_threshold=0.60,
         )
         # Should pass SoH floor gate and evaluate other gates
         assert decision.action in ['propose_test', 'defer_test', 'block_test']
         assert 'soh_floor' not in decision.reason_code
 
-    def test_custom_soh_threshold(self):
-        """SoH floor threshold is configurable."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_percent=0.70,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            soh_floor_threshold=0.75,  # Custom: higher floor
-        )
-        assert decision.action == 'block_test'
-        assert 'soh_floor' in decision.reason_code
-
 
 class TestRateLimitGate:
-    """Rate limiting gate (SCHED-01): enforces ≤1 test per week."""
+    """Rate limiting gate (SCHED-01): enforces ≤1 test per week (MIN_DAYS_BETWEEN_TESTS=7)."""
 
     def test_rate_limit_defers_recent_test(self):
         """Test <7 days since last: deferred."""
@@ -87,7 +69,6 @@ class TestRateLimitGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            min_days_between_tests=7.0,
         )
         assert decision.action == 'defer_test'
         assert 'rate_limit' in decision.reason_code
@@ -104,7 +85,6 @@ class TestRateLimitGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            min_days_between_tests=7.0,
         )
         # Should pass rate limit gate
         assert 'rate_limit' not in decision.reason_code
@@ -120,24 +100,7 @@ class TestRateLimitGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            min_days_between_tests=7.0,
         )
-        assert 'rate_limit' not in decision.reason_code
-
-    def test_custom_rate_limit_interval(self):
-        """Rate limit interval is configurable."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_percent=0.85,
-            days_since_last_test=5.0,  # 5 days
-            last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            min_days_between_tests=3.0,  # Custom: stricter interval
-        )
-        # 5 > 3, so passes
         assert 'rate_limit' not in decision.reason_code
 
 
@@ -318,7 +281,7 @@ class TestGridStabilityGate:
 
 
 class TestCycleBudgetGate:
-    """Cycle budget gate: blocks test when cycles critical (< 5)."""
+    """Cycle budget gate: blocks test when cycles critical (< CRITICAL_CYCLE_BUDGET=5)."""
 
     def test_critical_cycle_budget_blocks(self):
         """Cycle budget < 5: blocks test."""
@@ -355,7 +318,7 @@ class TestROIGate:
     """ROI threshold gate: defers low ROI (marginal benefit)."""
 
     def test_low_roi_defers_with_plenty_cycles(self):
-        """ROI < threshold with >20 cycles remaining: defers."""
+        """ROI < ROI_THRESHOLD (0.2) with >20 cycles remaining: defers."""
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.1,  # Low ROI
@@ -365,7 +328,6 @@ class TestROIGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,  # Plenty of cycles
-            roi_threshold=0.2,
         )
         assert decision.action == 'defer_test'
         assert 'marginal_roi' in decision.reason_code
@@ -381,7 +343,6 @@ class TestROIGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=15,  # < 20, so ROI gate doesn't apply
-            roi_threshold=0.2,
         )
         # Should evaluate sulfation gate instead
         assert 'marginal_roi' not in decision.reason_code
@@ -397,7 +358,6 @@ class TestROIGate:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            roi_threshold=0.2,
         )
         assert 'marginal_roi' not in decision.reason_code
 
@@ -406,7 +366,7 @@ class TestSulfationThreshold:
     """Sulfation threshold gate: proposes deep/quick or defers low sulfation."""
 
     def test_propose_deep_test_high_sulfation(self):
-        """Sulfation > 0.65: proposes deep test."""
+        """Sulfation > DEEP_SULFATION_THRESHOLD (0.65): proposes deep test."""
         decision = evaluate_test_scheduling(
             sulfation_score=0.72,
             cycle_roi=0.35,
@@ -438,7 +398,7 @@ class TestSulfationThreshold:
         assert 'sulfation' in decision.reason_code
 
     def test_defer_low_sulfation(self):
-        """Sulfation < 0.40: defers (no test needed)."""
+        """Sulfation < QUICK_SULFATION_THRESHOLD (0.40): defers (no test needed)."""
         decision = evaluate_test_scheduling(
             sulfation_score=0.32,
             cycle_roi=0.25,  # Good ROI so ROI gate doesn't interfere
@@ -500,8 +460,6 @@ class TestGateOrdering:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            soh_floor_threshold=0.60,
-            min_days_between_tests=7.0,
         )
         # SoH floor should be the reason (evaluated first)
         assert 'soh_floor' in decision.reason_code
@@ -522,7 +480,6 @@ class TestGateOrdering:
                 'credit_expires': credit_expires,
             },
             cycle_budget_remaining=50,
-            min_days_between_tests=7.0,
         )
         # Rate limit should be the reason (evaluated first)
         assert 'rate_limit' in decision.reason_code
@@ -558,7 +515,6 @@ class TestRealWorldScenarios:
             last_blackout_depth=0.0,
             active_blackout_credit=None,
             cycle_budget_remaining=50,
-            soh_floor_threshold=0.60,
         )
         assert decision.action == 'block_test'
         assert 'soh_floor' in decision.reason_code

@@ -183,29 +183,6 @@ class TestPeukertParameter:
         assert estimator.peukert_exponent == 1.2
 
 
-class TestOutlierRejection:
-    """Test coulomb vs voltage-curve disagreement > 20% → None."""
-
-    def test_rejects_outlier_coulomb_voltage_mismatch(self):
-        """Rejects measurement where coulomb Ah differs from voltage-based estimate by >20%."""
-        # This is a more complex test that would require mocking internal methods
-        # For now, we'll test the basic structure
-        time_series = [float(i * 10) for i in range(100)]
-        current_percent_series = [35.0] * 100
-        voltage_series = [13.0 - (i * 0.025) for i in range(100)]
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 10.5, "soc": 0.0}
-        ]
-
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
-
-        # For now just verify the method doesn't crash
-        # Detailed outlier testing will be in integration tests
-        assert result is None or result is not None
-
-
 class TestConvergenceScore:
     """Test convergence score = 1 - CoV (CAP-03)."""
 

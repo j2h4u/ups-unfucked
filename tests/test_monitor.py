@@ -24,7 +24,7 @@ def make_daemon(config_fixture):
          patch.object(MonitorDaemon, '_validate_model'), \
          patch.object(MonitorDaemon, '_reset_battery_baseline'):
         # Replace mocked JournalHandler with a real stderr handler so logging works in tests
-        from src.monitor import logger as monitor_logger
+        from src.monitor_config import logger as monitor_logger
         monitor_logger.handlers.clear()
         monitor_logger.addHandler(logging.StreamHandler())
 
@@ -73,7 +73,7 @@ def test_per_poll_writes_during_blackout(make_daemon):
         EventType.ONLINE,           # Poll 11: OL (should trigger batched write at 12th)
     ]
 
-    from src.monitor import CurrentMetrics
+    from src.monitor_config import CurrentMetrics
     daemon.current_metrics = CurrentMetrics(event_type=EventType.ONLINE, previous_event_type=EventType.ONLINE)
 
     # Run 12 iterations (mock loop)
@@ -101,7 +101,7 @@ def test_per_poll_writes_during_blackout(make_daemon):
 def test_handle_event_transition_per_poll_during_ob(make_daemon):
     """SAFE-02: LB flag decision (_handle_event_transition) executes every poll during OB."""
     from src.event_classifier import EventType
-    from src.monitor import CurrentMetrics
+    from src.monitor_config import CurrentMetrics
 
     daemon = make_daemon()
     daemon._handle_event_transition = MagicMock()
@@ -149,7 +149,7 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
 def test_no_writes_during_online_state(make_daemon):
     """SAFE-01: No spurious writes during OL state — only on poll % 6 boundary."""
     from src.event_classifier import EventType
-    from src.monitor import CurrentMetrics
+    from src.monitor_config import CurrentMetrics
 
     daemon = make_daemon()
     daemon._write_virtual_ups = MagicMock()
@@ -190,7 +190,7 @@ def test_no_writes_during_online_state(make_daemon):
 def test_lb_flag_signal_latency(make_daemon):
     """SAFE-02: LB flag written to virtual UPS within <10s of OB transition."""
     from src.event_classifier import EventType
-    from src.monitor import CurrentMetrics
+    from src.monitor_config import CurrentMetrics
     from pathlib import Path
     import tempfile
 
@@ -264,14 +264,14 @@ def test_voltage_sag_detection(make_daemon):
     daemon.battery_model = mock_model
 
     # Simulate EMA buffer with stable voltage before sag
-    daemon.ema_buffer = MagicMock()
-    daemon.ema_buffer.voltage = 13.50
-    daemon.ema_buffer.load = 16.5
+    daemon.ema_filter = MagicMock()
+    daemon.ema_filter.voltage = 13.50
+    daemon.ema_filter.load = 16.5
 
     # Set up pre-sag state
     daemon.v_before_sag = 13.50
     daemon.sag_buffer = [12.80, 12.75, 12.78, 12.76, 12.77]
-    from src.monitor import SagState
+    from src.monitor_config import SagState
     from src.battery_math.rls import ScalarRLS
     daemon.sag_state = SagState.MEASURING
     daemon.rls_ir_k = ScalarRLS(theta=0.015, P=1.0)
@@ -295,9 +295,9 @@ def test_voltage_sag_skipped_zero_current(make_daemon):
     mock_model.get_nominal_voltage.return_value = 12.0
     daemon.battery_model = mock_model
 
-    daemon.ema_buffer = MagicMock()
-    daemon.ema_buffer.voltage = 13.50
-    daemon.ema_buffer.load = 0.0  # Zero load
+    daemon.ema_filter = MagicMock()
+    daemon.ema_filter.voltage = 13.50
+    daemon.ema_filter.load = 0.0  # Zero load
 
     daemon.v_before_sag = 13.50
     daemon._record_voltage_sag(13.40, EventType.BLACKOUT_REAL)
@@ -310,7 +310,7 @@ def test_sag_init_vars(make_daemon):
     daemon = make_daemon()
     assert daemon.v_before_sag is None
     assert daemon.sag_buffer == []
-    from src.monitor import SagState
+    from src.monitor_config import SagState
     assert daemon.sag_state == SagState.IDLE
 
 
@@ -346,12 +346,12 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     mock_model.get_convergence_status.return_value = {'converged': False, 'sample_count': 1}
     daemon.battery_model = mock_model
 
-    daemon.ema_buffer = MagicMock()
-    daemon.ema_buffer.load = 20.0
+    daemon.ema_filter = MagicMock()
+    daemon.ema_filter.load = 20.0
     daemon.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
     daemon._discharge_predicted_runtime = None
 
-    from src.monitor import DischargeBuffer
+    from src.monitor_config import DischargeBuffer
     daemon.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0, 11.0, 10.5],
         times=[0, 100, 200, 300],
@@ -381,7 +381,7 @@ def test_auto_calibration_end_to_end(config_fixture):
              patch.object(MonitorDaemon, '_check_nut_connectivity'), \
              patch.object(MonitorDaemon, '_validate_model'):
             # Replace mocked JournalHandler with real handler so logging works
-            from src.monitor import logger as monitor_logger
+            from src.monitor_config import logger as monitor_logger
             monitor_logger.handlers.clear()
             monitor_logger.addHandler(logging.StreamHandler())
 
@@ -439,7 +439,7 @@ def test_current_metrics_dataclass(current_metrics_fixture):
     assert current_metrics_fixture.timestamp is not None
 
     # Test default instantiation (no args, all defaults)
-    from src.monitor import CurrentMetrics
+    from src.monitor_config import CurrentMetrics
     cm_default = CurrentMetrics()
     assert cm_default.soc is None
     assert cm_default.battery_charge is None
@@ -475,7 +475,7 @@ def test_config_dataclass(config_fixture):
     assert config_fixture.ema_window_sec == 120
 
     # Test custom instantiation
-    from src.monitor import Config
+    from src.monitor_config import Config
     custom_config = Config(
         ups_name='custom-ups',
         polling_interval=15,
@@ -538,10 +538,10 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
     daemon.reference_load_percent = 20.0
     daemon.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
 
-    daemon.ema_buffer = Mock()
-    daemon.ema_buffer.load = 20.0
+    daemon.ema_filter = Mock()
+    daemon.ema_filter.load = 20.0
 
-    from src.monitor import DischargeBuffer
+    from src.monitor_config import DischargeBuffer
 
     # Test Case 1: Normal case — calibrate_peukert returns non-clamped value → RLS updates
     daemon.discharge_buffer = DischargeBuffer(
@@ -693,12 +693,12 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         })
 
         # Setup EMA buffer
-        daemon.ema_buffer = Mock()
-        daemon.ema_buffer.stabilized = True
-        daemon.ema_buffer.voltage = 12.0
-        daemon.ema_buffer.load = 25.0
+        daemon.ema_filter = Mock()
+        daemon.ema_filter.stabilized = True
+        daemon.ema_filter.voltage = 12.0
+        daemon.ema_filter.load = 25.0
 
-        from src.monitor import DischargeBuffer
+        from src.monitor_config import DischargeBuffer
         daemon.discharge_buffer = DischargeBuffer()
 
         # CYCLE 1: OL → OL → OB → OB → OB → OL → OL
@@ -710,8 +710,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.event_type = EventType.ONLINE
         daemon.current_metrics.transition_occurred = False
         daemon.current_metrics.battery_charge = 100
-        daemon.ema_buffer.voltage = 13.4
-        daemon.ema_buffer.load = 2
+        daemon.ema_filter.voltage = 13.4
+        daemon.ema_filter.load = 2
         # No discharge tracking in OL state
 
         # Poll 1: OL at 13.3V, 100% charge
@@ -719,8 +719,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.event_type = EventType.ONLINE
         daemon.current_metrics.transition_occurred = False
         daemon.current_metrics.battery_charge = 100
-        daemon.ema_buffer.voltage = 13.3
-        daemon.ema_buffer.load = 2
+        daemon.ema_filter.voltage = 13.3
+        daemon.ema_filter.load = 2
 
         # Poll 2: OB at 12.0V, 50% charge (TRANSITION - OL→OB)
         daemon.poll_count = 2
@@ -729,8 +729,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.transition_occurred = True
         daemon.current_metrics.previous_event_type = prev_event
         daemon.current_metrics.battery_charge = 50
-        daemon.ema_buffer.voltage = 12.0
-        daemon.ema_buffer.load = 25
+        daemon.ema_filter.voltage = 12.0
+        daemon.ema_filter.load = 25
         daemon._track_discharge(12.0, base_timestamp + 100)
         daemon._handle_event_transition()
         # After transition, discharge buffer should be collecting
@@ -741,8 +741,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
         daemon.current_metrics.transition_occurred = False
         daemon.current_metrics.battery_charge = 30
-        daemon.ema_buffer.voltage = 11.5
-        daemon.ema_buffer.load = 25
+        daemon.ema_filter.voltage = 11.5
+        daemon.ema_filter.load = 25
         daemon._track_discharge(11.5, base_timestamp + 250)
 
         # Poll 4: OB at 11.0V, 20% charge (continue discharge)
@@ -750,8 +750,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
         daemon.current_metrics.transition_occurred = False
         daemon.current_metrics.battery_charge = 20
-        daemon.ema_buffer.voltage = 11.0
-        daemon.ema_buffer.load = 25
+        daemon.ema_filter.voltage = 11.0
+        daemon.ema_filter.load = 25
         daemon._track_discharge(11.0, base_timestamp + 500)
 
         # Poll 5: OL at 13.0V, 100% charge (TRANSITION - OB→OL)
@@ -761,8 +761,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.transition_occurred = True
         daemon.current_metrics.previous_event_type = prev_event
         daemon.current_metrics.battery_charge = 100
-        daemon.ema_buffer.voltage = 13.0
-        daemon.ema_buffer.load = 2
+        daemon.ema_filter.voltage = 13.0
+        daemon.ema_filter.load = 2
 
         # Verify discharge buffer BEFORE calling _handle_event_transition (which clears it)
         assert len(daemon.discharge_buffer.voltages) == 3, f"Expected 3 voltage samples before transition, got {len(daemon.discharge_buffer.voltages)}"
@@ -783,8 +783,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.event_type = EventType.ONLINE
         daemon.current_metrics.transition_occurred = False
         daemon.current_metrics.battery_charge = 100
-        daemon.ema_buffer.voltage = 13.2
-        daemon.ema_buffer.load = 2
+        daemon.ema_filter.voltage = 13.2
+        daemon.ema_filter.load = 2
 
         # CYCLE 2: OL → OB → OL (verify second cycle works)
         # Poll 7: OB at 12.5V, 60% charge (TRANSITION - OL→OB)
@@ -794,8 +794,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.transition_occurred = True
         daemon.current_metrics.previous_event_type = prev_event
         daemon.current_metrics.battery_charge = 60
-        daemon.ema_buffer.voltage = 12.5
-        daemon.ema_buffer.load = 25
+        daemon.ema_filter.voltage = 12.5
+        daemon.ema_filter.load = 25
         daemon._track_discharge(12.5, base_timestamp + 600)
         daemon._handle_event_transition()
         assert daemon.discharge_buffer.collecting is True, "Buffer should restart collecting in second OB"
@@ -805,8 +805,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
         daemon.current_metrics.transition_occurred = False
         daemon.current_metrics.battery_charge = 15
-        daemon.ema_buffer.voltage = 11.2
-        daemon.ema_buffer.load = 25
+        daemon.ema_filter.voltage = 11.2
+        daemon.ema_filter.load = 25
         daemon._track_discharge(11.2, base_timestamp + 1000)
 
         # Poll 9: OL at 13.1V (TRANSITION - OB→OL)
@@ -816,8 +816,8 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.transition_occurred = True
         daemon.current_metrics.previous_event_type = prev_event
         daemon.current_metrics.battery_charge = 100
-        daemon.ema_buffer.voltage = 13.1
-        daemon.ema_buffer.load = 2
+        daemon.ema_filter.voltage = 13.1
+        daemon.ema_filter.load = 2
 
         # Verify second cycle buffer BEFORE transition (has 2 samples)
         assert len(daemon.discharge_buffer.voltages) == 2, f"Expected 2 samples in second cycle, got {len(daemon.discharge_buffer.voltages)}"
@@ -837,13 +837,13 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
 
 def test_write_health_endpoint_creates_file(tmp_path, monkeypatch):
     """Verify health.json is created with correct structure."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
-    _write_health_endpoint(soc_percent=87.5, is_online=True)
+    write_health_endpoint(soc_percent=87.5, is_online=True)
 
     assert health_path.exists(), "health.json not created"
 
@@ -861,14 +861,14 @@ def test_write_health_endpoint_creates_file(tmp_path, monkeypatch):
 
 def test_health_endpoint_timestamp_format(tmp_path, monkeypatch):
     """Verify last_poll is ISO8601 UTC format."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     from datetime import datetime
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
-    _write_health_endpoint(soc_percent=50.0, is_online=False)
+    write_health_endpoint(soc_percent=50.0, is_online=False)
 
     import json
     with open(health_path) as f:
@@ -882,7 +882,7 @@ def test_health_endpoint_timestamp_format(tmp_path, monkeypatch):
 
 def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
     """Verify last_poll_unix is valid Unix epoch."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import time
     import json
     import src.monitor_config
@@ -891,7 +891,7 @@ def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     before = int(time.time())
-    _write_health_endpoint(soc_percent=75.0, is_online=True)
+    write_health_endpoint(soc_percent=75.0, is_online=True)
     after = int(time.time())
 
     with open(health_path) as f:
@@ -904,14 +904,14 @@ def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
 
 def test_health_endpoint_soc_precision(tmp_path, monkeypatch):
     """Verify SoC rounded to 1 decimal place."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import json
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
-    _write_health_endpoint(soc_percent=87.5432, is_online=True)
+    write_health_endpoint(soc_percent=87.5432, is_online=True)
 
     with open(health_path) as f:
         data = json.load(f)
@@ -921,7 +921,7 @@ def test_health_endpoint_soc_precision(tmp_path, monkeypatch):
 
 def test_health_endpoint_online_status(tmp_path, monkeypatch):
     """Verify online status reflects UPS state."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import json
     import src.monitor_config
 
@@ -929,13 +929,13 @@ def test_health_endpoint_online_status(tmp_path, monkeypatch):
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # Test OL state
-    _write_health_endpoint(soc_percent=100.0, is_online=True)
+    write_health_endpoint(soc_percent=100.0, is_online=True)
     with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is True
 
     # Test OB state
-    _write_health_endpoint(soc_percent=25.0, is_online=False)
+    write_health_endpoint(soc_percent=25.0, is_online=False)
     with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is False
@@ -943,7 +943,7 @@ def test_health_endpoint_online_status(tmp_path, monkeypatch):
 
 def test_health_endpoint_version(tmp_path, monkeypatch):
     """Verify daemon_version is dynamically loaded from package metadata."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     from unittest.mock import patch
     import json
     import src.monitor_config
@@ -953,7 +953,7 @@ def test_health_endpoint_version(tmp_path, monkeypatch):
 
     # Mock importlib.metadata.version to return "1.1"
     with patch('importlib.metadata.version', return_value='1.1'):
-        _write_health_endpoint(soc_percent=50.0, is_online=True)
+        write_health_endpoint(soc_percent=50.0, is_online=True)
 
         with open(health_path) as f:
             data = json.load(f)
@@ -963,7 +963,7 @@ def test_health_endpoint_version(tmp_path, monkeypatch):
 
 def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     """Verify file is replaced (not appended) on each call."""
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import time
     import json
     import src.monitor_config
@@ -972,13 +972,13 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # First write
-    _write_health_endpoint(soc_percent=100.0, is_online=True)
+    write_health_endpoint(soc_percent=100.0, is_online=True)
     file_size_1 = health_path.stat().st_size
 
     time.sleep(0.1)
 
     # Second write with different data
-    _write_health_endpoint(soc_percent=50.0, is_online=False)
+    write_health_endpoint(soc_percent=50.0, is_online=False)
     file_size_2 = health_path.stat().st_size
 
     with open(health_path) as f:
@@ -995,7 +995,7 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
 
 def test_run_error_rate_limiting(make_daemon):
     """P1-4: First N errors get full traceback, subsequent get summary only."""
-    from src.monitor import ERROR_LOG_BURST
+    from src.monitor_config import ERROR_LOG_BURST
     import time as time_mod
 
     daemon = make_daemon()
@@ -1013,7 +1013,7 @@ def test_run_error_rate_limiting(make_daemon):
 
     with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
          patch('src.monitor.sd_notify'), \
-         patch('src.monitor._write_health_endpoint'):
+         patch('src.monitor_config.write_health_endpoint'):
         daemon.run()
 
     # Verify error count tracked
@@ -1022,7 +1022,7 @@ def test_run_error_rate_limiting(make_daemon):
 
 def test_run_sag_state_reset_on_error(make_daemon):
     """P1-4: Sag state resets to IDLE on polling error (no stuck 1s sleep)."""
-    from src.monitor import SagState
+    from src.monitor_config import SagState
     import time as time_mod
 
     daemon = make_daemon()
@@ -1040,7 +1040,7 @@ def test_run_sag_state_reset_on_error(make_daemon):
 
     with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
          patch('src.monitor.sd_notify'), \
-         patch('src.monitor._write_health_endpoint'):
+         patch('src.monitor_config.write_health_endpoint'):
         daemon.run()
 
     assert daemon.sag_state == SagState.IDLE
@@ -1049,7 +1049,7 @@ def test_run_sag_state_reset_on_error(make_daemon):
 def test_run_ob_per_poll_compute_metrics(make_daemon):
     """P1-4: During OB, _compute_metrics called every poll (not every 6th)."""
     from src.event_classifier import EventType
-    from src.monitor import CurrentMetrics, SagState
+    from src.monitor_config import CurrentMetrics, SagState
     import time as time_mod
 
     daemon = make_daemon()
@@ -1083,7 +1083,7 @@ def test_run_ob_per_poll_compute_metrics(make_daemon):
 
     with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
          patch('src.monitor.sd_notify'), \
-         patch('src.monitor._write_health_endpoint'):
+         patch('src.monitor_config.write_health_endpoint'):
         daemon.run()
 
     # All 5 polls should call _compute_metrics (OB = every poll)
@@ -1102,7 +1102,7 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
     - previous_event_type updated every poll to track state changes
     """
     from src.event_classifier import EventType
-    from src.monitor import CurrentMetrics, SagState
+    from src.monitor_config import CurrentMetrics, SagState
 
     daemon = make_daemon()
     daemon.nut_client = MagicMock()
@@ -1148,7 +1148,7 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
 
     with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
          patch('src.monitor.sd_notify'), \
-         patch('src.monitor._write_health_endpoint'):
+         patch('src.monitor_config.write_health_endpoint'):
         daemon.run()
 
     # _handle_event_transition() should be called on every poll (6 total)
@@ -1163,7 +1163,7 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
 
 
 def test_f11_watchdog_after_critical_writes(make_daemon):
-    """F11 (P2): sd_notify('WATCHDOG=1') called AFTER _write_health_endpoint() and _write_virtual_ups().
+    """F11 (P2): sd_notify('WATCHDOG=1') called AFTER write_health_endpoint() and _write_virtual_ups().
 
     Verifies:
     - Health endpoint written before watchdog notification
@@ -1172,7 +1172,7 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
     - Watchdog kick order: health → virtual_ups → watchdog
     """
     from src.event_classifier import EventType
-    from src.monitor import CurrentMetrics, SagState
+    from src.monitor_config import CurrentMetrics, SagState
 
     daemon = make_daemon()
     daemon.nut_client = MagicMock()
@@ -1218,7 +1218,7 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
             daemon.running = False
 
     with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
-         patch('src.monitor._write_health_endpoint', side_effect=mock_health_endpoint), \
+         patch('src.monitor_config.write_health_endpoint', side_effect=mock_health_endpoint), \
          patch('src.monitor.sd_notify', side_effect=mock_watchdog), \
          patch('src.monitor.write_virtual_ups_dev', side_effect=mock_virtual_ups):
         daemon.run()
@@ -1487,7 +1487,8 @@ def test_new_battery_flag_false(tmp_path):
 
     This is the default when --new-battery is NOT passed.
     """
-    from src.monitor import MonitorDaemon, Config
+    from src.monitor import MonitorDaemon
+    from src.monitor_config import Config
     from src.model import BatteryModel
     from unittest.mock import patch, MagicMock
     from pathlib import Path
@@ -1531,7 +1532,8 @@ def test_new_battery_flag_true(tmp_path):
 
     This is set when user passes --new-battery CLI flag.
     """
-    from src.monitor import MonitorDaemon, Config
+    from src.monitor import MonitorDaemon
+    from src.monitor_config import Config
     from src.model import BatteryModel
     from unittest.mock import patch, MagicMock
     from pathlib import Path
@@ -1575,7 +1577,8 @@ def test_new_battery_flag_persistence(tmp_path):
 
     Ensures Phase 13 can read flag even if daemon restarts.
     """
-    from src.monitor import MonitorDaemon, Config
+    from src.monitor import MonitorDaemon
+    from src.monitor_config import Config
     from src.model import BatteryModel
     from unittest.mock import patch, MagicMock
     from pathlib import Path
@@ -1702,13 +1705,13 @@ def test_journald_capacity_event_logged(make_daemon):
         # Check extra dict has required fields
         if 'extra' in capacity_call.kwargs:
             extra = capacity_call.kwargs['extra']
-            assert extra.get('EVENT_TYPE') == 'capacity_measurement'
-            assert 'CAPACITY_AH' in extra
-            assert 'CONFIDENCE_PERCENT' in extra
-            assert 'SAMPLE_COUNT' in extra
-            assert 'DELTA_SOC_PERCENT' in extra
-            assert 'DURATION_SEC' in extra
-            assert 'LOAD_AVG_PERCENT' in extra
+            assert extra.get('event_type') == 'capacity_measurement'
+            assert 'capacity_ah' in extra
+            assert 'confidence_percent' in extra
+            assert 'sample_count' in extra
+            assert 'delta_soc_percent' in extra
+            assert 'duration_sec' in extra
+            assert 'load_avg_percent' in extra
 
 
 def test_journald_baseline_lock_event(make_daemon):
@@ -1768,15 +1771,15 @@ def test_journald_baseline_lock_event(make_daemon):
 
         # Count baseline_lock calls
         baseline_lock_calls = [call for call in mock_logger.info.call_args_list
-                              if call.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
+                              if call.kwargs.get('extra', {}).get('event_type') == 'baseline_lock']
         assert len(baseline_lock_calls) == 1, f"Expected 1 baseline_lock event, got {len(baseline_lock_calls)}"
 
         # Verify baseline_lock extra fields
         baseline_lock_extra = baseline_lock_calls[0].kwargs.get('extra', {})
-        assert baseline_lock_extra.get('EVENT_TYPE') == 'baseline_lock'
-        assert 'CAPACITY_AH' in baseline_lock_extra
-        assert 'SAMPLE_COUNT' in baseline_lock_extra
-        assert 'TIMESTAMP' in baseline_lock_extra
+        assert baseline_lock_extra.get('event_type') == 'baseline_lock'
+        assert 'capacity_ah' in baseline_lock_extra
+        assert 'sample_count' in baseline_lock_extra
+        assert 'timestamp' in baseline_lock_extra
 
         # Second discharge (should NOT trigger baseline_lock again due to flag)
         mock_logger.reset_mock()
@@ -1784,7 +1787,7 @@ def test_journald_baseline_lock_event(make_daemon):
 
         # Verify baseline_lock NOT called again
         baseline_lock_calls_2 = [call for call in mock_logger.info.call_args_list
-                               if call.kwargs.get('extra', {}).get('EVENT_TYPE') == 'baseline_lock']
+                               if call.kwargs.get('extra', {}).get('event_type') == 'baseline_lock']
         assert len(baseline_lock_calls_2) == 0, "baseline_lock should not be logged twice (deduplication flag failed)"
 
 
@@ -1794,13 +1797,13 @@ def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
     RPT-03 - Health endpoint exposes capacity metrics for Grafana scraping.
     """
     import json
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    _write_health_endpoint(
+    write_health_endpoint(
         soc_percent=87.5,
         is_online=True,
         poll_latency_ms=45.2,
@@ -1844,14 +1847,14 @@ def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
     RPT-03 - Health endpoint reflects convergence status accurately.
     """
     import json
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
     # Case A: Not converged (0 samples, no convergence)
-    _write_health_endpoint(
+    write_health_endpoint(
         soc_percent=50.0,
         is_online=False,
         capacity_converged=False,
@@ -1864,7 +1867,7 @@ def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
     assert data_a['capacity_samples_count'] == 0, "Case A: expected 0 samples"
 
     # Case B: Converged (3 samples, high confidence)
-    _write_health_endpoint(
+    write_health_endpoint(
         soc_percent=50.0,
         is_online=False,
         capacity_converged=True,
@@ -1885,13 +1888,13 @@ def test_health_endpoint_null_capacity_measured(tmp_path, monkeypatch):
     Edge case: capacity_ah_measured should be null in JSON, not 0.0.
     """
     import json
-    from src.monitor import _write_health_endpoint
+    from src.monitor_config import write_health_endpoint
     import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    _write_health_endpoint(
+    write_health_endpoint(
         soc_percent=75.0,
         is_online=True,
         capacity_ah_measured=None
