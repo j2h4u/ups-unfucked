@@ -86,7 +86,7 @@
 
 **Plans:** 6 plans across 5 execution waves
 
-- [ ] 16-01-PLAN.md — Wave 0: Test scaffolds for integration tests (Nyquist Rule gate)
+- [x] 16-01-PLAN.md — Wave 0: Test scaffolds for integration tests (Nyquist Rule gate) — completed 2026-03-17 (29 tests scaffolded, all 4 requirements covered)
 - [ ] 16-02-PLAN.md — Wave 1: BatteryModel schema extension + sulfation history persistence
 - [ ] 16-03-PLAN.md — Wave 2: Discharge handler integration with sulfation/ROI scoring
 - [ ] 16-04-PLAN.md — Wave 3: health.json export with Phase 16 observability metrics
@@ -135,9 +135,9 @@
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
 | 15. Foundation | v3.0 | 5/5 | Complete    | 2026-03-17 |
-| 16. Persistence & Observability | v3.0 | 6/6 | Planned | — |
+| 16. Persistence & Observability | v3.0 | 1/6 | In Progress | — |
 | 17. Scheduling Intelligence | v3.0 | 0/TBD | Not planned | — |
 
 ---
 
-*Roadmap updated: 2026-03-17 after Phase 16 planning*
+*Roadmap updated: 2026-03-17 after Phase 16 Plan 01 completion (Wave 0 infrastructure scaffolding)*

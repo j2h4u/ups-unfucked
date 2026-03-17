@@ -1,21 +1,21 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-last_updated: "2026-03-17T12:13:17.386Z"
+milestone: v3.0
+milestone_name: Active Battery Care
+status: in-progress
+last_updated: "2026-03-17T13:18:15.000Z"
 progress:
-  total_phases: 1
+  total_phases: 3
   completed_phases: 1
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 15
+  completed_plans: 6
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 15 Plan 05 completion
-**Milestone:** v3.0 Active Battery Care — Foundation phase complete
-**Current Position:** Phase 15 (Foundation) — All 5 plans COMPLETE, ready for Phase 16
+**Last Updated:** 2026-03-17 after Phase 16 Plan 01 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0 infrastructure scaffolded
+**Current Position:** Phase 16 (Persistence-Observability) Plan 01 COMPLETE — Wave 0 test infrastructure ready for Wave 1+ implementation
 
 ---
 
@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Phase 15 — foundation
+**Current focus:** Phase 16 — persistence-observability
 
 **Milestones shipped:**
 
@@ -91,17 +91,25 @@ None. Roadmap creation complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (research completed, roadmap creation initiated)
+**Last session:** 2026-03-17 (Phase 16 Plan 01 — test infrastructure scaffolding)
 
 **Artifacts created this session:**
 
-- `.planning/ROADMAP.md` (3 phases, 20 requirements, 15 success criteria)
-- `.planning/STATE.md` (project memory, decisions, blockers)
-- `.planning/REQUIREMENTS.md` (traceability updated with phase mappings: 2+10+8=20 coverage)
+- `.planning/phases/16-persistence-observability/16-01-SUMMARY.md` (Wave 0 completion report)
+- `tests/test_sulfation_persistence.py` (7 tests for SULF-05 model.json persistence)
+- `tests/test_health_endpoint_v16.py` (8 tests for RPT-01 health.json export)
+- `tests/test_journald_sulfation_events.py` (7 tests for RPT-02 journald event logging)
+- `tests/test_discharge_event_logging.py` (7 tests for RPT-03 discharge event tracking)
 
-**Next session:** Approve roadmap, then `/gsd:plan-phase 15` (Foundation)
+**Test Infrastructure Summary:**
+- Total tests created: 29 integration tests
+- Coverage: All 4 Phase 16 Wave 0 requirements (SULF-05, RPT-01, RPT-02, RPT-03)
+- Status: PASS — all tests collect, import without error, syntactically valid
+- Nyquist Rule: Wave 0 COMPLETE — Wave 1+ can begin implementation
+
+**Next session:** Phase 16 Plan 02 (Wave 1 implementation) — extend model.json schema, implement append_sulfation_history() and append_discharge_event() methods
 
 ---
 
 *State initialized: 2026-03-17*
-*Last updated: 2026-03-17 after v3.0 roadmap creation*
+*Last updated: 2026-03-17 after Phase 16 Plan 01 completion*
