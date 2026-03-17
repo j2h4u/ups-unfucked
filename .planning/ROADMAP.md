@@ -87,9 +87,9 @@
 **Plans:** 6 plans across 5 execution waves
 
 - [x] 16-01-PLAN.md — Wave 0: Test scaffolds for integration tests (Nyquist Rule gate) — completed 2026-03-17 (29 tests scaffolded, all 4 requirements covered)
-- [ ] 16-02-PLAN.md — Wave 1: BatteryModel schema extension + sulfation history persistence
-- [ ] 16-03-PLAN.md — Wave 2: Discharge handler integration with sulfation/ROI scoring
-- [ ] 16-04-PLAN.md — Wave 3: health.json export with Phase 16 observability metrics
+- [x] 16-02-PLAN.md — Wave 1: BatteryModel schema extension + sulfation history persistence — completed 2026-03-17
+- [x] 16-03-PLAN.md — Wave 2: Discharge handler integration with sulfation/ROI scoring — completed 2026-03-17
+- [x] 16-04-PLAN.md — Wave 3: health.json export with Phase 16 observability metrics — completed 2026-03-17 (11 fields, 8 tests, RPT-01/ROI-02/ROI-03 satisfied)
 - [ ] 16-05-PLAN.md — Wave 4: Journald structured event logging for discharge completion
 - [ ] 16-06-PLAN.md — Wave 5: MOTD module for sulfation status display
 

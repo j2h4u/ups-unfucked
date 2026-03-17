@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Active Battery Care
 status: in-progress
-last_updated: "2026-03-17T13:33:42Z"
+last_updated: "2026-03-17T13:17:30Z"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 15
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 16 Plan 03 completion
-**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-2 infrastructure complete
-**Current Position:** Phase 16 (Persistence-Observability) Plan 03 COMPLETE — Discharge handler integration, sulfation/ROI scoring, model persistence wired. Ready for Wave 3 (health.json export)
+**Last Updated:** 2026-03-17 after Phase 16 Plan 04 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-3 infrastructure complete
+**Current Position:** Phase 16 (Persistence-Observability) Plan 04 COMPLETE — health.json schema extended with 11 Phase 16 observability fields. Ready for Plan 05 (MOTD module)
 
 ---
 
@@ -91,24 +91,27 @@ None. Roadmap creation complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (Phase 16 Plan 03 — Discharge handler integration)
+**Last session:** 2026-03-17 (Phase 16 Plan 04 — health.json schema extension)
 
 **Artifacts created this session:**
 
-- `.planning/phases/16-persistence-observability/16-03-SUMMARY.md` (Wave 2 completion report)
-- Extended `src/discharge_handler.py`: 5 helper methods (_calculate_days_since_deep, _estimate_ir_trend, _classify_event_reason, _estimate_dod_from_buffer, _estimate_cycle_budget), sulfation/ROI integration in update_battery_health()
-- Updated `src/monitor.py`: write_health_endpoint() call extended with 11 Phase 16 parameters
+- `.planning/phases/16-persistence-observability/16-04-SUMMARY.md` (Wave 3 completion report)
+- Extended `src/monitor_config.py`: 11 new Phase 16 parameters added to write_health_endpoint(), health_data dict updated with all Phase 16 fields (sulfation, ROI, discharge metrics)
+- Implemented `tests/test_health_endpoint_v16.py`: 8 comprehensive integration tests covering health.json schema with Phase 16 fields
 
-**Discharge Handler Integration Summary:**
-- Total helper methods: 5 (all returning data for sulfation scoring)
-- In-memory state variables: 8 (last_sulfation_score, last_cycle_roi, last_days_since_deep, etc.)
-- Model.json integration: append_sulfation_history() and append_discharge_event() called on every discharge
-- Integration tests: 14 tests pass (7 sulfation + 7 discharge events), 389 total tests pass
-- Status: PASS — Wave 2 complete, all requirements (SULF-01–04, ROI-01–02) satisfied
+**health.json Schema Extension Summary:**
+- Function signature: 19 parameters total (8 existing v2.0 + 11 new Phase 16)
+- health_data dict: 21 fields total (10 existing v2.0 + 11 new Phase 16)
+- New fields: sulfation_score, sulfation_confidence, days_since_deep, ir_trend_rate, recovery_delta, cycle_roi, cycle_budget_remaining, scheduling_reason, next_test_timestamp, last_discharge_timestamp, natural_blackout_credit
+- All new fields optional (None defaults), backward-compatible with v2.0
+- Numeric precision standardized: sulfation 3 decimals, IR trend 6 decimals, ROI 3 decimals
+- Integration tests: 8 tests written (file creation, field presence, precision, null handling, v2.0 backward compatibility, timestamp formats)
+- Test status: 8/8 PASS, 22 integration tests PASS (with sulfation/discharge), 389 total tests PASS
+- Status: PASS — Wave 3 complete, RPT-01 (sulfation export), ROI-02 (ROI metrics export), ROI-03 (scheduling state export) requirements satisfied
 
-**Next session:** Phase 16 Plan 04 (Wave 3 implementation) — health.json export, JSON endpoint, observability metrics
+**Next session:** Phase 16 Plan 05 (MOTD module) — display sulfation status and next test countdown
 
 ---
 
 *State initialized: 2026-03-17*
-*Last updated: 2026-03-17 after Phase 16 Plan 03 completion*
+*Last updated: 2026-03-17 after Phase 16 Plan 04 completion*
