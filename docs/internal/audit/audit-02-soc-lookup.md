@@ -22,9 +22,9 @@
 
 ## Fix Status
 
-- [ ] **F7** (Low): Open — LUT dedup
-- [ ] **F8** (Medium): Open — known limitation, documented
-- [ ] **F9** (Medium): Open — resolves after first deep discharge
-- [ ] **F10** (Low): Open — prevented by dedup (F7)
+- [x] **F7** (Low): ✅ Dedup added to _prune_lut() — keeps most recent entry per ±0.01V band
+- [x] **F8** (Medium): ✅ Documented in soc_from_voltage() docstring
+- [x] **F9** (Medium): ✅ Documented in soc_from_voltage() docstring — resolves with data
+- [x] **F10** (Low): ✅ Documented in soc_from_voltage() docstring — prevented by F7 dedup
 - [x] **F11** (Info): No action needed — by design
 - [x] **F12** (OK): No action needed

@@ -22,6 +22,6 @@
 - [x] **F47** (OK): No action needed
 - [x] **F48** (OK): No action needed
 - [x] **F49** (OK): No action needed
-- [ ] **F50** (Low): Open — document distinction
+- [x] **F50** (Low): ✅ Documented in _track_discharge() — cycle_count = transfers, wear = cumulative_on_battery_sec
 - [x] **F51** (OK): No action needed
 - [x] **F52** (Info): No action needed — acceptable behavior

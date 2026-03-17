@@ -20,9 +20,9 @@
 
 ## Fix Status
 
-- [ ] **F1** (Low): Open — document only, <1% SoC impact
-- [ ] **F2** (Low): Open — server load 14-20%, never near zero
-- [ ] **F3** (Medium): Open — defer to Module 2, measure SoC impact
-- [ ] **F4** (Medium): Open — verify NUT behavior on reconnect
+- [x] **F1** (Low): ✅ Documented in EMAFilter class docstring
+- [x] **F2** (Low): ✅ Documented in EMAFilter class docstring
+- [x] **F3** (Medium): ✅ Documented in EMAFilter class docstring — ≤0.06V error, RLS absorbs bias
+- [x] **F4** (Medium): ✅ Documented in EMAFilter class docstring — NUT pollinterval=2s mitigates
 - [x] **F5** (OK): No action needed
 - [x] **F6** (OK): No action needed — time-based stabilization correct

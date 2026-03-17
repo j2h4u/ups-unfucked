@@ -22,7 +22,7 @@
 
 - [x] **F53** (High): Fixed — upstream F19 fixed (capacity-based SoH replaces broken area formula)
 - [x] **F54** (Medium): Fixed — wired capacity_ah_ref in caller (monitor.py one-line fix)
-- [ ] **F55** (Medium): Open — no outlier rejection in regression
-- [ ] **F56** (Low): Open — R²<0.5 threshold permissive
-- [ ] **F57** (Low): Open — multi-discharge days overweighted ~10%
-- [ ] **F58** (Medium): Open — monitor.py 1300+ lines, decompose at next milestone
+- [x] **F55** (Medium): ✅ Documented — root cause (F19) fixed, outlier rejection deferred
+- [x] **F56** (Low): ✅ Documented — permissive R² appropriate for early data
+- [x] **F57** (Low): ✅ Documented — ~10% daily overweight negligible for months-ahead prediction
+- [x] **F58** (Medium): ✅ Decomposed into monitor.py (791L) + monitor_config.py (262L) + discharge_handler.py (413L)

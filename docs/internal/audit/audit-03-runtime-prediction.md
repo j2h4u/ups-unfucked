@@ -21,8 +21,8 @@
 ## Fix Status
 
 - [x] **F13** (High): Fixed — return 24h cap instead of 0.0 for load=0 sensor glitch
-- [ ] **F14** (Medium): Open — nominal voltage in I_actual, <3% error at stable load
-- [ ] **F15** (Medium): Open — linear SoC scaling below 20%, improves with cliff data (F9)
-- [ ] **F16** (Low): Open — document only
-- [ ] **F17** (Low): Open — document only
+- [x] **F14** (Medium): ✅ Documented in runtime_minutes() docstring — <3% error at stable load
+- [x] **F15** (Medium): ✅ Documented in runtime_minutes() docstring — improves with cliff data (F9)
+- [x] **F16** (Low): ✅ Documented in runtime_minutes() docstring — RLS calibrates at actual C-rate
+- [x] **F17** (Low): ✅ Documented in runtime_minutes() docstring — ~5% VRLA approximation
 - [x] **F18** (Info): No action needed — unreachable in practice

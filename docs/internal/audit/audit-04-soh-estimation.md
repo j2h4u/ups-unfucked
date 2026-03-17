@@ -26,5 +26,5 @@ The formula compares area of a partial discharge (e.g., 600s) to the area of a f
 - [x] **F19** (Critical): Fixed — capacity-based SoH replaces area-under-curve (deprecated voltage-area formula)
 - [x] **F20** (High): Fixed — new SoH algorithm doesn't use arbitrary 0.30 weight
 - [x] **F21** (High): Fixed — real Bayesian blend weighted by ΔSoC depth
-- [ ] **F22** (Low): Open — document only, kernel 30s vs monitor 300s
+- [x] **F22** (Low): ✅ Documented in both soh.py (kernel param) and soh_calculator.py (operational guard)
 - [x] **F23** (OK): No action needed — anchor trimming correct

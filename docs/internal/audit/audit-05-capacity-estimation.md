@@ -21,8 +21,8 @@
 ## Fix Status
 
 - [x] **F24** (High): Fixed — lowered ΔSoC gate from 25% to 15%, CoV<10% handles noise
-- [ ] **F25** (Medium): Open — _compute_ir() is discharge-slope, not IR. Metadata only
-- [ ] **F26** (Low): Open — hardcoded nominal_ah in cross-check
-- [ ] **F27** (Low): Open — nominal voltage bias ~4%, doesn't affect convergence
+- [x] **F25** (Medium): ✅ Renamed _compute_ir() → _compute_discharge_slope(), metadata key ir_mohms → discharge_slope_mohm
+- [x] **F26** (Low): ✅ Added capacity_ah constructor param, replaced hardcoded 7.2 in cross-check
+- [x] **F27** (Low): ✅ Documented in _integrate_current() docstring — ~4% systematic bias
 - [x] **F28** (Info): No action needed — confirms F24 (now fixed)
 - [x] **F29** (OK): No action needed — convergence CoV<10% with population std is sound
