@@ -18,6 +18,8 @@ from src.capacity_estimator import CapacityEstimator
 from src.runtime_calculator import runtime_minutes
 from src.soc_predictor import soc_from_voltage
 from src.battery_math import calibrate_peukert, ScalarRLS
+from src.battery_math.sulfation import compute_sulfation_score
+from src.battery_math.cycle_roi import compute_cycle_roi
 from src import soh_calculator, replacement_predictor, alerter
 from src.monitor_config import DischargeBuffer, safe_save
 
@@ -54,6 +56,16 @@ class DischargeHandler:
 
         # Phase 14: Track if baseline_lock event has been logged (prevent duplicates)
         self.capacity_locked_previously = False
+
+        # Phase 16: Initialize in-memory sulfation state (will be populated on discharge)
+        self.last_sulfation_score: Optional[float] = None
+        self.last_sulfation_confidence: str = 'high'
+        self.last_days_since_deep: Optional[float] = None
+        self.last_ir_trend_rate: float = 0.0
+        self.last_recovery_delta: float = 0.0
+        self.last_cycle_roi: float = 0.0
+        self.last_cycle_budget_remaining: int = 0
+        self.last_discharge_timestamp: Optional[str] = None
 
     def update_battery_health(self, discharge_buffer: DischargeBuffer) -> None:
         """Process completed discharge event: SoH, Peukert, replacement prediction, alerts.
@@ -411,3 +423,113 @@ class DischargeHandler:
                 self.battery_model.data['capacity_ah_measured'] = current_measured
                 self.battery_model.save()
                 logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
+
+    def _calculate_days_since_deep(self) -> Optional[float]:
+        """Calculate days since last deep discharge (>70% DoD).
+
+        Returns None if no deep discharge in history.
+        Returns float days since last deep discharge otherwise.
+        """
+        discharge_events = self.battery_model.data.get('discharge_events', [])
+
+        # Find most recent deep discharge (DoD > 0.7)
+        for event in reversed(discharge_events):
+            if event.get('depth_of_discharge', 0) > 0.7:
+                # Parse timestamp (ISO8601) and calculate days ago
+                try:
+                    timestamp_str = event['timestamp']
+                    event_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    days_ago = (now - event_time).total_seconds() / 86400.0
+                    return days_ago
+                except (ValueError, KeyError):
+                    continue
+
+        return None
+
+    def _estimate_ir_trend(self) -> float:
+        """Estimate IR trend rate (dR/dt) in ohms/day.
+
+        Queries r_internal_history (existing v2.0 field), calculates slope.
+        Returns 0.0 if insufficient data.
+        """
+        r_history = self.battery_model.data.get('r_internal_history', [])
+
+        if len(r_history) < 2:
+            return 0.0
+
+        # Keep only last 30 days of data
+        now = datetime.now(timezone.utc)
+        recent_entries = []
+        for entry in r_history:
+            try:
+                entry_time = datetime.fromisoformat(entry.get('date', '').replace('Z', '+00:00'))
+                days_ago = (now - entry_time).total_seconds() / 86400.0
+                if days_ago <= 30:
+                    recent_entries.append({
+                        'days_ago': days_ago,
+                        'r_internal': entry.get('r_internal', 0)
+                    })
+            except (ValueError, KeyError):
+                continue
+
+        if len(recent_entries) < 2:
+            return 0.0
+
+        # Linear regression: fit r_internal = a * days_ago + b
+        # Return slope (a) in ohms/day
+        n = len(recent_entries)
+        sum_x = sum(e['days_ago'] for e in recent_entries)
+        sum_y = sum(e['r_internal'] for e in recent_entries)
+        sum_xy = sum(e['days_ago'] * e['r_internal'] for e in recent_entries)
+        sum_x2 = sum(e['days_ago'] ** 2 for e in recent_entries)
+
+        denominator = n * sum_x2 - sum_x ** 2
+        if abs(denominator) < 1e-10:
+            return 0.0
+
+        slope = (n * sum_xy - sum_x * sum_y) / denominator
+        return max(0.0, slope)  # Clip to non-negative
+
+    def _classify_event_reason(self, discharge_buffer: Optional[object] = None) -> str:
+        """Classify discharge as natural or test-initiated.
+
+        Phase 16: Always 'natural' (upscmd not called yet).
+        Phase 17: Compare discharge_buffer start time to last upscmd timestamp.
+
+        Returns: 'natural' | 'test_initiated'
+        """
+        return 'natural'  # Hardcoded for Phase 16
+
+    def _estimate_dod_from_buffer(self, discharge_buffer: object) -> float:
+        """Estimate depth of discharge from voltage samples.
+
+        Args:
+            discharge_buffer: DischargeBuffer with voltages array
+
+        Returns: float [0, 1] representing fraction of battery discharged
+        """
+        if not hasattr(discharge_buffer, 'voltages') or len(discharge_buffer.voltages) < 2:
+            return 0.0
+
+        # Existing SoC predictor (v2.0) can be reused here
+        # For now, estimate from voltage delta (simple approach)
+        v_min = min(discharge_buffer.voltages)
+        v_max = max(discharge_buffer.voltages)
+
+        # CyberPower UT850: nominal voltage 12V, min ~10.5V (fully discharged)
+        v_nominal = 12.0
+        v_floor = 10.5
+
+        dod = (v_max - v_min) / (v_nominal - v_floor) if (v_nominal - v_floor) > 0 else 0.0
+        return min(1.0, max(0.0, dod))
+
+    def _estimate_cycle_budget(self) -> int:
+        """Estimate remaining cycle budget based on SoH.
+
+        CyberPower UT850 rated at 300 cycles (per datasheet).
+        Estimate remaining = 300 * SoH
+        """
+        soh = self.battery_model.data.get('soh', 1.0)
+        rated_cycles = 300
+        return int(rated_cycles * soh)
