@@ -232,6 +232,23 @@ class DischargeHandler:
             'cycle_roi': round(roi, 3)
         })
 
+        # Phase 16 NEW: Log discharge completion to journald
+        try:
+            logger.info('Discharge complete', extra={
+                'event_type': 'discharge_complete',
+                'event_reason': self._classify_event_reason(discharge_buffer),
+                'duration_seconds': int(discharge_duration),
+                'depth_of_discharge': round(dod, 2),
+                'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
+                'sulfation_confidence': 'high' if sulfation_state else None,
+                'recovery_delta': round(self.last_recovery_delta, 3),
+                'cycle_roi': round(roi, 3),
+                'measured_capacity_ah': round(capacity_ah_used, 2) if capacity_ah_used else None,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as e:
+            logger.warning(f"Failed to log discharge event: {e}")
+
         # Log prediction error before clearing buffer
         self._log_discharge_prediction(discharge_buffer)
 
