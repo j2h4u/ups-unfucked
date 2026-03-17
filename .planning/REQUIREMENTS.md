@@ -70,32 +70,38 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SULF-01 | — | Pending |
-| SULF-02 | — | Pending |
-| SULF-03 | — | Pending |
-| SULF-04 | — | Pending |
-| SULF-05 | — | Pending |
-| SULF-06 | — | Pending |
-| SCHED-01 | — | Pending |
-| SCHED-02 | — | Pending |
-| SCHED-03 | — | Pending |
-| SCHED-04 | — | Pending |
-| SCHED-05 | — | Pending |
-| SCHED-06 | — | Pending |
-| SCHED-07 | — | Pending |
-| SCHED-08 | — | Pending |
-| ROI-01 | — | Pending |
-| ROI-02 | — | Pending |
-| ROI-03 | — | Pending |
-| RPT-01 | — | Pending |
-| RPT-02 | — | Pending |
-| RPT-03 | — | Pending |
+| SULF-01 | 16 | Pending |
+| SULF-02 | 16 | Pending |
+| SULF-03 | 16 | Pending |
+| SULF-04 | 16 | Pending |
+| SULF-05 | 16 | Pending |
+| SULF-06 | 15 | Pending |
+| SCHED-01 | 17 | Pending |
+| SCHED-02 | 15 | Pending |
+| SCHED-03 | 17 | Pending |
+| SCHED-04 | 17 | Pending |
+| SCHED-05 | 17 | Pending |
+| SCHED-06 | 17 | Pending |
+| SCHED-07 | 17 | Pending |
+| SCHED-08 | 17 | Pending |
+| ROI-01 | 16 | Pending |
+| ROI-02 | 16 | Pending |
+| ROI-03 | 16 | Pending |
+| RPT-01 | 16 | Pending |
+| RPT-02 | 16 | Pending |
+| RPT-03 | 16 | Pending |
 
 **Coverage:**
 - v3.0 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20 ⚠️
+- Mapped to phases: 20 ✓
+- Unmapped: 0 ✓
+
+**Phase Distribution:**
+- Phase 15 (Foundation): 2 requirements
+- Phase 16 (Persistence & Observability): 10 requirements
+- Phase 17 (Scheduling Intelligence): 8 requirements
 
 ---
+
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after initial definition*
+*Last updated: 2026-03-17 after roadmap creation*

@@ -5,6 +5,7 @@
 - ✅ **v1.0 MVP** — Phases 1-6 (shipped 2026-03-14)
 - ✅ **v1.1 Expert Panel Review Fixes** — Phases 7-11 (shipped 2026-03-14)
 - ✅ **v2.0 Actual Capacity Estimation** — Phases 12-14 (shipped 2026-03-16)
+- ⏳ **v3.0 Active Battery Care** — Phases 15-17 (planning in progress)
 
 ## Phases
 
@@ -41,6 +42,66 @@
 
 </details>
 
+<details>
+<summary>⏳ v3.0 Active Battery Care (Phases 15-17) — PLANNING</summary>
+
+### Phase 15: Foundation
+
+**Goal:** De-risk core technologies — validate NUT upscmd protocol, implement sulfation and ROI pure functions, confirm no daemon regressions. All work is isolated; no changes to main event loop.
+
+**Depends on:** v2.0 (Phase 14 completed)
+
+**Requirements:** SULF-06, SCHED-02
+
+**Success Criteria** (what must be TRUE):
+1. User can verify `src/battery_math/sulfation.py` functions compute score [0–1.0] from battery data (unit tests pass, offline harness confirms with synthetic discharge curves)
+2. User can verify `src/battery_math/cycle_roi.py` functions estimate desulfation benefit vs wear cost (synthetic test cases show <20% estimation margin)
+3. User can verify `nut_client.send_command()` method successfully dispatches `test.battery.start.quick` to real UT850EG (live UPS acknowledges INSTCMD, test.result updates)
+4. User can confirm zero daemon regressions — all v2.0 tests pass and main loop exhibits no new errors during import of new math modules
+
+**Plans:** TBD
+
+---
+
+### Phase 16: Persistence & Observability
+
+**Goal:** Extend daemon to observe, measure, and persist sulfation signals (IR trend, recovery delta, physics baseline) without triggering tests. Daemon still read-only. All new observability in place before active control; validates that signals are stable and interpretable in production.
+
+**Depends on:** Phase 15
+
+**Requirements:** SULF-01, SULF-02, SULF-03, SULF-04, SULF-05, ROI-01, ROI-02, RPT-01, RPT-02, RPT-03
+
+**Success Criteria** (what must be TRUE):
+1. User can read sulfation_score and recovery_delta for each discharge event from journald (structured events logged with numeric values, timestamp, and confidence)
+2. User can view MOTD and see sulfation_score, next_test_eta, blackout_credit_countdown refreshed post-discharge (values display correctly, countdown decrements daily)
+3. User can query `GET /health.json` endpoint and confirm sulfation_score, cycle_roi, scheduling_reason, next_test_timestamp exported for Grafana (metrics present, values reasonable given battery state)
+4. User can inspect `model.json` and verify sulfation history, ROI history, natural_blackout_events persisted with timestamps (schema extended, all discharge events logged, file remains backward compatible)
+5. User can review past blackout (or trigger one) and confirm daemon correctly labels event reason in journald (natural vs test-initiated distinguished in event.reason field)
+
+**Plans:** TBD
+
+---
+
+### Phase 17: Scheduling Intelligence
+
+**Goal:** Implement daemon-controlled scheduling logic — evaluate sulfation score + ROI + safety constraints, make daily decisions about test dispatch, log every decision with reason. All preconditions validated before any upscmd attempt. Disable static systemd timers and rely entirely on daemon scheduling.
+
+**Depends on:** Phase 16
+
+**Requirements:** SCHED-01, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-07, SCHED-08
+
+**Success Criteria** (what must be TRUE):
+1. User can review journald logs and confirm scheduler evaluated test candidates with decision reason codes (daily entry shows: propose_test [reason], defer_test [reason], or block_test [reason])
+2. User can verify daemon enforces SoH floor (≥60%) — no test when SoH below floor, reason logged (rejection logged with "SoH below floor (X%)" message, no upscmd attempt)
+3. User can verify daemon enforces rate limiting (≤1 test/week, minimum 7-day interval) — skips scheduled test if recent test within grace period, logs reason (deferral logged with "last test 3 days ago" or similar)
+4. User can verify daemon credits natural blackouts (≥90% depth, <7 days old) as desulfation equivalent — skips scheduled test when active blackout credit exists, logs credit usage (blackout_credit field shows "active until YYYY-MM-DD")
+5. User can verify systemd timers disabled on daemon startup — `ups-test-deep.timer` and `ups-test-quick.timer` masked or disabled (systemctl status shows "masked" or "disabled", not "active")
+6. User can review precondition checks logged before any upscmd dispatch (SoC ≥95%, no power glitches in last 4h, no test already running — each check logged with pass/fail status)
+
+**Plans:** TBD
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -60,7 +121,10 @@
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
+| 15. Foundation | v3.0 | 0/3 | Not started | — |
+| 16. Persistence & Observability | v3.0 | 0/3 | Not started | — |
+| 17. Scheduling Intelligence | v3.0 | 0/3 | Not started | — |
 
 ---
 
-*Roadmap updated: 2026-03-16 after v2.0 milestone completion*
+*Roadmap updated: 2026-03-17 after v3.0 roadmap creation*
