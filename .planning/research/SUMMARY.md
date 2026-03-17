@@ -1,198 +1,236 @@
-# Project Research Summary
+# Research Summary: v3.0 Active Battery Care
 
-**Project:** UPS Battery Monitor v2.0 — Actual Capacity Estimation
-**Domain:** Battery State-of-Health (SoH) Monitoring with Capacity Measurement
-**Researched:** 2026-03-15
-**Confidence:** MEDIUM-HIGH
+**Project:** UPS Battery Monitor v3.0 — Sulfation Modeling & Smart Scheduling
+**Domain:** VRLA UPS battery active management (daemon-driven desulfation)
+**Researched:** 2026-03-17
+**Confidence:** MEDIUM-HIGH (grounded in physics + enterprise practice; validation gates required)
+
+---
 
 ## Executive Summary
 
-Battery capacity estimation for lead-acid UPS batteries is a well-established problem with strong theoretical foundations (coulomb counting, voltage-anchoring, Peukert's law) but underspecified in practice. Real batteries commonly ship underrated — labeled 7.2Ah but measuring 5.8Ah actual — which causes SoH calculations to be artificially pessimistic from day one. This project solves that by measuring real capacity from actual discharge events (blackouts) using mathematical integration rather than relying on manufacturer specs.
+v3.0 transitions the daemon from **passive observer** (read-only monitoring via `upsc`) to **active battery manager** (intelligent scheduling + command dispatch via `upscmd`). This architectural shift enables three interdependent capabilities: sulfation detection via internal resistance trending + discharge curve analysis, daemon-controlled deep discharge scheduling with safety guardrails, and a cycle ROI metric quantifying desulfation benefit vs wear cost.
 
-The recommended approach combines three proven techniques: (1) coulomb counting (integrating current × time over discharge duration), (2) voltage-based state-of-charge anchoring to prevent cumulative error drift, and (3) statistical confidence tracking to show users when estimates are preliminary vs. reliable. Implementation requires only Python stdlib (no new dependencies), making the solution lightweight and maintainable. 2-3 deep discharges (>50% depth-of-discharge) produce estimates accurate to ±5-10%, matching manufacturer tolerance.
+The recommended approach prioritizes **safety through constraint enforcement** (SoH floor 60%, rate limiting, blackout credit logic) over aggressive automation. Technology stack remains minimal — zero new external dependencies — using pure Python electrochemical models + subprocess for systemd timer integration. Critical unknown: **sulfation model confidence depends on 30-day field validation** (score stability variance < 5 points/day); until then, scheduling thresholds should be conservative (ROI > 1.10, avoid aggressive tuning).
 
-Key risks center on circular dependencies (capacity ↔ Peukert exponent), temperature effects without a sensor, and shallow discharges being mistaken for deep ones. Mitigation is straightforward: fix Peukert at 1.2 for v2 (defer refinement to v3), accept ±5% seasonal variation as acceptable error margin, and enforce minimum depth/duration thresholds before accepting estimates. The biggest pitfall to avoid is coulomb-only counting without voltage anchoring, which causes estimates to drift ±30% over many discharges due to ADC noise and sensor bias accumulation.
+**Key risks:** daemon-initiated discharge during natural blackout (collision risk), upscmd silent failures (no heartbeat), recovery delta noise masking signal, temperature estimation error propagating through decisions. All have specific mitigation strategies (precondition checks, state machine, pooled recovery, configurable constant temp). Pitfalls research is comprehensive (11 documented scenarios); most critical are Pitfalls 1-3 (blackout collision, upscmd reliability, temperature sensitivity).
+
+---
 
 ## Key Findings
 
 ### Recommended Stack
 
-The technology stack is deliberately minimal — **no new external dependencies**. All capacity estimation is pure Python using only the stdlib (math, statistics, json, datetime). This is possible because the algorithm involves basic mathematical operations (trapezoidal integration, mean/variance calculations, LUT lookups) that don't require numerical libraries like numpy or scipy. The stack reuses existing infrastructure (discharge_buffer collection in monitor.py, voltage LUT from v1.1, atomic JSON write patterns in model.py).
+v3.0 stack is **zero-dependency addition** to v2.0 core. No external Python packages required; all new features implemented with stdlib + existing subprocess/systemd patterns.
 
-**Core technologies:**
-- **Python 3.13** — capacity estimator algorithm; already in use, stable, minimal dependencies
-- **Standard library `math` + `statistics`** — trapezoidal integration, variance/confidence calculations; no scipy/numpy needed for small sample sizes
-- **Standard library `json` + `datetime`** — persisting capacity estimates with atomic writes and timestamps
-- **Existing discharge buffer** — voltage/time/load samples already collected during blackouts; no new hardware
+**Core technologies (unchanged from v2.0):**
+- **Python 3.13** — daemon core + sulfation model (pure math library sufficient)
+- **systemd 249+** — service/timer management, journald structured logging (already integrated)
+- **NUT 2.8.1+** — read-only monitoring (`upsc`) + write commands (`upscmd`)
+- **Peukert discharge model** — capacity estimation from voltage curves (existing, reused)
+
+**New mathematical modules (pure Python, no external deps):**
+- **`battery_math/sulfation.py`** — hybrid physics + data-driven model: Shepherd curve shape analysis + IR trending + recovery delta + temperature compensation (constant fallback 35°C)
+- **`battery_math/cycle_roi.py`** — ROI metric: benefit (SoH recovery %) / cost (estimated capacity loss per discharge)
+- **`scheduler.py`** — intelligent scheduling: decision tree with safety constraints (SoH floor 60%, rate limiting 1 test/week, blackout grace 7d)
+
+**Systemd integration:**
+- Subprocess-based timer control (no D-Bus deps) — `subprocess.run(['systemctl', 'disable', timer])` idiomatic, one-time call per startup
+- journald structured logging — already in v2.0, extended for v3.0 scheduling events
+
+**Why no new dependencies:**
+- D-Bus adds external dep + debugging complexity for negligible latency gain (one-time startup call)
+- Shepherd state-space fitting deferred to v3.1 (requires 6+ months historical data for parameter optimization)
+- Temperature sensor polling deferred (UT850 lacks HID sensor; file fallback architecture designed for future USB probe integration)
 
 ### Expected Features
 
-**Table stakes (must have):**
-- **Capacity measurement from discharge** — core v2 requirement; without this feature, capacity remains a config guess
-- **Continuous refinement** — as more discharges occur, estimates converge via weighted averaging of recent samples
-- **New battery baseline detection** — on battery swap, system must distinguish "new battery" from "degraded battery" via user y/n prompt (>10% capacity change triggers)
-- **Statistical confidence tracking** — users want to know if estimate is solid (3 deep discharges) or preliminary (1 short blackout)
-- **Separation of capacity from degradation** — store both `rated_capacity` (reference) and `measured_capacity` (current); recalculate SoH baseline when measurement converges
+**Must-have (table stakes for credible active battery management):**
+1. **Sulfation detection** — Rising IR trend + discharge curve shape analysis; identify when battery needs desulfation before capacity loss becomes severe
+2. **Safe discharge triggering** — Minimum SoH floor (60%), rate limiting (≤1 test/week), grid stability check (no test if recent power glitches)
+3. **Cycle ROI metric** — Quantify desulfation benefit (SoH recovery %) vs wear cost; export to health.json for Grafana trending
+4. **Natural blackout credit** — If OL→OB event (≥90% depth) occurred <7 days ago, defer scheduled test (equivalent desulfation already provided)
+5. **Cycle count accumulation** — Track OL→OB transitions; persist in model.json for lifecycle analysis
 
-**Differentiators (should have, v2.1+):**
-- **Partial discharge accumulation** — estimate from many short blackouts (2-5 min each) using Bayesian weighting; enables faster measurement on stable grids
-- **Discharge quality metadata** — track depth (ΔSoC %), duration, load profile, temperature; serve to user for analysis
+**Should-have (competitive differentiators):**
+1. **Intelligent scheduling (daemon-driven)** — Daemon calls `upscmd` directly (replaces static systemd timers); adapts test frequency based on sulfation score + SoH trend + recent blackouts; every scheduling decision logged with reason code
+2. **Recovery delta tracking** — Measure voltage recovery 30s post-discharge; trending over 3+ tests enables confidence in recovery signal vs measurement noise
+3. **Structured journald events** — Every test trigger/skip logged with: reason, sulfation_score, SoH, next_test_eta, cycle_roi; enables root-cause analysis
+4. **Temperature compensation fallback** — Currently constant (35°C configurable); architecture ready for USB sensor or MQTT endpoint in future (file polling in v3.1)
 
-**Defer to v3+:**
-- **Peukert exponent auto-calibration** — circular dependency with capacity; fixed at 1.2 for v2
-- **Temperature-corrected estimates** — no sensor available; adds ±5% baseline uncertainty
-- **Cross-brand benchmarking** — requires multi-UPS data; out of scope for v2
+**Defer to v3.1+ (post-validation):**
+1. **Shepherd state-space fitting** — Parameter learning after 6+ months discharge history accumulated
+2. **NUT HID temperature integration** — When user adds USB probe or future UPS model includes sensor
+3. **Peukert exponent auto-calibration** — Requires circular dependency resolution (deferred from v2.0)
+4. **Shallow test as leading indicator** — Quick test before scheduling deep discharge to forecast desulfation need
+5. **Multi-UPS support** — Architecture ready; single UT850 only for v3.0
 
 ### Architecture Approach
 
-The architecture is event-driven and follows existing patterns in v1.1: on power restoration (OB→OL transition), capacity estimator processes the discharge buffer and stores result in model.json. BatteryModel (persistent data layer) is extended with methods for adding/averaging capacity estimates and detecting when convergence threshold is crossed. SoH calculator formula is updated to normalize against measured capacity instead of rated capacity when measurement becomes available. This design minimizes coupling, keeps responsibility boundaries clear, and reuses proven atomic write patterns (no data loss on crash).
+v3.0 extends v2.0's data flow with two new orchestration layers: **Sulfation Model** (computes score from discharge history + IR trend) and **Intelligent Scheduler** (evaluates ROI + constraints + natural blackout credit to decide test trigger). Both feed into existing persistence layer (model.json) and reporting pipeline (health.json, journald).
 
 **Major components:**
-1. **DischargeBuffer** (existing) — collects voltage/time/load samples during OB state
-2. **CapacityEstimator** (new) — pure function: (V_series, t_series, I_series, LUT) → (estimated_ah, confidence, metadata)
-3. **BatteryModel** (extended) — persists capacity_estimates array, tracks convergence, detects new battery
-4. **SoH Calculator** (formula updated) — normalizes to measured_capacity when available, recalculates SoH history
-5. **Monitor** (orchestration updated) — calls estimator on OB→OL, stores result via battery_model.add_capacity_estimate()
+
+1. **Sulfation Model** (`src/battery_math/sulfation.py`) — Pure function computing score (0-100) from: SoH baseline trend (40% weighting), IR percent rise (30%), voltage recovery delta (20%), recovery success rate (10%). Threshold: score ≥65 indicates test candidate; score ≥80 indicates urgent desulfation.
+
+2. **Intelligent Scheduler** (`src/scheduler.py`) — Decision engine runs daily; evaluates: sulfation_score, SoH floor (≥60%), days_since_last_test (≥7 for minimum interval), natural_blackout_credit (if recent OB event, defer 7 days), ROI threshold (≥1.10). Calls `upscmd` only if all constraints pass; logs every decision to journald.
+
+3. **Test Executor** (modified `src/nut_client.py`) — Spawns `upscmd` via subprocess with safety preconditions: verify UPS online, battery fully charged (≥95%), no test already running. Implements state machine: poll test.result every 30s, timeout safeguard (hard abort at 15 min if test overshoots expected 10-12 min window).
+
+4. **Cycle ROI Calculator** (`src/battery_math/cycle_roi.py`) — Pure function: ROI = (capacity_recovery_percent) / (cycle_wear_percent). Wear cost estimated from Peukert factor (0.15% per cycle at 90% depth). Exported to health.json, trending over time.
+
+5. **Model Persistence** (extended `src/model.py`) — New schema sections: sulfation history, test_schedule state, natural_blackout_events (with grace period tracking), cycle_roi_history. Backward compatible (v2.0 files load, new fields init).
+
+**Data flow highlights:**
+- Every discharge (natural blackout or scheduled test) → DischargeHandler processes → SoH recalculated → sulfation_score computed + stored → journald logging → health.json export
+- Daily scheduler evaluation → reads model.json (sulfation history, last test, blackout credit) → computes decision → records pending_test or logs deferral reason
+- On test dispatch → precondition checks (SoC >80%, no recent glitches) → upscmd subprocess → polling loop → discharge detector captures test as OB event → postprocessing updates ROI
 
 ### Critical Pitfalls
 
-1. **Coulomb-only counting without voltage anchor** — Current × time alone accumulates ADC noise (±0.1A × 3600 sec ≈ ±600mAh/hr) unbounded. Estimates drift ±30% over time. Prevent: anchor to voltage LUT using 10.5V (VRLA cutoff) as zero-error reference point. Validate every 5-10 discharges.
+Identified 11 domain pitfalls in PITFALLS-V3.md; top 5 require explicit mitigation:
 
-2. **Circular dependency: capacity ↔ Peukert exponent** — Capacity formula depends on Peukert (Q = ∫I×t × f(exponent)), but exponent depends on discharge profile (which changes with capacity). Simultaneous auto-calibration = oscillation (no convergence). Decision: **fix Peukert at 1.2 for v2** (±3% error acceptable), defer refinement to v3.
+1. **Daemon-Initiated Test During Natural Blackout** — If daemon schedules test at 2:55 AM and blackout occurs at 3:02 AM during test, battery partially discharged when real load hits → runtime drops from 47 min to 20 min → unclean shutdown risk. **Mitigation:** Block test scheduling if recent blackout (last 2h), require SoC ≥80% before dispatch, implement test abort protocol (call `upscmd test.battery.stop`), limit test window to historically stable hours.
 
-3. **SoH recalibration without user awareness** — When capacity converges, SoH baseline changes (e.g., 72% → 90%). User sees MOTD jump and loses confidence. Prevent: log warning before rebaseline, show both old/new SoH for one week, add metadata to model.json with rebaseline reason.
+2. **upscmd Silent Failures & State Ambiguity** — UPS may reject test silently (not fully charged, test already running, firmware hang) without heartbeat; daemon doesn't know if test actually running. **Mitigation:** Verify preconditions before dispatch (battery.charge ≥95%), implement polling state machine (poll test.result every 30s for 15 min), validate test actually happened by checking SoC drop matches expected ΔSoC (±10% tolerance).
 
-4. **Temperature sensitivity without sensor** — Capacity varies ±5% over ±10°C range. Winter vs. summer estimates look like degradation. Accept as within acceptable margin (document clearly), store discharge metadata for future if sensor added, flag large jumps in logs.
+3. **Sulfation Model Temperature Sensitivity** — Hard-coded 35°C assumption; actual variation ±10°C → model error ±30% on recovery prediction. Winter 15°C: underestimate sulfation, skip tests, battery sulfates. Summer 35°C: overcredit tests. **Mitigation:** Document temperature_estimated ± temperature_uncertainty in model.json, use empirical recovery measurement (adjust per-test calibration factor), never use sulfation model alone (combine with IR trend + SoC recovery speed as tie-breaker).
 
-5. **Shallow discharge masquerading as deep** — Voltage LUT lookup for small ΔV has ±3% uncertainty; ΔV=0.4V → ΔSoC=8% ± 3%. Prevent: reject if ΔSoC < 25% or duration < 300 sec, require at least 1 "deep" (>50%) before marking converged.
+4. **Recovery Delta Noise Masking Signal** — Single test SoH measurement ±1% noise floor; can't distinguish +0.3% recovery from noise. Accumulating noisy credit over 12 tests = false confidence. **Mitigation:** Require 3+ tests pooled over 2 weeks before crediting recovery, implement per-test confidence scoring (high confidence only if discharge >10 min, deep >50% DoD, low voltage noise), trend recovery rate over 6 tests (ignore magnitude, track direction).
+
+5. **Race Condition: Daemon Test Scheduling + Systemd Timers** — Both systemd timer and daemon scheduler can fire simultaneously, triggering two tests back-to-back. **Mitigation:** Migrate to daemon-only scheduling (disable systemd timers on v3.0 startup), document migration guide for ops, implement fcntl lock if both schedulers coexist (lock held during test execution, loser backs off).
+
+Other significant pitfalls: (6) deep test on degraded battery accelerates failure — SoH floor check mandatory (65% proposed, 60% in recommendation); (7) cycle ROI metric instability due to both numerator + denominator uncertainty — report confidence intervals not point estimates; (8) cycle wear estimation 10x off from literature — measure empirically after 6 months; (9) temperature from heuristic wrong — accept constant only; (10) test abort incomplete — verify stop command actually worked; (11) capacity not converged before scheduling starts — gate scheduling on capacity confidence >80%.
+
+---
 
 ## Implications for Roadmap
 
-Based on research findings, the implementation should follow this phase structure to avoid pitfalls and deliver value incrementally.
+Based on research, suggested phase structure balances **non-invasive observability first** (phases 1-2) with **controlled activation** (phases 3-4):
 
-### Phase 1: Deep Discharge Capacity Estimation
+### Phase 1: Foundation (NUT Write + Math Models)
 
-**Rationale:** Simplest path to MVP; no circular dependencies; eliminates guesswork for 90% of cases. Existing discharge_buffer already collects needed data. Two deep discharges ≈ 95% confidence; allows most users to converge in 1-4 weeks.
-
-**Delivers:**
-- `capacity_estimator.py` — coulomb counting + voltage anchor + Peukert correction (pure function)
-- `BatteryModel.add_capacity_estimate()` — persist estimates in capacity_estimates array
-- Weighted capacity averaging — recency + confidence-based weights
-- MOTD enhancement: "Capacity: 5.8Ah (measured) vs 7.2Ah (rated), 2/3 deep discharges"
-- `battery-health.py` fields: `capacity_ah_measured`, `capacity_confidence`
-
-**Addresses (table stakes):**
-- Capacity measurement from discharge
-- Continuous refinement via weighted averaging
-- Statistical confidence tracking (depth, duration, stability scores)
-- New battery detection (>10% difference triggers user prompt)
-
-**Avoids:**
-- Pitfall 1: Voltage LUT anchoring built into estimator design
-- Pitfall 2: Peukert fixed at 1.2; no auto-calibration
-- Pitfall 5: Minimum depth/duration filters (ΔSoC > 25%, duration > 300 sec)
-
-**Research flags:**
-- Coulomb error accumulation validation (replay real 2026-03-12 discharge_buffer)
-- Coefficient of variation convergence (2-3 samples sufficient? Test with synthetic Gaussian noise)
-- Load profile sensitivity (Peukert factor adequate across 10-30% loads?)
-
-### Phase 2: SoH Recalibration & New Battery Logic
-
-**Rationale:** Phase 1 establishes measured capacity baseline. Phase 2 feeds that back into SoH calculation (separates capacity from degradation). New battery detection prompts user, resets baseline, recalculates historical SoH. Must come after Phase 1 convergence or logic is meaningless.
+**Rationale:** De-risk core technologies without daemon integration. Sulfation model and ROI calculator are pure functions, fully testable in isolation. NUT upscmd capability validated before integration.
 
 **Delivers:**
-- Updated SoH formula: `SoH = area_measured / (area_reference × measured/rated)`
-- Automatic SoH history recomputation when capacity converges
-- Startup new battery detection: compare stored vs. runtime estimate, prompt if >10% diff
-- Logging/alerting for SoH rebaseline event with clear messaging
+- `src/nut_client.py` enhanced with `send_command()` method (upscmd protocol)
+- `src/battery_math/sulfation.py` pure function + unit tests (12 tests)
+- `src/battery_math/cycle_roi.py` pure function + unit tests (8 tests)
 
-**Addresses:**
-- Separation of capacity from degradation (foundation for replacement predictor accuracy)
+**Avoids pitfalls:** No daemon changes; no race condition risk; pure functions testable offline
 
-**Avoids:**
-- Pitfall 3: Clear logging before/after rebaseline, MOTD messaging, changelog note
+---
 
-**Effort:** Low (1 day; mostly formula change + state management)
+### Phase 2: Persistence & Observability (Model Integration)
 
-### Phase 3: Partial Discharge Accumulation (Conditional)
-
-**Rationale:** Only if field data shows users on stable grids waiting months without deep discharges. Phase 1 handles most cases; Phase 3 is fallback for edge case. Requires Bayesian variance weighting; medium complexity.
+**Rationale:** Extend model.json schema and discharge handler to track sulfation history + ROI + natural blackouts. Daemon still read-only; no scheduling yet. All observability in place before active control.
 
 **Delivers:**
-- Accumulation logic for ΔSoC > 20% discharges
-- Variance-weighted averaging (deeper = lower variance = higher weight)
-- Progress tracking: "2/3 deep discharges needed, or 3/10 partial discharges"
+- Extended `model.json` schema (sulfation, test_schedule, natural_blackout_events, cycle_roi_history)
+- Modified `src/discharge_handler.py` calls sulfation/ROI functions post-discharge, logs results
+- MOTD module showing sulfation_score, next_test_eta, blackout_credit countdown
+- health.json export of sulfation_score, roi, scheduling reason, next_test_timestamp
+- journald structured events for all discharge analysis (reason, soh_delta, ir_delta, roi)
 
-**Condition:** Build only if initial estimate confidence remains <0.8 after 4 weeks on deployed systems.
+**Avoids pitfalls:** Daemon still passive; no test dispatch; recovery delta thresholding not yet applied (just measured + logged)
 
-**Defer to:** v2.1 (post-MVP validation)
+---
 
-### Phase Ordering Rationale
+### Phase 3: Scheduling Intelligence (Daemon-Driven Decision Logic)
 
-1. **Phase 1 → Phase 2:** Capacity must converge before SoH recalibration makes sense. Phase 2 depends on stable Phase 1 baseline.
-2. **Phase 1 first, not Phase 2:** User immediately sees honest capacity + confidence from day 1. Even without SoH rebaseline, they know battery is 5.8Ah (not 7.2Ah), which fixes replacement predictor accuracy.
-3. **Phase 3 optional:** Only triggers if field data shows need. Adds complexity; Phase 1 alone covers typical scenarios.
-4. **Deferred: Peukert refinement (v3):** Breaks circular dependency by deferring. v2 owns capacity measurement; v3 owns Peukert refinement (milestone CAL2-02).
+**Rationale:** Implement scheduler as pure decision function; integrate into daemon main loop. Test logic validated before enabling upscmd dispatch.
 
-This ordering avoids Pitfall 2 (circular dependency) and Pitfall 3 (silent rebaseline) by making dependencies explicit and user-facing.
+**Delivers:**
+- `src/scheduler.py` with decision tree: evaluate ROI, SoH floor, days_since_test, blackout_credit, grid_stability
+- Integration into `src/monitor.py` main loop: hourly scheduler evaluation call
+- Pending_test state tracking in model.json
+- Precondition checks before dispatch (SoC ≥80%, no recent glitches, no test already running)
+- Logging of every scheduling decision (propose_test, test_deferred, test_blocked) with reason
+
+**Avoids pitfalls:** Scheduler still doesn't call upscmd; can test logic in log-only mode; safety constraints validated before any hardware interaction; race condition prevention: systemd timers disabled on daemon startup
+
+---
+
+### Phase 4: Active Control & Field Validation (upscmd Dispatch)
+
+**Rationale:** Enable actual test dispatch only after phases 1-3 validated. Real UPS testing required; ops sign-off needed. Longest phase; includes 30-day field monitoring gates.
+
+**Delivers:**
+- Enable `scheduler.execute_test()` → `nut_client.send_command("test.battery.start.deep")`
+- Precondition validation: battery fully charged ≥95%, UPS online, no power glitches last 4h
+- Test state machine: poll NUT every 30s during test, detect completion, validate SoC drop matches expected
+- Retry logic: if UPS refuses (charging), queue for 1h later; if timeout (>15 min), log ERROR + escalate
+- Disable systemd timers: `ups-test-deep.timer`, `ups-test-quick.timer` disabled on daemon startup
+- Integration testing: real deep discharge test on UT850, verify daemon handles preconditions + responses
+
+**Release blockers:** All 6 validation gates must pass (stress test, real upscmd, 30-day stability, blackout credit, ROI calibration, safety floor)
+
+---
 
 ### Research Flags
 
-Phases needing deeper research during planning:
-- **Phase 1 — Critical validation:** How much does ΔSoC error compound over full discharge? Run replay test with real 2026-03-12 discharge_buffer; expect <±10% total error with voltage anchor (vs >±20% without).
-- **Phase 1 — Convergence threshold:** Does coefficient of variation reach <10% by sample 3? Test with synthetic Gaussian noise (±5% load, ±0.1V voltage).
-- **Phase 1 — Load sensitivity:** How much does capacity estimate change across 10-30% loads? Peukert predicts ±3%; validate empirically.
+**Phases likely needing deeper research during planning:**
+- **Phase 2:** Blackout event classification — verify event classifier correctly labels natural vs test-induced OB
+- **Phase 3:** Grid stability detection — 4h glitch window heuristic sufficient for deployment
+- **Phase 4:** Temperature sensor integration — document future path if USB probe added
 
-Phases with standard patterns (skip research-phase):
-- **Phase 2:** SoH formula straightforward math; existing atomic write patterns proven in v1.1.
-- **Phase 3 (if triggered):** Variance weighting well-documented; defer research until field data justifies it.
+**Phases with standard patterns (skip research-phase):**
+- **Phase 1:** Pure function testing, subprocess I/O — well-documented patterns
+- **Phase 2:** JSON schema extension, logging — standard systemd/journald practices
+- **Phase 3:** Scheduler decision tree — established daemon pattern
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| **Stack** | HIGH | Python stdlib sufficient; verified existing discharge_buffer + LUT patterns cover all I/O needs. No external libs required. |
-| **Features** | MEDIUM-HIGH | Table stakes clear (coulomb counting + confidence tracking = standard practice). Statistical thresholds (2-3 discharges for convergence) backed by IEEE-450 and field experience, but not validated on CyberPower UT850 specifically. |
-| **Architecture** | MEDIUM-HIGH | Component design clean (estimator as pure function, BatteryModel extended sensibly). Patterns (voltage anchor, weighted averaging, multi-factor confidence) proven in literature + existing codebase. One gap: optimal confidence formula parameters inferred from domain knowledge, not empirically validated. |
-| **Pitfalls** | HIGH | Critical pitfalls (coulomb-only, circular dependency, SoH rebaseline) well-understood; prevention strategies concrete + testable. Temperature and load estimation effects grounded in battery physics. Shallow-discharge filtering straightforward. |
+| **Stack** | HIGH | Zero new dependencies verified; Python 3.13 + systemd + NUT established patterns |
+| **Features** | MEDIUM-HIGH | Grounded in enterprise practice (IEEE 1188, Eaton/Schneider standards); must-have features well-defined |
+| **Architecture** | HIGH | v2.0 codebase well-understood; v3.0 adds clean component boundaries (pure functions) |
+| **Pitfalls** | HIGH | 11 domain pitfalls systematically researched with specific mitigation strategies |
+| **Validation Gates** | MEDIUM | 6 acceptance gates defined; first 2 automated, last 4 require 30+ days field monitoring |
 
-**Overall confidence:** MEDIUM-HIGH
+**Overall confidence: MEDIUM-HIGH**
+
+Research thoroughly covers physics (VRLA sulfation), enterprise practice (Eaton/Schneider scheduling), and domain pitfalls (11 scenarios). Stack validated (no blocking dependencies). Architecture patterns established. Only gap: **field validation requires 30+ days real operation** to confirm sulfation score stability (variance <5 points/day) and ROI calibration (recovery 80-90% of prediction). Mitigation: extended Phase 4 with monitoring gates before release.
 
 ### Gaps to Address
 
-1. **Coulomb counting error accumulation (CRITICAL):** How much does LUT ΔSoC lookup error compound over 30+ minute discharge? Replay real 2026-03-12 discharge_buffer through estimator to validate error < ±10%. Mitigation: validation test during Phase 1 requirements.
-
-2. **Convergence threshold empirics (IMPORTANT):** Assumption that 2-3 deep discharges → 95% confidence needs field validation. Run Monte Carlo on synthetic discharge profiles with Gaussian noise. Mitigation: add to Phase 1 testing strategy.
-
-3. **Load profile sensitivity (IMPORTANT):** Discharge_buffer load varies (10-20% typical). How sensitive is capacity estimate to this variance? Mitigation: test Phase 1 implementation with discharge_buffer from different load scenarios.
-
-4. **Temperature effect quantification (NICE-TO-HAVE):** Can discharge curve shape be used to back-calculate temperature? Helps prioritize hardware sensor for v3. Mitigation: store discharge metadata; analyze post-hoc if data accumulates.
-
-5. **New battery false positive rate (MODERATE):** Pitfall 7 (user forgets to swap, claims new battery). No way to verify. Mitigation: log user response + timestamp, add config override for manual correction.
-
-## Sources
-
-### Primary (HIGH confidence)
-
-- **STACK.md:** Python 3.13 stdlib survey (math, statistics, json, datetime) — verified all required operations available without external deps
-- **FEATURES.md:** IEEE-1188 + IEEE-450-2010 (VRLA capacity testing standards); Battery University BU-904 (coulomb counting methodology)
-- **ARCHITECTURE.md:** Existing v1.1 codebase patterns; MDPI Energies Vol. 15 No. 21 (voltage-anchored coulomb counting)
-- **PITFALLS.md:** Real 2026-03-12 blackout data analysis; Peukert's Law literature; thermal physics (±5% temperature coefficient)
-
-### Secondary (MEDIUM confidence)
-
-- ScienceDirect SOH Estimation from Multiple Features (variance weighting methods)
-- Analog Devices SOC/SOH Estimation Techniques (confidence scoring heuristics)
-- Vertiv UPS Battery Acceptance/Capacity Test Procedure
-
-### Tertiary (validation needed)
-
-- Confidence threshold (2-3 deep discharges for convergence) — empirical validation needed
-- ΔSoC LUT lookup error propagation — needs replay testing with real discharge_buffer
-- Load profile sensitivity — needs comparison across discharge scenarios
+1. **Sulfation Score Stability** — Must validate in Phase 4 with 30-day monitoring: score variance <5 points/day, autocorrelation >0.8
+2. **Recovery Delta as Signal vs Noise** — Validate signal-to-noise ratio; empirical convergence via pooling already designed
+3. **ROI Model Calibration** — Across 10 real tests, does actual SoH recovery match model prediction ±20%?
+4. **Blackout Depth Classification** — Validate blackout ≥90% depth is actually desulfating
+5. **Temperature Impact** — If facility temperature varies ±10°C seasonally, measure sulfation_score correlation
+6. **UPS Firmware upscmd Behavior** — Manual test required: does upscmd work on target UT850EG hardware?
 
 ---
 
-**Research completed:** 2026-03-15
-**Ready for roadmap:** Yes — sufficient clarity for Phase 1-2 detailed design. Phase 3 roadmap gate pending field validation.
+## Sources
+
+**Primary (HIGH confidence):**
+- STACK-v3.0.md, FEATURES-v3.0.md, ARCHITECTURE-v3.0.md, ARCHITECTURE.md, DECISIONS-v3.0.md, PITFALLS-V3.md
+- NUT documentation (upscmd protocol, usbhid-ups driver, INSTCMD protocol)
+- IEEE standards (IEEE 1188 VRLA, IEEE 450 VLA, IEC 61427-2)
+
+**Secondary (MEDIUM confidence):**
+- VALIDATION-v3.0.md (test architecture, 30+ unit tests, 6 validation gates)
+- Real project context (CyberPower UT850EG, 2026-03-12 blackout event, 2-5 blackouts/week)
+
+**Tertiary (References in source documents):**
+- Enterprise manuals (Eaton ABM, Schneider monitoring, CyberPower UT850 guide)
+- Academic sources (MDPI Energies, ScienceDirect, ResearchGate)
+
+---
+
+## Summary for Roadmapper
+
+**v3.0 is a well-scoped, risk-mitigated progression from v2.0.** Four-phase structure recommended with clear handoffs. All critical decisions made (stack, architecture, thresholds). All major pitfalls identified with mitigation strategies. Phase 4 validation gates realistic; no gates require innovations or new research.
+
+**Ready for roadmap creation and detailed requirements definition.**
+
+---
+
+*Research completed: 2026-03-17*
+*Confidence: MEDIUM-HIGH (field validation gates required before release)*
+*Ready for roadmap: YES*
