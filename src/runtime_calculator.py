@@ -52,6 +52,21 @@ def runtime_minutes(
     Predict remaining battery runtime in minutes.
 
     Returns 0.0 if SoC=0. Returns capped value (via peukert_runtime_hours) if load=0.
+
+    Known limitations (audit 2026-03-17):
+    - F14: I_actual uses nominal voltage (12V) not actual battery voltage.
+      At low SoC (10.5V), current underestimated ~14%. Error <3% at stable
+      14-20% load because Peukert RLS calibrates at the same nominal V,
+      absorbing the systematic bias.
+    - F15: Linear SoC scaling (T_hours * soc) below 20% SoC overestimates
+      runtime. Partially compensated by LUT cliff nonlinearity. Improves
+      as cliff region data populates (F9).
+    - F16: Peukert at 15.7x C-rate is outside empirical range (typically
+      0.05-5x C). Works because RLS calibrates at the actual operating
+      point — Peukert exponent is a curve-fit, not a physical constant.
+    - F17: SoH linear scaling (T_hours * soh) approximates energy-based
+      SoH as capacity-based. ~5% error for VRLA. Acceptable for shutdown
+      timing decisions.
     """
     if soc <= 0:
         return 0.0
