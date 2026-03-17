@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Active Battery Care
 status: in-progress
-last_updated: "2026-03-17T13:18:15.000Z"
+last_updated: "2026-03-17T14:35:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 15
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 16 Plan 01 completion
-**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0 infrastructure scaffolded
-**Current Position:** Phase 16 (Persistence-Observability) Plan 01 COMPLETE — Wave 0 test infrastructure ready for Wave 1+ implementation
+**Last Updated:** 2026-03-17 after Phase 16 Plan 02 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-1 infrastructure complete
+**Current Position:** Phase 16 (Persistence-Observability) Plan 02 COMPLETE — Model persistence foundation ready for discharge handler integration (Wave 2)
 
 ---
 
@@ -91,23 +91,22 @@ None. Roadmap creation complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (Phase 16 Plan 01 — test infrastructure scaffolding)
+**Last session:** 2026-03-17 (Phase 16 Plan 02 — Model persistence foundation)
 
 **Artifacts created this session:**
 
-- `.planning/phases/16-persistence-observability/16-01-SUMMARY.md` (Wave 0 completion report)
-- `tests/test_sulfation_persistence.py` (7 tests for SULF-05 model.json persistence)
-- `tests/test_health_endpoint_v16.py` (8 tests for RPT-01 health.json export)
-- `tests/test_journald_sulfation_events.py` (7 tests for RPT-02 journald event logging)
-- `tests/test_discharge_event_logging.py` (7 tests for RPT-03 discharge event tracking)
+- `.planning/phases/16-persistence-observability/16-02-SUMMARY.md` (Wave 1 completion report)
+- Extended `src/model.py`: append_sulfation_history(), append_discharge_event(), _prune_sulfation_history(), _prune_discharge_events()
+- Updated `tests/test_sulfation_persistence.py`: 7 sulfation persistence integration tests
+- Updated `tests/test_discharge_event_logging.py`: 7 discharge event logging integration tests
 
-**Test Infrastructure Summary:**
-- Total tests created: 29 integration tests
-- Coverage: All 4 Phase 16 Wave 0 requirements (SULF-05, RPT-01, RPT-02, RPT-03)
-- Status: PASS — all tests collect, import without error, syntactically valid
-- Nyquist Rule: Wave 0 COMPLETE — Wave 1+ can begin implementation
+**Model Persistence Summary:**
+- Total tests created: 14 integration tests (7 sulfation + 7 discharge)
+- Coverage: SULF-05 (model.json persistence) + RPT-03 (discharge event tracking)
+- Status: PASS — all 14 tests pass, backward compatibility verified
+- Model.json schema extended with 4 new arrays (sulfation_history, discharge_events, roi_history, natural_blackout_events)
 
-**Next session:** Phase 16 Plan 02 (Wave 1 implementation) — extend model.json schema, implement append_sulfation_history() and append_discharge_event() methods
+**Next session:** Phase 16 Plan 03 (Wave 2 implementation) — discharge handler integration, append calls, journald logging
 
 ---
 
