@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Active Battery Care
 status: in-progress
-last_updated: "2026-03-17T13:17:30Z"
+last_updated: "2026-03-17T15:30:00Z"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 15
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 16 Plan 04 completion
-**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-3 infrastructure complete
-**Current Position:** Phase 16 (Persistence-Observability) Plan 04 COMPLETE — health.json schema extended with 11 Phase 16 observability fields. Ready for Plan 05 (MOTD module)
+**Last Updated:** 2026-03-17 after Phase 16 Plan 05 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-4 infrastructure and observability complete
+**Current Position:** Phase 16 (Persistence-Observability) Plan 05 COMPLETE — journald structured event logging with all discharge metrics queryable. Ready for Plan 06 (MOTD module)
 
 ---
 
@@ -91,27 +91,25 @@ None. Roadmap creation complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (Phase 16 Plan 04 — health.json schema extension)
+**Last session:** 2026-03-17 (Phase 16 Plan 05 — journald structured event logging)
 
 **Artifacts created this session:**
 
-- `.planning/phases/16-persistence-observability/16-04-SUMMARY.md` (Wave 3 completion report)
-- Extended `src/monitor_config.py`: 11 new Phase 16 parameters added to write_health_endpoint(), health_data dict updated with all Phase 16 fields (sulfation, ROI, discharge metrics)
-- Implemented `tests/test_health_endpoint_v16.py`: 8 comprehensive integration tests covering health.json schema with Phase 16 fields
+- `.planning/phases/16-persistence-observability/16-05-SUMMARY.md` (Wave 4 completion report)
+- Extended `src/discharge_handler.py`: Added logger.info('Discharge complete', extra={...}) call with 10 structured fields (event_type, event_reason, duration_seconds, depth_of_discharge, sulfation_score, sulfation_confidence, recovery_delta, cycle_roi, measured_capacity_ah, timestamp)
+- Implemented `tests/test_journald_sulfation_events.py`: 7 comprehensive integration tests covering journald event structure, JSON serialization, and journalctl queryability
 
-**health.json Schema Extension Summary:**
-- Function signature: 19 parameters total (8 existing v2.0 + 11 new Phase 16)
-- health_data dict: 21 fields total (10 existing v2.0 + 11 new Phase 16)
-- New fields: sulfation_score, sulfation_confidence, days_since_deep, ir_trend_rate, recovery_delta, cycle_roi, cycle_budget_remaining, scheduling_reason, next_test_timestamp, last_discharge_timestamp, natural_blackout_credit
-- All new fields optional (None defaults), backward-compatible with v2.0
-- Numeric precision standardized: sulfation 3 decimals, IR trend 6 decimals, ROI 3 decimals
-- Integration tests: 8 tests written (file creation, field presence, precision, null handling, v2.0 backward compatibility, timestamp formats)
-- Test status: 8/8 PASS, 22 integration tests PASS (with sulfation/discharge), 389 total tests PASS
-- Status: PASS — Wave 3 complete, RPT-01 (sulfation export), ROI-02 (ROI metrics export), ROI-03 (scheduling state export) requirements satisfied
+**Journald Event Logging Summary:**
+- Function signature: logger.info('Discharge complete', extra={...}) in discharge_handler.update_battery_health()
+- Event fields: 10 total (event_type='discharge_complete', event_reason, duration_seconds, depth_of_discharge, sulfation_score, sulfation_confidence, recovery_delta, cycle_roi, measured_capacity_ah, timestamp)
+- All fields JSON-serializable, ISO8601 timestamps, numeric precision standardized (sulfation/ROI: 3 decimals, DoD: 2, duration: int)
+- Exception handling: try/except wraps logger.info() to prevent daemon crashes
+- Integration tests: 7 tests written (message, event_type, event_reason, metrics, timestamp, JSON format, journalctl filtering)
+- Test status: 7/7 PASS, 29 integration tests PASS (with health_endpoint_v16, sulfation_persistence, discharge_event_logging), 389 total tests PASS
+- Status: PASS — Wave 4 complete, RPT-02 (discharge decisions logged to journald) requirement satisfied
 
-**Next session:** Phase 16 Plan 05 (MOTD module) — display sulfation status and next test countdown
+**Next session:** Phase 16 Plan 06 (MOTD module) — display sulfation status and next test countdown
 
 ---
 
-*State initialized: 2026-03-17*
-*Last updated: 2026-03-17 after Phase 16 Plan 04 completion*
+*State updated: 2026-03-17 after Phase 16 Plan 05 completion*

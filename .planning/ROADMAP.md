@@ -90,7 +90,7 @@
 - [x] 16-02-PLAN.md — Wave 1: BatteryModel schema extension + sulfation history persistence — completed 2026-03-17
 - [x] 16-03-PLAN.md — Wave 2: Discharge handler integration with sulfation/ROI scoring — completed 2026-03-17
 - [x] 16-04-PLAN.md — Wave 3: health.json export with Phase 16 observability metrics — completed 2026-03-17 (11 fields, 8 tests, RPT-01/ROI-02/ROI-03 satisfied)
-- [ ] 16-05-PLAN.md — Wave 4: Journald structured event logging for discharge completion
+- [x] 16-05-PLAN.md — Wave 4: Journald structured event logging for discharge completion — completed 2026-03-17 (10 event fields, 7 tests, RPT-02 satisfied)
 - [ ] 16-06-PLAN.md — Wave 5: MOTD module for sulfation status display
 
 ---
