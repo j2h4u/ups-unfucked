@@ -36,6 +36,9 @@ def calibrate_peukert(
     Notes:
         - Phase 12.1 returns refined value but monitor.py decides whether to apply (VAL-02)
         - Monitor.py may lock it to 1.2 (no auto-calibration during capacity estimation)
+        - F31: SoH dependency — T_effective = T_full * current_soh. With F19 fixed
+          (capacity-based SoH), this dependency now produces correct results. If Peukert
+          starts drifting, investigate SoH input quality first.
     """
     if capacity_ah <= 0 or avg_load_percent <= 0:
         return None

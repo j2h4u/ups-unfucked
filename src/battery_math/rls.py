@@ -21,7 +21,13 @@ class ScalarRLS:
         self.sample_count = 0
 
     def update(self, measurement: float) -> tuple[float, float]:
-        """Feed one measurement, return (theta_new, P_new)."""
+        """Feed one measurement, return (theta_new, P_new).
+
+        F33: Callers clamp theta after update (e.g., [1.0, 1.4] for Peukert,
+        [0.005, 0.025] for ir_k). This creates minor P/theta inconsistency —
+        P tracks the unclamped trajectory while theta is clamped. Bounded by
+        the narrow clamp ranges, so the inconsistency is negligible.
+        """
         K = self.P / (self.forgetting_factor + self.P)
         self.theta += K * (measurement - self.theta)
         self.P = (1 - K) * self.P / self.forgetting_factor
