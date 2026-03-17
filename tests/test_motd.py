@@ -77,7 +77,7 @@ def test_motd_capacity_displays(model_json_with_capacity):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
@@ -122,7 +122,7 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
@@ -150,7 +150,7 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
@@ -198,7 +198,7 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
@@ -235,7 +235,7 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
@@ -285,7 +285,7 @@ def test_motd_shows_new_battery_alert(temp_model_json):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
@@ -312,7 +312,7 @@ def test_motd_shows_new_battery_alert(temp_model_json):
         env={'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
-        cwd='/home/j2h4u/repos/j2h4u/ups-battery-monitor',
+        cwd=str(Path(__file__).resolve().parent.parent),
         timeout=5
     )
 
