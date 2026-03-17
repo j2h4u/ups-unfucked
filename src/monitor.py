@@ -740,6 +740,14 @@ class MonitorDaemon:
 
         # Handle kernel result: RLS smoothing instead of direct set
         if new_exponent is not None:
+            # F30: Skip RLS update if result hit clamp bounds — carries no information
+            if new_exponent <= 1.0 or new_exponent >= 1.4:
+                logger.debug(
+                    f"Peukert calibration hit clamp bound ({new_exponent:.3f}); "
+                    f"skipping RLS update"
+                )
+                return
+
             old_exponent = self.battery_model.get_peukert_exponent()
             smoothed, new_P = self.rls_peukert.update(new_exponent)
             smoothed = max(1.0, min(1.4, smoothed))  # physical bounds

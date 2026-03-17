@@ -248,6 +248,56 @@ class TestSystemdIntegration:
             f"Exception during poll cycles: {exception_caught}"
 
 
+class TestPeukertClampSkip:
+    """F30: Skip RLS update when calibrate_peukert returns clamped value."""
+
+    def test_peukert_rls_skipped_on_clamp_upper(self, mock_daemon):
+        """Short discharge → calibrate_peukert returns 1.4 (clamped) → RLS not updated."""
+        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+
+        initial_sample_count = mock_daemon.rls_peukert.sample_count
+
+        with patch('src.monitor.calibrate_peukert') as mock_calibrate:
+            mock_calibrate.return_value = 1.4  # Hit upper clamp
+
+            mock_daemon._auto_calibrate_peukert(current_soh=0.95)
+
+            # RLS should NOT have been updated
+            assert mock_daemon.rls_peukert.sample_count == initial_sample_count
+
+    def test_peukert_rls_skipped_on_clamp_lower(self, mock_daemon):
+        """calibrate_peukert returns 1.0 (lower clamp) → RLS not updated."""
+        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+
+        initial_sample_count = mock_daemon.rls_peukert.sample_count
+
+        with patch('src.monitor.calibrate_peukert') as mock_calibrate:
+            mock_calibrate.return_value = 1.0  # Hit lower clamp
+
+            mock_daemon._auto_calibrate_peukert(current_soh=0.95)
+
+            assert mock_daemon.rls_peukert.sample_count == initial_sample_count
+
+    def test_peukert_rls_updated_on_valid_exponent(self, mock_daemon):
+        """Valid exponent (1.15) → RLS updated, sample_count increments."""
+        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+
+        initial_sample_count = mock_daemon.rls_peukert.sample_count
+
+        with patch('src.monitor.calibrate_peukert') as mock_calibrate:
+            mock_calibrate.return_value = 1.15  # Valid, not clamped
+
+            mock_daemon._auto_calibrate_peukert(current_soh=0.95)
+
+            assert mock_daemon.rls_peukert.sample_count == initial_sample_count + 1
+
+
 class TestSoHRecalibrationFlow:
     """Tests for Phase 13 SoH recalibration and new battery detection."""
 
