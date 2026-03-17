@@ -3,9 +3,7 @@
 No I/O, no logging. Time injection for simulator support.
 """
 
-import math
-import time
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 
 def calculate_soh_from_discharge(
@@ -38,9 +36,6 @@ def calculate_soh_from_discharge(
         nominal_voltage: Battery nominal voltage (V)
         nominal_power_watts: UPS nominal power (W)
         min_duration_sec: Minimum discharge duration for valid update (default 30s VAL-01).
-            F22: Kernel uses 30s for year-simulation flexibility (fast synthetic
-            discharges). The daemon's operational guard in monitor.py
-            _update_battery_health() enforces 300s minimum for real data.
 
     Returns:
         Updated SoH [0.0, 1.0] or None if insufficient data
@@ -50,7 +45,6 @@ def calculate_soh_from_discharge(
 
     discharge_duration = time_series[-1] - time_series[0]
     if discharge_duration < min_duration_sec:
-        # VAL-01: Flicker storm protection
         return None
 
     # Trim data at anchor voltage (10.5V is physical limit)
@@ -79,7 +73,6 @@ def calculate_soh_from_discharge(
         area_measured += (v1 + v2) / 2.0 * dt
 
     # Reference area from Peukert's Law (pure physics)
-    # Import here to avoid circular dependency
     from .peukert import peukert_runtime_hours
 
     T_expected_sec = peukert_runtime_hours(
@@ -109,59 +102,11 @@ def calculate_soh_from_discharge(
     return new_soh
 
 
-def _weighted_average_by_voltage(
-    lut_entries: List[Dict],
-    current_time: Optional[float] = None,
-    decay_hours: float = 24 * 30
-) -> float:
-    """Weighted average voltage with age-based decay.
-
-    Args:
-        lut_entries: List of {"voltage": V, "timestamp": t_unix, "source": str}
-        current_time: Current timestamp (seconds since epoch).
-                     If None, defaults to time.time() (daemon behavior).
-                     If provided, uses that value (simulator behavior).
-        decay_hours: Age beyond which weight → 0 (30 days default)
-
-    Returns:
-        Weighted average voltage [V]
-    """
-    if current_time is None:
-        current_time = time.time()  # Backward compatible default
-
-    if not lut_entries:
-        return 12.0  # Default nominal voltage
-
-    # Compute weights based on age
-    total_weight = 0.0
-    weighted_voltage = 0.0
-    decay_seconds = decay_hours * 3600
-
-    for entry in lut_entries:
-        if 'timestamp' not in entry:
-            continue
-        age_seconds = current_time - entry['timestamp']
-        # Weight decays exponentially: exp(-age / decay_time)
-        weight = math.exp(-age_seconds / decay_seconds)
-        weighted_voltage += entry.get('voltage', 12.0) * weight
-        total_weight += weight
-
-    if total_weight > 1e-10:
-        return weighted_voltage / total_weight
-
-    # Unweighted fallback if all weights underflowed
-    voltages = [e.get('voltage', 12.0) for e in lut_entries]
-    return sum(voltages) / len(voltages) if voltages else 12.0
-
-
 def interpolate_cliff_region(lut: tuple) -> tuple:
     """Pure function: smooth LUT near cutoff region.
 
     Kernel function returns new LUT; orchestrator applies it.
     No mutation of input — returns new tuple.
-
-    For Phase 12.1, this is a placeholder that returns LUT unchanged.
-    Phase 12 will implement cliff region interpolation.
 
     Args:
         lut: Immutable tuple of (voltage, soc, source) tuples
@@ -169,6 +114,5 @@ def interpolate_cliff_region(lut: tuple) -> tuple:
     Returns:
         Smoothed LUT as new tuple
     """
-    # Phase 12.1 placeholder: return LUT unchanged
-    # Phase 12 will add cliff region interpolation logic
+    # Placeholder: return LUT unchanged
     return lut

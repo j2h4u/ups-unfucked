@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('ups-battery-monitor')
 
 
 def atomic_write_json(filepath, data):
@@ -35,17 +35,18 @@ def atomic_write_json(filepath, data):
     filepath.parent.mkdir(parents=True, exist_ok=True)
 
     # Write to temporary file in same directory (ensures same filesystem)
+    tmp_path = None
     with tempfile.NamedTemporaryFile(
         mode='w',
         dir=str(filepath.parent),
         delete=False,
         suffix='.tmp'
     ) as tmp:
+        tmp_path = Path(tmp.name)
         json.dump(data, tmp, indent=2)
         tmp.flush()
         os.fdatasync(tmp.fileno())
         os.fchmod(tmp.fileno(), 0o644)
-        tmp_path = Path(tmp.name)
 
     try:
         # Atomic rename (unlink + link on POSIX)
@@ -263,18 +264,11 @@ class BatteryModel:
             k: dict(v) for k, v in self._RLS_DEFAULTS.items()
         }
 
-    def _prune_soh_history(self, keep_count: int = 30) -> None:
-        """Remove old SoH history entries; retain only most recent keep_count.
-
-        Rationale: ~365 daily entries/year. After 20 years, unbounded growth.
-        Keep 30 (~1 month) provides trend detection without disk bloat.
-
-        Args:
-            keep_count: Maximum number of entries to retain (default 30)
-        """
-        soh_hist = self.data.get('soh_history', [])
-        if len(soh_hist) > keep_count:
-            self.data['soh_history'] = soh_hist[-keep_count:]
+    def _prune_list(self, key: str, keep_count: int = 30) -> None:
+        """Remove old entries from a list field; retain only most recent keep_count."""
+        items = self.data.get(key, [])
+        if len(items) > keep_count:
+            self.data[key] = items[-keep_count:]
 
     def _prune_lut(self, keep_count: int = 200) -> None:
         """Remove oldest measured LUT entries; retain non-measured and most recent measured.
@@ -315,30 +309,6 @@ class BatteryModel:
             measured = measured[-keep_count:]
         self.data['lut'] = sorted(non_measured + measured, key=lambda x: x['v'], reverse=True)
 
-    def _prune_r_internal_history(self, keep_count: int = 30) -> None:
-        """Remove old internal resistance history entries; retain only most recent keep_count.
-
-        Mirrors soh pruning for r_internal_history list.
-
-        Args:
-            keep_count: Maximum number of entries to retain (default 30)
-        """
-        r_int_hist = self.data.get('r_internal_history', [])
-        if len(r_int_hist) > keep_count:
-            self.data['r_internal_history'] = r_int_hist[-keep_count:]
-
-    def _prune_capacity_estimates(self, keep_count: int = 30) -> None:
-        """Remove old capacity estimate entries; retain only most recent keep_count.
-
-        Rationale: Deep discharges ~1-2 per week during active testing.
-        Keep 30 (~1-2 months) provides convergence tracking without disk bloat.
-
-        Args:
-            keep_count: Maximum number of entries to retain (default 30)
-        """
-        cap_est = self.data.get('capacity_estimates', [])
-        if len(cap_est) > keep_count:
-            self.data['capacity_estimates'] = cap_est[-keep_count:]
 
     def append_sulfation_history(self, entry: dict) -> None:
         """Append sulfation measurement to history.
@@ -372,17 +342,6 @@ class BatteryModel:
         """
         self.data.setdefault('discharge_events', []).append(event)
 
-    def _prune_sulfation_history(self, keep_count: int = 30) -> None:
-        """Prune old sulfation entries, keep most recent."""
-        hist = self.data.get('sulfation_history', [])
-        if len(hist) > keep_count:
-            self.data['sulfation_history'] = hist[-keep_count:]
-
-    def _prune_discharge_events(self, keep_count: int = 30) -> None:
-        """Prune old discharge events, keep most recent."""
-        events = self.data.get('discharge_events', [])
-        if len(events) > keep_count:
-            self.data['discharge_events'] = events[-keep_count:]
 
     def save(self):
         """
@@ -391,12 +350,12 @@ class BatteryModel:
         Prunes soh_history and r_internal_history to prevent unbounded growth.
         Use only at discharge event completion, not on every sample.
         """
-        self._prune_soh_history()
-        self._prune_r_internal_history()
+        self._prune_list('soh_history')
+        self._prune_list('r_internal_history')
         self._prune_lut()
-        self._prune_capacity_estimates()
-        self._prune_sulfation_history()
-        self._prune_discharge_events()
+        self._prune_list('capacity_estimates')
+        self._prune_list('sulfation_history')
+        self._prune_list('discharge_events')
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
@@ -483,7 +442,7 @@ class BatteryModel:
             'metadata': metadata
         }
         self.data['capacity_estimates'].append(entry)
-        self._prune_capacity_estimates()
+        self._prune_list('capacity_estimates')
         self.save()
 
     def get_capacity_estimates(self) -> List[Dict]:

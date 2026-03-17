@@ -68,11 +68,11 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
             suffix='.tmp',
             prefix='ups-virtual-'
         ) as tmp:
+            tmp_path = Path(tmp.name)
             tmp.write(content)
             tmp.flush()
             os.fdatasync(tmp.fileno())
             os.fchmod(tmp.fileno(), 0o644)
-            tmp_path = Path(tmp.name)
 
         # Atomic rename (POSIX guarantees)
         tmp_path.replace(virtual_ups_path)

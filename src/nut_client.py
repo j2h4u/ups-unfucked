@@ -37,7 +37,7 @@ class NUTClient:
         self.port = port
         self.timeout = timeout
         self.ups_name = ups_name
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger('ups-battery-monitor')
         self.sock = None
 
     def _close_socket(self):
@@ -95,6 +95,8 @@ class NUTClient:
         Returns:
             Response string (stripped)
         """
+        if '\n' in command:
+            raise ValueError(f"NUT protocol injection: newline in command: {command!r}")
         self.sock.sendall((command + '\n').encode())
         response = self.sock.recv(4096).decode().strip()
         return response
