@@ -37,7 +37,13 @@
 
 ### Active
 
-(None — planning next milestone)
+- [ ] Sulfation model: physics-based (Shepherd/Bode) + data-driven detection (IR trend, curve shape, recovery delta)
+- [ ] Smart test scheduling: daemon calls upscmd directly, replaces static systemd timers with intelligent scheduling
+- [ ] Cycle ROI metric: single number balancing desulfation benefit vs wear cost, exported to health.json
+- [ ] Temperature: research NUT HID for battery.temperature, fallback to configurable constant (~35°C)
+- [ ] Natural blackout credit: skip scheduled deep tests when recent blackouts already desulfated
+- [ ] Safety constraints: minimum SoH floor for safe deep discharge, grid stability check before test
+- [ ] Reporting: sulfation score + scheduling decisions in health.json for Grafana, journald structured events
 
 ### Out of Scope
 
@@ -49,9 +55,18 @@
 - Temperature compensation — indoor ±3°C, negligible variation
 - Offline mode / multi-UPS — single CyberPower UT850EG only
 
+## Current Milestone: v3.0 Active Battery Care
+
+**Goal:** Transform daemon from passive observer to active battery manager — model sulfation, schedule desulfation intelligently, and quantify each discharge's net impact on battery life.
+
+**Target features:**
+- Sulfation model (physics + data-driven hybrid)
+- Smart deep discharge scheduling (daemon controls upscmd, replaces static systemd timers)
+- Cycle ROI metric (desulfation benefit vs wear cost, health.json export)
+
 ## Context
 
-Shipped v2.0 with 11,602 LOC Python, 291 tests, 311 commits over 4 days.
+Shipped v2.0 with 11,602 LOC Python, 291 tests, 311 commits over 4 days. Post-v2.0 module audit fixed all 58 findings (337 tests now).
 Tech stack: Python 3.13, NUT (upsc + dummy-ups), systemd, journald.
 Hardware: CyberPower UT850EG (425W), USB, NUT usbhid-ups, Debian 13 (senbonzakura).
 
@@ -60,7 +75,9 @@ Firmware showed 0% at minute 35 — UPS ran 12 more minutes.
 
 v2.0 added capacity estimation from deep discharge events (coulomb counting + voltage anchor), SoH recalibration against measured capacity, and full reporting pipeline (MOTD, journald, Grafana). Math kernel extracted to `src/battery_math/` package with year-long simulation harness proving formula stability.
 
-Known v2.1+ candidates: Peukert exponent auto-calibration (CAL2-02), cliff-edge degradation detector, seasonal thermal correction.
+Operating environment: frequent blackouts (several/week), battery at ~35°C due to inverter heat. Existing deep test infrastructure: ups-test-quick.timer (daily) and ups-test-deep.timer (monthly) — to be replaced by daemon-controlled scheduling.
+
+Known v2.1+ candidates deferred: Peukert exponent auto-calibration (CAL2-02), cliff-edge degradation detector, seasonal thermal correction.
 
 ## Constraints
 
@@ -92,4 +109,4 @@ Known v2.1+ candidates: Peukert exponent auto-calibration (CAL2-02), cliff-edge 
 | 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
 
 ---
-*Last updated: 2026-03-16 after v2.0 milestone*
+*Last updated: 2026-03-17 after v3.0 milestone start*
