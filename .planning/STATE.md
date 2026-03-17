@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Active Battery Care — Phase 17 Scheduling Intelligence
 status: in_progress
-last_updated: "2026-03-17T21:15:00Z"
+last_updated: "2026-03-17T22:30:00Z"
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 17 Plan 01 completion
-**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 COMPLETE (6/6), Phase 17 Plan 01 COMPLETE (1/3)
-**Current Position:** Phase 17 Plan 01 (Scheduling Intelligence - Foundation) COMPLETE → Ready for Plan 02 (Timer Migration)
+**Last Updated:** 2026-03-17 after Phase 17 Plan 02 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 COMPLETE (6/6), Phase 17 Plan 02 COMPLETE (2/3)
+**Current Position:** Phase 17 Plan 02 (Configuration System) COMPLETE → Ready for Plan 03 (Timer Migration)
 
 ---
 
@@ -57,13 +57,15 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 
 ### Requirement Coverage
 
-**Phase 17 Plan 01 COMPLETE:** SCHED-01, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-08 (6/8)
+**Phase 17 Plan 01:** SCHED-01, SCHED-03, SCHED-04, SCHED-05, SCHED-06 (part), SCHED-08 (6/8)
 
-**Coverage:** 20/20 ✓
+**Phase 17 Plan 02:** SCHED-06 (complete), SCHED-07 (complete) (2/2)
 
-### Phase 17 Plan 01 Completion Report
+**Total Phase 17:** 20/20 requirements covered across Plans 01 and 02 ✅
 
-**Executed:** 2026-03-17, 4 tasks, 66 tests, ~1700 LOC
+### Phase 17 Completion Report
+
+**Phase 17 Plan 01 (Foundation):** Executed 2026-03-17, 4 tasks, 66 tests, ~1700 LOC
 
 | Task | Deliverable | Status | Tests |
 |------|-------------|--------|-------|
@@ -72,12 +74,30 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 | 3 | Precondition & dispatch | ✅ COMPLETE | 13 |
 | 4 | Blackout credit & classification | ✅ COMPLETE | 10 |
 
+**Phase 17 Plan 02 (Configuration):** Executed 2026-03-17, 4 tasks, 30 tests, ~238 LOC
+
+| Task | Deliverable | Status | Tests |
+|------|-------------|--------|-------|
+| 1 | config.toml extension | ✅ COMPLETE | — |
+| 2 | SchedulingConfig schema | ✅ COMPLETE | — |
+| 3 | monitor.py integration | ✅ COMPLETE | — |
+| 4 | Config tests + deployment | ✅ COMPLETE | 30 |
+
 **Commits:**
+
+Plan 01:
 - f2a0cc5: feat(17-01): scheduler decision engine
 - 2363224: feat(17-02): model schema extension
 - c22ad51: feat(17-03): precondition validator and dispatch
 - e278a67: feat(17-04): blackout credit logic
 - 929e83f: docs(17-01): complete summary
+
+Plan 02:
+- e8534a5: feat(17-02): extend config.toml with Phase 17 scheduling parameters
+- 9860d3f: feat(17-02): add SchedulingConfig schema and validation
+- 75c6d68: feat(17-02): load and use Phase 17 scheduling configuration in monitor.py
+- fe585df: feat(17-02): add configuration tests and deployment checklist
+- f61493c: docs(17-02): complete Phase 17 Plan 02 summary
 
 ### Open Blockers
 
@@ -101,24 +121,27 @@ None. Phase 17 Plan 01 complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (Phase 17 Plan 01 execution)
+**Last session:** 2026-03-17 (Phase 17 Plan 02 execution)
 
-**Artifacts created:**
+**Artifacts created (Plan 02):**
 
-- `.planning/phases/17-scheduling-intelligence/17-01-SUMMARY.md`
-- `src/battery_math/scheduler.py` (267 LOC)
-- `src/model.py` extension (82 LOC)
-- `src/monitor.py` extension (176 LOC)
-- `src/discharge_handler.py` extension (56 LOC)
-- `tests/test_scheduler.py` (528 LOC)
-- `tests/test_dispatch.py` (230 LOC)
-- `tests/test_discharge_handler.py` (268 LOC)
-- `tests/test_model.py` extension (158 LOC)
+- `.planning/phases/17-scheduling-intelligence/17-02-SUMMARY.md`
+- `tests/test_config.py` (30 tests, 400+ LOC)
+- `.planning/phases/17-scheduling-intelligence/DEPLOYMENT.md`
+- `config.toml` extension (57 lines, [scheduling] section)
+- `src/monitor_config.py` extension (111 lines, SchedulingConfig + validation)
+- `src/monitor.py` extension (70 lines, config loading + scheduler updates)
 
-**Total:** 5 commits, 66 tests passing
+**Total Plan 02:** 5 commits, 30 tests passing, 238 LOC added
 
-**Next phase:** Phase 17 Plan 02 (Timer Migration)
+**Combined Phase 17 (Plans 01-02):**
+- Total commits: 10
+- Total tests: 96 (66 from Plan 01 + 30 from Plan 02)
+- Total LOC: ~1938
+- Status: Wave 2 COMPLETE, Ready for Plan 03
+
+**Next phase:** Phase 17 Plan 03 (Timer Migration) — move from legacy systemd timers to daemon-driven scheduling
 
 ---
 
-*State updated: 2026-03-17 after Phase 17 Plan 01 completion*
+*State updated: 2026-03-17 after Phase 17 Plan 02 completion*
