@@ -11,3 +11,12 @@
 | F44 | fdatasync on tmpfs: no-op, negligible overhead, correct defensive coding | OK | No change |
 | F45 | Prune limits adequate: 30 SoH ≈ 15-30 months, 200 LUT ≈ 7 weeks | OK | No change |
 | F46 | model.json 3.8KB — tiny, indent=2 fine | OK | No change |
+
+## Fix Status
+
+- [x] **F41** (High): Fixed — 2min safety floor: runtime < 2 min → LB regardless of event type
+- [x] **F42** (Medium): Fixed — demoted to DEBUG
+- [x] **F43** (OK): No action needed — fdatasync on ext4 safe
+- [x] **F44** (OK): No action needed — fdatasync on tmpfs correct defensive coding
+- [x] **F45** (OK): No action needed — prune limits adequate
+- [x] **F46** (OK): No action needed — model.json indent fine

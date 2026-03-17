@@ -17,3 +17,12 @@
 - Predictor code itself is clean — the fix is upstream (F19 SoH redesign)
 - capacity_ah_ref filtering exists but needs wiring in the caller to separate pre/post battery replacement entries
 - Once F19 and F24 are fixed, predictor should work with clean data — reassess then
+
+## Fix Status
+
+- [x] **F53** (High): Fixed — upstream F19 fixed (capacity-based SoH replaces broken area formula)
+- [x] **F54** (Medium): Fixed — wired capacity_ah_ref in caller (monitor.py one-line fix)
+- [ ] **F55** (Medium): Open — no outlier rejection in regression
+- [ ] **F56** (Low): Open — R²<0.5 threshold permissive
+- [ ] **F57** (Low): Open — multi-discharge days overweighted ~10%
+- [ ] **F58** (Medium): Open — monitor.py 1300+ lines, decompose at next milestone

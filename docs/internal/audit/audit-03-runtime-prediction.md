@@ -17,3 +17,12 @@
 - The formula breaks down if server load changes significantly from calibration load. At stable 14-20%, error is <3%
 - Linear SoC × SoH scaling is a good enough approximation because: (a) LUT encodes voltage→SoC nonlinearity already, (b) energy-based SoH tracks capacity within ~5% for VRLA
 - Validated: 47 min actual vs 47.0 min predicted (2026-03-12 blackout, 17% load, n=1.15)
+
+## Fix Status
+
+- [x] **F13** (High): Fixed — return 24h cap instead of 0.0 for load=0 sensor glitch
+- [ ] **F14** (Medium): Open — nominal voltage in I_actual, <3% error at stable load
+- [ ] **F15** (Medium): Open — linear SoC scaling below 20%, improves with cliff data (F9)
+- [ ] **F16** (Low): Open — document only
+- [ ] **F17** (Low): Open — document only
+- [x] **F18** (Info): No action needed — unreachable in practice

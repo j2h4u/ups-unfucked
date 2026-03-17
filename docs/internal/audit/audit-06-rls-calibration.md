@@ -17,3 +17,12 @@
 - Peukert calibration works correctly for long discharges: 2026-03-12 blackout (47 min) → n=1.15 (validated)
 - Short discharges (<30 min at 16% load) always produce n>1.4 (clamped) — the formula can't distinguish "short blackout" from "high Peukert" at 15.7x C-rate
 - ir_k calibration from sag measurements is sound: R_internal → ir_k conversion has correct units and physics
+
+## Fix Status
+
+- [x] **F30** (High): Fixed — skip RLS update when calibrate_peukert returns a value hitting clamp bounds
+- [ ] **F31** (Medium): Open — Peukert depends on SoH; monitor after F19+F30 fix
+- [x] **F32** (OK): No action needed — ir_k formula derivation correct
+- [ ] **F33** (Low): Open — clamping after RLS, minor P/theta inconsistency
+- [x] **F34** (OK): No action needed — λ=0.97 effective memory is appropriate
+- [x] **F35** (OK): No action needed — P floor not needed

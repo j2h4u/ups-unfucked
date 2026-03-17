@@ -20,3 +20,11 @@ The formula compares area of a partial discharge (e.g., 600s) to the area of a f
 1. **ΔSoC normalization:** Compare energy rate (V·s per second = avg voltage) for the observed SoC range vs expected avg voltage for that range from LUT. Ratio ≈ 1.0 for healthy battery regardless of duration.
 2. **Capacity-based SoH:** `SoH = measured_capacity / rated_capacity`. CapacityEstimator (Module 5) already computes this. Deprecate voltage-area formula entirely.
 3. **Hybrid:** Use voltage-area for quick health checks (short discharges), capacity-based for authoritative SoH (deep discharges).
+
+## Fix Status
+
+- [x] **F19** (Critical): Fixed — capacity-based SoH replaces area-under-curve (deprecated voltage-area formula)
+- [x] **F20** (High): Fixed — new SoH algorithm doesn't use arbitrary 0.30 weight
+- [x] **F21** (High): Fixed — real Bayesian blend weighted by ΔSoC depth
+- [ ] **F22** (Low): Open — document only, kernel 30s vs monitor 300s
+- [x] **F23** (OK): No action needed — anchor trimming correct

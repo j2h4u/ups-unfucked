@@ -17,3 +17,12 @@
 - 4% nominal voltage bias is consistent (same direction as F14) and absorbed by convergence
 - `_compute_ir()` result is purely informational metadata — real IR comes from `_record_voltage_sag()` in monitor.py
 - 5-min blackout at 16% load: 13.5→12.5V = ΔSoC 31% (passes 25% gate but barely). 3-min blackout: ΔSoC ~15% (fails). Lowering to 15% doubles the number of contributing events.
+
+## Fix Status
+
+- [x] **F24** (High): Fixed — lowered ΔSoC gate from 25% to 15%, CoV<10% handles noise
+- [ ] **F25** (Medium): Open — _compute_ir() is discharge-slope, not IR. Metadata only
+- [ ] **F26** (Low): Open — hardcoded nominal_ah in cross-check
+- [ ] **F27** (Low): Open — nominal voltage bias ~4%, doesn't affect convergence
+- [x] **F28** (Info): No action needed — confirms F24 (now fixed)
+- [x] **F29** (OK): No action needed — convergence CoV<10% with population std is sound

@@ -19,3 +19,12 @@
 - The formula direction is correct: load < L_base → V_norm < V_ema (less IR drop at lower load means observed voltage is inflated relative to LUT reference)
 - Cliff region accuracy will improve organically with each deep discharge — no code change needed
 - F3 from Module 1 resolved: IR comp during OB is approximate but error bounded to ≤0.06V at typical loads
+
+## Fix Status
+
+- [ ] **F7** (Low): Open — LUT dedup
+- [ ] **F8** (Medium): Open — known limitation, documented
+- [ ] **F9** (Medium): Open — resolves after first deep discharge
+- [ ] **F10** (Low): Open — prevented by dedup (F7)
+- [x] **F11** (Info): No action needed — by design
+- [x] **F12** (OK): No action needed

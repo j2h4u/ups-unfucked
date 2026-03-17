@@ -17,3 +17,12 @@
 - CyberPower UT850 documented statuses: OL, OL CHRG, OB DISCHRG, OB LB DISCHRG, CAL DISCHRG, FSD
 - Fix: `"OB" in status or "CAL" in status → battery`, `"OL" in status → online`. Forward-compatible.
 - 100V threshold works because CyberPower reports exactly 0V on blackout and ~220V on test — no ambiguous middle range in practice.
+
+## Fix Status
+
+- [x] **F36** (High): Fixed — flag-based matching: "OB" in status → battery discharge detected
+- [x] **F36a** (Critical): Fixed — fallback passes through raw status when classifier returns unknown
+- [x] **F37** (Info): No action needed — mitigating factor for F36
+- [ ] **F38** (Low): Open — FSD/BYPASS/OFF not matched, YAGNI
+- [x] **F39** (OK): No action needed — brownout misclassification non-issue for line-interactive UPS
+- [x] **F40** (OK): No action needed — 100V threshold well-chosen
