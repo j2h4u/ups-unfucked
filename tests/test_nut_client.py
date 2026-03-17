@@ -141,12 +141,22 @@ class TestListVar:
 
 
 class TestINSTCMD:
-    """Tests for INSTCMD (instant command) protocol support."""
+    """Tests for INSTCMD (instant command) protocol support (RFC 9271)."""
 
     def test_send_instcmd_quick_test_success(self, mock_nut_socket):
-        """INSTCMD test.battery.start.quick succeeds with OK response."""
-        # Mock socket responses for: connect, INSTCMD send, response
-        mock_nut_socket.recv.return_value = b'OK TRACKING 12345\n'
+        """INSTCMD test.battery.start.quick succeeds with full RFC 9271 auth sequence."""
+        # Mock socket responses for full RFC 9271 sequence:
+        # 1. USERNAME upsmon → OK
+        # 2. PASSWORD → OK
+        # 3. LOGIN cyberpower → OK
+        # 4. INSTCMD cyberpower test.battery.start.quick → OK TRACKING 12345
+        responses = [
+            b'OK\n',                      # USERNAME response
+            b'OK\n',                      # PASSWORD response
+            b'OK\n',                      # LOGIN response
+            b'OK TRACKING 12345\n',       # INSTCMD response
+        ]
+        mock_nut_socket.recv.side_effect = responses
 
         client = NUTClient()
         success, msg = client.send_instcmd('test.battery.start.quick')
@@ -155,8 +165,14 @@ class TestINSTCMD:
         assert 'OK' in msg or 'TRACKING' in msg, f"Expected OK or TRACKING in message, got {msg}"
 
     def test_send_instcmd_command_not_supported(self, mock_nut_socket):
-        """INSTCMD with unsupported command returns error."""
-        mock_nut_socket.recv.return_value = b'ERR CMD-NOT-SUPPORTED\n'
+        """INSTCMD with unsupported command returns error after auth succeeds."""
+        responses = [
+            b'OK\n',                      # USERNAME response
+            b'OK\n',                      # PASSWORD response
+            b'OK\n',                      # LOGIN response
+            b'ERR CMD-NOT-SUPPORTED\n',   # INSTCMD response (unsupported)
+        ]
+        mock_nut_socket.recv.side_effect = responses
 
         client = NUTClient()
         success, msg = client.send_instcmd('fake.command.invalid')
@@ -165,11 +181,44 @@ class TestINSTCMD:
         assert 'CMD-NOT-SUPPORTED' in msg, f"Expected CMD-NOT-SUPPORTED in message, got {msg}"
 
     def test_send_instcmd_access_denied(self, mock_nut_socket):
-        """INSTCMD without proper credentials returns access denied error."""
-        mock_nut_socket.recv.return_value = b'ERR ACCESS-DENIED\n'
+        """INSTCMD returns access denied if LOGIN fails."""
+        responses = [
+            b'OK\n',                      # USERNAME response
+            b'OK\n',                      # PASSWORD response
+            b'ERR ACCESS-DENIED\n',       # LOGIN response (access denied)
+        ]
+        mock_nut_socket.recv.side_effect = responses
 
         client = NUTClient()
         success, msg = client.send_instcmd('test.battery.start.deep')
 
         assert success is False, f"Expected success=False, got {success}"
         assert 'ACCESS-DENIED' in msg, f"Expected ACCESS-DENIED in message, got {msg}"
+
+    def test_send_instcmd_with_param(self, mock_nut_socket):
+        """INSTCMD with optional parameter includes param in command."""
+        responses = [
+            b'OK\n',                      # USERNAME response
+            b'OK\n',                      # PASSWORD response
+            b'OK\n',                      # LOGIN response
+            b'OK\n',                      # INSTCMD with param response
+        ]
+        mock_nut_socket.recv.side_effect = responses
+
+        client = NUTClient()
+        success, msg = client.send_instcmd('load.off.delay', '120')
+
+        assert success is True, f"Expected success=True, got {success}"
+
+    def test_send_instcmd_username_fails(self, mock_nut_socket):
+        """INSTCMD returns error if USERNAME step fails."""
+        responses = [
+            b'ERR UNKNOWN-COMMAND\n',     # USERNAME response (unexpected error)
+        ]
+        mock_nut_socket.recv.side_effect = responses
+
+        client = NUTClient()
+        success, msg = client.send_instcmd('test.battery.start.quick')
+
+        assert success is False, f"Expected success=False, got {success}"
+        assert 'USERNAME failed' in msg, f"Expected 'USERNAME failed' in message, got {msg}"

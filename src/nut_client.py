@@ -9,6 +9,7 @@ import socket
 import logging
 import time
 from contextlib import contextmanager
+from typing import Tuple, Optional
 
 
 class NUTClient:
@@ -177,39 +178,76 @@ class NUTClient:
                     result[parsed[0]] = parsed[1]
             return result
 
-    def send_instcmd(self, cmd_name, param=None):
+    def send_instcmd(self, cmd_name: str, cmd_param: Optional[str] = None) -> Tuple[bool, str]:
         """
-        Send INSTCMD (instant command) to UPS (RFC 9271 protocol).
+        Send instant command via NUT RFC 9271 INSTCMD protocol.
 
-        Dispatches immediate commands to the UPS (e.g., test.battery.start.quick for
-        initiating a quick battery test). Response is parsed for OK or ERR status.
+        Dispatches immediate commands to the UPS via authenticated NUT protocol.
+        Implements full RFC 9271 authentication handshake: USERNAME → PASSWORD → LOGIN → INSTCMD.
 
         Args:
             cmd_name: Command name in NUT format (e.g., 'test.battery.start.quick')
-            param: Optional parameter value (not typically used for battery tests)
+            cmd_param: Optional parameter value (not typically used for battery tests)
 
         Returns:
-            Tuple (success: bool, message: str) where:
-            - success=True, message contains response (e.g., 'OK TRACKING 12345')
-            - success=False, message contains error (e.g., 'ERR CMD-NOT-SUPPORTED')
+            Tuple[bool, str] with success flag and message where:
+            - (True, response_text): Command accepted by upsd (e.g., 'OK' or 'OK TRACKING <id>')
+            - (False, error_text): Command failed or auth failed (e.g., 'ERR CMD-NOT-SUPPORTED')
 
         Raises:
-            socket.timeout: If connection times out
-            socket.error: If socket communication fails
+            socket.timeout: Connection timeout (caller should retry)
+            socket.error: Socket communication failed (caller should retry)
+
+        Protocol flow (RFC 9271):
+            1. USERNAME upsmon    → OK
+            2. PASSWORD           → OK  (v3.0 assumes upsd.users permits upsmon without password)
+            3. LOGIN <upsname>    → OK
+            4. INSTCMD <upsname> <cmd> [param] → OK or ERR
+            5. LOGOUT (implicit via socket close)
+
+        Example:
+            success, msg = client.send_instcmd('test.battery.start.quick')
+            if success:
+                print(f"Test started: {msg}")
+            else:
+                print(f"Error: {msg}")
         """
         with self._socket_session():
-            if param:
-                cmd = f'INSTCMD {self.ups_name} {cmd_name} {param}'
-            else:
-                cmd = f'INSTCMD {self.ups_name} {cmd_name}'
+            try:
+                # Step 1: Authenticate as 'upsmon' user
+                response = self.send_command('USERNAME upsmon')
+                if not response.startswith('OK'):
+                    return (False, f"USERNAME failed: {response}")
 
-            response = self.send_command(cmd)
+                # Step 2: Send password (empty for upsmon in standard upsd.users)
+                response = self.send_command('PASSWORD')
+                if not response.startswith('OK'):
+                    return (False, f"PASSWORD failed: {response}")
 
-            if response.startswith('OK'):
-                return (True, response)
-            elif response.startswith('ERR'):
-                return (False, response)
-            else:
-                # Unexpected response, treat as error
-                self.logger.error(f"Unexpected INSTCMD response: {response}")
-                return (False, response)
+                # Step 3: Login to UPS
+                response = self.send_command(f'LOGIN {self.ups_name}')
+                if not response.startswith('OK'):
+                    return (False, f"LOGIN failed: {response}")
+
+                # Step 4: Send the actual INSTCMD
+                if cmd_param is not None:
+                    cmd = f'INSTCMD {self.ups_name} {cmd_name} {cmd_param}'
+                else:
+                    cmd = f'INSTCMD {self.ups_name} {cmd_name}'
+
+                response = self.send_command(cmd)
+
+                # Step 5: Parse INSTCMD response
+                if response.startswith('OK'):
+                    return (True, response)
+                elif response.startswith('ERR'):
+                    return (False, response)
+                else:
+                    return (False, f"Unexpected response: {response}")
+
+            except socket.timeout:
+                raise  # Propagate timeout for caller retry logic
+            except socket.error:
+                raise  # Propagate socket error for caller retry logic
+            except Exception as e:
+                return (False, f"Unexpected error: {e}")
