@@ -56,10 +56,16 @@
 **Success Criteria** (what must be TRUE):
 1. User can verify `src/battery_math/sulfation.py` functions compute score [0–1.0] from battery data (unit tests pass, offline harness confirms with synthetic discharge curves)
 2. User can verify `src/battery_math/cycle_roi.py` functions estimate desulfation benefit vs wear cost (synthetic test cases show <20% estimation margin)
-3. User can verify `nut_client.send_command()` method successfully dispatches `test.battery.start.quick` to real UT850EG (live UPS acknowledges INSTCMD, test.result updates)
+3. User can verify `nut_client.send_instcmd()` method successfully dispatches `test.battery.start.quick` to real UT850EG (live UPS acknowledges INSTCMD, test.result updates)
 4. User can confirm zero daemon regressions — all v2.0 tests pass and main loop exhibits no new errors during import of new math modules
 
-**Plans:** TBD
+**Plans:** 5 plans (Wave 1: math modules + unit tests, Wave 2: NUT INSTCMD, Wave 3: integration tests, Wave 4: regression check)
+
+- [ ] 15-01-PLAN.md — Pure functions: sulfation.py, cycle_roi.py, module exports (Wave 1)
+- [ ] 15-02-PLAN.md — Unit tests: test_sulfation.py, test_cycle_roi.py, extend test_nut_client.py (Wave 1)
+- [ ] 15-03-PLAN.md — NUT INSTCMD: send_instcmd() method + live validation script (Wave 2)
+- [ ] 15-04-PLAN.md — Integration tests: test_sulfation_offline_harness.py with year-simulation (Wave 3)
+- [ ] 15-05-PLAN.md — Regression tests: full test suite passes, zero regressions (Wave 4)
 
 ---
 
@@ -121,10 +127,10 @@
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
-| 15. Foundation | v3.0 | 0/3 | Not started | — |
+| 15. Foundation | v3.0 | 5/5 | Planning | — |
 | 16. Persistence & Observability | v3.0 | 0/3 | Not started | — |
 | 17. Scheduling Intelligence | v3.0 | 0/3 | Not started | — |
 
 ---
 
-*Roadmap updated: 2026-03-17 after v3.0 roadmap creation*
+*Roadmap updated: 2026-03-17 after Phase 15 planning*
