@@ -117,6 +117,12 @@ class BatteryModel:
             logger.info("Model file not found; initializing with standard VRLA curve")
             self.data = self._default_vrla_lut()
 
+        # Initialize Phase 16 arrays for backward compatibility
+        self.data.setdefault('sulfation_history', [])
+        self.data.setdefault('discharge_events', [])
+        self.data.setdefault('roi_history', [])
+        self.data.setdefault('natural_blackout_events', [])
+
     def _default_vrla_lut(self) -> Dict[str, Any]:
         """
         Standard VRLA 12V discharge curve (7.2Ah reference capacity).
@@ -325,6 +331,50 @@ class BatteryModel:
         if len(cap_est) > keep_count:
             self.data['capacity_estimates'] = cap_est[-keep_count:]
 
+    def append_sulfation_history(self, entry: dict) -> None:
+        """Append sulfation measurement to history.
+
+        Args:
+            entry: {
+                'timestamp': ISO8601 string,
+                'event_type': 'natural' | 'test_initiated',
+                'sulfation_score': float [0, 1],
+                'days_since_deep': float,
+                'ir_trend_rate': float,
+                'recovery_delta': float,
+                'temperature_celsius': float,
+                'confidence_level': 'high' | 'medium' | 'low'
+            }
+        """
+        self.data.setdefault('sulfation_history', []).append(entry)
+
+    def append_discharge_event(self, event: dict) -> None:
+        """Append discharge completion to history.
+
+        Args:
+            event: {
+                'timestamp': ISO8601 string,
+                'event_reason': 'natural' | 'test_initiated',
+                'duration_seconds': float,
+                'depth_of_discharge': float,
+                'measured_capacity_ah': float | None,
+                'cycle_roi': float
+            }
+        """
+        self.data.setdefault('discharge_events', []).append(event)
+
+    def _prune_sulfation_history(self, keep_count: int = 30) -> None:
+        """Prune old sulfation entries, keep most recent."""
+        hist = self.data.get('sulfation_history', [])
+        if len(hist) > keep_count:
+            self.data['sulfation_history'] = hist[-keep_count:]
+
+    def _prune_discharge_events(self, keep_count: int = 30) -> None:
+        """Prune old discharge events, keep most recent."""
+        events = self.data.get('discharge_events', [])
+        if len(events) > keep_count:
+            self.data['discharge_events'] = events[-keep_count:]
+
     def save(self):
         """
         Atomically write model to disk with history pruning.
@@ -336,6 +386,8 @@ class BatteryModel:
         self._prune_r_internal_history()
         self._prune_lut()
         self._prune_capacity_estimates()
+        self._prune_sulfation_history()
+        self._prune_discharge_events()
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
