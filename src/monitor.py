@@ -38,6 +38,7 @@ from src.monitor_config import (  # noqa: F401
     RUNTIME_THRESHOLD_MINUTES, REFERENCE_LOAD_PERCENT, REPORTING_INTERVAL_POLLS,
     HEALTH_ENDPOINT_PATH, SAG_SAMPLES_REQUIRED, DISCHARGE_BUFFER_MAX_SAMPLES,
     ERROR_LOG_BURST, load_config, safe_save, write_health_endpoint, logger,
+    SchedulingConfig, get_scheduling_config,
 )
 from src.discharge_handler import DischargeHandler
 from src.battery_math.scheduler import evaluate_test_scheduling, SchedulerDecision
@@ -296,6 +297,51 @@ class MonitorDaemon:
         # Phase 17: Scheduler state tracking
         self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
         self.reference_load_percent = config.reference_load_percent
+
+        # Phase 17: Load scheduling configuration
+        try:
+            import tomllib
+            cfg_dict = {}
+            for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
+                if path.is_file():
+                    with open(path, 'rb') as f:
+                        cfg_dict = tomllib.load(f)
+                    break
+
+            self.scheduling_config = get_scheduling_config(cfg_dict)
+        except ValueError as e:
+            logger.error(f"Failed to load Phase 17 scheduling configuration: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error loading scheduling config: {e}")
+            raise
+
+        # Store scheduling parameters for convenient access in scheduler invocation
+        self.scheduling_params = {
+            'soh_floor_threshold': self.scheduling_config.soh_floor_threshold,
+            'min_days_between_tests': self.scheduling_config.min_days_between_tests,
+            'roi_threshold': self.scheduling_config.roi_threshold,
+            'grid_stability_cooldown_hours': self.scheduling_config.grid_stability_cooldown_hours,
+            'blackout_credit_window_days': self.scheduling_config.blackout_credit_window_days,
+            'critical_cycle_budget_threshold': self.scheduling_config.critical_cycle_budget_threshold,
+            'deep_test_sulfation_threshold': self.scheduling_config.deep_test_sulfation_threshold,
+            'quick_test_sulfation_threshold': self.scheduling_config.quick_test_sulfation_threshold,
+            'scheduler_eval_hour_utc': self.scheduling_config.scheduler_eval_hour_utc,
+            'verbose_scheduling': self.scheduling_config.verbose_scheduling,
+        }
+
+        logger.info(
+            "Phase 17 scheduling config loaded",
+            extra={
+                'event_type': 'scheduling_config_loaded',
+                'soh_floor_threshold': f"{self.scheduling_params['soh_floor_threshold']:.0%}",
+                'min_days_between_tests': f"{self.scheduling_params['min_days_between_tests']:.1f}",
+                'grid_stability_cooldown_hours': f"{self.scheduling_params['grid_stability_cooldown_hours']:.1f}",
+                'roi_threshold': f"{self.scheduling_params['roi_threshold']:.1f}",
+                'scheduler_eval_hour_utc': self.scheduling_params['scheduler_eval_hour_utc'],
+                'verbose_scheduling': self.scheduling_params['verbose_scheduling'],
+            }
+        )
 
         # Voltage sag measurement for internal resistance tracking
         self.sag_state = SagState.IDLE
@@ -893,8 +939,9 @@ class MonitorDaemon:
         current_hour = now.hour
         current_minute = now.minute
 
-        # Evaluate scheduler once daily at 08:00 UTC
-        if current_hour == 8 and current_minute < 10 and not self.scheduler_evaluated_today:
+        # Evaluate scheduler once daily at configured hour (default 08:00 UTC)
+        scheduler_hour = self.scheduling_params['scheduler_eval_hour_utc']
+        if current_hour == scheduler_hour and current_minute < 10 and not self.scheduler_evaluated_today:
             self.scheduler_evaluated_today = True
 
             try:
@@ -907,13 +954,21 @@ class MonitorDaemon:
                 active_credit = self.battery_model.get_blackout_credit()
                 cycle_budget = self.discharge_handler.last_cycle_budget_remaining or 100
 
-                # Get configurable thresholds from config (defaults per plan)
-                soh_floor = getattr(self.config, 'soh_floor_threshold', 0.60)
-                min_interval = getattr(self.config, 'min_days_between_tests', 7.0)
-                roi_threshold = getattr(self.config, 'roi_threshold', 0.2)
-                grid_cooldown = getattr(self.config, 'grid_stability_cooldown_hours', 4.0)
+                # Log verbose scheduling inputs if enabled
+                if self.scheduling_params['verbose_scheduling']:
+                    logger.debug(
+                        "Scheduler inputs",
+                        extra={
+                            'event_type': 'scheduler_inputs',
+                            'sulfation_score': f"{sulfation_score:.3f}",
+                            'cycle_roi': f"{cycle_roi:.3f}",
+                            'soh_percent': f"{soh_percent:.1%}",
+                            'days_since_last_test': f"{days_since_last_test:.1f}",
+                            'cycle_budget': int(cycle_budget),
+                        }
+                    )
 
-                # Call scheduler (pure function)
+                # Call scheduler with configurable thresholds
                 decision = evaluate_test_scheduling(
                     sulfation_score=sulfation_score,
                     cycle_roi=cycle_roi,
@@ -923,10 +978,10 @@ class MonitorDaemon:
                     last_blackout_depth=last_blackout.get('depth', 0.0) if last_blackout else 0.0,
                     active_blackout_credit=active_credit,
                     cycle_budget_remaining=int(cycle_budget),
-                    soh_floor_threshold=soh_floor,
-                    min_days_between_tests=min_interval,
-                    roi_threshold=roi_threshold,
-                    grid_stability_cooldown_hours=grid_cooldown,
+                    soh_floor_threshold=self.scheduling_params['soh_floor_threshold'],
+                    min_days_between_tests=self.scheduling_params['min_days_between_tests'],
+                    roi_threshold=self.scheduling_params['roi_threshold'],
+                    grid_stability_cooldown_hours=self.scheduling_params['grid_stability_cooldown_hours'],
                 )
 
                 # Log decision (all three actions, for audit trail)
@@ -934,9 +989,9 @@ class MonitorDaemon:
                     'event_type': 'scheduler_decision',
                     'action': decision.action,
                     'reason_code': decision.reason_code,
-                    'sulfation_score': sulfation_score,
-                    'roi': cycle_roi,
-                    'soh_percent': soh_percent,
+                    'sulfation_score': f"{sulfation_score:.3f}",
+                    'roi': f"{cycle_roi:.3f}",
+                    'soh_percent': f"{soh_percent:.1%}",
                     'timestamp': now.isoformat(),
                 })
 
