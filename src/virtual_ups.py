@@ -76,7 +76,7 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
 
         # Atomic rename (POSIX guarantees)
         tmp_path.replace(virtual_ups_path)
-        logger.info(f"Virtual UPS metrics written at {virtual_ups_path}")
+        logger.debug(f"Virtual UPS metrics written at {virtual_ups_path}")
 
     except Exception as e:
         # Consolidated handler: clean up + log once + re-raise
