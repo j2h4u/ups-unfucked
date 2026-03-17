@@ -33,7 +33,7 @@ Enterprise-equivalent metrics, computed from physics — no special hardware req
 |--------|-----|---------------------|
 | **State of Charge** | Voltage LUT + IR compensation | APC coulomb counter |
 | **Runtime prediction** | Peukert's law, load-adjusted, SoH-aware | Eaton runtime estimate |
-| **State of Health** | Discharge curve area analysis | APC `upsAdvBatteryHealthStatus` |
+| **State of Health** | Capacity-based: measured_Ah / rated_Ah | APC `upsAdvBatteryHealthStatus` |
 | **Replacement date** | Linear regression on SoH history | APC `upsAdvBatteryReplaceIndicator` |
 | **Cycle count** | OL→OB transition counter | Eaton cumulative transfer count |
 | **Internal resistance** | Voltage sag measurement (dV/dI) | APC impedance test |
@@ -54,7 +54,7 @@ The daemon polls NUT every 10 seconds. Raw voltage and load pass through:
 2. **IR compensation** — removes voltage sag caused by load, revealing true open-circuit voltage
 3. **Voltage→SoC lookup** — maps compensated voltage to state of charge via a self-updating LUT
 4. **Peukert runtime** — physics-based runtime prediction accounting for non-linear discharge at higher currents
-5. **SoH tracking** — compares each discharge curve area against the reference to track degradation
+5. **SoH tracking** — compares measured capacity (coulomb counting) against rated capacity to track degradation
 6. **Capacity estimation** — coulomb counting from deep discharges, voltage-anchored, with CoV-based convergence
 
 Results are published through a virtual NUT device. Your existing tools (upsmon, Grafana, MOTD scripts) see the virtual UPS — no downstream changes needed.
@@ -124,7 +124,7 @@ Everything else is either hardcoded or stored in `model.json` and auto-calibrate
 
 - [x] **v1.1 — Expert panel hardening.** Three rounds of expert review (electrochemist, statistician, embedded systems engineer) identified edge cases in short-discharge bias, mutable state risks, and SSD write amplification. Fixes: frozen dataclasses, batched calibration writes (60x fewer disk ops), full integration test suite, extensible EMA filter architecture. The math didn't change — the engineering around it got serious.
 
-- [x] **v2.0 — Measured capacity.** The label on your battery says 7.2Ah. Is that true? After a year of float charging at 35°C, probably not. This milestone measures actual capacity from real discharge events using coulomb counting (current × time integration), cross-validated against the voltage curve. Three deep discharges are enough to converge. SoH recalibrates against measured capacity instead of rated, with baseline versioning so old and new battery data never mix. All battery math extracted into a pure-function kernel (`src/battery_math/`) with a year-long simulation harness that proves the formula system doesn't diverge — because when five interdependent equations feed each other's outputs across months of operation, you want mathematical proof, not hope. 291 tests.
+- [x] **v2.0 — Measured capacity.** The label on your battery says 7.2Ah. Is that true? After a year of float charging at 35°C, probably not. This milestone measures actual capacity from real discharge events using coulomb counting (current × time integration), cross-validated against the voltage curve. Three deep discharges are enough to converge. SoH recalibrates against measured capacity instead of rated, with baseline versioning so old and new battery data never mix. All battery math extracted into a pure-function kernel (`src/battery_math/`) with a year-long simulation harness that proves the formula system doesn't diverge — because when five interdependent equations feed each other's outputs across months of operation, you want mathematical proof, not hope. 336 tests.
 
 - [ ] **v3.0 — Active battery care.** Right now the daemon watches your battery die and reports on the process. This milestone makes it fight back. Lead-acid batteries suffer from sulfation — crystal buildup on the plates that slowly kills capacity. Periodic deep discharges break up these crystals, but too many cycles wear the battery out. The daemon will model sulfation rate (temperature-dependent), track desulfation from natural blackouts, and schedule deep discharge tests only when the math says the benefit outweighs the wear. One metric — cycle ROI — answers: "will this discharge extend or shorten battery life?" The goal: stretch a $30 battery from 2.5 years to 4+.
 

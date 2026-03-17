@@ -20,7 +20,7 @@ Analogy: engine wear. A new engine delivers full power; after 100k km — only 8
 
 SoH affects runtime: at SoH=0.8, the battery delivers only 80% of its nominal runtime.
 
-Calculated after every discharge (blackout) using **trapezoidal integration** of the voltage-time curve (area under curve) compared to a reference. The update uses **Bayesian prior-posterior blending** weighted by discharge duration — short events (10-second flickers) barely change SoH, while long discharges (30+ minutes) carry full weight. This prevents the catastrophic bias that naive multiplicative updating causes on short discharges.
+Calculated after every qualifying discharge (≥300s, ΔSoC ≥5%) using **capacity-based method**: coulomb counting measures Ah delivered during discharge, LUT-based ΔSoC extrapolates to full-discharge capacity, and `SoH = measured_capacity / rated_capacity`. The update uses **Bayesian prior-posterior blending** weighted by ΔSoC depth — shallow events (small ΔSoC) barely change SoH, while deep discharges carry full weight.
 
 ### VRLA — Valve-Regulated Lead-Acid
 Sealed, maintenance-free lead-acid battery type. Found in most consumer UPS units, including CyberPower UT850EG.

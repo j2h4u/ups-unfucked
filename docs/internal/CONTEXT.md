@@ -1,6 +1,6 @@
 # ups-unfucked — Current Context
 
-This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-03-14 (post v1.1).
+This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-03-17 (post v2.0, all audit findings closed).
 
 ## What This Is
 
@@ -23,7 +23,7 @@ Real UPS (usbhid-ups) → NUT upsd (:3493)
 ups-battery-monitor daemon (10s poll interval)
     ↓ MetricEMA (per-metric adaptive EMA) → IR compensation → SoC (voltage LUT) → Runtime (Peukert)
     ↓ Event classifier (ONLINE / BLACKOUT_REAL / BLACKOUT_TEST)
-    ↓ SoH tracking → Replacement prediction → R_internal measurement
+    ↓ SoH tracking → Capacity estimation → Replacement prediction → R_internal measurement
     ↓ Enterprise counters (cycle count, cumulative on-battery time, install date)
     ↓ Per-poll writes during OB state (no 60s lag on LB flag)
     ↓
@@ -31,7 +31,7 @@ ups-battery-monitor daemon (10s poll interval)
     ↓
 NUT dummy-ups → upsd → upsmon (shutdown) / Grafana (dashboards) / MOTD
     ↑
-health.json (last_poll, SoC, online, version — for external monitoring)
+health.json (last_poll, SoC, online, capacity metrics — for external monitoring)
 ```
 
 **Key principles**:
@@ -44,7 +44,8 @@ health.json (last_poll, SoC, online, version — for external monitoring)
 |--------|----------|--------|--------|
 | Charge % | Coulomb counter (drifts, ±50% error) | Voltage→SoC lookup table | LUT with linear interpolation, IR-compensated |
 | Runtime | ~22 min reported, actual ~47 min | Peukert model (±10%) | Physics-based, load-dependent, SoH-adjusted |
-| SoH | Not available | Discharge curve area analysis | Trapezoidal integration, compared to reference |
+| SoH | Not available | Capacity-based degradation tracking | measured_Ah / rated_Ah, Bayesian blend weighted by ΔSoC |
+| Measured capacity | Not available | Coulomb counting from deep discharges | Trapezoidal integration, CoV-based convergence (≥3 samples) |
 | Replacement due date | Not available | Linear regression on SoH history | Persisted in model.json, exported to virtual UPS |
 | Internal resistance | Not available | Voltage sag measurement (dV/dI) | On every OL→OB transition |
 | Cycle count | Not available | OL→OB transition counter | Persisted in model.json |
@@ -55,9 +56,10 @@ health.json (last_poll, SoC, online, version — for external monitoring)
 
 The daemon learns the battery automatically:
 - **Every blackout** (even 1-2 min): writes measured voltage→SoC points to LUT, gradually replacing the standard VRLA curve
-- **Time-weighted averaging**: recent measurements dominate (CURVE_RELEVANCE_HALF_LIFE_DAYS=90), tracking battery aging
+- **LUT dedup**: entries within ±0.01V are deduplicated, keeping most recent per voltage band
 - **Cliff region** (10.5-11.0V): interpolated when ≥2 measured points exist there (requires deep discharge)
-- **Peukert exponent**: auto-calibrated when predicted vs actual runtime diverges >10%
+- **Peukert exponent**: auto-calibrated via RLS (Recursive Least Squares) with forgetting factor λ=0.97. Clamped values (hitting [1.0, 1.4] bounds) are skipped to prevent convergence drift.
+- **IR compensation coefficient**: auto-calibrated from voltage sag measurements via RLS
 - **No special mode needed**: all calibration is continuous and automatic
 
 ## Key Technical Decisions
@@ -66,7 +68,7 @@ The daemon learns the battery automatically:
 
 2. **LIST VAR single connection**: One TCP connection per poll instead of 6. Wall-clock deadline + 64KB buffer cap prevent hangs.
 
-3. **TOML config** (not env vars): Only 3 user-facing settings (ups_name, shutdown_minutes, soh_alert). Everything else is hardcoded or in model.json.
+3. **TOML config** (not env vars): Only 4 user-facing settings (ups_name, shutdown_minutes, soh_alert, capacity_ah). Everything else is hardcoded or in model.json.
 
 4. **Systemd integration**: Type=notify with WatchdogSec=120, JournalHandler for logging, ProtectSystem=strict hardening.
 
@@ -74,31 +76,50 @@ The daemon learns the battery automatically:
 
 6. **Fallback shutdown rejected**: Daemon does not call `systemctl poweroff`. That's upsmon's job. Separation of concerns per NUT architecture.
 
+7. **Capacity-based SoH** (not area-under-curve): v2.0 replaced the original voltage-area formula (which produced wrong SoH on partial discharges) with measured_capacity/rated_capacity. Coulomb counting + LUT ΔSoC extrapolation.
+
 ## Codebase
 
-- **~6,600 LoC** across 12 modules, **208 tests**
-- Key files: `src/monitor.py` (daemon, Config/CurrentMetrics frozen dataclasses, _safe_save helper), `src/nut_client.py` (LIST VAR, single TCP connection), `src/ema_filter.py` (MetricEMA generic class + adaptive EMA + IR compensation), `src/model.py` (battery model persistence, history/LUT pruning), `src/soh_calculator.py` (SoH + time-weighted cliff interpolation)
-- Config: `config.toml` (3 settings), `model.json` (battery state, auto-calibrated, pruned)
+- **~12,500 LoC** across 14 modules, **337 tests** (336 pass + 1 xfail)
+- **Module structure** (F58 decomposition):
+  - `src/monitor.py` (791L) — pipeline orchestrator: poll, EMA, classify, sag, discharge, metrics, export
+  - `src/monitor_config.py` (262L) — Config dataclass, constants, health endpoint, logger
+  - `src/discharge_handler.py` (413L) — DischargeHandler class: SoH, capacity, Peukert, alerts
+  - `src/battery_math/` — pure kernel functions: RLS, Peukert calibration, SoH calculation
+  - `src/model.py` — BatteryModel persistence, LUT management, atomic JSON writes
+  - `src/ema_filter.py` — adaptive EMA with per-metric instances
+  - `src/capacity_estimator.py` — coulomb counting + convergence tracking
+  - `src/soc_predictor.py` — voltage→SoC LUT lookup
+  - `src/runtime_calculator.py` — Peukert runtime prediction
+  - `src/event_classifier.py` — NUT status flag-based state machine
+  - `src/soh_calculator.py` — capacity-based SoH orchestrator
+  - `src/replacement_predictor.py` — linear regression on SoH history
+- Config: `config.toml` (4 settings), `model.json` (battery state, auto-calibrated, pruned)
 - Scripts: `scripts/battery-health.py` (health report), `scripts/install.sh` (product installer)
 
 ## Known Limitations
 
+Documented inline in code as "Known limitations (audit 2026-03-17)" blocks. Key ones:
 - **No temperature sensor**: ±3% SoC uncertainty from temperature. $2 NTC thermistor is highest-ROI hardware improvement.
 - **CyberPower doesn't expose temperature**: No `battery.temperature` or `ups.temperature` via NUT.
 - **Cliff region accuracy**: Requires deep discharge to measure 10.5-11.0V range. Short blackouts only calibrate upper curve.
 - **Peukert scalar**: Exponent is load-independent. Works with consistent ~15-20% load. Would need rework for variable loads.
+- **Nominal voltage in current calculation**: ~4% systematic bias in coulomb counting (F14/F27). Consistent direction, doesn't affect convergence.
+- **IR compensation during discharge**: Linear model approximate during OB. ≤0.06V error at typical loads (F3/F8).
 
 ## Documentation
 
-- `README.md` — Product overview, architecture, quick start
-- `docs/USER-SCENARIOS.md` — Health report, deep test, battery replacement (planned), config
-- `docs/EXPERT-PANEL-REVIEW-2026-03-14.md` — First expert review (architect, security, SRE, QA, Kaizen, statistician, battery chemist)
-- `docs/EXPERT-PANEL-REVIEW-2026-03-15.md` — Second expert review (5-panel). **All 21 findings fixed in v1.1** (2 P0 + 7 P1 + 7 P2 + 5 P3)
-- `docs/EXPERT-PANEL-REVIEW-2026-03-14-post-v1.1.md` — Third expert review (post v1.1). **All 20 findings fixed** (0 P0 + 5 P1 + 9 P2 + 6 P3)
-- `docs/GLOSSARY.md` — Term definitions
+- `README.md` — Product overview, architecture, quick start, roadmap
+- `docs/USER-SCENARIOS.md` — Health report, deep test, battery replacement, config
+- `docs/GLOSSARY.md` — Term definitions for all domain concepts
+- `docs/archive/` — Completed work: 10 module audits, 7 expert panels, research docs, incident report
 
-## Open Work
+## Next: v3.0 — Active Battery Care (Anti-Sulfation)
 
-- **GSD todos**: Battery replacement scenario (docs + implementation), install.sh system integration gaps (product vs site-specific split)
-- **v2 candidates**: Automatic IR coefficient estimation (CAL2-01), Peukert exponent refinement (CAL2-02), Grafana metrics export (MON-01)
-- **Research docs**: Enterprise UPS metrics analysis (RESEARCH-*.md) — identified 7 of 9 enterprise metrics as estimable
+The daemon currently watches the battery degrade and reports on it. v3.0 makes it fight back:
+- **Sulfation model**: temperature-dependent crystal growth rate, desulfation from deep discharges
+- **Smart scheduling**: replace fixed monthly deep test timer with daemon-driven decisions based on days since last deep discharge, sulfation score, SoH trend, and natural blackout frequency
+- **Cycle ROI metric**: net benefit per discharge (sulfation reversal vs cycle wear)
+- **Integration with existing systemd timers**: daemon overrides or skips scheduled deep tests based on battery state
+
+Design captured in GSD todo: "Anti-sulfation deep discharge scheduling for battery longevity"
