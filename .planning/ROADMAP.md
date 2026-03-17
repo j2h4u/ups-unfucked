@@ -145,7 +145,7 @@
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
 | 15. Foundation | v3.0 | 5/5 | Complete    | 2026-03-17 |
 | 16. Persistence & Observability | v3.0 | 6/6 | Complete    | 2026-03-17 |
-| 17. Scheduling Intelligence | v3.0 | 2/TBD | Planning | — |
+| 17. Scheduling Intelligence | v3.0 | 2/TBD | Complete    | 2026-03-17 |
 
 ---
 
