@@ -57,22 +57,40 @@ class TestQualityFilter:
     """Test VAL-01: discharge quality filter."""
 
     def test_rejects_shallow_discharge(self):
-        """Rejects discharge with ΔSoC < 25% (shallow)."""
-        # Shallow discharge: 13.0V → 12.75V (5% ΔSoC only)
+        """Rejects discharge with ΔSoC < 15% (F24: lowered from 25%)."""
+        # Shallow discharge: 13.0V → 12.8V (10% ΔSoC, below 15% gate)
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds (passes duration)
-        current_percent_series = [20.0] * 100  # Constant 20% load
-        voltage_series = [13.0 - (i * 0.0025) for i in range(100)]  # V drops from 13.0 to 12.75
+        current_percent_series = [20.0] * 100
+        voltage_series = [13.0 - (i * 0.002) for i in range(100)]  # V drops from 13.0 to 12.8
         lut = [
             {"v": 13.0, "soc": 1.0},
-            {"v": 12.75, "soc": 0.95},
+            {"v": 12.8, "soc": 0.90},
             {"v": 10.5, "soc": 0.0}
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
 
-        # Should reject as shallow (ΔSoC only 5%)
+        # Should reject (ΔSoC=10% < 15%)
         assert result is None
+
+    def test_accepts_15_percent_discharge(self):
+        """F24: Accepts discharge with ΔSoC ≥ 15% (was rejected at 25% gate)."""
+        # Moderate discharge: 13.0V → 12.5V (ΔSoC ~20%, above 15% gate)
+        time_series = [float(i * 10) for i in range(100)]  # 990 seconds
+        current_percent_series = [20.0] * 100
+        voltage_series = [13.0 - (i * 0.005) for i in range(100)]  # V drops 13.0 → 12.5
+        lut = [
+            {"v": 13.0, "soc": 1.0},
+            {"v": 12.5, "soc": 0.80},
+            {"v": 10.5, "soc": 0.0}
+        ]
+
+        estimator = CapacityEstimator(peukert_exponent=1.2)
+        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+
+        # Should now pass (ΔSoC=20% >= 15%, was rejected at old 25% gate)
+        assert result is not None
 
 
     def test_rejects_micro_discharge(self):

@@ -543,17 +543,16 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
 
     from src.monitor import DischargeBuffer
 
-    # Test Case 1: Normal case with two discharge events (>60s duration, error >10%)
+    # Test Case 1: Normal case — calibrate_peukert returns non-clamped value → RLS updates
     daemon.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0, 11.0, 10.5],
         times=[0, 100, 200, 300],
     )
 
-    with patch('src.monitor.peukert_runtime_hours') as mock_peukert:
-        # Mock peukert_runtime_hours to return a value that creates >10% error
-        mock_peukert.return_value = 1.0  # 60 minutes at full capacity
+    with patch('src.monitor.calibrate_peukert') as mock_calibrate:
+        mock_calibrate.return_value = 1.18  # Valid non-clamped result
         daemon._auto_calibrate_peukert(current_soh=0.95)
-        # Should trigger recalibration because error > 10%
+        # Should trigger RLS update and set_peukert_exponent
         daemon.battery_model.set_peukert_exponent.assert_called()
 
     # Test Case 2: Empty discharge buffer - should skip

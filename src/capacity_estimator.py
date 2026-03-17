@@ -105,8 +105,7 @@ class CapacityEstimator:
 
         Criteria:
         - Duration >= 300s (5 minutes)
-        - ΔSoC >= 5% (flicker threshold)
-        - ΔSoC >= 25% (shallow threshold — only deep discharges count)
+        - ΔSoC >= 15% (F24: lowered from 25% to accept typical 3-5 min blackouts)
 
         Args:
             voltage_series, time_series, current_series, lut: Discharge data.
@@ -120,16 +119,12 @@ class CapacityEstimator:
             logger.debug(f"Discharge rejected: duration {duration:.0f}s < 300s (micro)")
             return False
 
-        # Check ΔSoC
+        # Check ΔSoC (F24: 15% gate accepts typical blackouts with ~15% depth)
         soc_start, soc_end = self._get_soc_range(voltage_series, lut)
         delta_soc = soc_start - soc_end
 
-        if delta_soc < 0.05:
-            logger.debug(f"Discharge rejected: ΔSoC {delta_soc*100:.1f}% < 5% (flicker)")
-            return False
-
-        if delta_soc < 0.25:
-            logger.debug(f"Discharge rejected: ΔSoC {delta_soc*100:.1f}% < 25% (shallow)")
+        if delta_soc < 0.15:
+            logger.debug(f"Discharge rejected: ΔSoC {delta_soc*100:.1f}% < 15% (shallow)")
             return False
 
         return True
