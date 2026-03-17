@@ -14,12 +14,12 @@ Requirements for v3.0 Active Battery Care. Daemon transitions from passive obser
 - [ ] **SULF-03**: IR trend signal detects sulfation via internal resistance growth rate (dR/dt acceleration)
 - [ ] **SULF-04**: Recovery delta signal measures SoH bounce after deep discharge as desulfation evidence
 - [ ] **SULF-05**: Sulfation score persisted in model.json with history for trend analysis
-- [ ] **SULF-06**: All sulfation math implemented as pure functions in src/battery_math/
+- [x] **SULF-06**: All sulfation math implemented as pure functions in src/battery_math/
 
 ### Test Scheduling
 
 - [ ] **SCHED-01**: Daemon sends upscmd test.battery.start.deep when sulfation score warrants and safety gates pass
-- [ ] **SCHED-02**: Daemon sends upscmd test.battery.start.quick for periodic IR measurement and e2e readiness check
+- [x] **SCHED-02**: Daemon sends upscmd test.battery.start.quick for periodic IR measurement and e2e readiness check
 - [ ] **SCHED-03**: Natural blackout credit — skip scheduled deep test when recent blackouts already desulfated battery
 - [ ] **SCHED-04**: Safety gate: no test when UPS is on battery (OB state)
 - [ ] **SCHED-05**: Safety gate: no deep test when SoH below floor threshold (65%)
@@ -75,9 +75,9 @@ Deferred to future release. Tracked but not in current roadmap.
 | SULF-03 | 16 | Pending |
 | SULF-04 | 16 | Pending |
 | SULF-05 | 16 | Pending |
-| SULF-06 | 15 | Pending |
+| SULF-06 | 15 | Complete |
 | SCHED-01 | 17 | Pending |
-| SCHED-02 | 15 | Pending |
+| SCHED-02 | 15 | Complete |
 | SCHED-03 | 17 | Pending |
 | SCHED-04 | 17 | Pending |
 | SCHED-05 | 17 | Pending |

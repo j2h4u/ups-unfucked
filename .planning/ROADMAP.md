@@ -62,7 +62,7 @@
 **Plans:** 5 plans (Wave 1: math modules + unit tests, Wave 2: NUT INSTCMD, Wave 3: integration tests, Wave 4: regression check)
 
 - [ ] 15-01-PLAN.md — Pure functions: sulfation.py, cycle_roi.py, module exports (Wave 1)
-- [ ] 15-02-PLAN.md — Unit tests: test_sulfation.py, test_cycle_roi.py, extend test_nut_client.py (Wave 1)
+- [x] 15-02-PLAN.md — Unit tests: test_sulfation.py, test_cycle_roi.py, extend test_nut_client.py (Wave 1)
 - [ ] 15-03-PLAN.md — NUT INSTCMD: send_instcmd() method + live validation script (Wave 2)
 - [ ] 15-04-PLAN.md — Integration tests: test_sulfation_offline_harness.py with year-simulation (Wave 3)
 - [ ] 15-05-PLAN.md — Regression tests: full test suite passes, zero regressions (Wave 4)
@@ -127,7 +127,7 @@
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
-| 15. Foundation | v3.0 | 5/5 | Planning | — |
+| 15. Foundation | v3.0 | 1/5 | In Progress|  |
 | 16. Persistence & Observability | v3.0 | 0/3 | Not started | — |
 | 17. Scheduling Intelligence | v3.0 | 0/3 | Not started | — |
 
