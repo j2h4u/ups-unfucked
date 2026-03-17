@@ -43,7 +43,7 @@
 </details>
 
 <details>
-<summary>✅ v3.0 Active Battery Care (Phases 15-17) — Phase 15 COMPLETE</summary>
+<summary>⏳ v3.0 Active Battery Care (Phases 15-17) — Phase 15 COMPLETE, Phase 16 PLANNED</summary>
 
 ### Phase 15: Foundation
 
@@ -84,7 +84,14 @@
 4. User can inspect `model.json` and verify sulfation history, ROI history, natural_blackout_events persisted with timestamps (schema extended, all discharge events logged, file remains backward compatible)
 5. User can review past blackout (or trigger one) and confirm daemon correctly labels event reason in journald (natural vs test-initiated distinguished in event.reason field)
 
-**Plans:** TBD
+**Plans:** 6 plans across 5 execution waves
+
+- [ ] 16-01-PLAN.md — Wave 0: Test scaffolds for integration tests (Nyquist Rule gate)
+- [ ] 16-02-PLAN.md — Wave 1: BatteryModel schema extension + sulfation history persistence
+- [ ] 16-03-PLAN.md — Wave 2: Discharge handler integration with sulfation/ROI scoring
+- [ ] 16-04-PLAN.md — Wave 3: health.json export with Phase 16 observability metrics
+- [ ] 16-05-PLAN.md — Wave 4: Journald structured event logging for discharge completion
+- [ ] 16-06-PLAN.md — Wave 5: MOTD module for sulfation status display
 
 ---
 
@@ -104,7 +111,7 @@
 5. User can verify systemd timers disabled on daemon startup — `ups-test-deep.timer` and `ups-test-quick.timer` masked or disabled (systemctl status shows "masked" or "disabled", not "active")
 6. User can review precondition checks logged before any upscmd dispatch (SoC ≥95%, no power glitches in last 4h, no test already running — each check logged with pass/fail status)
 
-**Plans:** TBD
+**Plans:** TBD (planned after Phase 16 execution)
 
 </details>
 
@@ -128,9 +135,9 @@
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
 | 15. Foundation | v3.0 | 5/5 | Complete    | 2026-03-17 |
-| 16. Persistence & Observability | v3.0 | 0/3 | Not started | — |
-| 17. Scheduling Intelligence | v3.0 | 0/3 | Not started | — |
+| 16. Persistence & Observability | v3.0 | 6/6 | Planned | — |
+| 17. Scheduling Intelligence | v3.0 | 0/TBD | Not planned | — |
 
 ---
 
-*Roadmap updated: 2026-03-17 after Phase 15 planning*
+*Roadmap updated: 2026-03-17 after Phase 16 planning*
