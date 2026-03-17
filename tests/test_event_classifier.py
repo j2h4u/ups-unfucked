@@ -90,6 +90,59 @@ class TestEventUndefinedVoltage:
             f"Expected safe handling at boundary, got {result}"
 
 
+class TestFlagBasedMatching:
+    """Tests for F36: flag-based status matching instead of exact string match."""
+
+    def test_ob_lb_dischrg_classified_as_blackout_real(self):
+        """F36: 'OB LB DISCHRG' + input=0V → BLACKOUT_REAL (was failing with dict match)."""
+        classifier = EventClassifier()
+        result = classifier.classify(ups_status="OB LB DISCHRG", input_voltage=0)
+        assert result == EventType.BLACKOUT_REAL
+
+    def test_lb_ob_dischrg_flag_order_irrelevant(self):
+        """F36: 'LB OB DISCHRG' (different flag order) → still BLACKOUT_REAL."""
+        classifier = EventClassifier()
+        result = classifier.classify(ups_status="LB OB DISCHRG", input_voltage=0)
+        assert result == EventType.BLACKOUT_REAL
+
+    def test_ob_without_dischrg_flag(self):
+        """F36: 'OB' alone → battery category."""
+        classifier = EventClassifier()
+        result = classifier.classify(ups_status="OB", input_voltage=0)
+        assert result == EventType.BLACKOUT_REAL
+
+    def test_fsd_unknown_keeps_state(self):
+        """F36: 'FSD' (forced shutdown) → unknown, keeps previous state, logs warning."""
+        classifier = EventClassifier()
+        classifier.classify(ups_status="OL", input_voltage=230)
+        result = classifier.classify(ups_status="FSD", input_voltage=0)
+        assert result == EventType.ONLINE  # Kept previous state
+
+    def test_ob_lb_with_high_voltage_is_test(self):
+        """F36: 'OB LB DISCHRG' + input=220V → BLACKOUT_TEST (mains present)."""
+        classifier = EventClassifier()
+        result = classifier.classify(ups_status="OB LB DISCHRG", input_voltage=220)
+        assert result == EventType.BLACKOUT_TEST
+
+    def test_ol_chrg_classified_as_online(self):
+        """F36: 'OL CHRG' → ONLINE (OL flag present)."""
+        classifier = EventClassifier()
+        result = classifier.classify(ups_status="OL CHRG", input_voltage=230)
+        assert result == EventType.ONLINE
+
+    def test_cal_dischrg_classified_as_battery(self):
+        """F36: 'CAL DISCHRG' → battery category (CAL flag)."""
+        classifier = EventClassifier()
+        result = classifier.classify(ups_status="CAL DISCHRG", input_voltage=220)
+        assert result == EventType.BLACKOUT_TEST
+
+    def test_last_raw_status_tracked(self):
+        """F36a: last_raw_status is set for fallback use."""
+        classifier = EventClassifier()
+        classifier.classify(ups_status="OB LB DISCHRG", input_voltage=0)
+        assert classifier.last_raw_status == "OB LB DISCHRG"
+
+
 class TestEventInitialization:
     """Tests for EventClassifier initialization."""
 

@@ -19,22 +19,12 @@ class EventType(Enum):
     BLACKOUT_TEST = "blackout_test"
 
 
-# NUT status string → category for classification
-# 'online': UPS on mains power
-# 'battery': UPS discharging — need input voltage to distinguish real vs test
-_STATUS_CATEGORY = {
-    "OL":           "online",
-    "OL CHRG":      "online",
-    "OB DISCHRG":   "battery",
-    "CAL DISCHRG":  "battery",
-}
-
-
 class EventClassifier:
     """
     State machine for classifying UPS events based on status and voltage.
 
-    Status strings are mapped to categories via _STATUS_CATEGORY dict.
+    NUT status is a space-separated set of flags (e.g. "OB LB DISCHRG").
+    Flag-based matching (F36): check for individual flags instead of exact string match.
     Battery category is further split by input voltage:
     - 0V → BLACKOUT_REAL (mains lost)
     - ≥100V → BLACKOUT_TEST (mains present, intentional test)
@@ -44,9 +34,21 @@ class EventClassifier:
     def __init__(self):
         self.state = EventType.ONLINE
         self.transition_occurred = False
+        self.last_raw_status = ""
 
     def classify(self, ups_status: str, input_voltage: int) -> EventType:
-        category = _STATUS_CATEGORY.get(ups_status)
+        self.last_raw_status = ups_status
+
+        # Flag-based matching: NUT status is space-separated flags (F36)
+        # "OB LB DISCHRG", "OB DISCHRG", "CAL DISCHRG" all contain OB or CAL
+        flags = ups_status.split()
+
+        if "OB" in flags or "CAL" in flags:
+            category = "battery"
+        elif "OL" in flags:
+            category = "online"
+        else:
+            category = None
 
         if category == "online":
             new_state = EventType.ONLINE

@@ -1185,22 +1185,30 @@ class MonitorDaemon:
         """Write computed metrics to tmpfs for NUT dummy-ups driver."""
         try:
             ups_status_override = self.current_metrics.ups_status_override or ups_data.get("ups.status", "OL")
+            # F36a: If classifier returned unknown (kept previous state without transition),
+            # and original status contains "OB", pass through original to be safe
+            raw_status = ups_data.get("ups.status", "")
+            if (not self.event_classifier.transition_occurred
+                    and "OB" in raw_status.split()
+                    and self.event_classifier.state == EventType.ONLINE):
+                ups_status_override = raw_status
             # Enterprise-equivalent metrics computed from discharge history
             soh = self.battery_model.get_soh()
             install_date = self.battery_model.get_battery_install_date() or ""
             cycle_count = self.battery_model.get_cycle_count()
             cumulative_sec = self.battery_model.get_cumulative_on_battery_sec()
             replacement_due = self.battery_model.get_replacement_due() or ""
-            # R_internal: export only after ≥3 non-zero measurements (noise rejection).
-            # Early sag readings often show 0.0mΩ (no delta) or outliers from quick tests.
-            # Before enough data: omit field entirely (nut_exporter exports missing fields as 0).
+            # R_internal: median of non-zero measurements, require ≥3 for noise rejection.
+            # Always write to .dev file (0 when insufficient data) because dummy-ups driver
+            # caches variables in shared memory and never removes them — omitting a field
+            # leaves the stale value from a previous daemon run.
             r_internal_history = self.battery_model.get_r_internal_history()
             nonzero = [e["r_ohm"] for e in r_internal_history if e["r_ohm"] > 0]
-            r_internal_mohm = round(sorted(nonzero)[len(nonzero) // 2] * 1000, 1) if len(nonzero) >= 3 else None
+            r_internal_mohm = round(sorted(nonzero)[len(nonzero) // 2] * 1000, 1) if len(nonzero) >= 3 else 0
 
             virtual_metrics = {
-                "battery.runtime": int(time_rem * 60) if time_rem is not None else 0,
-                "battery.charge": int(battery_charge) if battery_charge is not None else 0,
+                "battery.runtime": int(time_rem * 60) if time_rem is not None else int(float(ups_data.get("battery.runtime", 0))),
+                "battery.charge": int(battery_charge) if battery_charge is not None else int(float(ups_data.get("battery.charge", 0))),
                 "ups.status": ups_status_override,
                 # Enterprise-equivalent fields
                 "battery.health": round(soh * 100),          # State of Health as % (like APC upsAdvBatteryHealthStatus)
@@ -1208,7 +1216,7 @@ class MonitorDaemon:
                 "battery.cycle.count": cycle_count,         # OL→OB transfers (like Eaton)
                 "battery.cumulative.runtime": int(cumulative_sec),  # Total seconds on battery (like Eaton)
                 "battery.replacement.due": replacement_due,           # Predicted replacement due date (regression)
-                **({"battery.internal_resistance": r_internal_mohm} if r_internal_mohm is not None else {}),
+                "battery.internal_resistance": r_internal_mohm,
                 **{k: v for k, v in ups_data.items()
                    if k not in ["battery.runtime", "battery.charge", "ups.status"]}
             }
