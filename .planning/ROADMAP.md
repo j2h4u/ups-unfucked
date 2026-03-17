@@ -43,7 +43,7 @@
 </details>
 
 <details>
-<summary>⏳ v3.0 Active Battery Care (Phases 15-17) — Phase 15 COMPLETE, Phase 16 PLANNED</summary>
+<summary>⏳ v3.0 Active Battery Care (Phases 15-17) — Phase 15 COMPLETE, Phase 16 COMPLETE</summary>
 
 ### Phase 15: Foundation
 
@@ -91,7 +91,7 @@
 - [x] 16-03-PLAN.md — Wave 2: Discharge handler integration with sulfation/ROI scoring — completed 2026-03-17
 - [x] 16-04-PLAN.md — Wave 3: health.json export with Phase 16 observability metrics — completed 2026-03-17 (11 fields, 8 tests, RPT-01/ROI-02/ROI-03 satisfied)
 - [x] 16-05-PLAN.md — Wave 4: Journald structured event logging for discharge completion — completed 2026-03-17 (10 event fields, 7 tests, RPT-02 satisfied)
-- [ ] 16-06-PLAN.md — Wave 5: MOTD module for sulfation status display
+- [x] 16-06-PLAN.md — Wave 5: MOTD module for sulfation status display — completed 2026-03-17 (52-line shell script, 7 tests, RPT-01 satisfied)
 
 ---
 

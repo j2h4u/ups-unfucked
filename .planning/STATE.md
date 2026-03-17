@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Active Battery Care
 status: in-progress
-last_updated: "2026-03-17T15:30:00Z"
+last_updated: "2026-03-17T18:35:00Z"
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 15
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 16 Plan 05 completion
-**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-4 infrastructure and observability complete
-**Current Position:** Phase 16 (Persistence-Observability) Plan 05 COMPLETE — journald structured event logging with all discharge metrics queryable. Ready for Plan 06 (MOTD module)
+**Last Updated:** 2026-03-17 after Phase 16 Plan 06 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 ALL PLANS COMPLETE (6/6)
+**Current Position:** Phase 16 (Persistence-Observability) COMPLETE — all 10 requirements (SULF-01 through RPT-03) satisfied. Ready for Phase 17 (Scheduling Intelligence)
 
 ---
 
@@ -91,25 +91,45 @@ None. Roadmap creation complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (Phase 16 Plan 05 — journald structured event logging)
+**Last session:** 2026-03-17 (Phase 16 Plan 06 — MOTD sulfation module)
 
 **Artifacts created this session:**
 
-- `.planning/phases/16-persistence-observability/16-05-SUMMARY.md` (Wave 4 completion report)
-- Extended `src/discharge_handler.py`: Added logger.info('Discharge complete', extra={...}) call with 10 structured fields (event_type, event_reason, duration_seconds, depth_of_discharge, sulfation_score, sulfation_confidence, recovery_delta, cycle_roi, measured_capacity_ah, timestamp)
-- Implemented `tests/test_journald_sulfation_events.py`: 7 comprehensive integration tests covering journald event structure, JSON serialization, and journalctl queryability
+- `.planning/phases/16-persistence-observability/16-06-SUMMARY.md` (Wave 5 completion report)
+- Created `scripts/motd/55-sulfation.sh`: MOTD module for sulfation status display
+- Updated `scripts/install.sh`: Added sulfation module to MOTD installation section
 
-**Journald Event Logging Summary:**
-- Function signature: logger.info('Discharge complete', extra={...}) in discharge_handler.update_battery_health()
-- Event fields: 10 total (event_type='discharge_complete', event_reason, duration_seconds, depth_of_discharge, sulfation_score, sulfation_confidence, recovery_delta, cycle_roi, measured_capacity_ah, timestamp)
-- All fields JSON-serializable, ISO8601 timestamps, numeric precision standardized (sulfation/ROI: 3 decimals, DoD: 2, duration: int)
-- Exception handling: try/except wraps logger.info() to prevent daemon crashes
-- Integration tests: 7 tests written (message, event_type, event_reason, metrics, timestamp, JSON format, journalctl filtering)
-- Test status: 7/7 PASS, 29 integration tests PASS (with health_endpoint_v16, sulfation_persistence, discharge_event_logging), 389 total tests PASS
-- Status: PASS — Wave 4 complete, RPT-02 (discharge decisions logged to journald) requirement satisfied
+**MOTD Module Summary:**
+- File: `scripts/motd/55-sulfation.sh` (52 lines, 1.7 KB)
+- Functionality: Reads health.json, displays "Battery health: Sulfation XX% · Next test in Xd · Blackout credit YY%"
+- JSON parsing: Safe jq extraction with error suppression
+- Edge cases: Handles missing files, null values, invalid JSON, past/future/no-date test timestamps
+- Integration: Module 55 runs after 51-ups.sh (alphabetical order in 50-59 status range)
+- Testing: 7 test cases all PASS, dynamic update verified
+- Status: PASS — Wave 5 complete, RPT-01 (sulfation score display) requirement satisfied
 
-**Next session:** Phase 16 Plan 06 (MOTD module) — display sulfation status and next test countdown
+**Phase 16 Completion Summary:**
+- Plan 01 (Model persistence): ✅ model.json schema + append/prune methods
+- Plan 02 (Health export): ✅ health.json schema extension with Phase 16 fields
+- Plan 03 (Discharge integration): ✅ discharge_handler imports sulfation + cycle_roi modules
+- Plan 04 (Event structure): ✅ journald event schema with reason field
+- Plan 05 (Event logging): ✅ logger.info() call in discharge_handler + 7 integration tests
+- Plan 06 (MOTD display): ✅ 55-sulfation.sh module + 7 functional tests
+
+**Requirements satisfied:** 10/10
+- SULF-01 (sulfation compute): Phase 15
+- SULF-02 (physics baseline): Phase 15
+- SULF-03 (IR trend): Phase 15
+- SULF-04 (recovery delta): Phase 15
+- SULF-05 (sulfation history persistence): Phase 16 Plan 01 ✅
+- ROI-01 (cycle ROI compute): Phase 15
+- ROI-02 (ROI factors): Phase 15
+- RPT-01 (sulfation export to display): Phase 16 Plan 06 ✅
+- RPT-02 (discharge events to journald): Phase 16 Plan 05 ✅
+- RPT-03 (health.json schema): Phase 16 Plan 02 ✅
+
+**Next session:** Phase 17 Plan 01 (Scheduling Intelligence) — implement discharge handler integration and scheduling decision tree
 
 ---
 
-*State updated: 2026-03-17 after Phase 16 Plan 05 completion*
+*State updated: 2026-03-17 after Phase 16 Plan 06 completion*
