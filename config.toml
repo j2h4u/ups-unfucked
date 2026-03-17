@@ -18,51 +18,14 @@ soh_alert = 0.80
 # capacity_ah = 7.2
 
 [scheduling]
-# Phase 17: Daemon-controlled test scheduling parameters
+# Daemon-controlled test scheduling parameters.
+# Algorithmic constants (SoH floor, rate limit, ROI, sulfation thresholds,
+# cycle budget, blackout credit) are internal to the scheduler — not here.
 
 # Grid stability cooldown (hours)
 # Default: 4.0 (skip test if blackout in last 4h)
 # Set to 0.0 to disable this gate entirely (test despite recent blackouts)
-# USER FEEDBACK: Set to 0 for grids with frequent short blackouts (1.5–3 min)
-grid_stability_cooldown_hours = 4.0
-
-# SoH floor threshold (percentage)
-# Default: 60% (don't test if SoH below 60%)
-# Hard block: no test allowed below this level
-# Range: [0.0, 1.0]
-soh_floor_threshold = 0.60
-
-# Minimum days between deep tests (rate limiting)
-# Default: 7.0 (at most 1 deep test per week)
-# Hard limit: enforced even if sulfation is high
-# Range: [1.0, ∞]
-min_days_between_tests = 7.0
-
-# ROI threshold for test recommendation
-# Default: 0.2 (marginal benefit >20% of total cost)
-# If ROI < threshold and cycle_budget > 20, defer test
-# Range: [0.0, 1.0]
-roi_threshold = 0.2
-
-# Blackout credit window (days)
-# Default: 7.0 (natural ≥90% DoD discharge grants 7-day test skip)
-# Range: [1.0, 30.0]
-blackout_credit_window_days = 7.0
-
-# Minimum cycle budget before critical block
-# Default: 5 (block test if cycle_budget < 5)
-# Range: [1, ∞]
-critical_cycle_budget_threshold = 5
-
-# Deep discharge threshold for test type selection
-# Default: 0.65 (sulfation >0.65 → propose deep; 0.40–0.65 → quick)
-# Range: [0.0, 1.0]
-deep_test_sulfation_threshold = 0.65
-
-# Quick discharge threshold for test type selection
-# Default: 0.40 (sulfation >0.40 → propose at least quick test)
-# Range: [0.0, 1.0]
-quick_test_sulfation_threshold = 0.40
+grid_stability_cooldown_hours = 0.0
 
 # Scheduling evaluation time (UTC hour)
 # Default: 8 (evaluate at 08:00 UTC daily)

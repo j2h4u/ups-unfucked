@@ -31,10 +31,9 @@ from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src.battery_math import calibrate_peukert, ScalarRLS
 from src.battery_math.soh import interpolate_cliff_region
 
-# Re-export from monitor_config for backward compatibility (tests import from src.monitor)
-from src.monitor_config import (  # noqa: F401
+from src.monitor_config import (
     Config, CurrentMetrics, DischargeBuffer, SagState,
-    CONFIG_DIR, REPO_ROOT, POLL_INTERVAL, EMA_WINDOW, NUT_HOST, NUT_PORT, NUT_TIMEOUT,
+    CONFIG_DIR, REPO_ROOT, POLL_INTERVAL, NUT_HOST, NUT_PORT, NUT_TIMEOUT,
     RUNTIME_THRESHOLD_MINUTES, REFERENCE_LOAD_PERCENT, REPORTING_INTERVAL_POLLS,
     HEALTH_ENDPOINT_PATH, SAG_SAMPLES_REQUIRED, DISCHARGE_BUFFER_MAX_SAMPLES,
     ERROR_LOG_BURST, load_config, safe_save, write_health_endpoint, logger,
@@ -44,11 +43,6 @@ from src.discharge_handler import DischargeHandler
 from src.battery_math.scheduler import evaluate_test_scheduling, SchedulerDecision
 from src.battery_math.sulfation import compute_sulfation_score
 from src.battery_math.cycle_roi import compute_cycle_roi
-
-# Backward-compat aliases for test patches that use old names
-_load_config = load_config
-_safe_save = safe_save
-_write_health_endpoint = write_health_endpoint
 
 
 def validate_preconditions_before_upscmd(
@@ -214,7 +208,7 @@ class MonitorDaemon:
             ups_name=config.ups_name
         )
 
-        self.ema_buffer = EMAFilter(
+        self.ema_filter = EMAFilter(
             window_sec=config.ema_window_sec,
             poll_interval_sec=config.polling_interval
         )
@@ -274,8 +268,7 @@ class MonitorDaemon:
         if new_battery_flag:
             logger.info("New battery flag set via --new-battery CLI; Phase 13 detection will check on next discharge")
 
-        # Phase 13: If user signals --new-battery, reset baseline
-        # Must be after discharge_handler creation (reset syncs rls_peukert)
+        # If user signals --new-battery, reset baseline (must be after discharge_handler creation)
         if new_battery_flag or self.battery_model.data.get('new_battery_requested', False):
             self._reset_battery_baseline()
 
@@ -294,54 +287,11 @@ class MonitorDaemon:
         self.soh_threshold = config.soh_alert_threshold
         self.runtime_threshold_minutes = config.runtime_threshold_minutes
 
-        # Phase 17: Scheduler state tracking
         self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
         self.reference_load_percent = config.reference_load_percent
 
-        # Phase 17: Load scheduling configuration
-        try:
-            import tomllib
-            cfg_dict = {}
-            for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
-                if path.is_file():
-                    with open(path, 'rb') as f:
-                        cfg_dict = tomllib.load(f)
-                    break
-
-            self.scheduling_config = get_scheduling_config(cfg_dict)
-        except ValueError as e:
-            logger.error(f"Failed to load Phase 17 scheduling configuration: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error loading scheduling config: {e}")
-            raise
-
-        # Store scheduling parameters for convenient access in scheduler invocation
-        self.scheduling_params = {
-            'soh_floor_threshold': self.scheduling_config.soh_floor_threshold,
-            'min_days_between_tests': self.scheduling_config.min_days_between_tests,
-            'roi_threshold': self.scheduling_config.roi_threshold,
-            'grid_stability_cooldown_hours': self.scheduling_config.grid_stability_cooldown_hours,
-            'blackout_credit_window_days': self.scheduling_config.blackout_credit_window_days,
-            'critical_cycle_budget_threshold': self.scheduling_config.critical_cycle_budget_threshold,
-            'deep_test_sulfation_threshold': self.scheduling_config.deep_test_sulfation_threshold,
-            'quick_test_sulfation_threshold': self.scheduling_config.quick_test_sulfation_threshold,
-            'scheduler_eval_hour_utc': self.scheduling_config.scheduler_eval_hour_utc,
-            'verbose_scheduling': self.scheduling_config.verbose_scheduling,
-        }
-
-        logger.info(
-            "Phase 17 scheduling config loaded",
-            extra={
-                'event_type': 'scheduling_config_loaded',
-                'soh_floor_threshold': f"{self.scheduling_params['soh_floor_threshold']:.0%}",
-                'min_days_between_tests': f"{self.scheduling_params['min_days_between_tests']:.1f}",
-                'grid_stability_cooldown_hours': f"{self.scheduling_params['grid_stability_cooldown_hours']:.1f}",
-                'roi_threshold': f"{self.scheduling_params['roi_threshold']:.1f}",
-                'scheduler_eval_hour_utc': self.scheduling_params['scheduler_eval_hour_utc'],
-                'verbose_scheduling': self.scheduling_params['verbose_scheduling'],
-            }
-        )
+        # Scheduling configuration (loaded by load_config, defaults if not in TOML)
+        self.scheduling_config = config.scheduling or SchedulingConfig()
 
         # Voltage sag measurement for internal resistance tracking
         self.sag_state = SagState.IDLE
@@ -350,7 +300,6 @@ class MonitorDaemon:
 
         self.calibration_last_written_index = 0
 
-        # Phase 14: Track if baseline_lock event has been logged (prevent duplicates)
         self.capacity_locked_previously = False
 
         # Signal handlers for graceful shutdown
@@ -481,8 +430,7 @@ class MonitorDaemon:
         """Reset capacity estimation and SoH history baseline on battery replacement."""
 
         old_capacity = self.battery_model.data.get('capacity_ah_measured')
-        old_soh = self.battery_model.data.get('soh', 1.0)
-        new_capacity = self.battery_model.get_capacity_ah()  # 7.2Ah (rated)
+        new_capacity = self.battery_model.get_capacity_ah()
 
         # Clear capacity estimates (will rebuild from next deep discharge)
         self.battery_model.data['capacity_estimates'] = []
@@ -509,24 +457,24 @@ class MonitorDaemon:
         # Sync discharge handler's reference
         self.discharge_handler.rls_peukert = self.rls_peukert
 
-        # Phase 14: Event 3 - baseline_reset: Structured journald logging
+        # Structured journald logging for baseline reset
         if old_capacity is not None:
             logger.info(
                 f"baseline_reset: capacity baseline reset from {old_capacity:.2f}Ah to {new_capacity:.2f}Ah",
                 extra={
-                    'EVENT_TYPE': 'baseline_reset',
-                    'CAPACITY_AH_OLD': f'{old_capacity:.2f}',
-                    'CAPACITY_AH_NEW': f'{new_capacity:.2f}',
-                    'TIMESTAMP': datetime.now(timezone.utc).isoformat(),
+                    'event_type': 'baseline_reset',
+                    'capacity_ah_old': f'{old_capacity:.2f}',
+                    'capacity_ah_new': f'{new_capacity:.2f}',
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                 }
             )
         else:
             logger.info(
                 f"baseline_reset: capacity baseline initialized to {new_capacity:.2f}Ah (first reset)",
                 extra={
-                    'EVENT_TYPE': 'baseline_reset',
-                    'CAPACITY_AH_NEW': f'{new_capacity:.2f}',
-                    'TIMESTAMP': datetime.now(timezone.utc).isoformat(),
+                    'event_type': 'baseline_reset',
+                    'capacity_ah_new': f'{new_capacity:.2f}',
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                 }
             )
 
@@ -560,9 +508,9 @@ class MonitorDaemon:
 
     def _record_voltage_sag(self, v_sag, event_type):
         """Record voltage sag measurement and compute internal resistance."""
-        if self.v_before_sag is None or self.ema_buffer.load is None:
+        if self.v_before_sag is None or self.ema_filter.load is None:
             return
-        load = self.ema_buffer.load
+        load = self.ema_filter.load
         I_actual = load / 100.0 * self.battery_model.get_nominal_power_watts() / self.battery_model.get_nominal_voltage()
         if I_actual <= 0:
             return
@@ -587,12 +535,12 @@ class MonitorDaemon:
                 f"confidence={self.rls_ir_k.confidence:.0%}, "
                 f"measured={ir_k_measured:.4f})",
                 extra={
-                    'EVENT_TYPE': 'ir_k_calibration',
-                    'IR_K': f'{new_ir_k:.4f}',
-                    'IR_K_MEASURED': f'{ir_k_measured:.4f}',
-                    'RLS_P': f'{new_P:.4f}',
-                    'RLS_CONFIDENCE': f'{self.rls_ir_k.confidence:.3f}',
-                    'SAMPLE_COUNT': str(self.rls_ir_k.sample_count),
+                    'event_type': 'ir_k_calibration',
+                    'ir_k': f'{new_ir_k:.4f}',
+                    'ir_k_measured': f'{ir_k_measured:.4f}',
+                    'rls_p': f'{new_P:.4f}',
+                    'rls_confidence': f'{self.rls_ir_k.confidence:.3f}',
+                    'sample_count': str(self.rls_ir_k.sample_count),
                 })
 
         logger.info(f"Voltage sag: {self.v_before_sag:.2f}V → {v_sag:.2f}V, "
@@ -625,11 +573,11 @@ class MonitorDaemon:
             logger.warning(f"Load {load:.1f}% out of bounds [0-100%]; skipping sample")
             return None, None
 
-        self.ema_buffer.add_sample(voltage, load)
+        self.ema_filter.add_sample(voltage, load)
         self.poll_count += 1
-        if self.ema_buffer.stabilized and not self._was_stabilized:
+        if self.ema_filter.stabilized and not self._stabilization_logged:
             logger.info(f"EMA buffer stabilized after {self.poll_count} samples, IR compensation active")
-            self._was_stabilized = True
+            self._stabilization_logged = True
         return voltage, load
 
     def _classify_event(self, ups_data):
@@ -637,6 +585,7 @@ class MonitorDaemon:
         ups_status = ups_data.get('ups.status')
         input_voltage = ups_data.get('input.voltage')
         if ups_status is None or input_voltage is None:
+            logger.debug(f"Missing NUT fields: ups.status={ups_status}, input.voltage={input_voltage}")
             return
         event_type = self.event_classifier.classify(ups_status, input_voltage)
         self.current_metrics.event_type = event_type
@@ -654,7 +603,7 @@ class MonitorDaemon:
 
         # OL→OB: start measuring
         if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
-            self.v_before_sag = self.ema_buffer.voltage
+            self.v_before_sag = self.ema_filter.voltage
             self.sag_buffer = []
             self.sag_state = SagState.MEASURING
 
@@ -717,7 +666,7 @@ class MonitorDaemon:
                 # Actual battery wear proxy = cumulative_on_battery_sec.
                 self.battery_model.increment_cycle_count()
                 # Snapshot predicted runtime at OB start for prediction error logging
-                if self.ema_buffer.stabilized and self.current_metrics.time_rem_minutes is not None:
+                if self.ema_filter.stabilized and self.current_metrics.time_rem_minutes is not None:
                     self.discharge_handler.discharge_predicted_runtime = self.current_metrics.time_rem_minutes
                 else:
                     self.discharge_handler.discharge_predicted_runtime = None
@@ -729,7 +678,7 @@ class MonitorDaemon:
                 else:
                     self.discharge_buffer.voltages.append(voltage)
                     self.discharge_buffer.times.append(timestamp)
-                    load = self.ema_buffer.load if self.ema_buffer.load is not None else 0.0
+                    load = self.ema_filter.load if self.ema_filter.load is not None else 0.0
                     self.discharge_buffer.loads.append(load)
                 self._write_calibration_points(event_type)
         else:
@@ -769,9 +718,9 @@ class MonitorDaemon:
 
     def _compute_metrics(self):
         """Calculate SoC, charge%, and runtime from EMA values. Returns (battery_charge, time_rem)."""
-        v_ema = self.ema_buffer.voltage
-        l_ema = self.ema_buffer.load
-        if not self.ema_buffer.stabilized:
+        v_ema = self.ema_filter.voltage
+        l_ema = self.ema_filter.load
+        if not self.ema_filter.stabilized:
             return None, None
 
         v_norm = ir_compensate(v_ema, l_ema, self.ir_l_base, self.ir_k)
@@ -793,7 +742,7 @@ class MonitorDaemon:
         self.current_metrics.soc = soc
         self.current_metrics.battery_charge = battery_charge
         self.current_metrics.time_rem_minutes = time_rem
-        self.current_metrics.timestamp = time.time()
+        self.current_metrics.timestamp = datetime.now(timezone.utc)
 
         # Log significant changes
         if self._last_logged_soc is None or abs(soc - self._last_logged_soc) > 0.05:
@@ -810,8 +759,8 @@ class MonitorDaemon:
 
     def _log_status(self, battery_charge, time_rem, poll_latency_ms=None):
         """Log periodic status line with all key metrics."""
-        v_ema = self.ema_buffer.voltage
-        l_ema = self.ema_buffer.load
+        v_ema = self.ema_filter.voltage
+        l_ema = self.ema_filter.load
         v_norm = getattr(self, '_last_v_norm', None)
 
         v_norm_str = f"{v_norm:.2f}V" if v_norm is not None else "N/A"
@@ -819,13 +768,13 @@ class MonitorDaemon:
         time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
         event_type = self.current_metrics.event_type
         event_str = event_type.name if event_type else "N/A"
-        discharge_depth = len(self.discharge_buffer.voltages)
+        discharge_sample_count = len(self.discharge_buffer.voltages)
         latency_str = f"{poll_latency_ms:.0f}ms" if poll_latency_ms is not None else "N/A"
         logger.info(
             f"Poll {self.poll_count}: V_ema={v_ema:.2f}V, L_ema={l_ema:.1f}%, "
             f"V_norm={v_norm_str}, charge={charge_str}, time_rem={time_rem_str}, "
-            f"event={event_str}, stabilized={self.ema_buffer.stabilized}, "
-            f"nut_latency={latency_str}, discharge_buf={discharge_depth}"
+            f"event={event_str}, stabilized={self.ema_filter.stabilized}, "
+            f"nut_latency={latency_str}, discharge_buf={discharge_sample_count}"
         )
 
     def _write_virtual_ups(self, ups_data, battery_charge, time_rem):
@@ -911,7 +860,8 @@ class MonitorDaemon:
 
         # Write health endpoint for external monitoring (every poll)
         convergence_status = self.battery_model.get_convergence_status()
-        write_health_endpoint(
+        try:
+            write_health_endpoint(
             soc_percent=(self.current_metrics.soc or 0.0) * 100.0,
             is_online=(self.current_metrics.ups_status_override == "OL"),
             poll_latency_ms=poll_latency_ms,
@@ -931,16 +881,18 @@ class MonitorDaemon:
             scheduling_reason='observing',  # Phase 17 will update with actual reason
             next_test_timestamp=None,  # Phase 17 will populate
             last_discharge_timestamp=self.discharge_handler.last_discharge_timestamp,
-            natural_blackout_credit=None,  # Phase 17 will populate
-        )
+            natural_blackout_credit=None,
+            )
+        except Exception as e:
+            logger.error(f"Health endpoint write failed: {e}")
 
-        # --- Phase 17: Daily scheduler evaluation ---
+        # Daily scheduler evaluation
         now = datetime.now(timezone.utc)
         current_hour = now.hour
         current_minute = now.minute
 
         # Evaluate scheduler once daily at configured hour (default 08:00 UTC)
-        scheduler_hour = self.scheduling_params['scheduler_eval_hour_utc']
+        scheduler_hour = self.scheduling_config.scheduler_eval_hour_utc
         if current_hour == scheduler_hour and current_minute < 10 and not self.scheduler_evaluated_today:
             self.scheduler_evaluated_today = True
 
@@ -955,7 +907,7 @@ class MonitorDaemon:
                 cycle_budget = self.discharge_handler.last_cycle_budget_remaining or 100
 
                 # Log verbose scheduling inputs if enabled
-                if self.scheduling_params['verbose_scheduling']:
+                if self.scheduling_config.verbose_scheduling:
                     logger.debug(
                         "Scheduler inputs",
                         extra={
@@ -978,10 +930,7 @@ class MonitorDaemon:
                     last_blackout_depth=last_blackout.get('depth', 0.0) if last_blackout else 0.0,
                     active_blackout_credit=active_credit,
                     cycle_budget_remaining=int(cycle_budget),
-                    soh_floor_threshold=self.scheduling_params['soh_floor_threshold'],
-                    min_days_between_tests=self.scheduling_params['min_days_between_tests'],
-                    roi_threshold=self.scheduling_params['roi_threshold'],
-                    grid_stability_cooldown_hours=self.scheduling_params['grid_stability_cooldown_hours'],
+                    grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
                 )
 
                 # Log decision (all three actions, for audit trail)
@@ -1019,7 +968,7 @@ class MonitorDaemon:
 
         else:
             # Reset flag at midnight UTC
-            if current_hour != 8:
+            if current_hour != scheduler_hour:
                 self.scheduler_evaluated_today = False
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
@@ -1037,7 +986,7 @@ class MonitorDaemon:
         sd_notify('READY=1')
         logger.info("Starting main polling loop")
         self.poll_count = 0
-        self._was_stabilized = False
+        self._stabilization_logged = False
         self._consecutive_errors = 0
         self._startup_time = time.monotonic()  # F12: Startup timing marker
 
