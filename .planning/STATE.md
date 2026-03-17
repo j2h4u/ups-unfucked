@@ -3,19 +3,19 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Active Battery Care
 status: in-progress
-last_updated: "2026-03-17T14:35:00.000Z"
+last_updated: "2026-03-17T13:33:42Z"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 15
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-17 after Phase 16 Plan 02 completion
-**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-1 infrastructure complete
-**Current Position:** Phase 16 (Persistence-Observability) Plan 02 COMPLETE — Model persistence foundation ready for discharge handler integration (Wave 2)
+**Last Updated:** 2026-03-17 after Phase 16 Plan 03 completion
+**Milestone:** v3.0 Active Battery Care — Phase 15 complete, Phase 16 Wave 0-2 infrastructure complete
+**Current Position:** Phase 16 (Persistence-Observability) Plan 03 COMPLETE — Discharge handler integration, sulfation/ROI scoring, model persistence wired. Ready for Wave 3 (health.json export)
 
 ---
 
@@ -91,24 +91,24 @@ None. Roadmap creation complete.
 
 ## Session Continuity
 
-**Last session:** 2026-03-17 (Phase 16 Plan 02 — Model persistence foundation)
+**Last session:** 2026-03-17 (Phase 16 Plan 03 — Discharge handler integration)
 
 **Artifacts created this session:**
 
-- `.planning/phases/16-persistence-observability/16-02-SUMMARY.md` (Wave 1 completion report)
-- Extended `src/model.py`: append_sulfation_history(), append_discharge_event(), _prune_sulfation_history(), _prune_discharge_events()
-- Updated `tests/test_sulfation_persistence.py`: 7 sulfation persistence integration tests
-- Updated `tests/test_discharge_event_logging.py`: 7 discharge event logging integration tests
+- `.planning/phases/16-persistence-observability/16-03-SUMMARY.md` (Wave 2 completion report)
+- Extended `src/discharge_handler.py`: 5 helper methods (_calculate_days_since_deep, _estimate_ir_trend, _classify_event_reason, _estimate_dod_from_buffer, _estimate_cycle_budget), sulfation/ROI integration in update_battery_health()
+- Updated `src/monitor.py`: write_health_endpoint() call extended with 11 Phase 16 parameters
 
-**Model Persistence Summary:**
-- Total tests created: 14 integration tests (7 sulfation + 7 discharge)
-- Coverage: SULF-05 (model.json persistence) + RPT-03 (discharge event tracking)
-- Status: PASS — all 14 tests pass, backward compatibility verified
-- Model.json schema extended with 4 new arrays (sulfation_history, discharge_events, roi_history, natural_blackout_events)
+**Discharge Handler Integration Summary:**
+- Total helper methods: 5 (all returning data for sulfation scoring)
+- In-memory state variables: 8 (last_sulfation_score, last_cycle_roi, last_days_since_deep, etc.)
+- Model.json integration: append_sulfation_history() and append_discharge_event() called on every discharge
+- Integration tests: 14 tests pass (7 sulfation + 7 discharge events), 389 total tests pass
+- Status: PASS — Wave 2 complete, all requirements (SULF-01–04, ROI-01–02) satisfied
 
-**Next session:** Phase 16 Plan 03 (Wave 2 implementation) — discharge handler integration, append calls, journald logging
+**Next session:** Phase 16 Plan 04 (Wave 3 implementation) — health.json export, JSON endpoint, observability metrics
 
 ---
 
 *State initialized: 2026-03-17*
-*Last updated: 2026-03-17 after Phase 16 Plan 01 completion*
+*Last updated: 2026-03-17 after Phase 16 Plan 03 completion*
