@@ -138,3 +138,38 @@ class TestListVar:
             client.get_ups_vars()
 
         mock_nut_socket.close.assert_called_once()
+
+
+class TestINSTCMD:
+    """Tests for INSTCMD (instant command) protocol support."""
+
+    def test_send_instcmd_quick_test_success(self, mock_nut_socket):
+        """INSTCMD test.battery.start.quick succeeds with OK response."""
+        # Mock socket responses for: connect, INSTCMD send, response
+        mock_nut_socket.recv.return_value = b'OK TRACKING 12345\n'
+
+        client = NUTClient()
+        success, msg = client.send_instcmd('test.battery.start.quick')
+
+        assert success is True, f"Expected success=True, got {success}"
+        assert 'OK' in msg or 'TRACKING' in msg, f"Expected OK or TRACKING in message, got {msg}"
+
+    def test_send_instcmd_command_not_supported(self, mock_nut_socket):
+        """INSTCMD with unsupported command returns error."""
+        mock_nut_socket.recv.return_value = b'ERR CMD-NOT-SUPPORTED\n'
+
+        client = NUTClient()
+        success, msg = client.send_instcmd('fake.command.invalid')
+
+        assert success is False, f"Expected success=False, got {success}"
+        assert 'CMD-NOT-SUPPORTED' in msg, f"Expected CMD-NOT-SUPPORTED in message, got {msg}"
+
+    def test_send_instcmd_access_denied(self, mock_nut_socket):
+        """INSTCMD without proper credentials returns access denied error."""
+        mock_nut_socket.recv.return_value = b'ERR ACCESS-DENIED\n'
+
+        client = NUTClient()
+        success, msg = client.send_instcmd('test.battery.start.deep')
+
+        assert success is False, f"Expected success=False, got {success}"
+        assert 'ACCESS-DENIED' in msg, f"Expected ACCESS-DENIED in message, got {msg}"

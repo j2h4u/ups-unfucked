@@ -176,3 +176,40 @@ class NUTClient:
                 if parsed is not None:
                     result[parsed[0]] = parsed[1]
             return result
+
+    def send_instcmd(self, cmd_name, param=None):
+        """
+        Send INSTCMD (instant command) to UPS (RFC 9271 protocol).
+
+        Dispatches immediate commands to the UPS (e.g., test.battery.start.quick for
+        initiating a quick battery test). Response is parsed for OK or ERR status.
+
+        Args:
+            cmd_name: Command name in NUT format (e.g., 'test.battery.start.quick')
+            param: Optional parameter value (not typically used for battery tests)
+
+        Returns:
+            Tuple (success: bool, message: str) where:
+            - success=True, message contains response (e.g., 'OK TRACKING 12345')
+            - success=False, message contains error (e.g., 'ERR CMD-NOT-SUPPORTED')
+
+        Raises:
+            socket.timeout: If connection times out
+            socket.error: If socket communication fails
+        """
+        with self._socket_session():
+            if param:
+                cmd = f'INSTCMD {self.ups_name} {cmd_name} {param}'
+            else:
+                cmd = f'INSTCMD {self.ups_name} {cmd_name}'
+
+            response = self.send_command(cmd)
+
+            if response.startswith('OK'):
+                return (True, response)
+            elif response.startswith('ERR'):
+                return (False, response)
+            else:
+                # Unexpected response, treat as error
+                self.logger.error(f"Unexpected INSTCMD response: {response}")
+                return (False, response)
