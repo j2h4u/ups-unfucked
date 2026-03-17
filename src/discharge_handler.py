@@ -174,6 +174,64 @@ class DischargeHandler:
         # Auto-calibrate Peukert exponent if prediction error > 10%
         self._auto_calibrate_peukert(soh_new, discharge_buffer)
 
+        # Phase 16 NEW: Compute sulfation signals
+        days_since_deep = self._calculate_days_since_deep()
+        ir_trend_rate = self._estimate_ir_trend()
+        dod = self._estimate_dod_from_buffer(discharge_buffer)
+        cycle_budget = self._estimate_cycle_budget()
+
+        try:
+            sulfation_state = compute_sulfation_score(
+                days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
+                ir_trend_rate=ir_trend_rate,
+                recovery_delta=soh_new - self.battery_model.get_soh() if soh_result else 0.0,
+                temperature_celsius=35.0  # Constant per v3.0 spec
+            )
+
+            roi = compute_cycle_roi(
+                days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
+                depth_of_discharge=dod,
+                cycle_budget_remaining=cycle_budget,
+                ir_trend_rate=ir_trend_rate,
+                sulfation_score=sulfation_state.score
+            )
+        except Exception as e:
+            logger.warning(f"Sulfation scoring failed: {e}")
+            sulfation_state = None
+            roi = 0.0
+
+        # Phase 16 NEW: Store in-memory state for health.json export (Wave 3)
+        self.last_sulfation_score = sulfation_state.score if sulfation_state else None
+        self.last_sulfation_confidence = 'high' if sulfation_state else None
+        self.last_days_since_deep = days_since_deep
+        self.last_ir_trend_rate = ir_trend_rate
+        self.last_recovery_delta = soh_new - self.battery_model.get_soh() if soh_result else 0.0
+        self.last_cycle_roi = roi
+        self.last_cycle_budget_remaining = cycle_budget
+        self.last_discharge_timestamp = datetime.now(timezone.utc).isoformat()
+
+        # Phase 16 NEW: Persist to model.json
+        self.battery_model.append_sulfation_history({
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'event_type': self._classify_event_reason(discharge_buffer),
+            'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
+            'days_since_deep': round(days_since_deep, 1) if days_since_deep is not None else None,
+            'ir_trend_rate': round(ir_trend_rate, 6),
+            'recovery_delta': round(self.last_recovery_delta, 3),
+            'temperature_celsius': 35.0,
+            'confidence_level': 'high'
+        })
+
+        discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
+        self.battery_model.append_discharge_event({
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'event_reason': self._classify_event_reason(discharge_buffer),
+            'duration_seconds': discharge_duration,
+            'depth_of_discharge': round(dod, 2),
+            'measured_capacity_ah': capacity_ah_used if soh_result else None,
+            'cycle_roi': round(roi, 3)
+        })
+
         # Log prediction error before clearing buffer
         self._log_discharge_prediction(discharge_buffer)
 
