@@ -267,12 +267,34 @@ class BatteryModel:
         Strategy: keep all non-measured entries (standard, anchor, interpolated)
         plus most recent keep_count measured entries by timestamp.
 
+        F7: Dedup measured entries within ±0.01V — keep only the most recent per
+        voltage band. Without this, ~80% of measured entries are duplicates at the
+        same voltage (e.g., 24/31), wasting the 200-entry prune budget.
+
         Args:
             keep_count: Maximum number of measured entries to retain (default 200)
         """
         lut = self.data.get('lut', [])
         non_measured = [e for e in lut if e.get('source') != 'measured']
         measured = [e for e in lut if e.get('source') == 'measured']
+
+        # F7: Dedup — when multiple entries share voltage within ±0.01V, keep most recent
+        if measured:
+            measured.sort(key=lambda x: x.get('timestamp', 0))
+            deduped = []
+            for entry in measured:
+                # Check if any existing deduped entry is within ±0.01V
+                merged = False
+                for i, existing in enumerate(deduped):
+                    if abs(existing['v'] - entry['v']) < 0.01:
+                        # Replace with newer entry (measured is sorted by timestamp asc)
+                        deduped[i] = entry
+                        merged = True
+                        break
+                if not merged:
+                    deduped.append(entry)
+            measured = deduped
+
         if len(measured) > keep_count:
             measured.sort(key=lambda x: x.get('timestamp', 0))
             measured = measured[-keep_count:]
@@ -382,7 +404,7 @@ class BatteryModel:
         Args:
             ah_estimate: Measured capacity in Ah (float)
             confidence: Confidence metric [0.0, 1.0] based on CoV across measurements
-            metadata: Dict with measurement details (delta_soc_percent, duration_sec, ir_mohms, load_avg_percent, etc.)
+            metadata: Dict with measurement details (delta_soc_percent, duration_sec, discharge_slope_mohm, load_avg_percent, etc.)
             timestamp: ISO8601 timestamp string
 
         Side effects:

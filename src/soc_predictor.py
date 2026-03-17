@@ -31,6 +31,18 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     Note:
         LUT is assumed sorted descending by voltage. Binary search via bisect is used
         for O(log n) bracket finding.
+
+    Known limitations (audit 2026-03-17):
+    - F8: IR compensation reference frame mismatch — LUT stores raw voltage
+      during discharge calibration, but lookup receives IR-compensated voltage.
+      Error = k*(L_actual - L_calibration), ≤5% SoC at typical loads. Negligible
+      when load ≈ L_base=20% because the correction term approaches zero.
+    - F9: Cliff region (10.5-11.0V) has no measured data initially — 0.5V span
+      covers 6% SoC. Resolves organically after deep discharge populates LUT
+      entries in this range. Data gap, not code bug.
+    - F10: ±0.01V tolerance could match conflicting SoC values if LUT contains
+      duplicate voltages. Prevented by F7 dedup in _prune_lut() which keeps
+      only the most recent entry per voltage band.
     """
     if not lut:
         logger.warning("Empty LUT provided to soc_from_voltage")
