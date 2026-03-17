@@ -220,13 +220,22 @@ MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 HEALTH_SRC="$REPO_ROOT/scripts/motd/51-ups-health.sh"
 HEALTH_DST="$MOTD_DIR/51-ups-health.sh"
 
+# Install sulfation status script (Phase 16)
+SULFATION_SRC="$REPO_ROOT/scripts/motd/55-sulfation.sh"
+SULFATION_DST="$MOTD_DIR/55-sulfation.sh"
+
 if [[ -d "$MOTD_DIR" ]]; then
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would copy $HEALTH_SRC -> $HEALTH_DST"
+        echo "[DRY-RUN] Would copy $SULFATION_SRC -> $SULFATION_DST"
     else
         cp "$HEALTH_SRC" "$HEALTH_DST"
         chmod +x "$HEALTH_DST"
         log_ok "MOTD health script installed to $HEALTH_DST"
+
+        cp "$SULFATION_SRC" "$SULFATION_DST"
+        chmod +x "$SULFATION_DST"
+        log_ok "MOTD sulfation script installed to $SULFATION_DST"
     fi
 
     # Patch existing 51-ups.sh to use virtual UPS
