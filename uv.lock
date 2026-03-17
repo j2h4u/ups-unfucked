@@ -1,0 +1,20 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "python-systemd"
+version = "0.0.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/44/e7929071efeb905acc6165fabbf704e57f9a61a448ec420718a0c511cffc/python-systemd-0.0.9.tar.gz", hash = "sha256:c01352a24518a6d89f90ceb94e384b0ef0385ea5b3b2d6963f8262d9c00f2fc7", size = 13605, upload-time = "2015-01-31T07:22:12.827Z" }
+
+[[package]]
+name = "ups-unfucked"
+version = "1.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "python-systemd" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "python-systemd" }]
