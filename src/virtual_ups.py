@@ -86,6 +86,11 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         raise
 
 
+# Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type (F41).
+# Prevents deep test from draining battery to hardware cutoff without graceful shutdown.
+SAFETY_LB_FLOOR_MINUTES = 2
+
+
 def compute_ups_status_override(
     event_type: EventType,
     time_rem_minutes: float,
@@ -99,6 +104,7 @@ def compute_ups_status_override(
 
     Pattern from RESEARCH.md Phase 3:
     - ONLINE → "OL"
+    - Any discharge + time_rem < 2 min → "OB DISCHRG LB" (F41 safety floor)
     - BLACKOUT_TEST → "OB DISCHRG" (no LB, allow calibration data collection)
     - BLACKOUT_REAL + time_rem >= threshold → "OB DISCHRG"
     - BLACKOUT_REAL + time_rem < threshold → "OB DISCHRG LB" (signal LOW_BATTERY to upsmon)
@@ -119,13 +125,14 @@ def compute_ups_status_override(
     """
     if event_type == EventType.ONLINE:
         return "OL"
-    elif event_type == EventType.BLACKOUT_TEST:
+    # F41: Safety floor — any discharge state with <2 min runtime gets LB
+    if time_rem_minutes < SAFETY_LB_FLOOR_MINUTES:
+        return "OB DISCHRG LB"
+    if event_type == EventType.BLACKOUT_TEST:
         return "OB DISCHRG"
-    elif event_type == EventType.BLACKOUT_REAL:
+    if event_type == EventType.BLACKOUT_REAL:
         if time_rem_minutes < shutdown_threshold_minutes:
             return "OB DISCHRG LB"
-        else:
-            return "OB DISCHRG"
-    else:
-        # Default to online if unknown event type
-        return "OL"
+        return "OB DISCHRG"
+    # Default to online if unknown event type
+    return "OL"

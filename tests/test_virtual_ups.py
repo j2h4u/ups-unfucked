@@ -400,49 +400,26 @@ class TestShutdownThresholds:
     def test_calibration_mode_threshold(self, calibration_threshold):
         """Test SHUT-03: Calibration mode uses reduced shutdown threshold.
 
-        Validates:
-        - Calibration mode flag (e.g., UPS_CALIBRATION_MODE=1) lowers threshold to ~1 min
-        - Allows longer test runs without triggering shutdown prematurely
-        - Threshold switch is atomic (no mid-test confusion)
-        - Calibration mode off → reverts to standard threshold
+        Note: F41 safety floor (2 min) overrides any calibration threshold
+        when runtime is critically low. Values above the floor still respect
+        the calibration threshold.
         """
-        # Arrange: Normal threshold = 5 minutes, calibration threshold = 1 or 0 minute
-        normal_threshold = 5
-        test_cases = [2, 1, 0.9]  # Various time_rem values
+        # Above safety floor (2 min): calibration threshold controls LB
+        time_rem_above_floor = 3.0
+        result = compute_ups_status_override(
+            EventType.BLACKOUT_REAL, time_rem_above_floor, calibration_threshold
+        )
+        if time_rem_above_floor >= calibration_threshold:
+            assert result == "OB DISCHRG", \
+                f"time_rem={time_rem_above_floor} >= threshold={calibration_threshold} should not trigger LB"
 
-        # Act: Test with normal threshold
-        for time_rem in test_cases:
-            result_normal = compute_ups_status_override(
-                EventType.BLACKOUT_REAL,
-                time_rem,
-                normal_threshold
-            )
-            # time_rem=2: >= 5 → "OB DISCHRG"
-            if time_rem >= normal_threshold:
-                assert result_normal == "OB DISCHRG", \
-                    f"Normal mode: time_rem={time_rem} >= threshold={normal_threshold} should not trigger LB"
-
-        # Act: Test with calibration threshold (lower)
-        for time_rem in test_cases:
-            result_calib = compute_ups_status_override(
-                EventType.BLACKOUT_REAL,
-                time_rem,
-                calibration_threshold
-            )
-            # With threshold=1: only time_rem < 1 triggers LB
-            # With threshold=0: only time_rem < 0 (unphysical, but test anyway)
-            if time_rem >= calibration_threshold:
-                assert result_calib == "OB DISCHRG", \
-                    f"Calibration mode (threshold={calibration_threshold}): time_rem={time_rem} should not trigger LB"
-            else:
-                assert result_calib == "OB DISCHRG LB", \
-                    f"Calibration mode (threshold={calibration_threshold}): time_rem={time_rem} should trigger LB"
-
-        # Assert: Verify lower threshold allows longer test runs
-        # Example: time_rem=2 with normal threshold=5 → no LB, but with threshold=1 → still no LB
-        # Example: time_rem=0.5 with normal threshold=5 → LB, with threshold=1 → LB
-        # Example: time_rem=2 with normal threshold=5 → no LB, with threshold=0 → no LB
-        # This shows calibration threshold can be set independently
+        # Below safety floor (2 min): LB always fires regardless of threshold
+        time_rem_below_floor = 0.9
+        result_below = compute_ups_status_override(
+            EventType.BLACKOUT_REAL, time_rem_below_floor, calibration_threshold
+        )
+        assert result_below == "OB DISCHRG LB", \
+            f"Below safety floor: time_rem={time_rem_below_floor} should always trigger LB"
 
 
 class TestMonitorIntegration:
@@ -627,6 +604,35 @@ class TestMonitorIntegration:
             # Assert: We expect this type of error
             assert isinstance(e, (OSError, FileNotFoundError))
             # This validates that the error would be caught in monitor.py's try/except
+
+
+class TestSafetyLBFloor:
+    """Tests for F41: hard LB safety floor at 2 minutes."""
+
+    def test_blackout_test_lb_floor(self):
+        """F41: BLACKOUT_TEST + runtime=1.5min → 'OB DISCHRG LB' (safety floor)."""
+        result = compute_ups_status_override(EventType.BLACKOUT_TEST, 1.5, 5)
+        assert result == "OB DISCHRG LB"
+
+    def test_blackout_test_above_floor(self):
+        """F41: BLACKOUT_TEST + runtime=10.0min → 'OB DISCHRG' (no LB, above floor)."""
+        result = compute_ups_status_override(EventType.BLACKOUT_TEST, 10.0, 5)
+        assert result == "OB DISCHRG"
+
+    def test_blackout_real_lb_floor_overrides_threshold(self):
+        """F41: BLACKOUT_REAL + runtime=1.5min + threshold=5 → LB (floor wins)."""
+        result = compute_ups_status_override(EventType.BLACKOUT_REAL, 1.5, 5)
+        assert result == "OB DISCHRG LB"
+
+    def test_online_ignores_floor(self):
+        """F41: ONLINE always returns 'OL' regardless of runtime."""
+        result = compute_ups_status_override(EventType.ONLINE, 0.5, 5)
+        assert result == "OL"
+
+    def test_floor_at_exactly_2_minutes(self):
+        """F41: runtime exactly at floor (2.0) → no LB (uses < not <=)."""
+        result = compute_ups_status_override(EventType.BLACKOUT_TEST, 2.0, 5)
+        assert result == "OB DISCHRG"
 
 
 class TestEventTypeIntegration:
