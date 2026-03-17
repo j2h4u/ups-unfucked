@@ -5,6 +5,8 @@ from .soh import calculate_soh_from_discharge, interpolate_cliff_region
 from .calibration import calibrate_peukert
 from .capacity import estimate_capacity
 from .rls import ScalarRLS
+from .sulfation import compute_sulfation_score, estimate_recovery_delta, SulfationState
+from .cycle_roi import compute_cycle_roi
 
 __all__ = [
     'BatteryState',
@@ -14,4 +16,6 @@ __all__ = [
     'calibrate_peukert',
     'estimate_capacity',
     'ScalarRLS',
+    'compute_sulfation_score', 'estimate_recovery_delta', 'SulfationState',
+    'compute_cycle_roi',
 ]
