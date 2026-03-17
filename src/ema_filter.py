@@ -84,6 +84,20 @@ class EMAFilter:
 
     Tracks separate EMA for voltage and load, with stabilization gate
     (requires sufficient samples before predictions are reliable).
+
+    Known limitations (audit 2026-03-17):
+    - F1: Adaptive alpha amplifies ADC quantization ~3x (0.06V band at 13.5V).
+      <1% SoC impact — acceptable for shutdown decision accuracy.
+    - F2: ``abs(ema) < 1e-6`` guard in _adaptive_alpha makes alpha=1.0 at
+      near-zero load (no smoothing). Server runs 14-20% load — unreachable.
+    - F3: IR compensation uses a linear model that is invalid during
+      electrochemical discharge (OB). Error bounded ≤0.06V at typical loads
+      (cross-ref F8). Acceptable because RLS calibration at the actual
+      operating point absorbs systematic bias.
+    - F4: First sample seeds EMA directly — a stale NUT reading biases
+      the EMA for up to 120s (one window). Mitigated: NUT usbhid-ups
+      pollinterval=2s, daemon polls every 10s, so first reading is at
+      most 2s old.
     """
 
     def __init__(self, window_sec=120, poll_interval_sec=10, sensitivity=0.05):
