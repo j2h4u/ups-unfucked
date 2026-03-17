@@ -49,7 +49,7 @@ def compute_sulfation_score(
     ir_weight: float = 0.4,
     recovery_weight: float = 0.3,
     days_weight: float = 0.3,
-) -> float:
+) -> SulfationState:
     """Hybrid sulfation score combining physics baseline + empirical signals.
 
     Args:
@@ -63,7 +63,7 @@ def compute_sulfation_score(
         days_weight: Weight for time signal [0, 1]
 
     Returns:
-        Sulfation score [0.0, 1.0] where 0.0 = no sulfation, 1.0 = critical
+        SulfationState with score [0.0, 1.0] and supporting signals
 
     Physics:
         Shepherd model: sulfation per day ≈ 0.02 at 25°C baseline.
@@ -105,7 +105,15 @@ def compute_sulfation_score(
     )
 
     # Clamp to [0.0, 1.0]
-    return max(0.0, min(1.0, score))
+    score = max(0.0, min(1.0, score))
+
+    return SulfationState(
+        score=score,
+        days_since_deep=days_since_deep,
+        ir_trend_rate=ir_trend_rate,
+        recovery_delta=recovery_delta,
+        temperature_celsius=temperature_celsius,
+    )
 
 
 def estimate_recovery_delta(

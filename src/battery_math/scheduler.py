@@ -17,6 +17,14 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 from datetime import datetime, timedelta, timezone
 
+# Algorithmic constants — internal to scheduler, not user-configurable.
+SOH_FLOOR = 0.60
+MIN_DAYS_BETWEEN_TESTS = 7.0
+ROI_THRESHOLD = 0.2
+CRITICAL_CYCLE_BUDGET = 5
+DEEP_SULFATION_THRESHOLD = 0.65
+QUICK_SULFATION_THRESHOLD = 0.40
+
 
 @dataclass(frozen=True)
 class SchedulerDecision:
@@ -43,9 +51,6 @@ def evaluate_test_scheduling(
     last_blackout_depth: float,
     active_blackout_credit: Optional[dict],
     cycle_budget_remaining: int,
-    soh_floor_threshold: float = 0.60,
-    min_days_between_tests: float = 7.0,
-    roi_threshold: float = 0.2,
     grid_stability_cooldown_hours: float = 4.0,
 ) -> SchedulerDecision:
     """Pure scheduler decision engine: evaluate test candidacy with safety gates.
@@ -59,9 +64,6 @@ def evaluate_test_scheduling(
         last_blackout_depth: Depth of discharge [0.0, 1.0] for that blackout
         active_blackout_credit: Dict with 'active', 'credit_expires' fields, or None
         cycle_budget_remaining: Cycles left before SoH=65% (mandatory replacement)
-        soh_floor_threshold: Minimum acceptable SoH (default 60%)
-        min_days_between_tests: Minimum days between tests (default 7.0 = 1/week)
-        roi_threshold: Minimum ROI to consider test (default 0.2)
         grid_stability_cooldown_hours: Hours to wait after blackout (default 4.0, 0 = disabled)
 
     Returns:
@@ -79,7 +81,7 @@ def evaluate_test_scheduling(
     now = datetime.now(timezone.utc)
 
     # GATE 1: SoH floor (hard block)
-    if soh_percent < soh_floor_threshold:
+    if soh_percent < SOH_FLOOR:
         floor_percent = int(soh_percent * 100)
         next_eligible = (now + timedelta(days=30)).isoformat()  # Long deferral
         return SchedulerDecision(
@@ -88,9 +90,9 @@ def evaluate_test_scheduling(
             next_eligible_timestamp=next_eligible,
         )
 
-    # GATE 2: Rate limiting (1 test per min_days_between_tests)
-    if days_since_last_test < min_days_between_tests:
-        days_remaining = min_days_between_tests - days_since_last_test
+    # GATE 2: Rate limiting (1 test per MIN_DAYS_BETWEEN_TESTS)
+    if days_since_last_test < MIN_DAYS_BETWEEN_TESTS:
+        days_remaining = MIN_DAYS_BETWEEN_TESTS - days_since_last_test
         next_eligible = (now + timedelta(days=days_remaining)).isoformat()
         return SchedulerDecision(
             action='defer_test',
@@ -133,7 +135,7 @@ def evaluate_test_scheduling(
     # Note: if grid_stability_cooldown_hours == 0, gate is skipped entirely (disabled)
 
     # GATE 5: Cycle budget (critical low)
-    if cycle_budget_remaining < 5:
+    if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:
         next_eligible = (now + timedelta(days=60)).isoformat()  # Very long deferral
         return SchedulerDecision(
             action='block_test',
@@ -143,7 +145,7 @@ def evaluate_test_scheduling(
 
     # GATE 6: ROI threshold (marginal benefit)
     # Only defer if ROI is low AND we have plenty of cycles (conservative approach)
-    if cycle_roi < roi_threshold and cycle_budget_remaining > 20:
+    if cycle_roi < ROI_THRESHOLD and cycle_budget_remaining > 20:
         roi_rounded = round(cycle_roi, 2)
         next_eligible = (now + timedelta(days=2)).isoformat()
         return SchedulerDecision(
@@ -154,7 +156,7 @@ def evaluate_test_scheduling(
 
     # GATE 7: Sulfation threshold (decision logic)
     # All gates passed; now decide test type based on sulfation
-    if sulfation_score > 0.65:
+    if sulfation_score > DEEP_SULFATION_THRESHOLD:
         # High sulfation: recommend deep test
         roi_rounded = round(cycle_roi, 2)
         sulfation_rounded = round(sulfation_score, 2)
@@ -163,13 +165,13 @@ def evaluate_test_scheduling(
             test_type='deep',
             reason_code=f'sulfation_{sulfation_rounded}_roi_{roi_rounded}',
         )
-    elif sulfation_score > 0.40:
+    elif sulfation_score > QUICK_SULFATION_THRESHOLD:
         # Medium sulfation: recommend quick test
-        ir_rounded = round(sulfation_score, 2)
+        sulfation_rounded = round(sulfation_score, 2)
         return SchedulerDecision(
             action='propose_test',
             test_type='quick',
-            reason_code=f'sulfation_{ir_rounded}_ir_measure',
+            reason_code=f'sulfation_{sulfation_rounded}',
         )
     else:
         # Low sulfation: no test needed
