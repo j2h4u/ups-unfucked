@@ -135,7 +135,7 @@
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
 | 15. Foundation | v3.0 | 5/5 | Complete    | 2026-03-17 |
-| 16. Persistence & Observability | v3.0 | 1/6 | In Progress | — |
+| 16. Persistence & Observability | v3.0 | 1/6 | Complete    | 2026-03-17 |
 | 17. Scheduling Intelligence | v3.0 | 0/TBD | Not planned | — |
 
 ---

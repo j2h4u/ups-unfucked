@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.0
-milestone_name: Active Battery Care
-status: in-progress
-last_updated: "2026-03-17T18:35:00Z"
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-17T13:31:38.165Z"
 progress:
-  total_phases: 3
+  total_phases: 2
   completed_phases: 2
-  total_plans: 15
+  total_plans: 11
   completed_plans: 11
 ---
 
@@ -100,6 +100,7 @@ None. Roadmap creation complete.
 - Updated `scripts/install.sh`: Added sulfation module to MOTD installation section
 
 **MOTD Module Summary:**
+
 - File: `scripts/motd/55-sulfation.sh` (52 lines, 1.7 KB)
 - Functionality: Reads health.json, displays "Battery health: Sulfation XX% · Next test in Xd · Blackout credit YY%"
 - JSON parsing: Safe jq extraction with error suppression
@@ -109,6 +110,7 @@ None. Roadmap creation complete.
 - Status: PASS — Wave 5 complete, RPT-01 (sulfation score display) requirement satisfied
 
 **Phase 16 Completion Summary:**
+
 - Plan 01 (Model persistence): ✅ model.json schema + append/prune methods
 - Plan 02 (Health export): ✅ health.json schema extension with Phase 16 fields
 - Plan 03 (Discharge integration): ✅ discharge_handler imports sulfation + cycle_roi modules
@@ -117,6 +119,7 @@ None. Roadmap creation complete.
 - Plan 06 (MOTD display): ✅ 55-sulfation.sh module + 7 functional tests
 
 **Requirements satisfied:** 10/10
+
 - SULF-01 (sulfation compute): Phase 15
 - SULF-02 (physics baseline): Phase 15
 - SULF-03 (IR trend): Phase 15
