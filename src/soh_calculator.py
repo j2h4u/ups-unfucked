@@ -1,68 +1,115 @@
-"""SoH calculation orchestrator — selects capacity baseline and calls kernel.
+"""SoH calculation orchestrator — capacity-based SoH (F19/F20/F21 redesign).
 
-Phase 13: When Phase 12 capacity estimation converges, use measured capacity
-instead of rated. This separates aging (SoH trend) from capacity loss.
+Algorithm: SoH = measured_capacity / rated_capacity
+- Coulomb counting for Ah delivered during discharge
+- LUT-based ΔSoC to extrapolate to full-discharge capacity
+- Bayesian blend with reference SoH, weighted by ΔSoC depth
+
+Replaces old area-under-curve approach which compared partial discharge
+to full Peukert area, producing SoH << 1.0 on every discharge.
 """
 
 import logging
-from typing import Optional, Tuple
-from src.battery_math import soh as battery_math_soh
+from typing import List, Optional, Tuple
+from src.soc_predictor import soc_from_voltage
 from src.model import BatteryModel
 
 logger = logging.getLogger(__name__)
 
+# Minimum ΔSoC for meaningful SoH update (5% depth too shallow)
+MIN_DELTA_SOC = 0.05
+
+# Minimum discharge duration for SoH calculation (seconds)
+MIN_DURATION_SEC = 300
+
 
 def calculate_soh_from_discharge(
-    discharge_voltage_series,
-    discharge_time_series,
-    reference_soh,
+    discharge_voltage_series: List[float],
+    discharge_time_series: List[float],
+    reference_soh: float,
     battery_model: BatteryModel,
-    load_percent,
-    nominal_power_watts,
-    nominal_voltage,
-    peukert_exponent,
+    load_percent: float,
+    nominal_power_watts: float,
+    nominal_voltage: float,
+    peukert_exponent: float,
 ) -> Optional[Tuple[float, float]]:
-    """Calculate SoH for completed discharge, using measured capacity if available.
+    """Calculate SoH for completed discharge using capacity-based method.
+
+    Algorithm:
+    1. Coulomb counting: integrate current over time → Ah delivered
+    2. LUT lookup: ΔSoC from voltage start/end
+    3. Extrapolate: measured_capacity = Ah_delivered / ΔSoC
+    4. SoH = measured_capacity / rated_capacity
+    5. Bayesian blend with reference_soh weighted by ΔSoC
 
     Args:
         discharge_voltage_series: List of voltage readings (V)
         discharge_time_series: List of time readings (s)
         reference_soh: Current SoH estimate before update
-        battery_model: BatteryModel instance with convergence data
+        battery_model: BatteryModel instance with LUT and convergence data
         load_percent: Average load during discharge (%)
-        nominal_power_watts: UPS rated power (850W for UT850)
-        nominal_voltage: UPS nominal voltage (120V for UT850)
-        peukert_exponent: Peukert coefficient (1.2 for Phase 13)
+        nominal_power_watts: UPS rated power (W)
+        nominal_voltage: Battery nominal voltage (V)
+        peukert_exponent: Peukert coefficient (unused, kept for API compat)
 
     Returns:
-        Tuple of (soh_new, capacity_ah_for_soh) or None if calculation failed
+        Tuple of (soh_new, capacity_ah_ref) or None if calculation failed
         - soh_new: Updated SoH estimate [0.0, 1.0]
-        - capacity_ah_for_soh: Capacity used in calculation (measured or rated)
+        - capacity_ah_ref: Rated capacity used as reference (Ah)
     """
-    # Get convergence status from Phase 12
-    convergence = battery_model.get_convergence_status()
-
-    # Select capacity reference: measured if converged, else rated
-    if convergence.get('converged', False):
-        capacity_ah_for_soh = convergence.get('latest_ah')
-        logger.info(f"SoH calculation using measured capacity: {capacity_ah_for_soh:.2f}Ah")
-    else:
-        capacity_ah_for_soh = battery_model.get_capacity_ah()  # Rated (7.2Ah)
-        logger.info(f"SoH calculation using rated capacity: {capacity_ah_for_soh:.2f}Ah (measured not converged)")
-
-    # Call kernel with selected capacity
-    soh_new = battery_math_soh.calculate_soh_from_discharge(
-        voltage_series=discharge_voltage_series,
-        time_series=discharge_time_series,
-        reference_soh=reference_soh,
-        capacity_ah=capacity_ah_for_soh,  # ← Measured or rated
-        load_percent=load_percent,
-        nominal_power_watts=nominal_power_watts,
-        nominal_voltage=nominal_voltage,
-        peukert_exponent=peukert_exponent,
-    )
-
-    if soh_new is None:
+    # Guard: need at least 2 samples
+    if len(discharge_voltage_series) < 2 or len(discharge_time_series) < 2:
         return None
 
-    return soh_new, capacity_ah_for_soh  # Return both for caller to tag history entry
+    # Guard: minimum duration
+    duration = discharge_time_series[-1] - discharge_time_series[0]
+    if duration < MIN_DURATION_SEC:
+        logger.debug(f"SoH skipped: discharge too short ({duration:.0f}s < {MIN_DURATION_SEC}s)")
+        return None
+
+    # Get LUT from model
+    lut = battery_model.get_lut()
+    if not lut:
+        logger.warning("SoH skipped: no LUT available")
+        return None
+
+    # ΔSoC from voltage series via LUT
+    soc_start = soc_from_voltage(discharge_voltage_series[0], lut)
+    soc_end = soc_from_voltage(discharge_voltage_series[-1], lut)
+    delta_soc = soc_start - soc_end
+
+    if delta_soc < MIN_DELTA_SOC:
+        logger.debug(f"SoH skipped: ΔSoC {delta_soc*100:.1f}% < {MIN_DELTA_SOC*100:.0f}%")
+        return None
+
+    # Coulomb counting: Ah delivered during discharge
+    ah_delivered = 0.0
+    for i in range(len(discharge_time_series) - 1):
+        dt = discharge_time_series[i + 1] - discharge_time_series[i]
+        if dt <= 0:
+            continue
+        current_a = load_percent / 100.0 * nominal_power_watts / nominal_voltage
+        ah_delivered += current_a * dt / 3600.0
+
+    if ah_delivered <= 0:
+        return None
+
+    # Extrapolate to full-discharge capacity
+    measured_capacity = ah_delivered / delta_soc
+
+    # SoH = measured / rated
+    capacity_ah_ref = battery_model.get_capacity_ah()  # Rated (7.2Ah)
+    soh_raw = min(1.0, measured_capacity / capacity_ah_ref)
+
+    # Bayesian blend: weight by ΔSoC (deeper discharge = more reliable)
+    weight = min(delta_soc, 1.0)
+    soh_new = reference_soh * (1 - weight) + soh_raw * weight
+    soh_new = max(0.0, min(1.0, soh_new))
+
+    logger.info(
+        f"SoH capacity-based: measured={measured_capacity:.2f}Ah, "
+        f"rated={capacity_ah_ref:.2f}Ah, raw={soh_raw:.3f}, "
+        f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, weight={weight:.2f})"
+    )
+
+    return soh_new, capacity_ah_ref
