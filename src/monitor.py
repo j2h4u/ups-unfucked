@@ -550,7 +550,8 @@ class MonitorDaemon:
         if convergence.get('converged', False):
             result = replacement_predictor.linear_regression_soh(
                 soh_history=self.battery_model.get_soh_history(),
-                threshold_soh=self.soh_threshold
+                threshold_soh=self.soh_threshold,
+                capacity_ah_ref=capacity_ah_used,
             )
         else:
             result = None
