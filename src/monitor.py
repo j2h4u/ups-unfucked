@@ -710,7 +710,19 @@ class MonitorDaemon:
             capacity_ah_rated=convergence_status.get('rated_ah', 7.2),
             capacity_confidence=convergence_status.get('confidence_percent', 0.0) / 100.0,
             capacity_samples_count=convergence_status.get('sample_count', 0),
-            capacity_converged=convergence_status.get('converged', False)
+            capacity_converged=convergence_status.get('converged', False),
+            # Phase 16 NEW parameters (from discharge_handler state):
+            sulfation_score=self.discharge_handler.last_sulfation_score,
+            sulfation_confidence=self.discharge_handler.last_sulfation_confidence,
+            days_since_deep=self.discharge_handler.last_days_since_deep,
+            ir_trend_rate=self.discharge_handler.last_ir_trend_rate,
+            recovery_delta=self.discharge_handler.last_recovery_delta,
+            cycle_roi=self.discharge_handler.last_cycle_roi,
+            cycle_budget_remaining=self.discharge_handler.last_cycle_budget_remaining,
+            scheduling_reason='observing',  # Phase 17 will update with actual reason
+            next_test_timestamp=None,  # Phase 17 will populate
+            last_discharge_timestamp=self.discharge_handler.last_discharge_timestamp,
+            natural_blackout_credit=None,  # Phase 17 will populate
         )
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
