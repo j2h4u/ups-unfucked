@@ -36,6 +36,18 @@ def linear_regression_soh(
         - All SoH identical: no variance; returns None
         - Slope = 0 or positive: battery not degrading; returns None
         - Filtering by capacity_ah_ref with < 3 matching entries: returns None
+
+    Known limitations (audit 2026-03-17):
+    - F55: No outlier rejection for SoH regression. Root cause was broken SoH
+      formula (F19, now fixed with capacity-based SoH). With stable SoH values,
+      outlier rejection is lower priority. Revisit if regression produces erratic
+      predictions after extended operation.
+    - F56: R²<0.5 threshold is permissive for early data. Battery degradation is
+      roughly linear over months — R² will improve with more data points. Tighter
+      threshold risks rejecting valid predictions during early battery lifetime.
+    - F57: Multiple discharges per day give ~10% extra weight to that day in
+      regression. Negligible for months-ahead extrapolation. Could deduplicate
+      to daily average if needed, but added complexity not justified.
     """
     # Phase 13: Filter by capacity baseline
     if capacity_ah_ref is not None:
