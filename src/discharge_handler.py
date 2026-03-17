@@ -10,7 +10,7 @@ MonitorDaemon.run() per SRE requirement.
 
 import math
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from src.model import BatteryModel
@@ -248,6 +248,27 @@ class DischargeHandler:
             })
         except Exception as e:
             logger.warning(f"Failed to log discharge event: {e}")
+
+        # Phase 17: Grant blackout credit for natural deep discharges
+        event_reason = self._classify_event_reason(discharge_buffer)
+        if event_reason == 'natural' and dod >= 0.90:
+            # Natural blackout ≥90% DoD → grant 7-day credit
+            credit_expires = datetime.now(timezone.utc) + timedelta(days=7)
+            logger.info(
+                f"Natural blackout desulfation credit: DoD={dod:.0%}",
+                extra={
+                    'event_type': 'blackout_credit_granted',
+                    'dod': round(dod, 2),
+                    'credit_expires': credit_expires.isoformat(),
+                }
+            )
+
+            self.battery_model.set_blackout_credit({
+                'active': True,
+                'credited_event_timestamp': datetime.now(timezone.utc).isoformat(),
+                'credit_expires': credit_expires.isoformat(),
+                'desulfation_credit': 0.15,  # Approximate desulfation benefit for ~90% DoD
+            })
 
         # Log prediction error before clearing buffer
         self._log_discharge_prediction(discharge_buffer)
@@ -569,12 +590,39 @@ class DischargeHandler:
     def _classify_event_reason(self, discharge_buffer: Optional[object] = None) -> str:
         """Classify discharge as natural or test-initiated.
 
-        Phase 16: Always 'natural' (upscmd not called yet).
         Phase 17: Compare discharge_buffer start time to last upscmd timestamp.
+        If discharge started within 60 seconds of upscmd, it's test-initiated.
+        Otherwise, natural.
 
         Returns: 'natural' | 'test_initiated'
         """
-        return 'natural'  # Hardcoded for Phase 16
+        # Get last upscmd timestamp
+        last_upscmd = self.battery_model.get_last_upscmd_timestamp()
+        if not last_upscmd or not discharge_buffer:
+            return 'natural'  # No upscmd record, assume natural
+
+        # Get discharge start time (approximate from buffer)
+        # For now, we don't have exact discharge start in buffer, so use current timestamp
+        # Phase 17 will be refined if we add precise discharge_start_timestamp to DischargeBuffer
+        discharge_start = datetime.now(timezone.utc).isoformat()
+
+        try:
+            upscmd_dt = datetime.fromisoformat(last_upscmd)
+            discharge_dt = datetime.fromisoformat(discharge_start)
+            time_delta = (discharge_dt - upscmd_dt).total_seconds()
+
+            # If discharge started within 60s of upscmd, it's test-initiated
+            if 0 <= time_delta <= 60:
+                logger.info(
+                    f"Discharge classified as test-initiated: {time_delta:.1f}s after upscmd",
+                    extra={'event_type': 'discharge_classification', 'reason': 'test_initiated'}
+                )
+                return 'test_initiated'
+            else:
+                return 'natural'
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid timestamps in discharge classification: upscmd={last_upscmd}, discharge={discharge_start}")
+            return 'natural'  # Invalid timestamps, assume natural
 
     def _estimate_dod_from_buffer(self, discharge_buffer: object) -> float:
         """Estimate depth of discharge from voltage samples.
