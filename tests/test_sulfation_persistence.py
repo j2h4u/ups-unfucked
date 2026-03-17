@@ -240,6 +240,8 @@ def test_backward_compatibility_missing_keys(battery_model_temp_file):
     model = BatteryModel(model_path=model_path)
     assert model.data['soh'] == 1.0
 
-    # Accessing sulfation_history should initialize empty array
-    model.data.setdefault('sulfation_history', [])
+    # All Phase 16 arrays should initialize to empty
     assert model.data['sulfation_history'] == []
+    assert model.data['discharge_events'] == []
+    assert model.data['roi_history'] == []
+    assert model.data['natural_blackout_events'] == []
