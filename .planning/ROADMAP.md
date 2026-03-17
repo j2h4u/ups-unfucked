@@ -43,7 +43,7 @@
 </details>
 
 <details>
-<summary>⏳ v3.0 Active Battery Care (Phases 15-17) — Phase 15 COMPLETE, Phase 16 COMPLETE</summary>
+<summary>⏳ v3.0 Active Battery Care (Phases 15-17) — Phase 15 COMPLETE, Phase 16 COMPLETE, Phase 17 PLANNING</summary>
 
 ### Phase 15: Foundation
 
@@ -97,7 +97,7 @@
 
 ### Phase 17: Scheduling Intelligence
 
-**Goal:** Implement daemon-controlled scheduling logic — evaluate sulfation score + ROI + safety constraints, make daily decisions about test dispatch, log every decision with reason. All preconditions validated before any upscmd attempt. Disable static systemd timers and rely entirely on daemon scheduling.
+**Goal:** Implement daemon-controlled scheduling logic — evaluate sulfation score + ROI + safety constraints, make daily decisions about test dispatch, log every decision with reason. All preconditions validated before any upscmd attempt. Daemon-controlled scheduling replaces static systemd timers. Grid stability cooldown configurable (0 = disabled for frequent blackout grids per user feedback). Manual deployment step to mask systemd timers.
 
 **Depends on:** Phase 16
 
@@ -108,10 +108,19 @@
 2. User can verify daemon enforces SoH floor (≥60%) — no test when SoH below floor, reason logged (rejection logged with "SoH below floor (X%)" message, no upscmd attempt)
 3. User can verify daemon enforces rate limiting (≤1 test/week, minimum 7-day interval) — skips scheduled test if recent test within grace period, logs reason (deferral logged with "last test 3 days ago" or similar)
 4. User can verify daemon credits natural blackouts (≥90% depth, <7 days old) as desulfation equivalent — skips scheduled test when active blackout credit exists, logs credit usage (blackout_credit field shows "active until YYYY-MM-DD")
-5. User can verify systemd timers disabled on daemon startup — `ups-test-deep.timer` and `ups-test-quick.timer` masked or disabled (systemctl status shows "masked" or "disabled", not "active")
+5. User can verify systemd timers disabled post-deployment — `ups-test-deep.timer` and `ups-test-quick.timer` masked or disabled (systemctl status shows "masked" or "disabled", not "active")
 6. User can review precondition checks logged before any upscmd dispatch (SoC ≥95%, no power glitches in last 4h, no test already running — each check logged with pass/fail status)
 
-**Plans:** TBD (planned after Phase 16 execution)
+**Plans:** 2 plans across 2 execution waves
+
+- [ ] 17-01-PLAN.md — Wave 1: Scheduler decision engine, precondition validator, dispatch integration, blackout credit logic, test suite (Requirements: SCHED-01, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-08)
+- [ ] 17-02-PLAN.md — Wave 2: Configurable grid stability cooldown, configuration validation, deployment checklist with manual timer masking (Requirements: SCHED-06, SCHED-07)
+
+**Key Implementation Notes (per user feedback):**
+- Grid stability cooldown configurable: default 4h, set to 0 to disable gate entirely for frequent blackout grids
+- Deep blackouts (>90% DoD) rare (~2 times in 4 years); short blackouts (1.5–3 min) common (several/week)
+- **NO systemd timer masking code in Python** — user will manually disable timers during deployment (checklist in Phase 17 Plan 02 DEPLOYMENT.md)
+- Conservative deep test bias: natural blackouts provide free desulfation; when ROI marginal, defer test
 
 </details>
 
@@ -135,9 +144,9 @@
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
 | 15. Foundation | v3.0 | 5/5 | Complete    | 2026-03-17 |
-| 16. Persistence & Observability | v3.0 | 1/6 | Complete    | 2026-03-17 |
-| 17. Scheduling Intelligence | v3.0 | 0/TBD | Not planned | — |
+| 16. Persistence & Observability | v3.0 | 6/6 | Complete    | 2026-03-17 |
+| 17. Scheduling Intelligence | v3.0 | 2/TBD | Planning | — |
 
 ---
 
-*Roadmap updated: 2026-03-17 after Phase 16 Plan 01 completion (Wave 0 infrastructure scaffolding)*
+*Roadmap updated: 2026-03-17 after Phase 17 planning*
