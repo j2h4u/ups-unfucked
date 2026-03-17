@@ -102,47 +102,52 @@ class TestComputeSulfationScore:
 class TestEstimateRecoveryDelta:
     """Test estimate_recovery_delta() function.
 
-    Note: estimate_recovery_delta measures the SoH drop after discharge.
-    Good desulfation means the battery drops LESS than expected (soh_drop < expected_drop).
-    Poor desulfation means the battery drops MORE than expected (wear > recovery).
+    The recovery_delta metric captures SoH change post-discharge:
+    - Positive change (improvement) → strong desulfation signal → delta near 1.0
+    - Expected drop (1%) → neutral recovery → delta = 0.5
+    - Larger drop → poor recovery → delta < 0.5
+    - No change → unclear signal → delta = 0.0
     """
 
-    def test_recovery_delta_good_desulfation(self):
-        """SoH drops LESS than expected → good desulfation signal (better recovery)."""
-        # SoH drops 0.5% (0.95→0.945), but expected drop is 1%
-        # So actual_drop (0.005) < expected_drop (0.01)
-        # recovery = 0.005 - 0.01 = -0.005, clamped to 0.0
-        # This test case shows recovery where soh_drop < expected means good
-        # So let's use: before=0.96, after=0.95 → drop=0.01, but what matters is comparison
-        # Actually, based on docstring: delta = (drop - expected) / expected
-        # If drop > expected: recovery < 0 (clamped to 0) = poor desulfation
-        # If drop == expected: recovery = 0 = neutral
-        # If drop < expected: recovery < 0 (clamped to 0) = also clamped
-        # Wait, re-reading: "If SoH recovers by >0.5% during recharge (vs 1% drop)"
-        # This means: drop=1%, recovery=1.5%, so net = 0% loss? That's confusing.
-        # Let me check the example: "SoH 0.95→0.94 (1% drop) then 0.94→0.95 (1% recovery)"
-        # Oh! The function takes soh_AFTER_discharge, not after recovery. So:
-        # soh_before_discharge = 0.95, soh_after_discharge = 0.94 → drop = 0.01
-        # If it then recovers to 0.95, that would be a different call
-        # For good desulfation, we want lower drop than expected after a full cycle
-        # Let's test: discharge causes small drop only
+    def test_recovery_delta_excellent_improvement(self):
+        """SoH improves post-discharge → excellent desulfation signal."""
+        # SoH improves by 1% (0.95→0.96)
+        # delta = min(1.0, 0.01 / 0.01) = 1.0
         soh_before = 0.95
-        soh_after = 0.945  # Only 0.5% drop (better than expected 1%)
+        soh_after = 0.96
 
         delta = estimate_recovery_delta(
             soh_before_discharge=soh_before,
             soh_after_discharge=soh_after,
         )
 
-        # drop = 0.005, expected = 0.01, recovery = (0.005 - 0.01) / 0.01 = -0.5 → clamped to 0.0
-        # So good desulfation (small drop) gives delta = 0.0
-        # That's not > 0.5, so let's expect what we get
+        assert delta > 0.5, f"Expected delta > 0.5 for improvement, got {delta:.3f}"
         assert 0.0 <= delta <= 1.0, f"Delta must be in [0.0, 1.0], got {delta:.3f}"
 
-    def test_recovery_delta_poor_desulfation(self):
-        """SoH drops MORE than expected → poor desulfation signal (wear > recovery)."""
-        # SoH drops 2% (0.95→0.93), but expected is 1%
-        # recovery = (0.02 - 0.01) / 0.01 = 1.0
+    def test_recovery_delta_moderate_drop(self):
+        """SoH drops 0.5% (half of expected 1%) → good recovery, less wear."""
+        # SoH drops 0.5% (0.95→0.945)
+        # soh_drop = 0.005, expected = 0.01
+        # ratio = 0.005 / 0.01 = 0.5
+        # recovery_score = max(0.0, 1.0 - (0.5 - 1.0)) = max(0.0, 1.0 - (-0.5)) = 1.5 → clamped to 1.0
+        soh_before = 0.95
+        soh_after = 0.945
+
+        delta = estimate_recovery_delta(
+            soh_before_discharge=soh_before,
+            soh_after_discharge=soh_after,
+        )
+
+        # Less drop than expected = better recovery
+        assert delta > 0.5, f"Expected delta > 0.5 for moderate drop, got {delta:.3f}"
+        assert 0.0 <= delta <= 1.0, f"Delta must be in [0.0, 1.0], got {delta:.3f}"
+
+    def test_recovery_delta_poor_large_drop(self):
+        """SoH drops more than expected → poor recovery, high sulfation."""
+        # SoH drops 2% (0.95→0.93) vs expected 1%
+        # soh_drop = 0.02, expected = 0.01
+        # soh_drop / expected - 1.0 = 2.0 - 1.0 = 1.0
+        # recovery_score = max(0.0, 1.0 - 1.0) = 0.0
         soh_before = 0.95
         soh_after = 0.93
 
@@ -151,18 +156,18 @@ class TestEstimateRecoveryDelta:
             soh_after_discharge=soh_after,
         )
 
-        # drop = 0.02, expected = 0.01, recovery = (0.02 - 0.01) / 0.01 = 1.0
-        assert delta > 0.5, f"Expected delta > 0.5 for large drop (poor desulfation), got {delta:.3f}"
+        # Based on docstring: "SoH 0.95→0.93 (2% drop) → delta = 0.0"
+        assert delta < 0.3, f"Expected delta < 0.3 for large drop, got {delta:.3f}"
         assert 0.0 <= delta <= 1.0, f"Delta must be in [0.0, 1.0], got {delta:.3f}"
 
-    def test_recovery_delta_no_drop_no_recovery(self):
-        """No SoH change (soh_after > soh_before) → unclear signal, returns 0.0."""
+    def test_recovery_delta_no_change(self):
+        """No SoH change → unclear signal, returns 0.0."""
         soh_before = 0.95
-        soh_after = 0.96  # SoH increased, drop <= 0
+        soh_after = 0.95  # No change
 
         delta = estimate_recovery_delta(
             soh_before_discharge=soh_before,
             soh_after_discharge=soh_after,
         )
 
-        assert delta == 0.0, f"Expected delta == 0.0 for no drop, got {delta:.3f}"
+        assert delta == 0.0, f"Expected delta == 0.0 for no change, got {delta:.3f}"
