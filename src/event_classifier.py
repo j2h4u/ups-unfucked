@@ -43,6 +43,10 @@ class EventClassifier:
         # "OB LB DISCHRG", "OB DISCHRG", "CAL DISCHRG" all contain OB or CAL
         flags = ups_status.split()
 
+        # F38: Unhandled NUT statuses (FSD, BYPASS, OFF, TRIM, BOOST) fall through
+        # to category=None → "unknown → keep state". YAGNI for CyberPower UT850EG
+        # which only produces OL, OL CHRG, OB DISCHRG, OB LB DISCHRG, CAL DISCHRG.
+        # Future UPS models with AVR (TRIM/BOOST) or bypass mode may need expansion.
         if "OB" in flags or "CAL" in flags:
             category = "battery"
         elif "OL" in flags:
