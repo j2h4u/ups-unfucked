@@ -65,25 +65,29 @@ def compute_cycle_roi(
         if benefit + cost < 0.001: return 0.0 (neither significant)
         roi = (benefit - cost) / (benefit + cost) → saturates to [-1, +1]
 
+    Note: The ROI formula uses a linear model. In practice, benefit from
+    desulfation is high when sulfation_score is high AND cycles are abundant.
+    Cost is high when both DoD is deep AND few cycles remain. The (b-c)/(b+c)
+    normalization ensures -1 ≤ ROI ≤ +1 and breaks even at 0.
+
     Source: Cycle life curves (IEEE-450), desulfation physics (Shepherd model),
     risk assessment (safety gates for v3.0).
     """
-    # Desulfation benefit: higher when sulfation is severe or IR drifting
-    # Sulfation contributes 70% of benefit signal; IR trend contributes 30%
+    # Desulfation benefit: sulfation dominates (70%), IR signal secondary (30%)
+    # Based on research: sulfation_score * 0.7 + IR_trend_normalized * 0.3
     desulfation_benefit = min(
         1.0,
-        (sulfation_score * 0.7) +  # Sulfation severity (0–70% of score)
-        (min(ir_trend_rate, 0.1) / 0.1 * 0.3)  # IR drift (0–30%)
+        (sulfation_score * 0.7) +  # Sulfation severity (0–70%)
+        (min(ir_trend_rate, 0.1) / 0.1 * 0.3)  # IR drift normalized to [0–30%]
     )
 
-    # Wear cost: higher when doing deep DoD repeatedly or few cycles remain
-    # DoD contributes 50% of cost; cycle budget contributes 50%
-    # Normalize cycle_budget_remaining to [0, 1]: assume 100 cycles = full budget
+    # Wear cost: DoD and cycle depletion equally weighted (50/50)
+    # Based on research: DoD * 0.5 + cycle_depletion * 0.5
     cycle_depletion = max(0.0, 1.0 - cycle_budget_remaining / 100.0)
     wear_cost = min(
         1.0,
-        (depth_of_discharge * 0.5) +  # Deep DoD costs (0–50%)
-        (cycle_depletion * 0.5)  # Few cycles left (0–50%)
+        (depth_of_discharge * 0.5) +  # Deep DoD aging (0–50%)
+        (cycle_depletion * 0.5)  # Cycle budget depletion (0–50%)
     )
 
     # Normalize: ROI = (benefit - cost) / (benefit + cost)

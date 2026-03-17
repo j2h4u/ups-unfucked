@@ -126,27 +126,41 @@ def estimate_recovery_delta(
     Physics:
         Healthy battery drops SoH by ~1% during a full discharge cycle
         due to normal cycle wear (internal corrosion, grid growth).
-        If SoH recovers by >0.5% post-recharge (vs 1% drop), sulfation reversed.
+        If battery improves post-discharge, desulfation is active.
+        If battery drops more than expected, sulfation is blocking recovery.
 
     Examples:
-        SoH 0.95→0.94 (1% drop) then 0.94→0.95 (1% recovery) → delta ≈ 0.1
-        SoH 0.95→0.93 (2% drop, wear > recovery) → delta ≈ -0.1 (clamped to 0.0)
-        SoH 0.95→0.96 (recovery without drop) → delta = 0.0 (unclear signal)
+        SoH 0.95→0.96 (improvement) → delta = 1.0 (excellent desulfation)
+        SoH 0.95→0.94 (1% drop as expected) → delta = 0.5 (neutral)
+        SoH 0.95→0.93 (2% drop) → delta = 0.0 (poor recovery, high sulfation)
+        SoH 0.95→0.95 (no change) → delta = 0.0 (unclear signal)
 
     Reasoning:
-        If discharge causes more drop than expected (sulfation blocking recovery),
-        or if SoH stays flat post-discharge (poor charge acceptance),
-        recovery_delta will be low (<0.05), signaling high sulfation.
-        Good desulfation reverses some of the impedance, allowing recovery.
+        The metric captures recovery quality relative to expected behavior.
+        Strong desulfation enables recovery (soh_after > soh_before) → delta near 1.0.
+        Normal wear (soh_drop = expected) → delta = 0.5 (neutral).
+        Poor recovery (larger drop than expected) → delta near 0.0.
+        No observable change indicates measurement noise.
     """
-    soh_drop = soh_before_discharge - soh_after_discharge
+    # Change in SoH: positive = improvement, negative = degradation
+    soh_change = soh_after_discharge - soh_before_discharge
 
-    if soh_drop <= 0:
-        # No drop detected; unclear signal (noise or recovery without discharge)
+    if soh_change > 0:
+        # SoH improved after discharge (strong desulfation signal)
+        # Scale improvement relative to expected drop: 1% improvement = delta 1.0
+        return min(1.0, soh_change / expected_soh_drop)
+
+    # SoH decreased (degradation)
+    soh_drop = -soh_change
+
+    if soh_drop == 0:
+        # No change; unclear signal
         return 0.0
 
-    # Recovery fraction: actual recovery vs expected recovery for healthy battery
-    # If drop = 1% expected and actual recovery = 1%, delta = 0.0 (neutral)
-    # If drop = 2% actual but expected = 1%, sulfation blocked recovery → delta < 0
-    recovery = soh_drop - expected_soh_drop
-    return max(0.0, min(1.0, recovery / expected_soh_drop))
+    # Dropped more than expected → poor recovery (high sulfation)
+    # Map: 0% drop → delta=1.0, expected drop → delta=0.5, 2x expected → delta=0.0
+    # Formula: delta = max(0, 1 - (actual_drop / expected_drop) / 2)
+    # This gives: actual_drop/expected=1 → 1 - 0.5 = 0.5 (neutral)
+    ratio = soh_drop / expected_soh_drop
+    recovery_score = max(0.0, 1.0 - ratio / 2.0)
+    return min(1.0, recovery_score)
