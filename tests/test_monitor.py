@@ -549,7 +549,7 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
         times=[0, 100, 200, 300],
     )
 
-    with patch('src.monitor.calibrate_peukert') as mock_calibrate:
+    with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
         mock_calibrate.return_value = 1.18  # Valid non-clamped result
         daemon._auto_calibrate_peukert(current_soh=0.95)
         # Should trigger RLS update and set_peukert_exponent
@@ -647,9 +647,9 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
     daemon._discharge_predicted_runtime = None
 
     # Pre-setup: Mock soh_calculator and other dependencies to avoid complex physics
-    with patch('src.monitor.soh_calculator.calculate_soh_from_discharge') as mock_soh_calc, \
-         patch('src.monitor.replacement_predictor.linear_regression_soh') as mock_replace, \
-         patch('src.monitor.runtime_minutes') as mock_runtime, \
+    with patch('src.discharge_handler.soh_calculator.calculate_soh_from_discharge') as mock_soh_calc, \
+         patch('src.discharge_handler.replacement_predictor.linear_regression_soh') as mock_replace, \
+         patch('src.discharge_handler.runtime_minutes') as mock_runtime, \
          patch('src.monitor.interpolate_cliff_region') as mock_interp:
         mock_soh_calc.return_value = (0.95, 7.2)  # Assume 95% SoH after discharge, using rated capacity
         mock_replace.return_value = None  # No replacement prediction
@@ -838,10 +838,10 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
 def test_write_health_endpoint_creates_file(tmp_path, monkeypatch):
     """Verify health.json is created with correct structure."""
     from src.monitor import _write_health_endpoint
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     _write_health_endpoint(soc_percent=87.5, is_online=True)
 
@@ -863,10 +863,10 @@ def test_health_endpoint_timestamp_format(tmp_path, monkeypatch):
     """Verify last_poll is ISO8601 UTC format."""
     from src.monitor import _write_health_endpoint
     from datetime import datetime
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     _write_health_endpoint(soc_percent=50.0, is_online=False)
 
@@ -885,10 +885,10 @@ def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
     from src.monitor import _write_health_endpoint
     import time
     import json
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     before = int(time.time())
     _write_health_endpoint(soc_percent=75.0, is_online=True)
@@ -906,10 +906,10 @@ def test_health_endpoint_soc_precision(tmp_path, monkeypatch):
     """Verify SoC rounded to 1 decimal place."""
     from src.monitor import _write_health_endpoint
     import json
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     _write_health_endpoint(soc_percent=87.5432, is_online=True)
 
@@ -923,10 +923,10 @@ def test_health_endpoint_online_status(tmp_path, monkeypatch):
     """Verify online status reflects UPS state."""
     from src.monitor import _write_health_endpoint
     import json
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # Test OL state
     _write_health_endpoint(soc_percent=100.0, is_online=True)
@@ -946,10 +946,10 @@ def test_health_endpoint_version(tmp_path, monkeypatch):
     from src.monitor import _write_health_endpoint
     from unittest.mock import patch
     import json
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # Mock importlib.metadata.version to return "1.1"
     with patch('importlib.metadata.version', return_value='1.1'):
@@ -966,10 +966,10 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     from src.monitor import _write_health_endpoint
     import time
     import json
-    import src.monitor
+    import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # First write
     _write_health_endpoint(soc_percent=100.0, is_online=True)
@@ -1376,7 +1376,7 @@ class TestCapacityEstimatorIntegration:
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
-        metadata = {'delta_soc_percent': 50.0, 'duration_sec': 900, 'ir_mohms': 45.2, 'load_avg_percent': 32.5}
+        metadata = {'delta_soc_percent': 50.0, 'duration_sec': 900, 'discharge_slope_mohm': 45.2, 'load_avg_percent': 32.5}
         daemon.capacity_estimator.estimate.return_value = (7.45, 0.85, metadata)
 
         daemon._handle_discharge_complete(discharge_data)
@@ -1459,7 +1459,7 @@ class TestCapacityEstimatorIntegration:
         metadata = {
             'delta_soc_percent': 52.0,
             'duration_sec': 800,
-            'ir_mohms': 45.2,
+            'discharge_slope_mohm': 45.2,
             'load_avg_percent': 28.5
         }
 
@@ -1681,7 +1681,7 @@ def test_journald_capacity_event_logged(make_daemon):
     ]
 
     # Capture logger calls
-    with patch('src.monitor.logger') as mock_logger:
+    with patch('src.discharge_handler.logger') as mock_logger:
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
             'time_series': [0, 300, 600, 900],
@@ -1756,7 +1756,7 @@ def test_journald_baseline_lock_event(make_daemon):
     ]
 
     # Capture logger calls
-    with patch('src.monitor.logger') as mock_logger:
+    with patch('src.discharge_handler.logger') as mock_logger:
         # First discharge (triggers baseline_lock)
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
@@ -1795,10 +1795,10 @@ def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
     """
     import json
     from src.monitor import _write_health_endpoint
-    import src.monitor
+    import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', test_health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
     _write_health_endpoint(
         soc_percent=87.5,
@@ -1845,10 +1845,10 @@ def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
     """
     import json
     from src.monitor import _write_health_endpoint
-    import src.monitor
+    import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', test_health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
     # Case A: Not converged (0 samples, no convergence)
     _write_health_endpoint(
@@ -1886,10 +1886,10 @@ def test_health_endpoint_null_capacity_measured(tmp_path, monkeypatch):
     """
     import json
     from src.monitor import _write_health_endpoint
-    import src.monitor
+    import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor, 'HEALTH_ENDPOINT_PATH', test_health_path)
+    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
     _write_health_endpoint(
         soc_percent=75.0,
