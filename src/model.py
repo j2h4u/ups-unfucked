@@ -123,6 +123,15 @@ class BatteryModel:
         self.data.setdefault('roi_history', [])
         self.data.setdefault('natural_blackout_events', [])
 
+        # Initialize Phase 17 scheduling state fields for backward compatibility
+        self.data.setdefault('last_upscmd_timestamp', None)
+        self.data.setdefault('last_upscmd_type', None)
+        self.data.setdefault('last_upscmd_status', None)
+        self.data.setdefault('scheduled_test_timestamp', None)
+        self.data.setdefault('scheduled_test_reason', None)
+        self.data.setdefault('test_block_reason', None)
+        self.data.setdefault('blackout_credit', None)
+
     def _default_vrla_lut(self) -> Dict[str, Any]:
         """
         Standard VRLA 12V discharge curve (7.2Ah reference capacity).
@@ -629,4 +638,70 @@ class BatteryModel:
         except Exception as e:
             logger.error(f"Failed to update LUT from calibration: {e}")
             raise
+
+    # --- Phase 17 Scheduling State Management ---
+
+    def set_blackout_credit(self, credit_dict: dict) -> None:
+        """Grant blackout credit after natural deep discharge.
+
+        Args:
+            credit_dict: {
+                'active': bool,
+                'credited_event_timestamp': str (ISO8601),
+                'credit_expires': str (ISO8601),
+                'desulfation_credit': float (0.0–1.0)
+            }
+        """
+        self.data['blackout_credit'] = credit_dict
+        logger.debug(f"Blackout credit set: expires {credit_dict.get('credit_expires')}")
+
+    def clear_blackout_credit(self) -> None:
+        """Expire or clear blackout credit."""
+        if self.data.get('blackout_credit'):
+            self.data['blackout_credit']['active'] = False
+            logger.debug("Blackout credit cleared")
+
+    def update_scheduling_state(
+        self,
+        scheduled_timestamp: Optional[str],
+        reason: str,
+        block_reason: Optional[str] = None
+    ) -> None:
+        """Update scheduled test info and block reason.
+
+        Args:
+            scheduled_timestamp: ISO8601 timestamp of next proposed/eligible test
+            reason: reason_code from SchedulerDecision (e.g., 'sulfation_0.65_roi_0.34')
+            block_reason: If test is blocked, reason code (e.g., 'soh_floor_55%'), else None
+        """
+        self.data['scheduled_test_timestamp'] = scheduled_timestamp
+        self.data['scheduled_test_reason'] = reason
+        self.data['test_block_reason'] = block_reason
+        logger.debug(f"Scheduling state updated: reason={reason}, blocked={block_reason}")
+
+    def update_upscmd_result(
+        self,
+        upscmd_timestamp: str,
+        upscmd_type: str,
+        upscmd_status: str
+    ) -> None:
+        """Update last upscmd result (called after successful dispatch or error).
+
+        Args:
+            upscmd_timestamp: ISO8601 timestamp of upscmd attempt
+            upscmd_type: Command sent, e.g., 'test.battery.start.deep' or 'test.battery.start.quick'
+            upscmd_status: 'OK' or error message
+        """
+        self.data['last_upscmd_timestamp'] = upscmd_timestamp
+        self.data['last_upscmd_type'] = upscmd_type
+        self.data['last_upscmd_status'] = upscmd_status
+        logger.debug(f"Upscmd result updated: type={upscmd_type}, status={upscmd_status}")
+
+    def get_last_upscmd_timestamp(self) -> Optional[str]:
+        """Get ISO8601 timestamp of last upscmd attempt, or None."""
+        return self.data.get('last_upscmd_timestamp')
+
+    def get_blackout_credit(self) -> Optional[dict]:
+        """Get current blackout credit dict, or None if inactive/expired."""
+        return self.data.get('blackout_credit')
 

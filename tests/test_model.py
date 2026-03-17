@@ -945,3 +945,154 @@ class TestSoHHistoryVersioning:
         assert 'capacity_ah_ref' not in history[0]  # Old entry
         assert history[1]['capacity_ah_ref'] == 6.8
         assert history[2]['capacity_ah_ref'] == 6.9
+
+
+class TestPhase17SchedulingSchema:
+    """Phase 17 scheduling state schema backward compatibility tests."""
+
+    def test_phase17_schema_fields_initialized(self, temporary_model_path):
+        """Phase 17 fields initialized to None on new model creation."""
+        model = BatteryModel(temporary_model_path)
+        assert model.data.get('last_upscmd_timestamp') is None
+        assert model.data.get('last_upscmd_type') is None
+        assert model.data.get('last_upscmd_status') is None
+        assert model.data.get('scheduled_test_timestamp') is None
+        assert model.data.get('scheduled_test_reason') is None
+        assert model.data.get('test_block_reason') is None
+        assert model.data.get('blackout_credit') is None
+
+    def test_phase17_fields_persist_after_save(self, temporary_model_path):
+        """Phase 17 fields persist correctly through save/reload cycle."""
+        model = BatteryModel(temporary_model_path)
+
+        # Set Phase 17 fields
+        model.data['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
+        model.data['last_upscmd_type'] = 'test.battery.start.deep'
+        model.data['last_upscmd_status'] = 'OK'
+        model.save()
+
+        # Reload and verify
+        model2 = BatteryModel(temporary_model_path)
+        assert model2.data.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
+        assert model2.data.get('last_upscmd_type') == 'test.battery.start.deep'
+        assert model2.data.get('last_upscmd_status') == 'OK'
+
+    def test_set_blackout_credit_method(self, temporary_model_path):
+        """set_blackout_credit() sets credit dict correctly."""
+        model = BatteryModel(temporary_model_path)
+        credit = {
+            'active': True,
+            'credited_event_timestamp': '2026-03-16T15:30:00Z',
+            'credit_expires': '2026-03-23T15:30:00Z',
+            'desulfation_credit': 0.18,
+        }
+        model.set_blackout_credit(credit)
+        assert model.data['blackout_credit'] == credit
+        assert model.get_blackout_credit() == credit
+
+    def test_clear_blackout_credit_method(self, temporary_model_path):
+        """clear_blackout_credit() sets active=False."""
+        model = BatteryModel(temporary_model_path)
+        credit = {
+            'active': True,
+            'credited_event_timestamp': '2026-03-16T15:30:00Z',
+            'credit_expires': '2026-03-23T15:30:00Z',
+        }
+        model.set_blackout_credit(credit)
+        model.clear_blackout_credit()
+        assert model.data['blackout_credit']['active'] is False
+
+    def test_update_scheduling_state_method(self, temporary_model_path):
+        """update_scheduling_state() updates scheduled test info."""
+        model = BatteryModel(temporary_model_path)
+        model.update_scheduling_state(
+            scheduled_timestamp='2026-03-24T08:00:00Z',
+            reason='sulfation_0.65_roi_0.34',
+            block_reason=None,
+        )
+        assert model.data['scheduled_test_timestamp'] == '2026-03-24T08:00:00Z'
+        assert model.data['scheduled_test_reason'] == 'sulfation_0.65_roi_0.34'
+        assert model.data['test_block_reason'] is None
+
+    def test_update_upscmd_result_method(self, temporary_model_path):
+        """update_upscmd_result() updates last command info."""
+        model = BatteryModel(temporary_model_path)
+        model.update_upscmd_result(
+            upscmd_timestamp='2026-03-17T10:30:00Z',
+            upscmd_type='test.battery.start.deep',
+            upscmd_status='OK',
+        )
+        assert model.data['last_upscmd_timestamp'] == '2026-03-17T10:30:00Z'
+        assert model.data['last_upscmd_type'] == 'test.battery.start.deep'
+        assert model.data['last_upscmd_status'] == 'OK'
+
+    def test_phase16_model_loads_with_phase17_code(self, temporary_model_path):
+        """Phase 16 model.json (no Phase 17 fields) loads correctly with Phase 17 code."""
+        import json
+        # Create Phase 16-style model.json (no Phase 17 fields)
+        phase16_data = {
+            'full_capacity_ah_ref': 7.2,
+            'soh': 0.95,
+            'physics': {},
+            'lut': [
+                {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
+                {'v': 10.5, 'soc': 0.0, 'source': 'anchor'},
+            ],
+            'soh_history': [],
+            'sulfation_history': [],
+            'discharge_events': [],
+        }
+        with open(temporary_model_path, 'w') as f:
+            json.dump(phase16_data, f)
+
+        # Load with Phase 17 code
+        model = BatteryModel(temporary_model_path)
+
+        # Verify Phase 17 fields are initialized
+        assert model.data.get('last_upscmd_timestamp') is None
+        assert model.data.get('blackout_credit') is None
+        assert model.get_soh() == 0.95  # Phase 16 data still intact
+
+    def test_phase17_fields_not_stripped_on_save(self, temporary_model_path):
+        """model.save() preserves Phase 17 fields (forward compatibility)."""
+        model = BatteryModel(temporary_model_path)
+
+        # Set Phase 17 fields
+        model.data['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
+        model.data['blackout_credit'] = {
+            'active': True,
+            'credit_expires': '2026-03-24T00:00:00Z',
+        }
+
+        # Save and reload
+        model.save()
+        model2 = BatteryModel(temporary_model_path)
+
+        # Verify fields persist
+        assert model2.data.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
+        assert model2.data.get('blackout_credit')['active'] is True
+
+    def test_get_last_upscmd_timestamp_method(self, temporary_model_path):
+        """get_last_upscmd_timestamp() returns correct value or None."""
+        model = BatteryModel(temporary_model_path)
+        assert model.get_last_upscmd_timestamp() is None
+
+        model.update_upscmd_result(
+            upscmd_timestamp='2026-03-17T10:30:00Z',
+            upscmd_type='test.battery.start.quick',
+            upscmd_status='OK',
+        )
+        assert model.get_last_upscmd_timestamp() == '2026-03-17T10:30:00Z'
+
+    def test_get_blackout_credit_method(self, temporary_model_path):
+        """get_blackout_credit() returns credit dict or None."""
+        model = BatteryModel(temporary_model_path)
+        assert model.get_blackout_credit() is None
+
+        credit = {
+            'active': True,
+            'credit_expires': '2026-03-24T00:00:00Z',
+        }
+        model.set_blackout_credit(credit)
+        assert model.get_blackout_credit() == credit
+
