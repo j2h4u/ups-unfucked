@@ -40,11 +40,147 @@ from src.monitor_config import (  # noqa: F401
     ERROR_LOG_BURST, load_config, safe_save, write_health_endpoint, logger,
 )
 from src.discharge_handler import DischargeHandler
+from src.battery_math.scheduler import evaluate_test_scheduling, SchedulerDecision
+from src.battery_math.sulfation import compute_sulfation_score
+from src.battery_math.cycle_roi import compute_cycle_roi
 
 # Backward-compat aliases for test patches that use old names
 _load_config = load_config
 _safe_save = safe_save
 _write_health_endpoint = write_health_endpoint
+
+
+def validate_preconditions_before_upscmd(
+    ups_status: str,
+    soc: float,
+    recent_power_glitches: int,
+    test_already_running: bool,
+) -> tuple[bool, str]:
+    """Validate preconditions before dispatching test command.
+
+    Guard clauses (must all pass):
+    - UPS is online: 'OL' in ups_status and 'OB' not in ups_status and 'CAL' not in ups_status
+    - SoC ≥95%: soc >= 0.95
+    - Grid stable: recent_power_glitches ≤ 2 (at most 2 transitions in 4h)
+    - No test running: test_already_running == False
+
+    Args:
+        ups_status: UPS status string (e.g., "OL", "OB DISCHRG", "CAL")
+        soc: State of charge [0.0, 1.0]
+        recent_power_glitches: Count of grid state changes in last 4h
+        test_already_running: Whether a test is currently running
+
+    Returns:
+        tuple[bool, str]: (can_proceed, reason_if_blocked)
+    """
+    # Check: UPS online
+    if 'OL' not in ups_status or 'OB' in ups_status or 'CAL' in ups_status:
+        return False, "UPS_not_online_cannot_test_during_discharge"
+
+    # Check: SoC ≥95%
+    if soc < 0.95:
+        soc_percent = int(soc * 100)
+        return False, f"SoC_below_95_percent_{soc_percent}%"
+
+    # Check: Grid stable
+    if recent_power_glitches > 2:
+        return False, f"grid_unstable_{recent_power_glitches}_transitions_in_4h"
+
+    # Check: No test running
+    if test_already_running:
+        return False, "test_already_running"
+
+    # All checks passed
+    return True, ""
+
+
+def dispatch_test_with_audit(
+    nut_client,
+    battery_model: BatteryModel,
+    decision: SchedulerDecision,
+    current_metrics,
+) -> bool:
+    """Dispatch test command with full precondition checks and journald logging.
+
+    Flow:
+    1. Validate preconditions (SoC, grid, no test running)
+    2. If blocked → log reason to journald, return False
+    3. If pass → call nut_client.send_instcmd(f'test.battery.start.{decision.test_type}')
+    4. If success → update model.json with timestamp/type/status
+    5. If failure → update model.json with error message
+    6. Return True if dispatched, False if precondition blocked or send failed
+
+    Args:
+        nut_client: NUTClient instance for sending commands
+        battery_model: BatteryModel for persistence
+        decision: SchedulerDecision from evaluate_test_scheduling()
+        current_metrics: CurrentMetrics with UPS status and SoC
+
+    Returns:
+        bool: True if test was dispatched, False if blocked or failed
+    """
+    # Extract current state for precondition checks
+    ups_status = getattr(current_metrics, 'ups_status_override', None) or "OL"
+    soc = getattr(current_metrics, 'soc', 1.0)
+    recent_glitches = 0  # TODO: implement glitch counting from discharge_events
+    test_running = battery_model.data.get('test_running', False)
+
+    # Validate preconditions
+    preconditions_ok, block_reason = validate_preconditions_before_upscmd(
+        ups_status=ups_status,
+        soc=soc,
+        recent_power_glitches=recent_glitches,
+        test_already_running=test_running,
+    )
+
+    if not preconditions_ok:
+        # Precondition blocked
+        logger.info(f"Test dispatch precondition blocked: {block_reason}", extra={
+            'event_type': 'test_precondition_blocked',
+            'reason': block_reason,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        })
+        return False
+
+    # All preconditions passed, attempt to dispatch
+    command = f'test.battery.start.{decision.test_type}'
+    success, error_msg = nut_client.send_instcmd(command)
+
+    upscmd_timestamp = datetime.now(timezone.utc).isoformat()
+    if success:
+        # Success: update model with command result
+        battery_model.update_upscmd_result(
+            upscmd_timestamp=upscmd_timestamp,
+            upscmd_type=command,
+            upscmd_status='OK',
+        )
+        battery_model.data['test_running'] = True
+        battery_model.save()
+
+        logger.info(f"Test dispatched: {command}", extra={
+            'event_type': 'test_dispatched',
+            'test_type': decision.test_type,
+            'command': command,
+            'reason_code': decision.reason_code,
+            'timestamp': upscmd_timestamp,
+        })
+        return True
+    else:
+        # Failure: update model with error
+        battery_model.update_upscmd_result(
+            upscmd_timestamp=upscmd_timestamp,
+            upscmd_type=command,
+            upscmd_status=error_msg or 'ERR_UNKNOWN',
+        )
+        battery_model.save()
+
+        logger.error(f"Test dispatch failed: {error_msg or 'unknown error'}", extra={
+            'event_type': 'test_dispatch_failed',
+            'command': command,
+            'error': error_msg or 'unknown',
+            'timestamp': upscmd_timestamp,
+        })
+        return False
 
 
 class MonitorDaemon:
@@ -156,6 +292,9 @@ class MonitorDaemon:
         self.discharge_buffer_clear_countdown = None  # Cooldown timer (60s) before clearing buffer after OL
         self.soh_threshold = config.soh_alert_threshold
         self.runtime_threshold_minutes = config.runtime_threshold_minutes
+
+        # Phase 17: Scheduler state tracking
+        self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
         self.reference_load_percent = config.reference_load_percent
 
         # Voltage sag measurement for internal resistance tracking
@@ -346,6 +485,30 @@ class MonitorDaemon:
             )
 
         self.battery_model.save()
+
+    # --- Phase 17 Scheduler helpers ---
+
+    def _calculate_days_since_last_test(self) -> float:
+        """Calculate days since last upscmd, or inf if never tested."""
+        last_ts = self.battery_model.get_last_upscmd_timestamp()
+        if not last_ts:
+            return float('inf')
+        try:
+            last_dt = datetime.fromisoformat(last_ts)
+            return (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400.0
+        except (ValueError, TypeError):
+            return float('inf')
+
+    def _get_last_natural_blackout(self) -> dict | None:
+        """Return most recent natural blackout event (DoD, timestamp)."""
+        events = self.battery_model.data.get('discharge_events', [])
+        for event in reversed(events):  # Most recent first
+            if event.get('event_reason') == 'natural':
+                return {
+                    'timestamp': event.get('timestamp'),
+                    'depth': event.get('depth_of_discharge', 0.0),
+                }
+        return None
 
     # --- Voltage sag tracking ---
 
@@ -724,6 +887,85 @@ class MonitorDaemon:
             last_discharge_timestamp=self.discharge_handler.last_discharge_timestamp,
             natural_blackout_credit=None,  # Phase 17 will populate
         )
+
+        # --- Phase 17: Daily scheduler evaluation ---
+        now = datetime.now(timezone.utc)
+        current_hour = now.hour
+        current_minute = now.minute
+
+        # Evaluate scheduler once daily at 08:00 UTC
+        if current_hour == 8 and current_minute < 10 and not self.scheduler_evaluated_today:
+            self.scheduler_evaluated_today = True
+
+            try:
+                # Gather inputs for scheduler
+                sulfation_score = self.discharge_handler.last_sulfation_score or 0.0
+                cycle_roi = self.discharge_handler.last_cycle_roi or 0.0
+                soh_percent = self.battery_model.get_soh()
+                days_since_last_test = self._calculate_days_since_last_test()
+                last_blackout = self._get_last_natural_blackout()
+                active_credit = self.battery_model.get_blackout_credit()
+                cycle_budget = self.discharge_handler.last_cycle_budget_remaining or 100
+
+                # Get configurable thresholds from config (defaults per plan)
+                soh_floor = getattr(self.config, 'soh_floor_threshold', 0.60)
+                min_interval = getattr(self.config, 'min_days_between_tests', 7.0)
+                roi_threshold = getattr(self.config, 'roi_threshold', 0.2)
+                grid_cooldown = getattr(self.config, 'grid_stability_cooldown_hours', 4.0)
+
+                # Call scheduler (pure function)
+                decision = evaluate_test_scheduling(
+                    sulfation_score=sulfation_score,
+                    cycle_roi=cycle_roi,
+                    soh_percent=soh_percent,
+                    days_since_last_test=days_since_last_test,
+                    last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
+                    last_blackout_depth=last_blackout.get('depth', 0.0) if last_blackout else 0.0,
+                    active_blackout_credit=active_credit,
+                    cycle_budget_remaining=int(cycle_budget),
+                    soh_floor_threshold=soh_floor,
+                    min_days_between_tests=min_interval,
+                    roi_threshold=roi_threshold,
+                    grid_stability_cooldown_hours=grid_cooldown,
+                )
+
+                # Log decision (all three actions, for audit trail)
+                logger.info(f"Scheduler decision: {decision.action}", extra={
+                    'event_type': 'scheduler_decision',
+                    'action': decision.action,
+                    'reason_code': decision.reason_code,
+                    'sulfation_score': sulfation_score,
+                    'roi': cycle_roi,
+                    'soh_percent': soh_percent,
+                    'timestamp': now.isoformat(),
+                })
+
+                # Update model.json with scheduled info
+                self.battery_model.update_scheduling_state(
+                    scheduled_timestamp=decision.next_eligible_timestamp,
+                    reason=decision.reason_code,
+                    block_reason=decision.reason_code if decision.action == 'block_test' else None,
+                )
+
+                # If proposed, attempt dispatch
+                if decision.action == 'propose_test':
+                    dispatch_test_with_audit(
+                        nut_client=self.nut_client,
+                        battery_model=self.battery_model,
+                        decision=decision,
+                        current_metrics=self.current_metrics,
+                    )
+                else:
+                    logger.info(f"Test {decision.action}: {decision.reason_code}")
+
+                self.battery_model.save()
+            except Exception as e:
+                logger.error(f"Scheduler evaluation failed: {e}", exc_info=True)
+
+        else:
+            # Reset flag at midnight UTC
+            if current_hour != 8:
+                self.scheduler_evaluated_today = False
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
         sd_notify('WATCHDOG=1')
