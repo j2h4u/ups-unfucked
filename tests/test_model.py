@@ -801,7 +801,7 @@ class TestCapacityEstimates:
             metadata={
                 'delta_soc_percent': 52.0,
                 'duration_sec': 1234,
-                'ir_mohms': 45.2,
+                'discharge_slope_mohm': 45.2,
                 'load_avg_percent': 35.0
             },
             timestamp='2026-03-15T12:34:56Z'

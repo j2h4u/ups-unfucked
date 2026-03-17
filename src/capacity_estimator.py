@@ -23,7 +23,7 @@ class CapacityEstimator:
     """
 
     def __init__(self, peukert_exponent: float = 1.2, nominal_voltage: float = 12.0,
-                 nominal_power_watts: float = 425.0):
+                 nominal_power_watts: float = 425.0, capacity_ah: float = 7.2):
         """
         Initialize CapacityEstimator.
 
@@ -31,10 +31,12 @@ class CapacityEstimator:
             peukert_exponent: Peukert exponent for voltage curve analysis (default 1.2, VAL-02 constraint).
             nominal_voltage: Battery nominal voltage (V).
             nominal_power_watts: UPS rated power (W).
+            capacity_ah: Rated battery capacity in Ah (default 7.2, F26).
         """
         self.peukert_exponent = peukert_exponent
         self.nominal_voltage = nominal_voltage
         self.nominal_power_watts = nominal_power_watts
+        self.capacity_ah = capacity_ah
         self.measurements: List[Tuple] = []  # [(timestamp, ah, confidence, metadata), ...]
 
     def estimate(
@@ -80,14 +82,14 @@ class CapacityEstimator:
         # Use coulomb as primary estimate
         ah_estimate = ah_coulomb
 
-        # Step 4: IR metadata (expert panel requirement)
-        ir_mohms = self._compute_ir(voltage_series, current_series)
+        # Step 4: Discharge slope metadata (expert panel requirement)
+        discharge_slope_mohm = self._compute_discharge_slope(voltage_series, current_series)
 
         # Step 5: Assemble metadata
         metadata = {
             'delta_soc_percent': delta_soc * 100,
             'duration_sec': time_series[-1] - time_series[0],
-            'ir_mohms': ir_mohms,
+            'discharge_slope_mohm': discharge_slope_mohm,
             'load_avg_percent': sum(current_series) / len(current_series) if current_series else 0,
             'coulomb_ah': ah_coulomb,
             'voltage_check_ah': ah_voltage
@@ -139,6 +141,11 @@ class CapacityEstimator:
             Ah = ∫I dt / 3600 (convert A·s to Ah)
 
         Uses trapezoidal rule for numerical integration (IEEE-1106 standard).
+
+        F27: Current computed from nominal voltage (12V), not actual battery voltage.
+        Ah overestimated ~4% (same bias as F14 in runtime_calculator). Systematic
+        and consistent — doesn't affect convergence because all measurements share
+        the same bias direction.
 
         Args:
             current_percent: Load percentages [0–100] at each time point.
@@ -223,8 +230,8 @@ class CapacityEstimator:
         # Use coulomb-estimated Ah to back-calculate what the voltage curve suggests
         # Actually, for safety, just return an estimate based on voltage drop alone
 
-        # Nominal capacity at nominal voltage
-        nominal_ah = 7.2
+        # F26: Use constructor param instead of hardcoded 7.2
+        nominal_ah = self.capacity_ah
 
         # Voltage-based estimate (very rough): proportional to depth-of-discharge
         # Avoid division by zero
@@ -236,21 +243,24 @@ class CapacityEstimator:
 
         return ah_voltage
 
-    def _compute_ir(self, voltage_series: List[float], current_percent: List[float]) -> float:
+    def _compute_discharge_slope(self, voltage_series: List[float], current_percent: List[float]) -> float:
         """
-        Compute internal resistance from voltage and current changes.
+        Compute discharge slope (ΔV_total / I_avg) as metadata for trending.
 
-        Formula:
-            IR = ΔV / I_avg (in Ohms, multiplied by 1000 for mΩ)
+        F25: Renamed from _compute_ir(). This computes the total voltage drop
+        divided by average current — a discharge slope metric (~352mΩ typical),
+        NOT actual internal resistance (~20mΩ, measured via voltage sag in
+        monitor.py _record_voltage_sag). The 17x difference is because this
+        includes electrochemical polarization, not just ohmic IR drop.
 
-        Expert panel requirement: foundation for v3.0 trending.
+        Metadata only — not used in any calculations.
 
         Args:
             voltage_series: Voltage readings (V).
             current_percent: Load percentages [0–100].
 
         Returns:
-            float: Internal resistance in mΩ.
+            float: Discharge slope in mΩ-equivalent units.
         """
         voltage_drop = voltage_series[0] - voltage_series[-1]
 
@@ -261,11 +271,11 @@ class CapacityEstimator:
         if current_avg_amps == 0:
             return 0.0
 
-        # IR in Ohms, then convert to mΩ
-        ir_ohms = voltage_drop / current_avg_amps
-        ir_mohms = ir_ohms * 1000
+        # Slope in Ohm-equivalent, then convert to mΩ
+        slope_ohms = voltage_drop / current_avg_amps
+        slope_mohms = slope_ohms * 1000
 
-        return ir_mohms
+        return slope_mohms
 
     def _compute_confidence(self) -> float:
         """

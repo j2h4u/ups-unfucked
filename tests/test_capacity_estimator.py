@@ -150,7 +150,7 @@ class TestMetadata:
         ah_estimate, confidence, metadata = result
 
         # Check metadata keys
-        required_keys = {'delta_soc_percent', 'duration_sec', 'ir_mohms', 'load_avg_percent',
+        required_keys = {'delta_soc_percent', 'duration_sec', 'discharge_slope_mohm', 'load_avg_percent',
                         'coulomb_ah', 'voltage_check_ah'}
         assert set(metadata.keys()) >= required_keys, \
             f"Metadata missing keys: {required_keys - set(metadata.keys())}"
@@ -158,7 +158,7 @@ class TestMetadata:
         # Check metadata types
         assert isinstance(metadata['delta_soc_percent'], (int, float))
         assert isinstance(metadata['duration_sec'], (int, float))
-        assert isinstance(metadata['ir_mohms'], (int, float))
+        assert isinstance(metadata['discharge_slope_mohm'], (int, float))
         assert isinstance(metadata['load_avg_percent'], (int, float))
         assert isinstance(metadata['coulomb_ah'], (int, float))
         assert isinstance(metadata['voltage_check_ah'], (int, float))
@@ -414,7 +414,7 @@ class TestValidationGates:
         # Metadata should be populated
         assert metadata['delta_soc_percent'] > 50, "Real discharge should be deep (>50%)"
         assert metadata['duration_sec'] > 2700, "Real discharge should be long (>45 min)"
-        assert metadata['ir_mohms'] > 0, "IR should be computed"
+        assert metadata['discharge_slope_mohm'] > 0, "IR should be computed"
 
     def test_monte_carlo_convergence(self, synthetic_discharge_fixture):
         """
