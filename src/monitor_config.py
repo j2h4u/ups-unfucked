@@ -188,12 +188,28 @@ def safe_save(model: BatteryModel) -> None:
         logger.error(f"Failed to persist model (disk full?): {e}")
 
 
-def write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms: Optional[float] = None,
-                          capacity_ah_measured: Optional[float] = None,
-                          capacity_ah_rated: float = 7.2,
-                          capacity_confidence: float = 0.0,
-                          capacity_samples_count: int = 0,
-                          capacity_converged: bool = False) -> None:
+def write_health_endpoint(
+    soc_percent: float,
+    is_online: bool,
+    poll_latency_ms: Optional[float] = None,
+    capacity_ah_measured: Optional[float] = None,
+    capacity_ah_rated: float = 7.2,
+    capacity_confidence: float = 0.0,
+    capacity_samples_count: int = 0,
+    capacity_converged: bool = False,
+    # Phase 16 NEW parameters:
+    sulfation_score: Optional[float] = None,
+    sulfation_confidence: str = 'high',
+    days_since_deep: Optional[float] = None,
+    ir_trend_rate: Optional[float] = None,
+    recovery_delta: Optional[float] = None,
+    cycle_roi: Optional[float] = None,
+    cycle_budget_remaining: Optional[int] = None,
+    scheduling_reason: str = 'observing',
+    next_test_timestamp: Optional[int] = None,
+    last_discharge_timestamp: Optional[str] = None,
+    natural_blackout_credit: Optional[float] = None,
+) -> None:
     """Write daemon health state to file for external monitoring tools.
 
     Updates every poll (10s) with current daemon metrics. Tools like Grafana,
@@ -225,6 +241,20 @@ def write_health_endpoint(soc_percent: float, is_online: bool, poll_latency_ms: 
         "capacity_confidence": round(capacity_confidence, 3),
         "capacity_samples_count": capacity_samples_count,
         "capacity_converged": capacity_converged,
+        # Phase 16 NEW: sulfation metrics
+        "sulfation_score": round(sulfation_score, 3) if sulfation_score is not None else None,
+        "sulfation_score_confidence": sulfation_confidence,
+        "days_since_deep": round(days_since_deep, 1) if days_since_deep is not None else None,
+        "ir_trend_rate": round(ir_trend_rate, 6) if ir_trend_rate is not None else None,
+        "recovery_delta": round(recovery_delta, 3) if recovery_delta is not None else None,
+        # Phase 16 NEW: ROI metrics
+        "cycle_roi": round(cycle_roi, 3) if cycle_roi is not None else None,
+        "cycle_budget_remaining": cycle_budget_remaining,
+        "scheduling_reason": scheduling_reason,
+        "next_test_timestamp": next_test_timestamp,
+        # Phase 16 NEW: discharge metrics
+        "last_discharge_timestamp": last_discharge_timestamp,
+        "natural_blackout_credit": round(natural_blackout_credit, 3) if natural_blackout_credit is not None else None,
     }
     health_path = HEALTH_ENDPOINT_PATH
     tmp_path = None
