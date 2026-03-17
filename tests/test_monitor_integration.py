@@ -727,7 +727,7 @@ class TestPollOnceCallChain:
         }
         with patch('src.monitor.sd_notify'), \
              patch('time.sleep'), \
-             patch('src.monitor_config.write_health_endpoint'), \
+             patch('src.monitor.write_health_endpoint'), \
              patch('src.monitor.write_virtual_ups_dev'), \
              patch('src.discharge_handler.safe_save'):
             daemon._poll_once()
