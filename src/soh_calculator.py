@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 # Minimum ΔSoC for meaningful SoH update (5% depth too shallow)
 MIN_DELTA_SOC = 0.05
 
-# Minimum discharge duration for SoH calculation (seconds)
+# Minimum discharge duration for SoH calculation (seconds).
+# F22: This operational guard is stricter than the kernel's 30s (battery_math/soh.py)
+# which uses 30s for year-simulation flexibility. Real discharges must be ≥300s.
 MIN_DURATION_SEC = 300
 
 

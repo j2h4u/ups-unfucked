@@ -37,7 +37,10 @@ def calculate_soh_from_discharge(
         peukert_exponent: Peukert exponent [1.0, 1.4]
         nominal_voltage: Battery nominal voltage (V)
         nominal_power_watts: UPS nominal power (W)
-        min_duration_sec: Minimum discharge duration for valid update (default 30s VAL-01)
+        min_duration_sec: Minimum discharge duration for valid update (default 30s VAL-01).
+            F22: Kernel uses 30s for year-simulation flexibility (fast synthetic
+            discharges). The daemon's operational guard in monitor.py
+            _update_battery_health() enforces 300s minimum for real data.
 
     Returns:
         Updated SoH [0.0, 1.0] or None if insufficient data
