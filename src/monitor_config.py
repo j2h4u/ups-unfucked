@@ -54,6 +54,78 @@ DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Cap at ~3 hours (1000 * 10s ≈ 2.8h), pr
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
 
 
+class SchedulingConfig:
+    """Phase 17 scheduling parameters — all optional with sensible defaults."""
+
+    def __init__(self,
+                 grid_stability_cooldown_hours: float = 4.0,
+                 soh_floor_threshold: float = 0.60,
+                 min_days_between_tests: float = 7.0,
+                 roi_threshold: float = 0.2,
+                 blackout_credit_window_days: float = 7.0,
+                 critical_cycle_budget_threshold: int = 5,
+                 deep_test_sulfation_threshold: float = 0.65,
+                 quick_test_sulfation_threshold: float = 0.40,
+                 scheduler_eval_hour_utc: int = 8,
+                 verbose_scheduling: bool = False):
+        self.grid_stability_cooldown_hours = grid_stability_cooldown_hours
+        self.soh_floor_threshold = soh_floor_threshold
+        self.min_days_between_tests = min_days_between_tests
+        self.roi_threshold = roi_threshold
+        self.blackout_credit_window_days = blackout_credit_window_days
+        self.critical_cycle_budget_threshold = critical_cycle_budget_threshold
+        self.deep_test_sulfation_threshold = deep_test_sulfation_threshold
+        self.quick_test_sulfation_threshold = quick_test_sulfation_threshold
+        self.scheduler_eval_hour_utc = scheduler_eval_hour_utc
+        self.verbose_scheduling = verbose_scheduling
+
+    def validate(self) -> list[str]:
+        """Return list of validation errors, empty if valid."""
+        errors = []
+
+        # grid_stability_cooldown_hours: 0 is valid (disables gate), else ≥0
+        if self.grid_stability_cooldown_hours < 0:
+            errors.append("grid_stability_cooldown_hours must be ≥0 (0 disables gate)")
+
+        # soh_floor_threshold: 0.0–1.0
+        if not (0.0 <= self.soh_floor_threshold <= 1.0):
+            errors.append("soh_floor_threshold must be in [0.0, 1.0]")
+
+        # min_days_between_tests: ≥1.0
+        if self.min_days_between_tests < 1.0:
+            errors.append("min_days_between_tests must be ≥1.0")
+
+        # roi_threshold: 0.0–1.0
+        if not (0.0 <= self.roi_threshold <= 1.0):
+            errors.append("roi_threshold must be in [0.0, 1.0]")
+
+        # blackout_credit_window_days: 1.0–30.0
+        if not (1.0 <= self.blackout_credit_window_days <= 30.0):
+            errors.append("blackout_credit_window_days must be in [1.0, 30.0]")
+
+        # critical_cycle_budget_threshold: ≥1
+        if self.critical_cycle_budget_threshold < 1:
+            errors.append("critical_cycle_budget_threshold must be ≥1")
+
+        # deep_test_sulfation_threshold: 0.0–1.0
+        if not (0.0 <= self.deep_test_sulfation_threshold <= 1.0):
+            errors.append("deep_test_sulfation_threshold must be in [0.0, 1.0]")
+
+        # quick_test_sulfation_threshold: 0.0–1.0
+        if not (0.0 <= self.quick_test_sulfation_threshold <= 1.0):
+            errors.append("quick_test_sulfation_threshold must be in [0.0, 1.0]")
+
+        # quick < deep (logical ordering)
+        if self.quick_test_sulfation_threshold > self.deep_test_sulfation_threshold:
+            errors.append("quick_test_sulfation_threshold must be ≤ deep_test_sulfation_threshold")
+
+        # scheduler_eval_hour_utc: 0–23
+        if not (0 <= self.scheduler_eval_hour_utc <= 23):
+            errors.append("scheduler_eval_hour_utc must be in [0, 23]")
+
+        return errors
+
+
 @dataclass(frozen=True)
 class Config:
     """Immutable UPS daemon configuration.
@@ -81,6 +153,7 @@ def load_config() -> Config:
     """Load user config from TOML, falling back to defaults for missing keys.
 
     Returns: Config dataclass instance with all fields populated.
+    Raises: ValueError if Phase 17 scheduling configuration is invalid.
     """
     cfg_dict = {}
     for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
@@ -90,6 +163,24 @@ def load_config() -> Config:
             break
 
     user_config = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
+
+    # Validate Phase 17 scheduling configuration if present
+    if 'scheduling' in cfg_dict:
+        scheduling_params = cfg_dict.get('scheduling', {})
+        sched_config = SchedulingConfig(**scheduling_params)
+        errors = sched_config.validate()
+        if errors:
+            raise ValueError(f"Invalid scheduling configuration: {'; '.join(errors)}")
+        logger.info(
+            "Phase 17 scheduling configuration loaded and validated",
+            extra={
+                'event_type': 'config_loaded',
+                'grid_stability_cooldown_hours': sched_config.grid_stability_cooldown_hours,
+                'soh_floor_threshold': sched_config.soh_floor_threshold,
+                'min_days_between_tests': sched_config.min_days_between_tests,
+                'roi_threshold': sched_config.roi_threshold,
+            }
+        )
 
     return Config(
         ups_name=user_config['ups_name'],
@@ -107,6 +198,26 @@ def load_config() -> Config:
         reference_load_percent=REFERENCE_LOAD_PERCENT,
         ema_window_sec=EMA_WINDOW,
     )
+
+
+def get_scheduling_config(config_dict: dict) -> SchedulingConfig:
+    """Extract and validate Phase 17 scheduling configuration from TOML dict.
+
+    Args:
+        config_dict: Parsed TOML dictionary (from tomllib.load)
+
+    Returns:
+        SchedulingConfig with all parameters (defaults applied for missing keys)
+
+    Raises:
+        ValueError: If any parameter is invalid
+    """
+    scheduling_params = config_dict.get('scheduling', {})
+    sched_config = SchedulingConfig(**scheduling_params)
+    errors = sched_config.validate()
+    if errors:
+        raise ValueError(f"Invalid scheduling configuration: {'; '.join(errors)}")
+    return sched_config
 
 
 @dataclass
