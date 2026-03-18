@@ -273,7 +273,9 @@ def test_health_endpoint_iso8601_timestamps(health_endpoint_temp_file, baseline_
 @pytest.mark.integration
 def test_health_endpoint_unix_timestamp(health_endpoint_temp_file, baseline_health_params):
     """Verify last_poll_unix field contains integer unix timestamp."""
-    with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
+    fixed_time = 1710800000.0
+    with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file), \
+         patch('src.monitor_config.time.time', return_value=fixed_time):
         write_health_endpoint(**baseline_health_params)
 
         with open(health_endpoint_temp_file) as f:
@@ -281,10 +283,4 @@ def test_health_endpoint_unix_timestamp(health_endpoint_temp_file, baseline_heal
 
         assert 'last_poll_unix' in data, "Missing last_poll_unix field"
         assert isinstance(data['last_poll_unix'], int), "last_poll_unix should be integer"
-        assert data['last_poll_unix'] > 0, "last_poll_unix should be positive"
-
-        # Sanity check: should be close to current time
-        import time
-        now = int(time.time())
-        assert abs(data['last_poll_unix'] - now) < 5, \
-            f"last_poll_unix {data['last_poll_unix']} is not close to current time {now}"
+        assert data['last_poll_unix'] == int(fixed_time)

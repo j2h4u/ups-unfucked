@@ -26,12 +26,22 @@ def test_alert_runtime_below_threshold(caplog):
 
 
 def test_independent_thresholds(caplog):
-    """SoH below threshold but runtime above: only SoH alert fires."""
+    """SoH and runtime alerts are independent — firing one does not produce the other."""
     logger = logging.getLogger("test-ups")
     with caplog.at_level(logging.WARNING):
         alerter.alert_soh_below_threshold(logger, 0.75, 0.80, 45)
-    # SoH alert should fire
-    assert len(caplog.records) > 0
+    # Exactly 1 record: SoH alert only
+    assert len(caplog.records) == 1
+    assert "SoH" in caplog.text
+    assert "runtime" not in caplog.text.lower()
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        alerter.alert_runtime_below_threshold(logger, 18.0, 20.0)
+    # Exactly 1 record: runtime alert only
+    assert len(caplog.records) == 1
+    assert "runtime" in caplog.text.lower()
+    assert "SoH" not in caplog.text
 
 
 def test_none_days_to_replacement(caplog):

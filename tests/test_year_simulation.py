@@ -264,14 +264,51 @@ def test_year_simulation_seed_reproducibility(initial_battery_state):
 
         final_states.append(state.soh)
 
-    # Diagnostic: print final SoH values for each seed
-    print(f"\nReproducibility check (10-day sims): SoH values = {final_states}")
+    # Run the same seeds again and verify identical results
+    final_states_rerun = []
+    for seed in [42, 123, 456]:
+        random.seed(seed)
+        state = initial_battery_state
 
-    # Verify that the same seed produces identical results across reruns
-    # (This is a baseline check; actual reproducibility is verified by
-    # running the same seed twice and comparing)
-    assert len(final_states) == 3, "Should have 3 final states"
-    assert all(isinstance(soh, float) for soh in final_states), "All values should be floats"
+        for day in range(10):
+            blackout_count = random.randint(1, 3)
+            for _ in range(blackout_count):
+                depth = random.choice([0.2, 0.4, 0.6, 0.8])
+                duration = random.randint(300, 3600)
+                load = random.uniform(10, 40)
+
+                v_series, t_series, _ = synthetic_discharge(
+                    initial_soc=1.0,
+                    final_soc=1.0 - depth,
+                    duration_sec=duration,
+                    load_percent=load,
+                    lut=state.lut,
+                    num_samples=10,
+                )
+
+                new_soh = calculate_soh_from_discharge(
+                    voltage_series=v_series,
+                    time_series=t_series,
+                    reference_soh=state.soh,
+                    capacity_ah=state.capacity_ah_rated,
+                    load_percent=load,
+                    peukert_exponent=state.peukert_exponent,
+                    min_duration_sec=30.0,
+                )
+
+                if new_soh is not None:
+                    state = replace(state, soh=new_soh)
+
+                state = replace(
+                    state,
+                    cycle_count=state.cycle_count + 1,
+                    cumulative_on_battery_sec=state.cumulative_on_battery_sec + duration,
+                )
+
+        final_states_rerun.append(state.soh)
+
+    assert final_states == final_states_rerun, \
+        f"Same seeds must produce identical results: {final_states} != {final_states_rerun}"
 
 
 # ============================================================================
@@ -837,8 +874,10 @@ def test_cliff_edge_degradation(initial_battery_state):
     print(f"\nCliff-edge limitation discovered: {errors_exceeding_threshold}/{len(soh_tracking_errors)} months exceeded ±15% error")
     print("This documents Bayesian inertia (Phase 2.1 fix candidate)")
 
-    # Just verify test runs without crashing (soft assertion)
     assert len(soh_tracking_errors) == 33, "Should complete all 33 months"
+    # Hard bound: SoH must degrade over 33 months of cycling
+    assert state.soh < initial_battery_state.soh, \
+        f"SoH should degrade: final {state.soh:.3f} >= initial {initial_battery_state.soh:.3f}"
 
 
 def test_sulfation_recovery(initial_battery_state):
@@ -1013,13 +1052,10 @@ def test_instrument_characterization(initial_battery_state):
         min_duration_sec=30.0
     )
 
-    # Compare
-    if soh_raw is not None and soh_filtered is not None:
-        bias = abs(soh_filtered - soh_raw) / soh_raw * 100 if soh_raw > 0 else 0
-        print(f"\nInstrument characterization: SoH_raw={soh_raw:.4f}, SoH_filtered={soh_filtered:.4f}, bias={bias:.2f}%")
+    # Both paths must produce valid SoH
+    assert soh_raw is not None, "Raw path should produce valid SoH"
+    assert soh_filtered is not None, "Filtered path should produce valid SoH"
 
-        # Document findings (soft assertion)
-        if bias > 3:
-            print(f"  → Significant bias detected: quantization + EMA introduce {bias:.2f}% error")
-        else:
-            print(f"  → Bias acceptable: {bias:.2f}% < 3%")
+    # Quantization + EMA bias must stay within 10% (instrument-grade bound)
+    bias = abs(soh_filtered - soh_raw) / soh_raw * 100 if soh_raw > 0 else 0
+    assert bias < 10, f"Instrument bias {bias:.2f}% exceeds 10% bound"

@@ -19,15 +19,14 @@ class TestVirtualUPSWriting:
     """Tests for virtual UPS tmpfs writing infrastructure (VUPS-01, VUPS-02)."""
 
     def test_write_to_tmpfs(self):
-        """Test VUPS-01: Metrics written atomically to /run/ups-battery-monitor/ups-virtual.dev.
+        """Test VUPS-01: Metrics written atomically via write_virtual_ups_dev().
 
         Validates:
-        - File is created in tmpfs (/run/ups-battery-monitor)
+        - File is created at the patched path
         - Atomic write pattern prevents partial files on crash
         - All metrics from input dict appear in output
         - File is readable after write
         """
-        # Arrange: Test metrics
         metrics = {
             "battery.voltage": "13.4",
             "battery.charge": "85",
@@ -35,61 +34,56 @@ class TestVirtualUPSWriting:
             "ups.load": "25",
         }
 
-        # Act: Use a test tmpfs directory (cannot use real /dev/shm in test)
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
 
-            # Directly test atomic write pattern from virtual_ups module
-            import os, tempfile as tf
-            with tf.NamedTemporaryFile(
-                mode='w',
-                dir=tmpdir,
-                delete=False,
-                suffix='.tmp',
-                prefix='ups-virtual-'
-            ) as tmp:
-                lines = [f"VAR cyberpower {k} {v}\n" for k, v in metrics.items()]
-                tmp.write("".join(lines))
-                tmp_path = Path(tmp.name)
+            with patch("src.virtual_ups.Path") as mock_path_class:
+                mock_path_class.return_value = test_file
+                # Bypass the is_symlink guard
+                test_file_mock = Mock()
+                test_file_mock.is_symlink.return_value = False
+                test_file_mock.parent = test_file.parent
+                test_file_mock.__str__ = lambda self: str(test_file)
+                test_file_mock.replace = test_file.replace
+                mock_path_class.return_value = test_file_mock
 
-            # Simulate fsync
-            fd = os.open(str(tmp_path), os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+                # Call production function with real tmpdir
+                with patch("src.virtual_ups.Path") as mp:
+                    # Patch only the constant path inside the function
+                    real_path = test_file
+                    mp.side_effect = lambda *a, **kw: real_path if "/run/ups-battery-monitor" in str(a) else Path(*a, **kw)
+                    # Simpler approach: patch at the module level constant
+                    pass
 
-            # Atomic rename
-            tmp_path.replace(test_file)
+            # Use the simplest correct approach: patch the output path directly
+            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
+                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
+            )):
+                write_virtual_ups_dev(metrics)
 
-            # Assert: File exists at expected location
+            # Assert: File exists at patched location
             assert test_file.exists(), "File not created at expected location"
 
-            # Assert: File is readable
             content = test_file.read_text()
             assert content, "File is empty"
 
-            # Assert: All metrics are in the file
+            # Assert: All metrics appear in the file (production format: "key: value\n")
             for key, value in metrics.items():
-                assert f"{key} {value}" in content, \
+                assert f"{key}: {value}" in content, \
                     f"Metric {key}={value} not found in output"
 
-            # Assert: No partial writes (no .tmp files left)
+            # Assert: No leftover .tmp files
             tmp_files = list(Path(tmpdir).glob("*.tmp"))
             assert len(tmp_files) == 0, f"Leftover temp files found: {tmp_files}"
 
     def test_passthrough_fields(self):
-        """Test VUPS-02: All real UPS fields transparently proxy except 3 overrides.
+        """Test VUPS-02: All real UPS fields transparently proxy via write_virtual_ups_dev().
 
         Validates:
-        - All input fields (battery.voltage, ups.load, input.voltage, etc.) appear
-          in output file unchanged
-        - Only 3 fields are overridden: battery.runtime, battery.charge, ups.status
-        - Passthroughs use original values from real UPS
+        - All input fields appear in output file unchanged
+        - Production function writes the exact dict contents passed to it
         """
-        # Arrange: Create realistic metrics dict with mixed override + passthrough fields
         metrics = {
-            # Passthrough fields (real UPS values)
             "battery.voltage": "13.4",
             "ups.load": "25",
             "input.voltage": "230",
@@ -98,43 +92,19 @@ class TestVirtualUPSWriting:
             "device.serial": "ABC123456",
             "battery.type": "PbAc",
             "ups.temperature": "25",
-            # Override fields (would be computed values)
             "battery.runtime": "600",
             "battery.charge": "87",
             "ups.status": "OB DISCHRG LB",
         }
 
-        # Act: Use temporary directory for test file
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
 
-            # Directly implement the write pattern (testing atomic write logic)
-            lines = []
-            for key, value in metrics.items():
-                line = f"VAR cyberpower {key} {value}\n"
-                lines.append(line)
-            content = "".join(lines)
+            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
+                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
+            )):
+                write_virtual_ups_dev(metrics)
 
-            # Atomic write
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                dir=tmpdir,
-                delete=False,
-                suffix='.tmp',
-                prefix='ups-virtual-'
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = Path(tmp.name)
-
-            fd = os.open(str(tmp_path), os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-
-            tmp_path.replace(test_file)
-
-            # Assert: File exists and is readable
             assert test_file.exists(), "File not created"
             file_content = test_file.read_text()
 
@@ -146,16 +116,16 @@ class TestVirtualUPSWriting:
             }
             for field in passthrough_fields:
                 value = metrics[field]
-                assert f"{field} {value}" in file_content, \
+                assert f"{field}: {value}" in file_content, \
                     f"Passthrough field {field} not found in output"
 
-            # Assert: Override fields are present (synthetic values)
+            # Assert: Override fields are also present
             for field in ["battery.runtime", "battery.charge", "ups.status"]:
                 assert field in file_content, \
                     f"Override field {field} not found in output"
 
-            # Assert: Correct field count
-            lines_in_file = file_content.strip().split('\n')
+            # Assert: Correct line count
+            lines_in_file = [l for l in file_content.strip().split('\n') if l]
             assert len(lines_in_file) == len(metrics), \
                 f"Field count mismatch: expected {len(metrics)}, got {len(lines_in_file)}"
 
@@ -164,22 +134,16 @@ class TestFieldOverrides:
     """Tests for field overrides in virtual UPS (VUPS-03)."""
 
     def test_field_overrides(self):
-        """Test VUPS-03: Three critical fields correctly overridden.
+        """Test VUPS-03: Three critical fields correctly written by write_virtual_ups_dev().
 
         Validates:
-        - battery.runtime: set to calculated time_rem (not firmware value)
-        - battery.charge: set to calculated SoC (not firmware value)
-        - ups.status: set to our computed status (OL / OB DISCHRG / OB DISCHRG LB)
-        - Override values replace real UPS firmware values completely
+        - battery.runtime, battery.charge, ups.status written as provided
+        - Override values appear verbatim in output (production function is pass-through)
         """
-        # Arrange: Create dict with 3 override fields + 5 passthrough fields
         metrics = {
-            # Override fields (calculated, not from firmware)
-            "battery.runtime": "600",      # 10 minutes in seconds
-            "battery.charge": "87",        # SoC percentage
-            "ups.status": "OB DISCHRG LB",  # Computed status with LB flag
-
-            # Passthrough fields (from real UPS)
+            "battery.runtime": "600",
+            "battery.charge": "87",
+            "ups.status": "OB DISCHRG LB",
             "battery.voltage": "11.8",
             "ups.load": "35",
             "input.voltage": "0",
@@ -187,82 +151,44 @@ class TestFieldOverrides:
             "device.model": "UT850EG",
         }
 
-        # Act: Use temporary directory for test isolation
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
 
-            # Directly write and parse (test the atomic write pattern)
-            lines = []
-            for key, value in metrics.items():
-                line = f"VAR cyberpower {key} {value}\n"
-                lines.append(line)
-            content = "".join(lines)
+            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
+                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
+            )):
+                write_virtual_ups_dev(metrics)
 
-            # Atomic write pattern
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                dir=tmpdir,
-                delete=False,
-                suffix='.tmp',
-                prefix='ups-virtual-'
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = Path(tmp.name)
-
-            fd = os.open(str(tmp_path), os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-
-            tmp_path.replace(test_file)
-
-            # Assert: File was created successfully
             assert test_file.exists(), "Virtual UPS file not created"
-
-            # Assert: Parse output file and verify override fields
             file_content = test_file.read_text()
 
-            # Extract VAR lines into a dict
+            # Parse output into dict (format: "key: value\n")
             var_dict = {}
             for line in file_content.strip().split('\n'):
-                if 'VAR' in line:
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        # Format: VAR <ups_name> <key> <value>
-                        ups_name = parts[1]
-                        key = parts[2]
-                        value = " ".join(parts[3:])  # Handle multi-word values
-                        var_dict[key] = value
+                if ': ' in line:
+                    key, _, value = line.partition(': ')
+                    var_dict[key.strip()] = value.strip()
 
             # Assert: Three override fields are exactly as provided
             assert var_dict["battery.runtime"] == "600", \
-                f"battery.runtime not correctly overridden: {var_dict.get('battery.runtime')}"
+                f"battery.runtime not correctly written: {var_dict.get('battery.runtime')}"
             assert var_dict["battery.charge"] == "87", \
-                f"battery.charge not correctly overridden: {var_dict.get('battery.charge')}"
+                f"battery.charge not correctly written: {var_dict.get('battery.charge')}"
             assert var_dict["ups.status"] == "OB DISCHRG LB", \
-                f"ups.status not correctly overridden: {var_dict.get('ups.status')}"
-
-            # Assert: Override values were not modified or transformed
-            assert var_dict["battery.runtime"] in file_content
-            assert var_dict["battery.charge"] in file_content
-            assert var_dict["ups.status"] in file_content
+                f"ups.status not correctly written: {var_dict.get('ups.status')}"
 
 
 class TestNUTFormatCompliance:
     """Tests for NUT format compliance in tmpfs file (VUPS-04)."""
 
     def test_nut_format_compliance(self):
-        """Test VUPS-04: File written in NUT format, readable by dummy-ups.
+        """Test VUPS-04: File written by write_virtual_ups_dev() uses key: value format.
 
         Validates:
-        - Each line follows NUT format: 'VAR <ups_name> <field> <value>'
-        - No extra whitespace or formatting issues
-        - Field names and values are properly escaped
-        - File can be parsed by dummy-ups driver without errors
-        - All required fields present for Grafana/upsmon to consume
+        - Each line follows dummy-ups format: '<field>: <value>'
+        - All required fields present in output
+        - Correct field count
         """
-        # Arrange: Test metrics with various types (int, float, str)
         metrics = {
             "battery.voltage": "13.4",
             "battery.charge": "85",
@@ -272,43 +198,26 @@ class TestNUTFormatCompliance:
             "input.voltage": "230",
         }
 
-        # Act: Write to tmpfs (real write)
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
-            virtual_ups_path = Path(tmpdir) / "ups-virtual.dev"
+            test_file = Path(tmpdir) / "ups-virtual.dev"
 
-            # Patch the path inside write_virtual_ups_dev to use test location
-            with patch('src.virtual_ups.Path') as mock_path_class:
-                mock_path_instance = Mock()
-                mock_path_instance.parent.mkdir = Mock()
+            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
+                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
+            )):
+                write_virtual_ups_dev(metrics)
 
-                # Create the file directly for test verification
-                def write_impl(metrics, ups_name="cyberpower"):
-                    lines = []
-                    for key, value in metrics.items():
-                        line = f"VAR {ups_name} {key} {value}\n"
-                        lines.append(line)
-                    content = "".join(lines)
+            assert test_file.exists(), "Virtual UPS file not created"
 
-                    with open(virtual_ups_path, 'w') as f:
-                        f.write(content)
+            content = test_file.read_text()
+            lines = [l for l in content.strip().split('\n') if l]
 
-                write_impl(metrics)
-
-            # Assert: File exists
-            assert virtual_ups_path.exists(), "Virtual UPS file not created"
-
-            # Assert: Read and parse content
-            content = virtual_ups_path.read_text()
-            lines = content.strip().split('\n')
-
-            # Assert: NUT format compliance (each line matches pattern)
-            nut_pattern = r"^VAR cyberpower [a-z.]+\d* [a-zA-Z0-9\-\. ]+$"
+            # Assert: dummy-ups format compliance (each line: "key: value")
             for line in lines:
-                assert re.match(nut_pattern, line), f"Line doesn't match NUT format: {line}"
+                assert ': ' in line, f"Line doesn't match 'key: value' format: {line}"
 
             # Assert: All metrics present
-            for key in metrics.keys():
-                assert f"VAR cyberpower {key} {metrics[key]}" in content, \
+            for key, value in metrics.items():
+                assert f"{key}: {value}" in content, \
                     f"Metric {key} not found in output"
 
             # Assert: Correct field count
@@ -348,9 +257,10 @@ class TestShutdownThresholds:
                 f"time_rem={time_rem}, threshold={default_threshold}: " \
                 f"expected '{expected_status}', got '{result}'"
 
-    @pytest.mark.parametrize("threshold", [1, 3, 5, 10])
+    @pytest.mark.parametrize("threshold", [3, 5, 10])
     def test_configurable_threshold(self, threshold):
         """Test SHUT-02: Shutdown threshold configurable via environment variable.
+        Thresholds must be > SAFETY_LB_FLOOR_MINUTES (2) for both branches to be testable.
 
         Validates:
         - Threshold parameter actually controls LB firing (not hardcoded)
@@ -382,19 +292,6 @@ class TestShutdownThresholds:
         )
         assert result_above == "OB DISCHRG", \
             f"Threshold {threshold}: LB should not fire when time_rem={time_rem_above} > {threshold}"
-
-    def test_configurable_threshold(self):
-        """Test SHUT-02: Shutdown threshold configurable via environment variable.
-
-        Validates:
-        - Default shutdown threshold (e.g., 5 minutes) when env var not set
-        - Custom threshold from UPS_SHUTDOWN_THRESHOLD_MINUTES env var
-        - Threshold applies to all blackout event classifications
-        - Invalid threshold values handled gracefully (fallback to default)
-        """
-        # TODO: Implement - set/unset env var, verify threshold used in
-        # compute_ups_status_override(), verify LB flag logic respects threshold
-        pass
 
     @pytest.mark.parametrize("calibration_threshold", [1, 0])
     def test_calibration_mode_threshold(self, calibration_threshold):
@@ -429,14 +326,10 @@ class TestMonitorIntegration:
         """Test end-to-end flow: monitor calculates metrics → virtual UPS writes output.
 
         Validates:
-        - Monitor polling loop computes virtual_metrics dict correctly
-        - Dict includes 3 override fields: battery.runtime, battery.charge, ups.status
-        - Dict includes all passthrough fields from real UPS
-        - ups.status override reflects event type and time_rem threshold
-        - write_virtual_ups_dev() is called with properly formatted dict
-        - Error handling: tmpfs write failures logged but don't crash daemon
+        - virtual_metrics dict built correctly with 3 override fields + passthrough fields
+        - write_virtual_ups_dev() writes the dict contents verbatim
+        - ups.status reflects event type and time_rem threshold
         """
-        # Arrange: Simulate real UPS data and calculated metrics
         real_ups_data = {
             "battery.voltage": "13.4",
             "ups.load": "25",
@@ -448,13 +341,11 @@ class TestMonitorIntegration:
             "ups.temperature": "28",
         }
 
-        # Calculated metrics from monitor loop
         battery_charge = 87
-        time_rem = 3.5  # 3.5 minutes
+        time_rem = 3.5  # 3.5 minutes < threshold of 5 → LB fires
         event_type = EventType.BLACKOUT_REAL
         shutdown_threshold = 5
 
-        # Act: Build virtual_metrics dict as monitor.py does
         ups_status_override = compute_ups_status_override(
             event_type,
             time_rem,
@@ -464,77 +355,44 @@ class TestMonitorIntegration:
         virtual_metrics = {
             "battery.runtime": int(time_rem * 60),  # 210 seconds
             "battery.charge": int(battery_charge),  # 87%
-            "ups.status": ups_status_override,  # "OB DISCHRG" (since 3.5 < 5)
+            "ups.status": ups_status_override,
             **{k: v for k, v in real_ups_data.items()
                if k not in ["battery.runtime", "battery.charge", "ups.status"]}
         }
 
-        # Assert: Virtual metrics dict structure is correct
-        assert "battery.runtime" in virtual_metrics
-        assert "battery.charge" in virtual_metrics
-        assert "ups.status" in virtual_metrics
+        # Assert: virtual_metrics dict structure
         assert virtual_metrics["battery.runtime"] == 210
         assert virtual_metrics["battery.charge"] == 87
-
-        # Assert: 3.5 < 5 means time_rem < threshold, so LB flag SHOULD be present
         assert virtual_metrics["ups.status"] == "OB DISCHRG LB"
 
-        # Assert: All passthrough fields are present unchanged
+        # Assert: passthrough fields present unchanged
         for key in real_ups_data.keys():
             if key not in ["battery.runtime", "battery.charge", "ups.status"]:
                 assert key in virtual_metrics
                 assert virtual_metrics[key] == real_ups_data[key]
 
-        # Act: Write to tmpfs using the virtual_metrics dict
+        # Act: Write via production function and verify output
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
 
-            # Directly write (test the virtual_metrics dict format)
-            lines = []
-            for key, value in virtual_metrics.items():
-                line = f"VAR cyberpower {key} {value}\n"
-                lines.append(line)
-            content = "".join(lines)
+            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
+                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
+            )):
+                write_virtual_ups_dev(virtual_metrics)
 
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                dir=tmpdir,
-                delete=False,
-                suffix='.tmp',
-                prefix='ups-virtual-'
-            ) as tmp:
-                tmp.write(content)
-                tmp_path = Path(tmp.name)
-
-            fd = os.open(str(tmp_path), os.O_RDONLY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-
-            tmp_path.replace(test_file)
-
-            # Assert: Virtual UPS file created and contains expected format
             assert test_file.exists()
             file_content = test_file.read_text()
 
-            # Parse and verify override fields
+            # Parse output
             var_dict = {}
             for line in file_content.strip().split('\n'):
-                if 'VAR' in line:
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        ups_name = parts[1]
-                        key = parts[2]
-                        value = " ".join(parts[3:])
-                        var_dict[key] = value
+                if ': ' in line:
+                    key, _, value = line.partition(': ')
+                    var_dict[key.strip()] = value.strip()
 
-            # Assert: Override fields are in the output
             assert var_dict["battery.runtime"] == "210"
             assert var_dict["battery.charge"] == "87"
             assert var_dict["ups.status"] == "OB DISCHRG LB"
-
-            # Assert: Passthrough fields are in the output
             assert var_dict["battery.voltage"] == "13.4"
             assert var_dict["ups.load"] == "25"
 
@@ -546,13 +404,11 @@ class TestMonitorIntegration:
             "input.voltage": "0",
         }
 
-        # time_rem = 4.9 minutes < threshold = 5 minutes
         battery_charge = 25
         time_rem = 4.9
         event_type = EventType.BLACKOUT_REAL
         shutdown_threshold = 5
 
-        # Act: Build virtual_metrics
         ups_status_override = compute_ups_status_override(
             event_type,
             time_rem,
@@ -567,43 +423,9 @@ class TestMonitorIntegration:
                if k not in ["battery.runtime", "battery.charge", "ups.status"]}
         }
 
-        # Assert: LB flag should be set
         assert virtual_metrics["ups.status"] == "OB DISCHRG LB"
         assert virtual_metrics["battery.runtime"] == 294  # 4.9 * 60
         assert virtual_metrics["battery.charge"] == 25
-
-    def test_monitor_virtual_ups_error_handling(self):
-        """Variation: Test error handling when write_virtual_ups_dev raises exception.
-
-        Validates:
-        - tmpfs write failures are caught and logged
-        - Daemon continues polling (doesn't crash)
-        - Exception is raised but handled gracefully
-        """
-        # Arrange: Setup to test error handling by simulating a permission denied
-        virtual_metrics = {
-            "battery.runtime": "210",
-            "battery.charge": "87",
-            "ups.status": "OB DISCHRG LB",
-        }
-
-        # Act: Try to write with invalid path to simulate error
-        # (using /dev/null which is not a directory for tmpfile creation)
-        try:
-            # Attempt write with invalid directory (simulates error)
-            with tempfile.NamedTemporaryFile(
-                mode='w',
-                dir="/invalid_nonexistent_path",
-                delete=False,
-                suffix='.tmp'
-            ) as tmp:
-                pass
-            # If we got here, the error handling test needs adjustment
-            pytest.skip("Cannot reliably create tmpfile error without mocking")
-        except (OSError, FileNotFoundError) as e:
-            # Assert: We expect this type of error
-            assert isinstance(e, (OSError, FileNotFoundError))
-            # This validates that the error would be caught in monitor.py's try/except
 
 
 class TestSafetyLBFloor:
@@ -646,7 +468,6 @@ class TestEventTypeIntegration:
 
     def test_compute_status_override_signature(self):
         """Verify compute_ups_status_override has correct signature and accepts EventType."""
-        # Verify function signature accepts event_type: EventType
         import inspect
         sig = inspect.signature(compute_ups_status_override)
         assert 'event_type' in sig.parameters
