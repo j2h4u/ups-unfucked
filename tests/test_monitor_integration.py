@@ -152,9 +152,9 @@ class TestOrchestratorWiring:
             mock_daemon._update_battery_health()
 
         assert 'soh' in call_order, "SoH calculation was not called"
-        if 'peukert' in call_order:
-            assert call_order.index('soh') < call_order.index('peukert'), \
-                f"SoH must be called before Peukert, got: {call_order}"
+        assert 'peukert' in call_order, "Peukert calibration was not called"
+        assert call_order.index('soh') < call_order.index('peukert'), \
+            f"SoH must be called before Peukert, got: {call_order}"
 
     def test_guard_clause_sample_count(self, mock_daemon):
         """Guard clause 1: rejects if <2 discharge samples."""

@@ -5,7 +5,7 @@ import math
 import json
 from datetime import datetime
 from src.capacity_estimator import CapacityEstimator
-from tests.conftest import synthetic_discharge_fixture, discharge_buffer_fixture
+from tests.conftest import synthetic_discharge_fixture, synthetic_discharge_47min_fixture
 
 
 class TestCoulombIntegration:
@@ -363,7 +363,7 @@ class TestWeightedAveraging:
 class TestValidationGates:
     """Expert panel validation gates (Phase 12 Plan 03)."""
 
-    def test_real_discharge_validation(self, discharge_buffer_fixture):
+    def test_real_discharge_validation(self, synthetic_discharge_47min_fixture):
         """
         Validation Gate 1: Real 2026-03-12 blackout discharge replay.
 
@@ -375,7 +375,7 @@ class TestValidationGates:
         """
         estimator = CapacityEstimator(peukert_exponent=1.2)
 
-        V, t, I, lut = discharge_buffer_fixture
+        V, t, I, lut = synthetic_discharge_47min_fixture
 
         result = estimator.estimate(V, t, I, lut)
         assert result is not None, "2026-03-12 discharge should pass quality filter"

@@ -47,15 +47,6 @@ class TestAlerterOutput:
         captured = capsys.readouterr()
         assert "18" in captured.err or "18.5" in captured.err
 
-    def test_structured_fields_dont_crash(self):
-        """Extra dict fields don't crash the logger."""
-        logger = self._make_logger()
-
-        try:
-            logger.info("test", extra={'BATTERY_SOH': '0.85', 'THRESHOLD': '0.80'})
-        except Exception as e:
-            pytest.fail(f"Structured fields crashed logger: {e}")
-
     def test_alert_none_days_to_replacement(self, capsys):
         """SoH alert handles None days_to_replacement gracefully."""
         logger = self._make_logger()

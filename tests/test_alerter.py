@@ -59,7 +59,7 @@ def test_message_format_readability(caplog):
     with caplog.at_level(logging.ERROR):
         alerter.alert_runtime_below_threshold(logger, 25.5, 30.0)
     assert len(caplog.records) > 0
-    assert "min" in caplog.text or "25" in caplog.text
+    assert "26 min" in caplog.text
 
 
 def test_setup_ups_logger_removed():
@@ -74,13 +74,3 @@ def test_setup_ups_logger_removed():
         pass
 
 
-def test_alerter_accepts_logger_parameter():
-    """Verify alerter functions accept logger as parameter."""
-    import inspect
-
-    # Check that alert functions accept logger parameter
-    sig_soh = inspect.signature(alerter.alert_soh_below_threshold)
-    sig_runtime = inspect.signature(alerter.alert_runtime_below_threshold)
-
-    assert 'logger' in sig_soh.parameters, "alert_soh_below_threshold should accept logger parameter"
-    assert 'logger' in sig_runtime.parameters, "alert_runtime_below_threshold should accept logger parameter"

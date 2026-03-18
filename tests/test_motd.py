@@ -320,6 +320,6 @@ def test_motd_shows_new_battery_alert(temp_model_json):
     assert result.returncode == 0, f"MOTD script failed: {result.stderr}"
 
     # Verify: MOTD output does NOT contain alert when flag is false
-    assert '⚠️  Possible new battery detected' not in result.stdout or \
+    assert '⚠️  Possible new battery detected' not in result.stdout and \
            'ups-battery-monitor --new-battery' not in result.stdout, \
            f"Alert should not be shown when flag=false: {result.stdout}"

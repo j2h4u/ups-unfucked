@@ -195,7 +195,7 @@ def current_metrics_fixture():
     """
     from src.monitor_config import CurrentMetrics
     from src.event_classifier import EventType
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     return CurrentMetrics(
         soc=0.75,
@@ -206,7 +206,7 @@ def current_metrics_fixture():
         shutdown_imminent=False,
         ups_status_override=None,
         previous_event_type=EventType.ONLINE,
-        timestamp=datetime.now(),
+        timestamp=datetime(2026, 3, 12, tzinfo=timezone.utc),
     )
 
 
@@ -272,15 +272,15 @@ def synthetic_discharge_fixture(mock_lut_standard):
 
 
 @pytest.fixture
-def discharge_buffer_fixture():
+def synthetic_discharge_47min_fixture():
     """
-    Real discharge data from 2026-03-12 blackout event.
+    Synthetic discharge data modeled after a 47-minute blackout scenario.
 
-    Captured during actual server blackout with UPS providing power.
+    Synthetic but realistic parameters for a CyberPower UT850EG discharge:
     - Duration: ~2820 seconds (47 minutes)
     - Voltage drop: 13.2V → 10.5V (50% ΔSoC)
-    - Load: ~35% average (normalized to UPS rating)
-    - Real capacity measured: ~7.2Ah
+    - Load: ~26% average (normalized to UPS rating)
+    - Expected capacity: ~7.2Ah
 
     Returns:
         tuple: (voltage_series, time_series, current_series, lut)

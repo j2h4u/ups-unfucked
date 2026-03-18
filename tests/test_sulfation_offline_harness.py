@@ -446,10 +446,9 @@ def test_recovery_delta_discriminates_healthy_vs_degraded(healthy_battery_state,
     assert 0.0 <= recovery_healthy <= 1.0, f"Healthy recovery {recovery_healthy:.3f} out of range"
     assert 0.0 <= recovery_degraded <= 1.0, f"Degraded recovery {recovery_degraded:.3f} out of range"
 
-    # Healthy battery should show better recovery than degraded
-    # (This may not always hold for single discharge due to measurement noise,
-    # but over multiple discharges, the trend should favor healthy)
-    # For now, just validate they're different values
-    assert recovery_healthy != recovery_degraded, (
-        "Healthy and degraded batteries should show different recovery signals"
+    # Degraded battery shows more desulfation evidence (recovery_delta) because
+    # its SoH has room to rebound after discharge; healthy battery at SoH=1.0
+    # cannot improve further, so recovery_delta stays near zero.
+    assert recovery_degraded > recovery_healthy, (
+        "Degraded battery should show more desulfation recovery than healthy"
     )

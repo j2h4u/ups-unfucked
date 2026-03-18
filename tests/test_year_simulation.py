@@ -724,7 +724,7 @@ def test_voltage_spike_sample_rejection(initial_battery_state):
 
     # Spike should be handled gracefully (skipped or absorbed)
     # Exact SoH doesn't matter; we're checking it doesn't crash or corrupt LUT
-    assert isinstance(new_soh, (float, type(None))), "SoH should be float or None, not corrupted"
+    assert new_soh is None or 0.0 <= new_soh <= 1.0, f"SoH out of bounds: {new_soh}"
 
     print(f"\nVoltage spike test: SoH={new_soh} (spike handled gracefully)")
 
@@ -752,16 +752,8 @@ def test_stale_adc_no_soh_inflation(initial_battery_state):
         min_duration_sec=30.0
     )
 
-    if new_soh is not None:
-        # Change should be minimal (almost no discharge)
-        # Note: stale ADC (constant voltage) still represents some discharge time
-        # even if the voltage drop is zero. The kernel may estimate from time + load.
-        # Threshold: change should be modest (< 5% delta), indicating graceful handling.
-        delta_soh = abs(new_soh - state.soh)
-        assert delta_soh < 0.15, f"Stale ADC inflated SoH by {delta_soh:.4f} (too much)"
-        print(f"\nStale ADC: SoH change {delta_soh:.4f} (handled gracefully, not inflated)")
-    else:
-        print(f"\nStale ADC: SoH=None (no change, which is acceptable)")
+    assert new_soh is None or abs(new_soh - state.soh) < 0.15, \
+        f"SoH inflated: {new_soh} vs previous {state.soh}"
 
 
 def test_ntp_clock_jump_handled_gracefully(initial_battery_state):
@@ -778,20 +770,17 @@ def test_ntp_clock_jump_handled_gracefully(initial_battery_state):
     load = 25
 
     # Should not crash; negative interval should be skipped
-    try:
-        new_soh = calculate_soh_from_discharge(
-            voltage_series=v_series,
-            time_series=t_series,
-            reference_soh=state.soh,
-            capacity_ah=state.capacity_ah_rated,
-            load_percent=load,
-            peukert_exponent=state.peukert_exponent,
-            min_duration_sec=30.0
-        )
-        assert True, "NTP clock jump handled without crash"
-        print(f"\nNTP clock jump: SoH={new_soh} (no crash, handled gracefully)")
-    except Exception as e:
-        pytest.fail(f"NTP clock jump caused crash: {e}")
+    new_soh = calculate_soh_from_discharge(
+        voltage_series=v_series,
+        time_series=t_series,
+        reference_soh=state.soh,
+        capacity_ah=state.capacity_ah_rated,
+        load_percent=load,
+        peukert_exponent=state.peukert_exponent,
+        min_duration_sec=30.0
+    )
+    assert new_soh is None or 0.0 <= new_soh <= 1.0, f"SoH out of bounds: {new_soh}"
+    print(f"\nNTP clock jump: SoH={new_soh} (no crash, handled gracefully)")
 
 
 # ============================================================================
