@@ -290,7 +290,7 @@ class MonitorDaemon:
         self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
         self.reference_load_percent = config.reference_load_percent
 
-        # Scheduling configuration (loaded by load_config, defaults if not in TOML)
+        # Scheduling configuration (always set by load_config; fallback for tests)
         self.scheduling_config = config.scheduling or SchedulingConfig()
 
         # Voltage sag measurement for internal resistance tracking

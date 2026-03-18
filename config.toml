@@ -19,13 +19,19 @@ soh_alert = 0.80
 
 [scheduling]
 # Daemon-controlled test scheduling parameters.
-# Algorithmic constants (SoH floor, rate limit, ROI, sulfation thresholds,
-# cycle budget, blackout credit) are internal to the scheduler — not here.
+#
+# Internal constants (not configurable, for reference):
+#   SoH floor: 60% (no test below this)
+#   Rate limit: 7 days between tests
+#   Cycle budget critical: 5 cycles remaining → block
+#   Blackout credit: natural discharge ≥90% DoD → skip next test for 7 days
+#   Min discharge for model update: 300 seconds (shorter events track cycles only)
+#   Deep discharge threshold: >70% DoD (for sulfation days_since_deep)
 
 # Grid stability cooldown (hours)
-# Default: 4.0 (skip test if blackout in last 4h)
-# Set to 0.0 to disable this gate entirely (test despite recent blackouts)
-grid_stability_cooldown_hours = 0.0
+# Software default: 4.0 (skip test if blackout in last 4h)
+# Set to 0.0 to disable this gate (useful for grids with frequent short blackouts)
+grid_stability_cooldown_hours = 0.0  # disabled — frequent blackouts on this grid
 
 # Scheduling evaluation time (UTC hour)
 # Default: 8 (evaluate at 08:00 UTC daily)

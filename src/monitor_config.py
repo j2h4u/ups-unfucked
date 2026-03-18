@@ -55,7 +55,7 @@ ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then s
 
 
 class SchedulingConfig:
-    """Phase 17 scheduling parameters — user-configurable knobs only.
+    """User-configurable scheduling knobs.
 
     Algorithmic constants (SoH floor, rate limit, ROI threshold, sulfation
     thresholds, cycle budget, blackout credit window) live as named constants
@@ -106,14 +106,14 @@ class Config:
     reference_load_percent: float          # 20.0% (hardcoded constant)
     ema_window_sec: int                    # 120 seconds (hardcoded constant)
     capacity_ah: float                     # From config.toml['capacity_ah'] or default 7.2
-    scheduling: Optional[SchedulingConfig] = None  # Scheduling params; None = defaults
+    scheduling: SchedulingConfig = None  # Always populated by load_config(); default for tests
 
 
 def load_config() -> Config:
     """Load user config from TOML, falling back to defaults for missing keys.
 
     Returns: Config dataclass instance with all fields populated.
-    Raises: ValueError if Phase 17 scheduling configuration is invalid.
+    Raises: ValueError if scheduling configuration is invalid.
     """
     cfg_dict = {}
     for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
@@ -157,7 +157,7 @@ def load_config() -> Config:
 
 
 def get_scheduling_config(config_dict: dict) -> SchedulingConfig:
-    """Extract and validate Phase 17 scheduling configuration from TOML dict.
+    """Extract and validate scheduling configuration from TOML dict.
 
     Args:
         config_dict: Parsed TOML dictionary (from tomllib.load)
@@ -264,7 +264,7 @@ def write_health_endpoint(
     capacity_confidence: float = 0.0,
     capacity_samples_count: int = 0,
     capacity_converged: bool = False,
-    # Phase 16 NEW parameters:
+    # Sulfation and scheduling parameters:
     sulfation_score: Optional[float] = None,
     sulfation_confidence: str = 'high',
     days_since_deep: Optional[float] = None,
@@ -285,7 +285,7 @@ def write_health_endpoint(
     - Current battery state (soc_percent, online status)
     - Poll latency for performance monitoring
     - Daemon version tracking
-    - Phase 14: capacity metrics (measured Ah, confidence, convergence status)
+    - Capacity metrics (measured Ah, confidence, convergence status)
 
     Uses atomic write pattern (tempfile + fdatasync + rename) to prevent
     partial writes on crash or power loss.
@@ -302,24 +302,24 @@ def write_health_endpoint(
         "online": is_online,
         "daemon_version": daemon_version,
         "poll_latency_ms": round(poll_latency_ms, 1) if poll_latency_ms is not None else None,
-        # Phase 14: capacity metrics
+        # Capacity metrics
         "capacity_ah_measured": round(capacity_ah_measured, 2) if capacity_ah_measured else None,
         "capacity_ah_rated": round(capacity_ah_rated, 2),
         "capacity_confidence": round(capacity_confidence, 3),
         "capacity_samples_count": capacity_samples_count,
         "capacity_converged": capacity_converged,
-        # Phase 16 NEW: sulfation metrics
+        # Sulfation metrics
         "sulfation_score": round(sulfation_score, 3) if sulfation_score is not None else None,
         "sulfation_score_confidence": sulfation_confidence,
         "days_since_deep": round(days_since_deep, 1) if days_since_deep is not None else None,
         "ir_trend_rate": round(ir_trend_rate, 6) if ir_trend_rate is not None else None,
         "recovery_delta": round(recovery_delta, 3) if recovery_delta is not None else None,
-        # Phase 16 NEW: ROI metrics
+        # ROI metrics
         "cycle_roi": round(cycle_roi, 3) if cycle_roi is not None else None,
         "cycle_budget_remaining": cycle_budget_remaining,
         "scheduling_reason": scheduling_reason,
         "next_test_timestamp": next_test_timestamp,
-        # Phase 16 NEW: discharge metrics
+        # Discharge metrics
         "last_discharge_timestamp": last_discharge_timestamp,
         "natural_blackout_credit": round(natural_blackout_credit, 3) if natural_blackout_credit is not None else None,
     }

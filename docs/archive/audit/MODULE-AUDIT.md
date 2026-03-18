@@ -1,12 +1,17 @@
 # Module Audit — Expert Panel Reviews
 
+> **Status: ALL FINDINGS RESOLVED.** This audit was conducted during v1.0.
+> Critical findings (F19, F36a) were fixed in v1.1. Remaining high/medium
+> findings (F20, F21, F24, F30, F41, F53, F54, F58) were resolved across
+> v2.0 and v3.0. This document is retained as historical record.
+
 Systematic review of each daemon module by expert panel. Findings tracked per module, critical items fixed immediately, medium deferred or forwarded to dependent modules.
 
 ## Cumulative Severity Summary
 
-- **Critical:** 2 findings (F19, F36a)
-- **High:** 7 findings (F13✅, F20, F21, F24, F30, F36, F41, F53)
-- **Medium:** 14 findings
+- **Critical:** 2 findings (F19, F36a) — resolved in v1.1
+- **High:** 7 findings (F13, F20, F21, F24, F30, F36, F41, F53) — resolved in v1.1–v2.0
+- **Medium:** 14 findings — resolved across v1.1–v3.0
 - **Low/Info:** 19 findings
 
 ---

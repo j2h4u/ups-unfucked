@@ -28,7 +28,7 @@ class SulfationState:
     """Sulfation score [0.0, 1.0] where 0.0 = no sulfation, 1.0 = critical"""
 
     days_since_deep: float
-    """Days elapsed since last deep discharge (≥50% DoD)"""
+    """Days elapsed since last deep discharge (>70% DoD)"""
 
     ir_trend_rate: float
     """Internal resistance rate-of-change (dR/dt in Ω/day)"""
@@ -53,7 +53,7 @@ def compute_sulfation_score(
     """Hybrid sulfation score combining physics baseline + empirical signals.
 
     Args:
-        days_since_deep: Days elapsed since last ≥50% discharge event
+        days_since_deep: Days elapsed since last deep discharge (>70% DoD)
         ir_trend_rate: Internal resistance rate-of-change (dR/dt in Ω/day)
         recovery_delta: SoH bounce after discharge [0.0, 1.0], higher = less sulfation
         temperature_celsius: Battery temperature (constant 35°C per v3.0 scope)
