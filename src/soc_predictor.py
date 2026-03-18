@@ -65,9 +65,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     # Binary search for bracketing points (LUT sorted descending by voltage)
     # Build reversed voltage list for bisect (which expects ascending order)
     voltages_asc = [e["v"] for e in reversed(lut)]
-    # bisect_left finds insertion point in ascending list
     pos = bisect.bisect_left(voltages_asc, voltage)
-    # Convert back to descending index: i is the upper bracket
     i = len(lut) - 1 - pos
     v1_entry = None
     v2_entry = None
@@ -85,7 +83,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     if v2_entry is not None and abs(v2_entry["v"] - voltage) < 0.01:
         return v2_entry["soc"]
 
-    # If no valid bracket found, something went wrong (shouldn't happen given above logic)
+    # Fallback: no valid bracket found
     if v1_entry is None or v2_entry is None:
         logger.warning(f"No LUT bracket found for voltage {voltage}")
         return SOC_FALLBACK

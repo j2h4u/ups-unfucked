@@ -37,7 +37,7 @@ NUT_PORT = 3493
 NUT_TIMEOUT = 2.0            # socket timeout (seconds)
 RUNTIME_THRESHOLD_MINUTES = 20
 REFERENCE_LOAD_PERCENT = 20.0
-REPORTING_INTERVAL_POLLS = 6  # Log metrics every N polls (6 * 10s = 60s)
+REPORTING_INTERVAL_POLLS = 6  # Log metrics every N polls
 HEALTH_ENDPOINT_PATH = Path("/run/ups-battery-monitor/ups-health.json")
 
 # User-configurable (from config.toml)
@@ -50,7 +50,7 @@ _CONFIGURABLE_DEFAULTS = {
 
 # Internal constants (not user-configurable)
 SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of last 3 for noise rejection
-DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Cap at ~3 hours (1000 * 10s ≈ 2.8h), prevents unbounded memory growth
+DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Prevents unbounded memory growth (~2.8h at default poll rate)
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
 
 
@@ -89,8 +89,7 @@ class SchedulingConfig:
 class Config:
     """Immutable UPS daemon configuration.
 
-    frozen=True prevents accidental mutation at runtime. All fields are read-only.
-    Config instance is created at startup and passed to MonitorDaemon.__init__.
+    Created at startup, passed to MonitorDaemon.__init__.
     """
     ups_name: str
     polling_interval: int
@@ -242,7 +241,7 @@ def safe_save(model: BatteryModel) -> None:
         model: BatteryModel instance to persist
 
     Side effects:
-        - Logs to logger at ERROR level if save fails
+        - Logs to logger at WARNING level if save fails
         - Does NOT raise exception; allows daemon to continue
 
     Raises:

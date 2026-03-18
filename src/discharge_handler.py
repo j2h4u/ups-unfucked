@@ -54,7 +54,7 @@ class DischargeHandler:
         # Per-discharge state
         self.discharge_predicted_runtime: Optional[float] = None
 
-        self.baseline_lock_logged = False
+        self.has_logged_baseline_lock = False
 
         self.last_sulfation_score: Optional[float] = None
         self.last_sulfation_confidence: Optional[str] = None
@@ -87,7 +87,6 @@ class DischargeHandler:
                         f"skipping SoH/Peukert calibration")
             return
 
-        # Calculate average load from accumulated samples
         avg_load = (sum(discharge_buffer.loads) / len(discharge_buffer.loads)
                    if discharge_buffer.loads else self.reference_load_percent)
 
@@ -108,35 +107,31 @@ class DischargeHandler:
 
         soh_new, capacity_ah_used = soh_result
 
-        # Add to history with capacity baseline tag
         today = datetime.now().strftime('%Y-%m-%d')
         self.battery_model.add_soh_history_entry(today, soh_new, capacity_ah_ref=capacity_ah_used)
 
         logger.info(f"SoH calculated: {soh_new:.2%}")
 
-        # Predict replacement date — only if capacity has converged.
         convergence = self.battery_model.get_convergence_status()
         if convergence.get('converged', False):
-            result = replacement_predictor.linear_regression_soh(
+            soh_regression = replacement_predictor.linear_regression_soh(
                 soh_history=self.battery_model.get_soh_history(),
                 threshold_soh=self.soh_threshold,
                 capacity_ah_ref=capacity_ah_used,
             )
         else:
-            result = None
+            soh_regression = None
 
-        # Persist replacement date for MOTD and telemetry
-        if result:
-            _, _, _, replacement_date = result
+        if soh_regression:
+            _, _, _, replacement_date = soh_regression
             self.battery_model.set_replacement_due(replacement_date)
         else:
             self.battery_model.set_replacement_due(None)
 
-        # Alert if SoH below threshold
         if soh_new < self.soh_threshold:
             days_to_replacement = None
-            if result:
-                slope, intercept, r2, replacement_date = result
+            if soh_regression:
+                slope, intercept, r2, replacement_date = soh_regression
                 if replacement_date and replacement_date != 'overdue':
                     try:
                         repl_dt = datetime.strptime(replacement_date, '%Y-%m-%d')
@@ -151,7 +146,6 @@ class DischargeHandler:
                 days_to_replacement
             )
 
-        # Alert if runtime at 100% is low
         time_rem_at_100pct = runtime_minutes(
             soc=1.0, load_percent=avg_load,
             capacity_ah=self.battery_model.get_capacity_ah(),
@@ -167,10 +161,9 @@ class DischargeHandler:
                 self.config.runtime_threshold_minutes
             )
 
-        # Auto-calibrate Peukert exponent if prediction error > 10%
+        # Auto-calibrate Peukert exponent from measured discharge
         self._auto_calibrate_peukert(soh_new, discharge_buffer)
 
-        # Compute sulfation signals
         days_since_deep = self._calculate_days_since_deep()
         ir_trend_rate = self._estimate_ir_trend()
         depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
@@ -196,7 +189,6 @@ class DischargeHandler:
             sulfation_state = None
             roi = 0.0
 
-        # Store in-memory state for health.json export
         self.last_sulfation_score = sulfation_state.score if sulfation_state else None
         self.last_sulfation_confidence = 'high' if sulfation_state else None
         self.last_days_since_deep = days_since_deep
@@ -264,7 +256,6 @@ class DischargeHandler:
                 'desulfation_credit': 0.15,  # Approximate desulfation benefit for ~90% DoD
             })
 
-        # Log prediction error before clearing buffer
         self._log_discharge_prediction(discharge_buffer)
 
         # Single save at end after all mutations
@@ -466,7 +457,7 @@ class DischargeHandler:
             self.battery_model.data['capacity_converged'] = True
 
             # Log baseline_lock event only once per convergence
-            if not self.baseline_lock_logged:
+            if not self.has_logged_baseline_lock:
                 logger.info(
                     f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
                     extra={
@@ -476,7 +467,7 @@ class DischargeHandler:
                         'timestamp': datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                self.baseline_lock_logged = True
+                self.has_logged_baseline_lock = True
 
             safe_save(self.battery_model)
 
@@ -626,8 +617,7 @@ class DischargeHandler:
         if not hasattr(discharge_buffer, 'voltages') or len(discharge_buffer.voltages) < 2:
             return 0.0
 
-        # Existing SoC predictor (v2.0) can be reused here
-        # For now, estimate from voltage delta (simple approach)
+        # TODO: integrate with LUT-based SoC predictor for higher accuracy
         v_min = min(discharge_buffer.voltages)
         v_max = max(discharge_buffer.voltages)
 

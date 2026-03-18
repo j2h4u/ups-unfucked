@@ -91,6 +91,10 @@ class NUTClient:
         """
         Send command to NUT, receive response (one line).
 
+        Uses a single recv(4096) call — only suitable for single-line responses
+        (GET VAR, USERNAME, PASSWORD, LOGIN, INSTCMD). For multi-line responses
+        (LIST VAR), use get_ups_vars() which calls _recv_until() instead.
+
         Args:
             command: NUT protocol command string (without newline)
 

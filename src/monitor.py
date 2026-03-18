@@ -142,7 +142,7 @@ def dispatch_test_with_audit(
     upscmd_timestamp = datetime.now(timezone.utc).isoformat()
 
     try:
-        success, error_msg = nut_client.send_instcmd(command)
+        success, response_msg = nut_client.send_instcmd(command)
     except (socket.error, OSError) as e:
         battery_model.update_upscmd_result(
             upscmd_timestamp=upscmd_timestamp,
@@ -176,14 +176,14 @@ def dispatch_test_with_audit(
         battery_model.update_upscmd_result(
             upscmd_timestamp=upscmd_timestamp,
             upscmd_type=command,
-            upscmd_status=error_msg or 'ERR_UNKNOWN',
+            upscmd_status=response_msg or 'ERR_UNKNOWN',
         )
         battery_model.save()
 
-        logger.error(f"Test dispatch failed: {error_msg or 'unknown error'}", extra={
+        logger.error(f"Test dispatch failed: {response_msg or 'unknown error'}", extra={
             'event_type': 'test_dispatch_failed',
             'command': command,
-            'error': error_msg or 'unknown',
+            'error': response_msg or 'unknown',
             'timestamp': upscmd_timestamp,
         })
         return False
@@ -310,7 +310,7 @@ class MonitorDaemon:
 
         self.calibration_last_written_index = 0
 
-        self.baseline_lock_logged = False
+        self.has_logged_baseline_lock = False
 
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)

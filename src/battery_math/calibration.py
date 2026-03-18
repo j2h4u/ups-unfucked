@@ -62,7 +62,7 @@ def calibrate_peukert(
     T_rated = capacity_ah / I_rated  # = 20 hours
 
     # T_full is predicted runtime at SoC=1.0, SoH=1.0
-    T_full_minutes = T_rated * 60  # Convert to minutes
+    T_full_minutes = T_rated * 60
 
     # Actual effective runtime accounting for SoH
     T_effective = T_full_minutes * current_soh
@@ -73,12 +73,12 @@ def calibrate_peukert(
     # Solve: actual_minutes = T_effective × (I_rated / I_actual) ^ n
     # n = log(actual_minutes / T_effective) / log(ratio)
 
-    denom = math.log(ratio)
-    if abs(denom) < 1e-10:
+    log_denominator = math.log(ratio)
+    if abs(log_denominator) < 1e-10:
         return None
 
-    numer = math.log(actual_minutes / T_effective)
-    new_exp = numer / denom
+    log_numerator = math.log(actual_minutes / T_effective)
+    new_exp = log_numerator / log_denominator
 
     # Clamp to physical bounds
     new_exp = max(1.0, min(1.4, new_exp))

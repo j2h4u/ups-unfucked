@@ -70,13 +70,11 @@ class CapacityEstimator:
 
         ah_voltage = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
 
-        # Outlier rejection: coulomb vs voltage >75% disagreement
         if ah_voltage > 0 and abs(ah_coulomb - ah_voltage) / max(ah_coulomb, ah_voltage) > 0.75:
             logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage:.2f}Ah "
                           f"disagree >75%; rejecting measurement")
             return None
 
-        # Use coulomb as primary estimate
         ah_estimate = ah_coulomb
 
         discharge_slope_mohm = self._compute_discharge_slope(voltage_series, load_series)
@@ -157,9 +155,9 @@ class CapacityEstimator:
 
         ah_total = 0.0
         for i in range(len(current_percent) - 1):
-            i_curr_1 = (current_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
-            i_curr_2 = (current_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
-            i_avg = (i_curr_1 + i_curr_2) / 2.0
+            current_amps_left = (current_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
+            current_amps_right = (current_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
+            i_avg = (current_amps_left + current_amps_right) / 2.0
             dt = time_sec[i + 1] - time_sec[i]
             ah_total += i_avg * dt / 3600.0
 

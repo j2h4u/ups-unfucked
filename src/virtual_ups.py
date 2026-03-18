@@ -59,7 +59,7 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
 
         content = "".join(lines)
 
-        # Atomic write pattern: tempfile in same mount (/dev/shm) + fsync + rename
+        # Atomic write pattern: tempfile in same dir (/run/ups-battery-monitor) + fsync + rename
         # Use delete=False to manage cleanup ourselves after fsync
         with tempfile.NamedTemporaryFile(
             mode='w',
@@ -79,7 +79,6 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         logger.debug(f"Virtual UPS metrics written at {virtual_ups_path}")
 
     except Exception as e:
-        # Consolidated handler: clean up + log once + re-raise
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
         logger.error(f"Failed to write virtual UPS metrics: {e}")

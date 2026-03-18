@@ -18,12 +18,12 @@ from typing import Literal, Optional
 from datetime import datetime, timedelta, timezone
 
 # Algorithmic constants — internal to scheduler, not user-configurable.
-SOH_FLOOR = 0.60
-MIN_DAYS_BETWEEN_TESTS = 7.0
-ROI_THRESHOLD = 0.2
-CRITICAL_CYCLE_BUDGET = 5
-DEEP_SULFATION_THRESHOLD = 0.65
-QUICK_SULFATION_THRESHOLD = 0.40
+SOH_FLOOR = 0.60                    # Below 60% SoH, testing accelerates degradation (IEEE-450 guidance)
+MIN_DAYS_BETWEEN_TESTS = 7.0        # 7 days: balance sulfation monitoring vs cycle wear
+ROI_THRESHOLD = 0.2                 # Minimum benefit/cost ratio to justify a test cycle
+CRITICAL_CYCLE_BUDGET = 5           # At ≤5 cycles remaining, every cycle counts — hard block
+DEEP_SULFATION_THRESHOLD = 0.65     # Score above 0.65 indicates crystal growth worth a deep test
+QUICK_SULFATION_THRESHOLD = 0.40    # Moderate sulfation: quick test suffices (less wear than deep)
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ def evaluate_test_scheduling(
     # GATE 1: SoH floor (hard block)
     if soh_percent < SOH_FLOOR:
         floor_percent = int(soh_percent * 100)
-        next_eligible = (now + timedelta(days=30)).isoformat()  # Long deferral
+        next_eligible = (now + timedelta(days=30)).isoformat()
         return SchedulerDecision(
             action='block_test',
             reason_code=f'soh_floor_{floor_percent}%',
@@ -130,7 +130,6 @@ def evaluate_test_scheduling(
                 )
         except (ValueError, TypeError):
             pass  # Invalid timestamp, continue
-    # Note: if grid_stability_cooldown_hours == 0, gate is skipped entirely (disabled)
 
     # GATE 5: Cycle budget (critical low)
     if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:

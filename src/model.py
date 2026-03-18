@@ -57,7 +57,7 @@ def atomic_write_json(filepath, data):
         # Clean up temp file on write-phase or rename-phase error
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
-        logger.error(f"Atomic write failed: {e}")
+        logger.error(f"Atomic write failed: {e}", exc_info=True)
         raise
 
 
@@ -119,7 +119,7 @@ class BatteryModel:
             logger.info("Model file not found; initializing with standard VRLA curve")
             self.data = self._default_vrla_lut()
 
-        # Ensure arrays/fields exist (backward compat with older model.json)
+        # Ensure arrays/fields exist
         self.data.setdefault('sulfation_history', [])
         self.data.setdefault('discharge_events', [])
         self.data.setdefault('roi_history', [])
@@ -350,19 +350,19 @@ class BatteryModel:
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
-        """Return the lookup table."""
+        """Return the voltage→SoC lookup table entries."""
         return self.data.get('lut', [])
 
     def get_soh(self):
-        """Return current SoH estimate (0.0 to 1.0)."""
+        """SoH estimate [0.0, 1.0]."""
         return self.data.get('soh', 1.0)
 
     def set_soh(self, value: float):
-        """Set current SoH estimate (0.0 to 1.0)."""
+        """Update SoH estimate, clamped to [0.0, 1.0]."""
         self.data['soh'] = value
 
     def get_capacity_ah(self):
-        """Return reference full capacity (Ah)."""
+        """Reference full capacity in Ah (default 7.2 for UT850)."""
         return self.data.get('full_capacity_ah_ref', 7.2)
 
     def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
@@ -419,7 +419,7 @@ class BatteryModel:
 
         Side effects:
             - Appends entry to model.data['capacity_estimates']
-            - Calls _prune_capacity_estimates() to limit array to 30 entries
+            - Calls _prune_list('capacity_estimates') to limit array to 30 entries
             - Calls self.save() for atomic persistence
         """
         if 'capacity_estimates' not in self.data:
@@ -444,7 +444,6 @@ class BatteryModel:
             ordered newest to oldest
         """
         estimates = self.data.get('capacity_estimates', [])
-        # Sort by timestamp descending (latest first)
         return sorted(estimates, key=lambda x: x.get('timestamp', ''), reverse=True)
 
     def get_latest_capacity(self) -> Optional[float]:
@@ -473,7 +472,7 @@ class BatteryModel:
                 'latest_ah': float | None,  # Latest measured capacity
                 'rated_ah': float,  # Firmware rated capacity (7.2 for UT850)
                 'converged': bool,  # True if count >= 3 AND CoV < 0.10
-                'capacity_ah_ref': float | None  # Reference capacity (for new battery detection)
+                'capacity_ah_measured': float | None  # Measured capacity baseline (for new battery detection)
             }
         """
         estimates = self.data.get('capacity_estimates', [])
@@ -505,7 +504,7 @@ class BatteryModel:
             'latest_ah': ah_values[-1],
             'rated_ah': 7.2,
             'converged': len(estimates) >= 3 and cov < 0.10,
-            'capacity_ah_ref': self.data.get('capacity_ah_ref', None)
+            'capacity_ah_measured': self.data.get('capacity_ah_measured', None)
         }
 
 

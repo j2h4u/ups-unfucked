@@ -1,20 +1,7 @@
-"""
-Pure kernel function: Peukert's Law for battery runtime prediction.
+"""Pure kernel: Peukert's Law runtime prediction.
 
-Remaining runtime prediction using Peukert's Law.
-
-Pure physics formula — no empirical constants.
-
-Peukert's Law: T = T_rated × (I_rated / I_actual)^n
-where:
-  T_rated = capacity_ah / I_rated (hours at C/20 rate)
-  I_rated = capacity_ah / 20 (C/20 discharge rate)
-  I_actual = (load_percent / 100) × nominal_power_watts / nominal_voltage
-  n = Peukert exponent (1.0–1.4 for VRLA, typically 1.2)
-
-Validation: at 17% load, n=1.15, 7.2Ah, 425W/12V → 47.0 min (matches 2026-03-12 blackout).
-
-This kernel function is pure: no I/O, no time.time() calls, no state mutation.
+Pure physics — no I/O, no state mutation. See runtime_calculator.py for
+the production wrapper that applies SoC/SoH scaling and the 24h zero-load cap.
 """
 
 
@@ -36,13 +23,14 @@ def peukert_runtime_hours(
 
     Returns:
         Runtime in hours at SoC=1.0, SoH=1.0
+        Returns 0.0 for zero/negative load (battery_math strict; runtime_calculator uses 24h cap).
     """
     if load_percent <= 0:
         return 0.0
 
     I_rated = capacity_ah / 20.0
     I_actual = load_percent / 100.0 * nominal_power_watts / nominal_voltage
-    T_rated = capacity_ah / I_rated  # = 20h
+    T_rated = capacity_ah / I_rated
     return T_rated * (I_rated / I_actual) ** peukert_exponent
 
 

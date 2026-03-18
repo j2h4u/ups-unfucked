@@ -73,21 +73,17 @@ def compute_cycle_roi(
     Source: Cycle life curves (IEEE-450), desulfation physics (Shepherd model),
     risk assessment (safety gates for v3.0).
     """
-    # Desulfation benefit: sulfation dominates (70%), IR signal secondary (30%)
-    # Based on research: sulfation_score * 0.7 + IR_trend_normalized * 0.3
     desulfation_benefit = min(
         1.0,
-        (sulfation_score * 0.7) +  # Sulfation severity (0–70%)
-        (min(ir_trend_rate, 0.1) / 0.1 * 0.3)  # IR drift normalized to [0–30%]
+        (sulfation_score * 0.7) +
+        (min(ir_trend_rate, 0.1) / 0.1 * 0.3)
     )
 
-    # Wear cost: DoD and cycle depletion equally weighted (50/50)
-    # Based on research: DoD * 0.5 + cycle_depletion * 0.5
     cycle_depletion = max(0.0, 1.0 - cycle_budget_remaining / 100.0)
     wear_cost = min(
         1.0,
-        (depth_of_discharge * 0.5) +  # Deep DoD aging (0–50%)
-        (cycle_depletion * 0.5)  # Cycle budget depletion (0–50%)
+        (depth_of_discharge * 0.5) +
+        (cycle_depletion * 0.5)
     )
 
     # Normalize: ROI = (benefit - cost) / (benefit + cost)
@@ -98,5 +94,4 @@ def compute_cycle_roi(
 
     roi = (desulfation_benefit - wear_cost) / total_magnitude
 
-    # Saturate to [-1.0, +1.0]
     return max(-1.0, min(1.0, roi))

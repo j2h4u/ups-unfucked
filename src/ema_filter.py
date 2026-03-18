@@ -26,7 +26,7 @@ class MetricEMA:
         self.poll_interval_sec = poll_interval_sec
         self.sensitivity = sensitivity
 
-        # Base α = 1 - exp(-Δt/τ), used when signal is stable
+        # Used when signal is stable; adaptive alpha takes over during transients
         self.alpha = 1 - math.exp(-poll_interval_sec / window_sec)
 
         # EMA state
@@ -119,7 +119,7 @@ class EMAFilter:
 
     @property
     def stabilized(self) -> bool:
-        """True if EMA has settled (≥12 readings, ~2 min at default poll rate)."""
+        """True if enough wall-clock time has elapsed (≥ window_sec) for EMA to converge."""
         return self.voltage_ema.stabilized and self.load_ema.stabilized
 
     @property
@@ -142,6 +142,8 @@ def ir_compensate(v_ema, l_ema, l_base=20.0, k=0.015):
     NOTE: F23 — Linear model valid at <50% load only. Above 50% load,
     concentration polarization effects make the linear approximation
     inaccurate; higher-order effects dominate the voltage response.
+
+    Returns None if either input is None (caller must guard before LUT lookup).
     """
     if v_ema is None or l_ema is None:
         return None

@@ -23,10 +23,10 @@ class ScalarRLS:
     def update(self, measurement: float) -> tuple[float, float]:
         """Feed one measurement, return (theta_new, P_new).
 
-        F33: Callers clamp theta after update (e.g., [1.0, 1.4] for Peukert,
-        [0.005, 0.025] for ir_k). This creates minor P/theta inconsistency —
-        P tracks the unclamped trajectory while theta is clamped. Bounded by
-        the narrow clamp ranges, so the inconsistency is negligible.
+        P is the error covariance scalar — starts at 1.0 (high uncertainty),
+        decreases toward 0 as confidence grows. Callers should clamp theta
+        after update to physical bounds (this creates minor P/theta inconsistency
+        bounded by the narrow clamp ranges).
         """
         K = self.P / (self.forgetting_factor + self.P)
         self.theta += K * (measurement - self.theta)
