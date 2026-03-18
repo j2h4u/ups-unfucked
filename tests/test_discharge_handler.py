@@ -109,13 +109,11 @@ class TestDischargeClassification:
 class TestBlackoutCreditLogic:
     """Tests for blackout credit granting after natural deep discharges."""
 
-    def test_grant_blackout_credit_on_deep_natural_discharge(self, temporary_model_path):
-        """Deep natural discharge (≥90% DoD): grants 7-day blackout credit."""
-        model = BatteryModel(temporary_model_path)
-
+    def _make_handler(self, model):
+        """Create a DischargeHandler with minimal mocked config."""
         config = Mock()
         config.capacity_ah = 7.2
-        handler = DischargeHandler(
+        return DischargeHandler(
             battery_model=model,
             config=config,
             capacity_estimator=Mock(),
@@ -124,23 +122,34 @@ class TestBlackoutCreditLogic:
             soh_threshold=0.80,
         )
 
-        # Simulate deep natural discharge (DoD = 0.92)
-        with patch.object(handler, '_classify_discharge_trigger', return_value='natural'):
-            with patch('src.discharge_handler.logger'):
-                # We need to simulate the discharge event processing
-                # For this test, directly call set_blackout_credit
-                dod = 0.92
-                if dod >= 0.90:
-                    from datetime import timedelta
-                    credit_expires = datetime.now(timezone.utc) + timedelta(days=7)
-                    model.set_blackout_credit({
-                        'active': True,
-                        'credited_event_timestamp': datetime.now(timezone.utc).isoformat(),
-                        'credit_expires': credit_expires.isoformat(),
-                        'desulfation_credit': 0.15,
-                    })
+    def _deep_discharge_buffer(self):
+        """Buffer with ≥90% DoD: voltage 13.0→11.5V (delta 1.5V / 1.5V range = 100%)."""
+        buf = DischargeBuffer()
+        buf.voltages = [13.0, 12.5, 12.0, 11.5]
+        buf.times = [0.0, 300.0, 600.0, 900.0]
+        buf.loads = [25.0, 25.0, 25.0, 25.0]
+        return buf
 
-        # Verify credit was granted
+    def _shallow_discharge_buffer(self):
+        """Buffer with <90% DoD: voltage 13.0→12.5V (delta 0.5V / 1.5V = 33%)."""
+        buf = DischargeBuffer()
+        buf.voltages = [13.0, 12.8, 12.6, 12.5]
+        buf.times = [0.0, 300.0, 600.0, 900.0]
+        buf.loads = [25.0, 25.0, 25.0, 25.0]
+        return buf
+
+    def test_grant_blackout_credit_on_deep_natural_discharge(self, temporary_model_path):
+        """Deep natural discharge (≥90% DoD): grants 7-day blackout credit."""
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+
+        with patch('src.discharge_handler.logger'):
+            handler._score_and_persist_sulfation(
+                soh_new=0.95, recovery_delta=-0.02,
+                discharge_buffer=self._deep_discharge_buffer(),
+                event_reason='natural',
+            )
+
         credit = model.get_blackout_credit()
         assert credit is not None
         assert credit['active'] is True
@@ -149,60 +158,30 @@ class TestBlackoutCreditLogic:
     def test_no_blackout_credit_shallow_discharge(self, temporary_model_path):
         """Shallow discharge (<90% DoD): no blackout credit."""
         model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
 
-        config = Mock()
-        config.capacity_ah = 7.2
-        handler = DischargeHandler(
-            battery_model=model,
-            config=config,
-            capacity_estimator=Mock(),
-            rls_peukert=Mock(),
-            reference_load_percent=20.0,
-            soh_threshold=0.80,
-        )
+        with patch('src.discharge_handler.logger'):
+            handler._score_and_persist_sulfation(
+                soh_new=0.95, recovery_delta=-0.01,
+                discharge_buffer=self._shallow_discharge_buffer(),
+                event_reason='natural',
+            )
 
-        # Shallow discharge (DoD = 0.50)
-        dod = 0.50
-        if dod >= 0.90:
-            model.set_blackout_credit({
-                'active': True,
-                'credited_event_timestamp': datetime.now(timezone.utc).isoformat(),
-                'credit_expires': (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-                'desulfation_credit': 0.15,
-            })
-
-        # Verify no credit
         credit = model.get_blackout_credit()
         assert credit is None
 
     def test_no_blackout_credit_on_test_initiated_discharge(self, temporary_model_path):
         """Test-initiated discharge: no blackout credit even if deep."""
         model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
 
-        config = Mock()
-        config.capacity_ah = 7.2
-        handler = DischargeHandler(
-            battery_model=model,
-            config=config,
-            capacity_estimator=Mock(),
-            rls_peukert=Mock(),
-            reference_load_percent=20.0,
-            soh_threshold=0.80,
-        )
+        with patch('src.discharge_handler.logger'):
+            handler._score_and_persist_sulfation(
+                soh_new=0.95, recovery_delta=-0.03,
+                discharge_buffer=self._deep_discharge_buffer(),
+                event_reason='test_initiated',
+            )
 
-        # Test-initiated discharge at 95% DoD
-        event_reason = 'test_initiated'
-        dod = 0.95
-
-        if event_reason == 'natural' and dod >= 0.90:
-            model.set_blackout_credit({
-                'active': True,
-                'credited_event_timestamp': datetime.now(timezone.utc).isoformat(),
-                'credit_expires': (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-                'desulfation_credit': 0.15,
-            })
-
-        # Verify no credit (condition not met)
         credit = model.get_blackout_credit()
         assert credit is None
 
@@ -260,22 +239,20 @@ class TestBlackoutCreditEventLogging:
             soh_threshold=0.80,
         )
 
+        # Deep discharge buffer (≥90% DoD)
+        buf = DischargeBuffer()
+        buf.voltages = [13.0, 12.5, 12.0, 11.5]
+        buf.times = [0.0, 300.0, 600.0, 900.0]
+        buf.loads = [25.0, 25.0, 25.0, 25.0]
+
         with patch('src.discharge_handler.logger') as mock_logger:
-            dod = 0.92
-            if dod >= 0.90:
-                credit_expires = datetime.now(timezone.utc) + timedelta(days=7)
-                logger_info_called = False
-                # Simulate the logging that happens in discharge handler
-                from src.discharge_handler import logger as actual_logger
-                # Check that logging would have event_type='blackout_credit_granted'
-                assert dod >= 0.90  # Condition met
+            handler._score_and_persist_sulfation(
+                soh_new=0.95, recovery_delta=-0.02,
+                discharge_buffer=buf, event_reason='natural',
+            )
 
-        # Direct model update
-        model.set_blackout_credit({
-            'active': True,
-            'credited_event_timestamp': datetime.now(timezone.utc).isoformat(),
-            'credit_expires': (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-            'desulfation_credit': 0.15,
-        })
-
+        # Verify blackout_credit_granted was logged
+        log_calls = [c for c in mock_logger.info.call_args_list
+                     if c.kwargs.get('extra', {}).get('event_type') == 'blackout_credit_granted']
+        assert len(log_calls) == 1
         assert model.get_blackout_credit()['active'] is True

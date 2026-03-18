@@ -390,7 +390,7 @@ def test_journald_event_filtering():
                 discharge_data = {
                     'voltage_series': [12.5, 12.0, 11.5, 11.0],
                     'time_series': [0, 300, 600, 900],
-                    'current_series': [25.0, 25.0, 25.0, 25.0],
+                    'load_series': [25.0, 25.0, 25.0, 25.0],
                     'timestamp': '2026-03-16T12:00:00'
                 }
 

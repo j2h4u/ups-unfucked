@@ -250,8 +250,7 @@ class NUTClient:
 
                 _validate_nut_identifier(cmd_name, 'cmd_name')
                 if cmd_param is not None:
-                    if ' ' in cmd_param or '\n' in cmd_param:
-                        raise ValueError(f"Invalid NUT cmd_param: {cmd_param!r} (no spaces/newlines)")
+                    _validate_nut_identifier(cmd_param, 'cmd_param')
                     cmd = f'INSTCMD {self.ups_name} {cmd_name} {cmd_param}'
                 else:
                     cmd = f'INSTCMD {self.ups_name} {cmd_name}'

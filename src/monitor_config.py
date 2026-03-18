@@ -12,12 +12,12 @@ import sys
 import tomllib
 import tempfile
 import importlib.metadata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
-# JournalHandler imported inside setup_logging try block below
+# JournalHandler imported inside try block at module level (line ~220)
 
 from src.model import BatteryModel
 from src.event_classifier import EventType
@@ -163,7 +163,12 @@ def get_scheduling_config(config_dict: dict) -> SchedulingConfig:
     Raises:
         ValueError: If any parameter is invalid
     """
-    scheduling_params = config_dict.get('scheduling', {})
+    scheduling_raw = config_dict.get('scheduling', {})
+    known_fields = {f.name for f in fields(SchedulingConfig)}
+    unknown_keys = set(scheduling_raw) - known_fields
+    if unknown_keys:
+        logger.warning("Unknown scheduling config keys ignored: %s", ', '.join(sorted(unknown_keys)))
+    scheduling_params = {k: v for k, v in scheduling_raw.items() if k in known_fields}
     sched_config = SchedulingConfig(**scheduling_params)
     errors = sched_config.validate()
     if errors:
@@ -250,6 +255,34 @@ def safe_save(model: BatteryModel) -> None:
         model.save()
     except OSError as e:
         logger.warning(f"Failed to persist model (disk full?): {e}")
+
+
+@dataclass
+class HealthSnapshot:
+    """Aggregated health state for external monitoring tools.
+
+    Groups the 16+ metrics written to health.json every poll.
+    Construct in monitor.py, pass to write_health_endpoint().
+    """
+    soc_percent: float = 0.0
+    is_online: bool = False
+    poll_latency_ms: Optional[float] = None
+    capacity_ah_measured: Optional[float] = None
+    capacity_ah_rated: float = 7.2
+    capacity_confidence: float = 0.0
+    capacity_samples_count: int = 0
+    capacity_converged: bool = False
+    sulfation_score: Optional[float] = None
+    sulfation_confidence: str = 'high'
+    days_since_deep: Optional[float] = None
+    ir_trend_rate: Optional[float] = None
+    recovery_delta: Optional[float] = None
+    cycle_roi: Optional[float] = None
+    cycle_budget_remaining: Optional[int] = None
+    scheduling_reason: str = 'observing'
+    next_test_timestamp: Optional[int] = None
+    last_discharge_timestamp: Optional[str] = None
+    natural_blackout_credit: Optional[float] = None
 
 
 def write_health_endpoint(
@@ -350,5 +383,8 @@ def write_health_endpoint(
 
     except Exception as e:
         if tmp_path is not None:
-            tmp_path.unlink(missing_ok=True)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         logger.warning(f"Failed to write health endpoint: {e}")

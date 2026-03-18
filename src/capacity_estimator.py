@@ -135,7 +135,7 @@ class CapacityEstimator:
 
         return True
 
-    def _integrate_current(self, current_percent: List[float], time_sec: List[float],
+    def _integrate_current(self, load_percent: List[float], time_sec: List[float],
                           nominal_power_watts: float, nominal_voltage: float) -> float:
         """
         Coulomb counting: convert load% → current (A) → Ah via trapezoidal integration.
@@ -152,7 +152,7 @@ class CapacityEstimator:
         the same bias direction.
 
         Args:
-            current_percent: Load percentages [0–100] at each time point.
+            load_percent: Load percentages [0–100] at each time point.
             time_sec: Unix timestamps (seconds, monotonic).
             nominal_power_watts: UPS rated power (W).
             nominal_voltage: Battery nominal voltage (V).
@@ -160,13 +160,13 @@ class CapacityEstimator:
         Returns:
             float: Total charge in Ah.
         """
-        if len(current_percent) < 2:
+        if len(load_percent) < 2:
             return 0.0
 
         ah_total = 0.0
-        for i in range(len(current_percent) - 1):
-            current_amps_left = (current_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
-            current_amps_right = (current_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
+        for i in range(len(load_percent) - 1):
+            current_amps_left = (load_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
+            current_amps_right = (load_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
             i_avg = (current_amps_left + current_amps_right) / 2.0
             dt = time_sec[i + 1] - time_sec[i]
             ah_total += i_avg * dt / 3600.0
@@ -236,7 +236,7 @@ class CapacityEstimator:
 
         return ah_voltage
 
-    def _compute_discharge_slope(self, voltage_series: List[float], current_percent: List[float]) -> float:
+    def _compute_discharge_slope(self, voltage_series: List[float], load_percent: List[float]) -> float:
         """
         Compute discharge slope (ΔV_total / I_avg) as metadata for trending.
 
@@ -250,14 +250,14 @@ class CapacityEstimator:
 
         Args:
             voltage_series: Voltage readings (V).
-            current_percent: Load percentages [0–100].
+            load_percent: Load percentages [0–100].
 
         Returns:
             float: Discharge slope in mΩ-equivalent units.
         """
         voltage_drop = voltage_series[0] - voltage_series[-1]
 
-        current_avg_percent = sum(current_percent) / len(current_percent)
+        current_avg_percent = sum(load_percent) / len(load_percent)
         current_avg_amps = (current_avg_percent / 100.0) * self.nominal_power_watts / self.nominal_voltage
 
         if current_avg_amps == 0:

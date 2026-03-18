@@ -105,13 +105,14 @@ class TestGetSchedulingConfigFromDict:
             get_scheduling_config(cfg_dict)
         assert 'grid_stability_cooldown' in str(exc_info.value)
 
-    def test_get_scheduling_config_rejects_unknown_keys(self):
-        """Unknown keys in [scheduling] raise TypeError (no backward compat)."""
+    def test_get_scheduling_config_ignores_unknown_keys(self):
+        """Unknown keys in [scheduling] are filtered out with a warning, not crash."""
         cfg_dict = {
             'scheduling': {
                 'grid_stability_cooldown_hours': 4.0,
-                'soh_floor_threshold': 0.60,  # removed key
+                'soh_floor_threshold': 0.60,  # unknown key — filtered
             }
         }
-        with pytest.raises(TypeError):
-            get_scheduling_config(cfg_dict)
+        result = get_scheduling_config(cfg_dict)
+        assert result.grid_stability_cooldown_hours == 4.0
+        assert not hasattr(result, 'soh_floor_threshold')

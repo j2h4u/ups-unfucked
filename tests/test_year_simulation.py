@@ -16,7 +16,7 @@ from src.battery_math import (
     BatteryState,
     peukert_runtime_hours,
 )
-from src.battery_math.soh import calculate_soh_from_discharge
+from tests.auc_soh_kernel import calculate_soh_from_discharge
 from src.soc_predictor import soc_from_voltage
 
 # ============================================================================
@@ -722,11 +722,12 @@ def test_voltage_spike_sample_rejection(initial_battery_state):
         min_duration_sec=30.0
     )
 
-    # Spike should be handled gracefully (skipped or absorbed)
-    # Exact SoH doesn't matter; we're checking it doesn't crash or corrupt LUT
-    assert new_soh is None or 0.0 <= new_soh <= 1.0, f"SoH out of bounds: {new_soh}"
-
-    print(f"\nVoltage spike test: SoH={new_soh} (spike handled gracefully)")
+    # AUC kernel trims at 10.5V anchor, so 8.5V spike causes early trim.
+    # Only [12.0, 11.5] are used (2 samples, 100s duration). The short AUC
+    # produces a low SoH, but the key property is: no crash, valid range,
+    # and the 8.5V spike does not corrupt the result.
+    assert new_soh is not None, "Spike trimmed by 10.5V floor; remaining data should produce SoH"
+    assert 0.0 <= new_soh <= 1.0, f"SoH out of bounds: {new_soh}"
 
 
 def test_stale_adc_no_soh_inflation(initial_battery_state):

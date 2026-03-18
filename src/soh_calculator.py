@@ -100,14 +100,14 @@ def calculate_soh_from_discharge(
     soh_raw = min(1.0, measured_capacity / capacity_ah_ref)
 
     # Bayesian blend: weight by ΔSoC (deeper discharge = more reliable)
-    discharge_depth_weight = min(delta_soc, 1.0)
-    soh_new = reference_soh * (1 - discharge_depth_weight) + soh_raw * discharge_depth_weight
+    blend_weight = min(delta_soc, 1.0)
+    soh_new = reference_soh * (1 - blend_weight) + soh_raw * blend_weight
     soh_new = max(0.0, min(1.0, soh_new))
 
     logger.info(
         f"SoH capacity-based: measured={measured_capacity:.2f}Ah, "
         f"rated={capacity_ah_ref:.2f}Ah, raw={soh_raw:.3f}, "
-        f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, discharge_depth_weight={discharge_depth_weight:.2f})",
+        f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, blend_weight={blend_weight:.2f})",
         extra={
             'event_type': 'soh_calculation',
             'measured_capacity_ah': f'{measured_capacity:.2f}',

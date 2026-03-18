@@ -222,3 +222,55 @@ class TestINSTCMD:
 
         assert success is False, f"Expected success=False, got {success}"
         assert 'USERNAME failed' in msg, f"Expected 'USERNAME failed' in message, got {msg}"
+
+
+class TestNUTProtocolValidation:
+    """Tests for NUT protocol injection prevention (commit cb6c552)."""
+
+    @pytest.mark.parametrize("bad_name", [
+        "cyber power",          # space
+        "ups;DROP",             # semicolon
+        'ups"quoted',           # quote
+        "ups\nnewline",         # newline
+        "ups\rcarriage",        # carriage return
+        "ups\x00null",          # null byte
+        "",                     # empty
+    ])
+    def test_invalid_ups_name_rejected(self, bad_name):
+        """NUTClient rejects ups_name with injection characters."""
+        with pytest.raises(ValueError, match="Invalid NUT"):
+            NUTClient(ups_name=bad_name)
+
+    @pytest.mark.parametrize("bad_var", [
+        "battery voltage",      # space
+        "ups.status\n",         # newline
+        "var;DROP",             # semicolon
+        "",                     # empty
+    ])
+    def test_invalid_var_name_rejected(self, mock_nut_socket, bad_var):
+        """get_ups_var rejects variable names with injection characters."""
+        client = NUTClient()
+        with pytest.raises(ValueError):
+            client.get_ups_var(bad_var)
+
+    @pytest.mark.parametrize("bad_cmd", [
+        "test battery",         # space
+        "cmd\nnewline",         # newline
+        "cmd;inject",           # semicolon
+    ])
+    def test_invalid_cmd_name_rejected(self, mock_nut_socket, bad_cmd):
+        """send_instcmd rejects command names with injection characters."""
+        client = NUTClient()
+        with pytest.raises(ValueError, match="Invalid NUT"):
+            client.send_instcmd(bad_cmd)
+
+    @pytest.mark.parametrize("bad_param", [
+        "param space",          # space
+        "param\nnewline",       # newline
+        "param;inject",         # semicolon
+    ])
+    def test_invalid_cmd_param_rejected(self, mock_nut_socket, bad_param):
+        """send_instcmd rejects cmd_param with injection characters."""
+        client = NUTClient()
+        with pytest.raises(ValueError, match="Invalid NUT"):
+            client.send_instcmd('test.battery.start.quick', cmd_param=bad_param)

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from src.soh_calculator import calculate_soh_from_discharge
 
 
-def _make_battery_model(lut=None, capacity_ah=7.2):
+def _mock_battery_model(lut=None, capacity_ah=7.2):
     """Helper: create mock BatteryModel with LUT and capacity."""
     model = Mock()
     model.get_lut.return_value = lut if lut is not None else [
@@ -32,7 +32,7 @@ class TestCapacityBasedSoH:
         n = 194
         voltage_series = [13.0 - (i * 1.0 / (n - 1)) for i in range(n)]  # 13.0 → 12.0
         time_series = [float(i * 10) for i in range(n)]  # 0..1930s
-        model = _make_battery_model()
+        model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
             discharge_voltage_series=voltage_series,
@@ -67,7 +67,7 @@ class TestCapacityBasedSoH:
         time_series = [float(i * 10) for i in range(n)]  # 600s
 
         # Use higher load to get more Ah delivered
-        model = _make_battery_model(capacity_ah=7.2)
+        model = _mock_battery_model(capacity_ah=7.2)
 
         result = calculate_soh_from_discharge(
             discharge_voltage_series=voltage_series,
@@ -92,7 +92,7 @@ class TestCapacityBasedSoH:
         n = 60
         voltage_series = [13.0 - (i * 0.05 / (n - 1)) for i in range(n)]
         time_series = [float(i * 10) for i in range(n)]  # 590s
-        model = _make_battery_model()
+        model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
             discharge_voltage_series=voltage_series,
@@ -111,7 +111,7 @@ class TestCapacityBasedSoH:
         """Duration < 300s → returns None."""
         voltage_series = [13.0, 12.5, 12.0, 11.5, 11.0]
         time_series = [0, 50, 100, 150, 200]  # 200s < 300s
-        model = _make_battery_model()
+        model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
             discharge_voltage_series=voltage_series,
@@ -136,7 +136,7 @@ class TestBayesianBlend:
         n = 100
         voltage_series = [13.4 - (i * 2.9 / (n - 1)) for i in range(n)]  # 13.4→10.5
         time_series = [float(i * 10) for i in range(n)]  # 990s
-        model = _make_battery_model()
+        model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
             discharge_voltage_series=voltage_series,
@@ -166,7 +166,7 @@ class TestBayesianBlend:
         n = 60
         voltage_series = [13.0 - (i * 0.6 / (n - 1)) for i in range(n)]  # 13.0→12.4
         time_series = [float(i * 10) for i in range(n)]  # 590s
-        model = _make_battery_model()
+        model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
             discharge_voltage_series=voltage_series,
@@ -186,7 +186,7 @@ class TestBayesianBlend:
 
     def test_insufficient_samples_returns_none(self):
         """< 2 voltage samples → returns None."""
-        model = _make_battery_model()
+        model = _mock_battery_model()
         result = calculate_soh_from_discharge(
             discharge_voltage_series=[13.0],
             discharge_time_series=[0.0],
@@ -201,7 +201,7 @@ class TestBayesianBlend:
 
     def test_no_lut_returns_none(self):
         """Empty LUT → returns None."""
-        model = _make_battery_model(lut=[])
+        model = _mock_battery_model(lut=[])
         result = calculate_soh_from_discharge(
             discharge_voltage_series=[13.0, 12.0],
             discharge_time_series=[0.0, 600.0],

@@ -67,6 +67,7 @@ class DischargeHandler:
 
     def update_battery_health(self, discharge_buffer: DischargeBuffer) -> None:
         """Process completed discharge: SoH, Peukert, replacement prediction, alerts, sulfation."""
+        soh_before = self.battery_model.get_soh()
         soh_result = self._compute_soh(discharge_buffer)
         if soh_result is None:
             return
@@ -78,7 +79,8 @@ class DischargeHandler:
         self._auto_calibrate_peukert(soh_new, discharge_buffer)
 
         event_reason = self._classify_discharge_trigger(discharge_buffer)
-        self._score_and_persist_sulfation(soh_new, soh_result, discharge_buffer, event_reason)
+        recovery_delta = soh_new - soh_before
+        self._score_and_persist_sulfation(soh_new, recovery_delta, discharge_buffer, event_reason, capacity_ah_used)
 
         self._log_discharge_prediction(discharge_buffer)
 
@@ -196,9 +198,10 @@ class DischargeHandler:
     def _score_and_persist_sulfation(
         self,
         soh_new: float,
-        soh_result: tuple,
+        recovery_delta: float,
         discharge_buffer: DischargeBuffer,
         event_reason: str,
+        capacity_ah_used: float = None,
     ) -> None:
         """Compute sulfation score, persist sulfation/discharge history, grant blackout credit.
 
@@ -215,7 +218,7 @@ class DischargeHandler:
             sulfation_state = compute_sulfation_score(
                 days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
                 ir_trend_rate=ir_trend_rate,
-                recovery_delta=soh_new - self.battery_model.get_soh() if soh_result else 0.0,
+                recovery_delta=recovery_delta,
                 temperature_celsius=35.0,
             )
 
@@ -235,7 +238,7 @@ class DischargeHandler:
         self.last_sulfation_confidence = self._assess_sulfation_confidence(days_since_deep, ir_trend_rate) if sulfation_state else None
         self.last_days_since_deep = days_since_deep
         self.last_ir_trend_rate = ir_trend_rate
-        self.last_recovery_delta = soh_new - self.battery_model.get_soh() if soh_result else 0.0
+        self.last_recovery_delta = recovery_delta
         self.last_cycle_roi = roi
         self.last_cycle_budget_remaining = cycle_budget
         self.last_discharge_timestamp = datetime.now(timezone.utc).isoformat()
@@ -254,7 +257,7 @@ class DischargeHandler:
         })
 
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
-        capacity_ah_used = soh_result[1] if soh_result else None
+        # capacity_ah_used passed from caller (update_battery_health)
         self.battery_model.append_discharge_event({
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'event_reason': event_reason,
@@ -419,7 +422,7 @@ class DischargeHandler:
         """
         voltage_series = discharge_data.get('voltage_series', [])
         time_series = discharge_data.get('time_series', [])
-        load_series = discharge_data.get('load_series', discharge_data.get('current_series', []))
+        load_series = discharge_data.get('load_series', [])
         timestamp = discharge_data.get('timestamp', datetime.now().isoformat())
 
         # Guard: need at least 2 samples

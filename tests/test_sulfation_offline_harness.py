@@ -15,7 +15,7 @@ from typing import Tuple
 import pytest
 
 from src.battery_math import BatteryState
-from src.battery_math.soh import calculate_soh_from_discharge
+from tests.auc_soh_kernel import calculate_soh_from_discharge
 from src.battery_math.sulfation import (
     compute_sulfation_score,
     estimate_recovery_delta,

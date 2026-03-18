@@ -62,15 +62,4 @@ def test_message_format_readability(caplog):
     assert "26 min" in caplog.text
 
 
-def test_setup_ups_logger_removed():
-    """Verify setup_ups_logger is removed from alerter module."""
-    # Try to import setup_ups_logger; should fail
-    try:
-        from src.alerter import setup_ups_logger as _
-        # If we get here, the function still exists
-        assert False, "setup_ups_logger should be removed but still exists"
-    except ImportError:
-        # Expected: function no longer exported
-        pass
-
 

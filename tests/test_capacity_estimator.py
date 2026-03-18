@@ -13,10 +13,10 @@ class TestCoulombIntegration:
 
     def test_coulomb_integration_synthetic(self, synthetic_discharge_fixture):
         """Test coulomb integration returns expected Ah within ±1% for synthetic data."""
-        voltage_series, time_series, current_percent_series, lut = synthetic_discharge_fixture
+        voltage_series, time_series, load_series, lut = synthetic_discharge_fixture
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         # Result should not be None (should pass quality filter)
         assert result is not None
@@ -34,7 +34,7 @@ class TestCoulombIntegration:
         """Test coulomb integration with known low-noise data."""
         # 30 samples over 600 seconds with 30% load constant
         time_series = [float(i * 20) for i in range(30)]  # 0, 20, 40, ..., 580 seconds (600s total)
-        current_percent_series = [30.0] * 30  # 30% load constant
+        load_series = [30.0] * 30  # 30% load constant
         voltage_series = [13.0 - (i * 0.083) for i in range(30)]  # 13.0V → 10.56V (>50% ΔSoC)
         lut = [
             {"v": 13.0, "soc": 1.0},
@@ -42,7 +42,7 @@ class TestCoulombIntegration:
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         assert result is not None
         ah_estimate, confidence, metadata = result
@@ -60,7 +60,7 @@ class TestQualityFilter:
         """Rejects discharge with ΔSoC < 15% (F24: lowered from 25%)."""
         # Shallow discharge: 13.0V → 12.8V (10% ΔSoC, below 15% gate)
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds (passes duration)
-        current_percent_series = [20.0] * 100
+        load_series = [20.0] * 100
         voltage_series = [13.0 - (i * 0.002) for i in range(100)]  # V drops from 13.0 to 12.8
         lut = [
             {"v": 13.0, "soc": 1.0},
@@ -69,7 +69,7 @@ class TestQualityFilter:
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         # Should reject (ΔSoC=10% < 15%)
         assert result is None
@@ -78,7 +78,7 @@ class TestQualityFilter:
         """F24: Accepts discharge with ΔSoC ≥ 15% (was rejected at 25% gate)."""
         # Moderate discharge: 13.0V → 12.5V (ΔSoC ~20%, above 15% gate)
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds
-        current_percent_series = [20.0] * 100
+        load_series = [20.0] * 100
         voltage_series = [13.0 - (i * 0.005) for i in range(100)]  # V drops 13.0 → 12.5
         lut = [
             {"v": 13.0, "soc": 1.0},
@@ -87,7 +87,7 @@ class TestQualityFilter:
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         # Should now pass (ΔSoC=20% >= 15%, was rejected at old 25% gate)
         assert result is not None
@@ -97,7 +97,7 @@ class TestQualityFilter:
         """Rejects discharge with duration < 300s (micro)."""
         # Short discharge: only 200 seconds
         time_series = [float(i * 2) for i in range(100)]  # 0, 2, 4, ..., 198 seconds (< 300s)
-        current_percent_series = [30.0] * 100
+        load_series = [30.0] * 100
         voltage_series = [13.0 - (i * 0.025) for i in range(100)]  # V drops 13.0 → 10.5 (50% ΔSoC)
         lut = [
             {"v": 13.0, "soc": 1.0},
@@ -105,7 +105,7 @@ class TestQualityFilter:
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         # Should reject as micro (duration < 300s)
         assert result is None
@@ -114,7 +114,7 @@ class TestQualityFilter:
     def test_accepts_valid_discharge(self):
         """Accepts discharge with ΔSoC >= 25% AND duration >= 300s."""
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds (> 300s)
-        current_percent_series = [35.0] * 100
+        load_series = [35.0] * 100
         voltage_series = [13.0 - (i * 0.025) for i in range(100)]  # V drops 13.0 → 10.5 (50% ΔSoC)
         lut = [
             {"v": 13.0, "soc": 1.0},
@@ -122,7 +122,7 @@ class TestQualityFilter:
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         # Should pass quality filter and return valid result
         assert result is not None
@@ -136,7 +136,7 @@ class TestMetadata:
     def test_estimate_returns_metadata_tuple(self):
         """estimate() returns (Ah_estimate, confidence, metadata) tuple."""
         time_series = [float(i * 10) for i in range(100)]
-        current_percent_series = [35.0] * 100
+        load_series = [35.0] * 100
         voltage_series = [13.0 - (i * 0.025) for i in range(100)]
         lut = [
             {"v": 13.0, "soc": 1.0},
@@ -144,7 +144,7 @@ class TestMetadata:
         ]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
-        result = estimator.estimate(voltage_series, time_series, current_percent_series, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
         assert result is not None
         ah_estimate, confidence, metadata = result

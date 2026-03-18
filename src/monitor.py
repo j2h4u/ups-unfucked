@@ -7,6 +7,7 @@ F58: Config/dataclasses extracted to monitor_config.py,
 discharge lifecycle extracted to discharge_handler.py.
 """
 
+import dataclasses
 import time
 import signal
 import socket
@@ -32,7 +33,7 @@ from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src.battery_math import calibrate_peukert, ScalarRLS
 
 from src.monitor_config import (
-    Config, CurrentMetrics, DischargeBuffer, SagState,
+    Config, CurrentMetrics, DischargeBuffer, HealthSnapshot, SagState,
     CONFIG_DIR, REPO_ROOT, POLL_INTERVAL, NUT_HOST, NUT_PORT, NUT_TIMEOUT,
     RUNTIME_THRESHOLD_MINUTES, REFERENCE_LOAD_PERCENT, REPORTING_INTERVAL_POLLS,
     HEALTH_ENDPOINT_PATH, SAG_SAMPLES_REQUIRED, DISCHARGE_BUFFER_MAX_SAMPLES,
@@ -56,7 +57,7 @@ def validate_preconditions_before_upscmd(
     Guard clauses (must all pass):
     - UPS is online: 'OL' in ups_status and 'OB' not in ups_status and 'CAL' not in ups_status
     - SoC ≥95%: soc >= 0.95
-    - Grid stable: recent_power_glitches ≤ 2 (at most 2 transitions in 4h)
+    - Grid stable: recent_power_glitches ≤ 2 (not yet implemented — caller passes 0)
     - No test running: test_already_running == False
 
     Args:
@@ -333,10 +334,7 @@ class MonitorDaemon:
             raise ValueError(f"Model capacity_ah={capacity} invalid; cannot compute runtime")
 
     def _check_nut_connectivity(self):
-        """
-        Verify NUT upsd is reachable before entering main loop.
-        Only 4 lines as specified.
-        """
+        """Verify NUT upsd is reachable before entering main loop."""
         try:
             _ = self.nut_client.get_ups_vars()
             logger.info("NUT upsd reachable, polling started")
@@ -798,7 +796,8 @@ class MonitorDaemon:
                 self.calibration_last_written_index = i + 1
             except Exception as e:
                 logger.error(f"Calibration write failed at index {i}: {e}", exc_info=True)
-                break
+                self.calibration_last_written_index = i + 1
+                continue
 
         # Batch flush: persist all accumulated points once per REPORTING_INTERVAL
         points_written = self.calibration_last_written_index
@@ -968,8 +967,8 @@ class MonitorDaemon:
 
         # Write health endpoint for external monitoring (every poll)
         convergence_status = self.battery_model.get_convergence_status()
-        try:
-            write_health_endpoint(
+        dh = self.discharge_handler
+        snapshot = HealthSnapshot(
             soc_percent=(self.current_metrics.soc or 0.0) * 100.0,
             is_online=(self.current_metrics.ups_status_override == "OL"),
             poll_latency_ms=poll_latency_ms,
@@ -978,19 +977,19 @@ class MonitorDaemon:
             capacity_confidence=convergence_status.get('confidence_percent', 0.0) / 100.0,
             capacity_samples_count=convergence_status.get('sample_count', 0),
             capacity_converged=convergence_status.get('converged', False),
-            # Sulfation and scheduling state:
-            sulfation_score=self.discharge_handler.last_sulfation_score,
-            sulfation_confidence=self.discharge_handler.last_sulfation_confidence,
-            days_since_deep=self.discharge_handler.last_days_since_deep,
-            ir_trend_rate=self.discharge_handler.last_ir_trend_rate,
-            recovery_delta=self.discharge_handler.last_recovery_delta,
-            cycle_roi=self.discharge_handler.last_cycle_roi,
-            cycle_budget_remaining=self.discharge_handler.last_cycle_budget_remaining,
+            sulfation_score=dh.last_sulfation_score,
+            sulfation_confidence=dh.last_sulfation_confidence,
+            days_since_deep=dh.last_days_since_deep,
+            ir_trend_rate=dh.last_ir_trend_rate,
+            recovery_delta=dh.last_recovery_delta,
+            cycle_roi=dh.last_cycle_roi,
+            cycle_budget_remaining=dh.last_cycle_budget_remaining,
             scheduling_reason=self.last_scheduling_reason,
             next_test_timestamp=self.last_next_test_timestamp,
-            last_discharge_timestamp=self.discharge_handler.last_discharge_timestamp,
-            natural_blackout_credit=None,
-            )
+            last_discharge_timestamp=dh.last_discharge_timestamp,
+        )
+        try:
+            write_health_endpoint(**dataclasses.asdict(snapshot))
         except Exception as e:
             logger.error(f"Health endpoint write failed: {e}", exc_info=True)
 

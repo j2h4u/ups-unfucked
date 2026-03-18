@@ -1,6 +1,7 @@
 """Pure scheduler decision engine for test scheduling with safety gates.
 
-No I/O, no logging, no daemon coupling. Fully testable offline.
+No I/O, no daemon coupling. Fully testable offline.
+Logging limited to safety-gate corruption warnings.
 
 The scheduler evaluates test candidacy daily based on:
 - Sulfation score (0.0-1.0) indicating crystal growth
@@ -13,9 +14,12 @@ for audit trail and decision debugging.
 All timestamps use ISO8601 format in UTC.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Literal, Optional
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger(__name__)
 
 # Algorithmic constants — internal to scheduler, not user-configurable.
 SOH_FLOOR = 0.60                    # Below 60% SoH, testing accelerates degradation (IEEE-450 guidance)
@@ -112,7 +116,8 @@ def evaluate_test_scheduling(
                         next_eligible_timestamp=credit_expires_str,
                     )
         except (ValueError, TypeError):
-            pass  # Invalid timestamp, continue to next gate
+            logger.warning("Corrupted credit_expires timestamp %r — blackout credit gate skipped",
+                           credit_expires_str)
 
     # GATE 4: Grid stability (configurable, can be disabled)
     if grid_stability_cooldown_hours > 0 and last_blackout_timestamp:
@@ -129,7 +134,8 @@ def evaluate_test_scheduling(
                     next_eligible_timestamp=next_eligible,
                 )
         except (ValueError, TypeError):
-            pass  # Invalid timestamp, continue
+            logger.warning("Corrupted last_blackout_timestamp %r — grid stability gate skipped",
+                           last_blackout_timestamp)
 
     # GATE 5: Cycle budget (critical low)
     if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:

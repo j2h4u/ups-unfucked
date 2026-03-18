@@ -33,156 +33,128 @@ def make_daemon(config_fixture):
         yield _make
 
 
+def _poll_once_mocked(daemon, event_type):
+    """Run _poll_once with mocked I/O, controlling the classified event type."""
+    from src.event_classifier import EventType
+
+    def classify_side_effect(ups_data):
+        daemon.current_metrics.event_type = event_type
+
+    daemon._classify_event = MagicMock(side_effect=classify_side_effect)
+
+    with patch('src.monitor.sd_notify'), \
+         patch('time.sleep'), \
+         patch('src.monitor.write_health_endpoint'):
+        daemon._poll_once()
+        daemon.poll_count += 1
+
+
 def test_per_poll_writes_during_blackout(make_daemon):
     """SAFE-01: Virtual UPS metrics written every poll during OB, not every 6th."""
     from src.event_classifier import EventType
-    from unittest.mock import call
+    from src.monitor_config import CurrentMetrics
 
     daemon = make_daemon()
     daemon.nut_client = MagicMock()
     daemon.nut_client.get_ups_vars.return_value = {
-        'battery.voltage': '12.0',
-        'input.voltage': '0',
-        'ups.status': 'OB DISCHRG',
-        'ups.load': '25'
+        'battery.voltage': '12.0', 'input.voltage': '0',
+        'ups.status': 'OB DISCHRG', 'ups.load': '25'
     }
-
-    # Mock dependencies
     daemon._update_ema = MagicMock(return_value=(12.0, 25.0))
-    daemon._classify_event = MagicMock()
     daemon._compute_metrics = MagicMock(return_value=(50.0, 10.0))
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
     daemon._track_voltage_sag = MagicMock()
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
-
-    # Simulate OL→OB→OL transition over 12 polls
-    event_sequence = [
-        EventType.ONLINE,           # Poll 0: OL
-        EventType.ONLINE,           # Poll 1: OL
-        EventType.BLACKOUT_REAL,    # Poll 2: OB (transition)
-        EventType.BLACKOUT_REAL,    # Poll 3: OB
-        EventType.BLACKOUT_REAL,    # Poll 4: OB
-        EventType.BLACKOUT_REAL,    # Poll 5: OB
-        EventType.BLACKOUT_REAL,    # Poll 6: OB
-        EventType.BLACKOUT_REAL,    # Poll 7: OB
-        EventType.ONLINE,           # Poll 8: Back to OL
-        EventType.ONLINE,           # Poll 9: OL
-        EventType.ONLINE,           # Poll 10: OL
-        EventType.ONLINE,           # Poll 11: OL (should trigger batched write at 12th)
-    ]
-
-    from src.monitor_config import CurrentMetrics
+    daemon._run_daily_scheduler = MagicMock()
+    daemon.poll_count = 0
+    daemon._startup_logged = True
+    daemon._consecutive_errors = 0
     daemon.current_metrics = CurrentMetrics(event_type=EventType.ONLINE, previous_event_type=EventType.ONLINE)
 
-    # Run 12 iterations (mock loop)
-    for i in range(12):
-        daemon.poll_count = i
-        daemon.current_metrics.event_type = event_sequence[i]
+    event_sequence = [
+        EventType.ONLINE, EventType.ONLINE,         # Polls 0-1: OL
+        EventType.BLACKOUT_REAL, EventType.BLACKOUT_REAL,  # Polls 2-3: OB
+        EventType.BLACKOUT_REAL, EventType.BLACKOUT_REAL,  # Polls 4-5: OB
+        EventType.BLACKOUT_REAL, EventType.BLACKOUT_REAL,  # Polls 6-7: OB
+        EventType.ONLINE, EventType.ONLINE,          # Polls 8-9: OL
+        EventType.ONLINE, EventType.ONLINE,          # Polls 10-11: OL
+    ]
 
-        # Replicate gate logic from monitor.py
-        event_type = daemon.current_metrics.event_type
-        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
+    for evt in event_sequence:
+        _poll_once_mocked(daemon, evt)
 
-        if is_discharging or daemon.poll_count % 6 == 0:
-            daemon._compute_metrics()
-            daemon._handle_event_transition()
-            daemon._write_virtual_ups(None, 50.0, 10.0)
-
-    # During OL (polls 0-1): only poll 0 should write (modulo) → 1 call
-    # During OB (polls 2-7): all 6 polls should write → 6 calls
-    # During OL (polls 8-11): poll 12 not reached yet → no additional calls
-    # Expected calls: 1 (OL) + 6 (OB) = 7
+    # Poll 0: OL, poll_count%6==0 → write. Poll 1: OL, skip.
+    # Polls 2-7: OB → write every poll (6 writes).
+    # Polls 8-11: OL, only poll 12 would hit %6 → 0 writes.
+    # Total: 1 + 6 = 7
     assert daemon._write_virtual_ups.call_count == 7, \
         f"Expected 7 writes (1 OL + 6 OB), got {daemon._write_virtual_ups.call_count}"
 
 
 def test_handle_event_transition_per_poll_during_ob(make_daemon):
-    """SAFE-02: LB flag decision (_handle_event_transition) executes every poll during OB."""
+    """SAFE-02: _handle_event_transition executes every poll (not gated by reporting interval)."""
     from src.event_classifier import EventType
     from src.monitor_config import CurrentMetrics
 
     daemon = make_daemon()
-    daemon._handle_event_transition = MagicMock()
-    daemon.current_metrics = CurrentMetrics(
-        event_type=EventType.BLACKOUT_REAL,
-        time_rem_minutes=3.0,  # Below shutdown threshold (5 min)
-        previous_event_type=EventType.ONLINE,
-        shutdown_imminent=False
-    )
-    daemon.shutdown_threshold_minutes = 5
-
-    # Mock dependencies
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '11.0', 'input.voltage': '0',
+        'ups.status': 'OB DISCHRG', 'ups.load': '30'
+    }
     daemon._update_ema = MagicMock(return_value=(11.0, 30.0))
-    daemon._classify_event = MagicMock()
     daemon._compute_metrics = MagicMock(return_value=(30.0, 3.0))
+    daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
     daemon._track_voltage_sag = MagicMock()
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
-    daemon.nut_client = MagicMock()
-    daemon.nut_client.get_ups_vars.return_value = {
-        'battery.voltage': '11.0',
-        'input.voltage': '0',
-        'ups.status': 'OB DISCHRG',
-        'ups.load': '30'
-    }
+    daemon._run_daily_scheduler = MagicMock()
+    daemon.poll_count = 0
+    daemon._startup_logged = True
+    daemon._consecutive_errors = 0
+    daemon.current_metrics = CurrentMetrics(
+        event_type=EventType.BLACKOUT_REAL, previous_event_type=EventType.ONLINE,
+    )
 
-    # Simulate 4 polls during OB state
-    for i in range(4):
-        daemon.poll_count = i
-        daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
+    for _ in range(4):
+        _poll_once_mocked(daemon, EventType.BLACKOUT_REAL)
 
-        event_type = daemon.current_metrics.event_type
-        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
-
-        if is_discharging or daemon.poll_count % 6 == 0:
-            daemon._compute_metrics()
-            daemon._handle_event_transition()
-
-    # All 4 polls should call _handle_event_transition (is_discharging=True)
+    # _handle_event_transition runs every poll (F13 fix), not gated
     assert daemon._handle_event_transition.call_count == 4, \
         f"Expected 4 calls during OB, got {daemon._handle_event_transition.call_count}"
 
 
 def test_no_writes_during_online_state(make_daemon):
-    """SAFE-01: No spurious writes during OL state — only on poll % 6 boundary."""
+    """SAFE-01: No spurious writes during OL state — only on reporting interval boundary."""
     from src.event_classifier import EventType
     from src.monitor_config import CurrentMetrics
 
     daemon = make_daemon()
-    daemon._write_virtual_ups = MagicMock()
-    daemon._handle_event_transition = MagicMock()
-    daemon._compute_metrics = MagicMock(return_value=(85.0, 120.0))
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.return_value = {
+        'battery.voltage': '13.4', 'input.voltage': '220',
+        'ups.status': 'OL', 'ups.load': '15'
+    }
     daemon._update_ema = MagicMock(return_value=(13.4, 15.0))
-    daemon._classify_event = MagicMock()
+    daemon._compute_metrics = MagicMock(return_value=(85.0, 120.0))
+    daemon._handle_event_transition = MagicMock()
+    daemon._write_virtual_ups = MagicMock()
     daemon._track_voltage_sag = MagicMock()
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
-    daemon.nut_client = MagicMock()
-    daemon.nut_client.get_ups_vars.return_value = {
-        'battery.voltage': '13.4',
-        'input.voltage': '220',
-        'ups.status': 'OL',
-        'ups.load': '15'
-    }
+    daemon._run_daily_scheduler = MagicMock()
+    daemon.poll_count = 0
+    daemon._startup_logged = True
+    daemon._consecutive_errors = 0
     daemon.current_metrics = CurrentMetrics(event_type=EventType.ONLINE, previous_event_type=EventType.ONLINE)
 
-    # Simulate 7 polls in OL state
-    for i in range(7):
-        daemon.poll_count = i
-        daemon.current_metrics.event_type = EventType.ONLINE
+    for _ in range(7):
+        _poll_once_mocked(daemon, EventType.ONLINE)
 
-        event_type = daemon.current_metrics.event_type
-        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
-
-        if is_discharging or daemon.poll_count % 6 == 0:
-            daemon._compute_metrics()
-            daemon._handle_event_transition()
-            daemon._write_virtual_ups(None, 85.0, 120.0)
-
-    # Only poll 0 and poll 6 should trigger writes (modulo 6 == 0)
+    # Only poll 0 and poll 6 should trigger writes (poll_count % 6 == 0)
     assert daemon._write_virtual_ups.call_count == 2, \
         f"Expected 2 writes (poll 0, poll 6), got {daemon._write_virtual_ups.call_count}"
 
@@ -1249,7 +1221,7 @@ class TestCapacityEstimatorIntegration:
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
             'time_series': [0, 300, 600, 900],
-            'current_series': [30, 32, 35, 40],
+            'load_series': [30, 32, 35, 40],
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
@@ -1274,7 +1246,7 @@ class TestCapacityEstimatorIntegration:
         discharge_data = {
             'voltage_series': [12.0, 11.9],  # Too shallow
             'time_series': [0, 100],  # Too short
-            'current_series': [20, 21],
+            'load_series': [20, 21],
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
@@ -1306,7 +1278,7 @@ class TestCapacityEstimatorIntegration:
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
             'time_series': [0, 300, 600, 900],
-            'current_series': [30, 32, 35, 40],
+            'load_series': [30, 32, 35, 40],
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
@@ -1344,7 +1316,7 @@ class TestCapacityEstimatorIntegration:
         discharge_data = {
             'voltage_series': [12.5, 11.0],
             'time_series': [0, 900],
-            'current_series': [30, 40],
+            'load_series': [30, 40],
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
@@ -1386,7 +1358,7 @@ class TestCapacityEstimatorIntegration:
         discharge_data = {
             'voltage_series': [12.5, 12.3, 12.1, 11.9, 11.7, 11.5, 11.3, 11.1, 10.9],
             'time_series': [0, 100, 200, 300, 400, 500, 600, 700, 800],
-            'current_series': [25, 26, 27, 28, 29, 30, 31, 32, 33],
+            'load_series': [25, 26, 27, 28, 29, 30, 31, 32, 33],
             'timestamp': '2026-03-15T12:34:56Z'
         }
 
@@ -1629,7 +1601,7 @@ def test_journald_capacity_event_logged(make_daemon):
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
             'time_series': [0, 300, 600, 900],
-            'current_series': [25.0, 25.0, 25.0, 25.0],
+            'load_series': [25.0, 25.0, 25.0, 25.0],
             'timestamp': '2026-03-16T12:00:00'
         }
         daemon._handle_discharge_complete(discharge_data)
@@ -1705,7 +1677,7 @@ def test_journald_baseline_lock_event(make_daemon):
         discharge_data = {
             'voltage_series': [12.5, 12.0, 11.5, 11.0],
             'time_series': [0, 300, 600, 900],
-            'current_series': [25.0, 25.0, 25.0, 25.0],
+            'load_series': [25.0, 25.0, 25.0, 25.0],
             'timestamp': '2026-03-16T12:00:00'
         }
         daemon._handle_discharge_complete(discharge_data)

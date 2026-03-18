@@ -15,14 +15,6 @@ def mock_socket_ok():
     communication with NUT upsd daemon. Includes responses for common UPS variables:
     battery.voltage, ups.load, ups.status, input.voltage.
     """
-    # NUT protocol response strings for common variables
-    response_data = {
-        'battery.voltage': 'VAR cyberpower battery.voltage 13.4\n',
-        'ups.load': 'VAR cyberpower ups.load 16\n',
-        'ups.status': 'VAR cyberpower ups.status OL\n',
-        'input.voltage': 'VAR cyberpower input.voltage 230\n',
-    }
-
     # Create a mock socket that returns valid responses
     mock_sock = Mock(spec=socket.socket)
 
@@ -256,7 +248,7 @@ def synthetic_discharge_fixture(mock_lut_standard):
     - Expected capacity: ~5.8Ah via coulomb counting
 
     Returns:
-        tuple: (voltage_series, time_series, current_series, lut)
+        tuple: (voltage_series, time_series, load_series, lut)
     """
     # 100 time points over 990 seconds (every ~10 seconds)
     time_series = [float(i * 10) for i in range(100)]
@@ -266,9 +258,9 @@ def synthetic_discharge_fixture(mock_lut_standard):
 
     # Constant load: 35A at 12V = (35 * 12 / 425) * 100 ≈ 99% load
     # For realistic testing, use 30% load: (30 * 425 / 100 / 12) ≈ 10.6A
-    current_percent_series = [30.0] * 100
+    load_series = [30.0] * 100
 
-    return voltage_series, time_series, current_percent_series, mock_lut_standard
+    return voltage_series, time_series, load_series, mock_lut_standard
 
 
 @pytest.fixture
@@ -283,7 +275,7 @@ def synthetic_discharge_47min_fixture():
     - Expected capacity: ~7.2Ah
 
     Returns:
-        tuple: (voltage_series, time_series, current_series, lut)
+        tuple: (voltage_series, time_series, load_series, lut)
     """
     # Simulated real discharge over 2820 seconds (47 minutes)
     # Sample every 10 seconds, so 282 samples
@@ -302,12 +294,12 @@ def synthetic_discharge_47min_fixture():
     # For 7.2Ah over 2800s: I_avg = 7.2 * 3600 / 2800 ≈ 9.26A
     # In load percent: (9.26A * 12V / 425W) * 100 ≈ 26%
     # Add variation: ±3% to simulate server load fluctuations
-    current_percent_series = []
+    load_series = []
     for i in range(num_samples):
         # Base load ~26% with ±3% variation
         base = 26.0
         variation = 3.0 * (0.5 + 0.5 * (i % 10) / 10)  # Sinusoidal-ish variation
-        current_percent_series.append(base + variation)
+        load_series.append(base + variation)
 
     lut = [
         {"v": 13.4, "soc": 1.0, "source": "standard"},
@@ -318,4 +310,4 @@ def synthetic_discharge_47min_fixture():
         {"v": 10.5, "soc": 0.0, "source": "anchor"},
     ]
 
-    return voltage_series, time_series, current_percent_series, lut
+    return voltage_series, time_series, load_series, lut

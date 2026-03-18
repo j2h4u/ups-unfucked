@@ -1,11 +1,11 @@
-"""DEPRECATED: AUC-based SoH kernel — superseded by soh_calculator.py (capacity-based).
+"""AUC-based SoH kernel for year-simulation and offline harness tests.
 
-This module is retained for year-simulation tests only. Production code uses
-src.soh_calculator.calculate_soh_from_discharge (capacity-based F19/F20/F21).
-Do not add new callers — this module will be removed in a future cleanup.
+This is the original area-under-curve algorithm, superseded in production by
+soh_calculator.py (capacity-based F19/F20/F21). Kept here because the
+simulation tests model battery degradation using this pure-function interface.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 
 def calculate_soh_from_discharge(
@@ -25,22 +25,6 @@ def calculate_soh_from_discharge(
     - Duration < 30s (VAL-01: flicker storm protection)
     - Insufficient voltage data
     - Math undefined
-
-    No I/O, no time.time() calls — all inputs as parameters.
-
-    Args:
-        voltage_series: Voltage readings [V] during discharge
-        time_series: Time [sec] for each reading (must be monotonic)
-        reference_soh: Previous SoH estimate [0.0, 1.0]
-        capacity_ah: Battery capacity (Ah)
-        load_percent: Average load during discharge (%)
-        peukert_exponent: Peukert exponent [1.0, 1.4]
-        nominal_voltage: Battery nominal voltage (V)
-        nominal_power_watts: UPS nominal power (W)
-        min_duration_sec: Minimum discharge duration for valid update (default 30s VAL-01).
-
-    Returns:
-        Updated SoH [0.0, 1.0] or None if insufficient data
     """
     if len(voltage_series) < 2 or len(time_series) < 2:
         return None
@@ -75,7 +59,7 @@ def calculate_soh_from_discharge(
         area_measured += (v1 + v2) / 2.0 * dt
 
     # Reference area from Peukert's Law (pure physics)
-    from .peukert import peukert_runtime_hours
+    from src.battery_math.peukert import peukert_runtime_hours
 
     T_expected_sec = peukert_runtime_hours(
         load_percent, capacity_ah, peukert_exponent,
