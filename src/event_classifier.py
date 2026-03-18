@@ -37,6 +37,19 @@ class EventClassifier:
         self.last_raw_status = ""
 
     def classify(self, ups_status: str, input_voltage: int) -> EventType:
+        """Classify UPS event from status string and input voltage.
+
+        Stateful: mutates self.state, self.transition_occurred, and self.previous_state
+        (via self.state before assignment). Callers should read transition_occurred
+        immediately after each call if they need to detect state changes.
+
+        Args:
+            ups_status: NUT status string (space-separated flags, e.g. "OB LB DISCHRG")
+            input_voltage: AC input voltage in volts (0 = mains lost, ≥100 = mains present)
+
+        Returns:
+            EventType: Classified event (ONLINE, BLACKOUT_REAL, or BLACKOUT_TEST)
+        """
         self.last_raw_status = ups_status
 
         # Flag-based matching: NUT status is space-separated flags (F36)

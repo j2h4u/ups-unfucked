@@ -379,7 +379,6 @@ class BatteryModel:
 
         entry = {'date': date, 'soh': soh}
 
-        # Phase 13: Tag with capacity baseline
         if capacity_ah_ref is not None:
             entry['capacity_ah_ref'] = round(capacity_ah_ref, 2)
 
@@ -474,7 +473,7 @@ class BatteryModel:
                 'latest_ah': float | None,  # Latest measured capacity
                 'rated_ah': float,  # Firmware rated capacity (7.2 for UT850)
                 'converged': bool,  # True if count >= 3 AND CoV < 0.10
-                'capacity_ah_ref': float | None  # Reference capacity (for new battery detection, Phase 13)
+                'capacity_ah_ref': float | None  # Reference capacity (for new battery detection)
             }
         """
         estimates = self.data.get('capacity_estimates', [])
@@ -585,7 +584,7 @@ class BatteryModel:
             logger.error(f"Failed to update LUT from calibration: {e}")
             raise
 
-    # --- Phase 17 Scheduling State Management ---
+    # --- Scheduling State Management ---
 
     def set_blackout_credit(self, credit_dict: dict) -> None:
         """Grant blackout credit after natural deep discharge.

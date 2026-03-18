@@ -30,6 +30,7 @@ def peukert_runtime_hours(
     values from NUT sensor glitches (load=0 would otherwise cause division
     by zero or false LB flag if returned as 0.0).
     """
+    # Zero load → 24h cap (conservative upper bound); battery_math/peukert.py returns 0.0 (strict math)
     if load_percent <= 0:
         return 24.0
 

@@ -62,18 +62,15 @@ class CapacityEstimator:
         if not self._passes_quality_filter(voltage_series, time_series, load_series, lut):
             return None
 
-        # Step 1: Coulomb integration
         ah_coulomb = self._integrate_current(load_series, time_series,
                                              self.nominal_power_watts, self.nominal_voltage)
 
-        # Step 2: SoC range for depth-of-discharge
         soc_start, soc_end = self._get_soc_range(voltage_series, lut)
         delta_soc = soc_start - soc_end
 
-        # Step 3: Voltage-based capacity estimate (for cross-check)
         ah_voltage = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
 
-        # Outlier rejection: coulomb vs voltage >50% disagreement
+        # Outlier rejection: coulomb vs voltage >75% disagreement
         if ah_voltage > 0 and abs(ah_coulomb - ah_voltage) / max(ah_coulomb, ah_voltage) > 0.75:
             logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage:.2f}Ah "
                           f"disagree >75%; rejecting measurement")
@@ -82,10 +79,9 @@ class CapacityEstimator:
         # Use coulomb as primary estimate
         ah_estimate = ah_coulomb
 
-        # Step 4: Discharge slope metadata (expert panel requirement)
         discharge_slope_mohm = self._compute_discharge_slope(voltage_series, load_series)
 
-        # Step 5: Assemble metadata
+        # Assemble metadata
         metadata = {
             'delta_soc_percent': delta_soc * 100,
             'duration_sec': time_series[-1] - time_series[0],
@@ -161,17 +157,10 @@ class CapacityEstimator:
 
         ah_total = 0.0
         for i in range(len(current_percent) - 1):
-            # Convert load% to current (A)
             i_curr_1 = (current_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
             i_curr_2 = (current_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
-
-            # Average current in interval
             i_avg = (i_curr_1 + i_curr_2) / 2.0
-
-            # Time step (seconds)
             dt = time_sec[i + 1] - time_sec[i]
-
-            # Accumulate Ah (convert A·s to Ah by dividing by 3600)
             ah_total += i_avg * dt / 3600.0
 
         return ah_total
@@ -226,10 +215,6 @@ class CapacityEstimator:
         # Scale by delta_soc: if delta_soc = 0.5 and we see 1.75V drop, it checks out
         expected_voltage_drop = typical_full_discharge_voltage_drop * delta_soc
 
-        # If observed voltage drop matches expected, our coulomb estimate should be correct
-        # Use coulomb-estimated Ah to back-calculate what the voltage curve suggests
-        # Actually, for safety, just return an estimate based on voltage drop alone
-
         # F26: Use constructor param instead of hardcoded 7.2
         nominal_ah = self.capacity_ah
 
@@ -264,14 +249,12 @@ class CapacityEstimator:
         """
         voltage_drop = voltage_series[0] - voltage_series[-1]
 
-        # Convert load% to current (A)
         current_avg_percent = sum(current_percent) / len(current_percent)
         current_avg_amps = (current_avg_percent / 100.0) * self.nominal_power_watts / self.nominal_voltage
 
         if current_avg_amps == 0:
             return 0.0
 
-        # Slope in Ohm-equivalent, then convert to mΩ
         slope_ohms = voltage_drop / current_avg_amps
         slope_mohms = slope_ohms * 1000
 

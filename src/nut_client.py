@@ -218,22 +218,18 @@ class NUTClient:
         """
         with self._socket_session():
             try:
-                # Step 1: Authenticate as 'upsmon' user
                 response = self.send_command('USERNAME upsmon')
                 if not response.startswith('OK'):
                     return (False, f"USERNAME failed: {response}")
 
-                # Step 2: Send password (empty for upsmon in standard upsd.users)
                 response = self.send_command('PASSWORD')
                 if not response.startswith('OK'):
                     return (False, f"PASSWORD failed: {response}")
 
-                # Step 3: Login to UPS
                 response = self.send_command(f'LOGIN {self.ups_name}')
                 if not response.startswith('OK'):
                     return (False, f"LOGIN failed: {response}")
 
-                # Step 4: Send the actual INSTCMD
                 if cmd_param is not None:
                     cmd = f'INSTCMD {self.ups_name} {cmd_name} {cmd_param}'
                 else:
@@ -241,7 +237,6 @@ class NUTClient:
 
                 response = self.send_command(cmd)
 
-                # Step 5: Parse INSTCMD response
                 if response.startswith('OK'):
                     return (True, response)
                 elif response.startswith('ERR'):

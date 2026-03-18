@@ -59,7 +59,7 @@ class SchedulingConfig:
 
     Algorithmic constants (SoH floor, rate limit, ROI threshold, sulfation
     thresholds, cycle budget, blackout credit window) live as named constants
-    in their respective modules (scheduler.py, discharge_handler.py).
+    in their respective modules (scheduler.py constants, discharge_handler.py inline constants).
     """
 
     def __init__(self,
@@ -92,20 +92,20 @@ class Config:
     frozen=True prevents accidental mutation at runtime. All fields are read-only.
     Config instance is created at startup and passed to MonitorDaemon.__init__.
     """
-    ups_name: str                          # From config.toml['ups_name'] or default 'cyberpower'
-    polling_interval: int                  # 10 seconds
-    reporting_interval: int                # 60 seconds (REPORTING_INTERVAL_POLLS * polling_interval)
-    nut_host: str                          # 'localhost'
-    nut_port: int                          # 3493
-    nut_timeout: float                     # 2.0 seconds
-    shutdown_minutes: int                  # From config.toml['shutdown_minutes'] or default 5
-    soh_alert_threshold: float             # From config.toml['soh_alert'] or default 0.80
-    model_dir: Path                        # ~/.config/ups-battery-monitor
-    runtime_threshold_minutes: int         # 20 minutes (hardcoded constant)
-    reference_load_percent: float          # 20.0% (hardcoded constant)
-    ema_window_sec: int                    # 120 seconds (hardcoded constant)
-    capacity_ah: float                     # From config.toml['capacity_ah'] or default 7.2
-    scheduling: SchedulingConfig = None  # Always populated by load_config(); default for tests
+    ups_name: str
+    polling_interval: int
+    reporting_interval: int
+    nut_host: str
+    nut_port: int
+    nut_timeout: float
+    shutdown_minutes: int
+    soh_alert_threshold: float
+    model_dir: Path
+    runtime_threshold_minutes: int
+    reference_load_percent: float
+    ema_window_sec: int
+    capacity_ah: float
+    scheduling: SchedulingConfig = None
 
 
 def load_config() -> Config:

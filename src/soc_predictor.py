@@ -113,7 +113,5 @@ def charge_percentage(soc: float) -> int:
     Returns:
         int: Charge percentage (0-100)
     """
-    # Clamp SoC to [0, 1] first
     soc_clamped = max(0.0, min(1.0, soc))
-    # Convert to percentage and round to nearest integer
     return int(round(soc_clamped * 100))

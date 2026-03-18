@@ -52,7 +52,7 @@ def calculate_soh_from_discharge(
         load_percent: Average load during discharge (%)
         nominal_power_watts: UPS rated power (W)
         nominal_voltage: Battery nominal voltage (V)
-        peukert_exponent: Peukert coefficient (unused, kept for API compat)
+        peukert_exponent: Peukert coefficient (unused — forwarded to battery_math.soh kernel; will be removed in next cleanup)
 
     Returns:
         Tuple of (soh_new, capacity_ah_ref) or None if calculation failed

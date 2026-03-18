@@ -74,7 +74,6 @@ class DischargeHandler:
         Args:
             discharge_buffer: Completed discharge data (voltages, times, loads).
         """
-        # Check discharge buffer has data
         if len(discharge_buffer.voltages) < 2:
             return  # No discharge detected; skip SoH update
 
@@ -277,19 +276,16 @@ class DischargeHandler:
         Guard clauses (sample count, duration, load validity) stay here in orchestrator.
         Pure math is delegated to kernel function.
         """
-        # Guard clause 1: Minimum discharge samples
         times = discharge_buffer.times
         if len(times) < 2:
             logger.debug("Peukert calibration skipped: <2 discharge samples")
             return
 
-        # Guard clause 2: Discharge duration threshold
         actual_duration_sec = times[-1] - times[0]
         if actual_duration_sec < 60:
             logger.debug(f"Peukert calibration skipped: discharge too short ({actual_duration_sec:.0f}s < 60s)")
             return
 
-        # Guard clause 3: Valid average load (use raw load from discharge buffer)
         avg_load = (sum(discharge_buffer.loads) / len(discharge_buffer.loads)
                    if discharge_buffer.loads else self.reference_load_percent)
         if avg_load is None or avg_load <= 0 or avg_load > 100:

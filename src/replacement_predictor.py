@@ -28,7 +28,7 @@ def linear_regression_soh(
         - Insufficient data (< 3 points)
         - R² < 0.5 (unreliable fit)
         - No degradation (slope >= 0)
-        - SoH already below threshold (returns date as 'overdue')
+        - SoH already below threshold (returns today's date as ISO8601 string)
 
     Edge cases handled:
         - Non-monotonic dates: sorting applied implicitly via index order
@@ -49,7 +49,7 @@ def linear_regression_soh(
       regression. Negligible for months-ahead extrapolation. Could deduplicate
       to daily average if needed, but added complexity not justified.
     """
-    # Phase 13: Filter by capacity baseline
+    # Filter by capacity baseline
     if capacity_ah_ref is not None:
         # Keep only entries matching the baseline
         # Default missing field to 7.2Ah (original rated capacity)

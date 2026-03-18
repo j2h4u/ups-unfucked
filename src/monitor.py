@@ -117,7 +117,7 @@ def dispatch_test_with_audit(
     # Extract current state for precondition checks
     ups_status = getattr(current_metrics, 'ups_status_override', None) or "OL"
     soc = getattr(current_metrics, 'soc', 1.0)
-    recent_glitches = 0  # TODO: implement glitch counting from discharge_events
+    recent_glitches = 0  # Not implemented — always 0 for now
     test_running = battery_model.data.get('test_running', False)
 
     # Validate preconditions
@@ -202,7 +202,7 @@ class MonitorDaemon:
         Args:
             config: Config dataclass instance with all daemon parameters.
             battery_replaced: Boolean flag from CLI --new-battery; indicates battery swap.
-                             When True, Phase 13 detection logic will check on next discharge.
+                             When True, new-battery detection logic will check on next discharge.
         """
         self.running = True
         self.config = config
@@ -236,7 +236,7 @@ class MonitorDaemon:
             self.battery_model.save()  # Write defaults so tools (battery-health.py, MOTD) can read
         self.event_classifier = EventClassifier()
 
-        # Initialize CapacityEstimator for Phase 12 capacity measurement (CAP-01, CAP-05)
+        # Initialize CapacityEstimator for capacity measurement (CAP-01, CAP-05)
         self.capacity_estimator = CapacityEstimator(
             peukert_exponent=self.battery_model.get_peukert_exponent(),
             nominal_voltage=self.battery_model.get_nominal_voltage(),
@@ -361,7 +361,7 @@ class MonitorDaemon:
         event_type = self.current_metrics.event_type
         previous_event_type = self.current_metrics.previous_event_type
 
-        # EVT-02: Real blackout - prepare shutdown signal
+        # EVT-02
         if event_type == EventType.BLACKOUT_REAL:
             time_rem = self.current_metrics.time_rem_minutes
             if time_rem is not None and time_rem < self.shutdown_threshold_minutes:
@@ -373,19 +373,19 @@ class MonitorDaemon:
             else:
                 self.current_metrics.shutdown_imminent = False
 
-        # EVT-03: Battery test - suppress shutdown
+        # EVT-03
         if event_type == EventType.BLACKOUT_TEST:
             logger.info("Battery test detected; collecting calibration data, no shutdown")
             self.current_metrics.shutdown_imminent = False
 
-        # EVT-04: Status arbitration via compute_ups_status_override()
+        # EVT-04
         self.current_metrics.ups_status_override = compute_ups_status_override(
             event_type,
             self.current_metrics.time_rem_minutes or 0,
             self.shutdown_threshold_minutes
         )
 
-        # EVT-05: Model update on OB→OL transition
+        # EVT-05
         if (self.current_metrics.transition_occurred and
             event_type == EventType.ONLINE and
             previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
@@ -484,7 +484,7 @@ class MonitorDaemon:
 
         self.battery_model.save()
 
-    # --- Phase 17 Scheduler helpers ---
+    # --- Scheduler helpers ---
 
     def _calculate_days_since_last_test(self) -> float:
         """Calculate days since last upscmd, or inf if never tested."""

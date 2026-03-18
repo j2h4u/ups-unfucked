@@ -28,7 +28,6 @@ def alert_soh_below_threshold(
     else:
         msg += "; replacement date unknown"
 
-    # Log as warning
     logger.warning(msg, extra={
         'BATTERY_SOH': f'{current_soh:.4f}',
         'THRESHOLD': f'{threshold_soh:.4f}',

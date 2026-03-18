@@ -1,4 +1,4 @@
-"""Pure kernel functions: SoH calculation from discharge curves and LUT smoothing.
+"""Pure kernel function: SoH calculation from discharge curve analysis (AUC-based).
 
 No I/O, no logging. Time injection for simulator support.
 """
