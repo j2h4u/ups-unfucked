@@ -43,7 +43,7 @@ class CapacityEstimator:
         self,
         voltage_series: List[float],
         time_series: List[float],
-        current_series: List[float],
+        load_series: List[float],
         lut: List[Dict],
     ) -> Optional[Tuple[float, float, Dict]]:
         """
@@ -52,18 +52,18 @@ class CapacityEstimator:
         Args:
             voltage_series: Voltage readings (V) during discharge.
             time_series: Unix timestamps (sec) — monotonic increasing.
-            current_series: Load percent (%) during discharge.
+            load_series: Load percent (%) during discharge.
             lut: Voltage → SoC lookup table.
 
         Returns:
             (Ah_estimate, confidence, metadata) tuple, or None if quality filter rejects.
         """
         # VAL-01: Quality filter
-        if not self._passes_quality_filter(voltage_series, time_series, current_series, lut):
+        if not self._passes_quality_filter(voltage_series, time_series, load_series, lut):
             return None
 
         # Step 1: Coulomb integration
-        ah_coulomb = self._integrate_current(current_series, time_series,
+        ah_coulomb = self._integrate_current(load_series, time_series,
                                              self.nominal_power_watts, self.nominal_voltage)
 
         # Step 2: SoC range for depth-of-discharge
@@ -83,14 +83,14 @@ class CapacityEstimator:
         ah_estimate = ah_coulomb
 
         # Step 4: Discharge slope metadata (expert panel requirement)
-        discharge_slope_mohm = self._compute_discharge_slope(voltage_series, current_series)
+        discharge_slope_mohm = self._compute_discharge_slope(voltage_series, load_series)
 
         # Step 5: Assemble metadata
         metadata = {
             'delta_soc_percent': delta_soc * 100,
             'duration_sec': time_series[-1] - time_series[0],
             'discharge_slope_mohm': discharge_slope_mohm,
-            'load_avg_percent': sum(current_series) / len(current_series) if current_series else 0,
+            'load_avg_percent': sum(load_series) / len(load_series) if load_series else 0,
             'coulomb_ah': ah_coulomb,
             'voltage_check_ah': ah_voltage
         }
@@ -101,7 +101,7 @@ class CapacityEstimator:
         return (ah_estimate, confidence, metadata)
 
     def _passes_quality_filter(self, voltage_series: List[float], time_series: List[float],
-                              current_series: List[float], lut: List[Dict]) -> bool:
+                              load_series: List[float], lut: List[Dict]) -> bool:
         """
         VAL-01: Reject micro and shallow discharges.
 
@@ -110,7 +110,7 @@ class CapacityEstimator:
         - ΔSoC >= 15% (F24: lowered from 25% to accept typical 3-5 min blackouts)
 
         Args:
-            voltage_series, time_series, current_series, lut: Discharge data.
+            voltage_series, time_series, load_series, lut: Discharge data.
 
         Returns:
             bool: True if all criteria pass, False if any rejected.

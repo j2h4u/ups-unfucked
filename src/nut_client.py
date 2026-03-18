@@ -47,8 +47,8 @@ class NUTClient:
         try:
             if self.sock:
                 self.sock.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Socket close error (ignored): {e}")
 
     @staticmethod
     def _parse_var_line(line):

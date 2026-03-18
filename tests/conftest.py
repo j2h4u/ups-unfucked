@@ -237,7 +237,6 @@ def config_fixture(tmp_path):
         shutdown_minutes=5,
         soh_alert_threshold=0.80,
         model_dir=tmp_path / "test_model",
-        config_dir=tmp_path / "test_config",
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,

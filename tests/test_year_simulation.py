@@ -16,8 +16,8 @@ from src.battery_math import (
     BatteryState,
     calculate_soh_from_discharge,
     peukert_runtime_hours,
-    soc_from_voltage,
 )
+from src.soc_predictor import soc_from_voltage
 
 # ============================================================================
 # VRLA Reference LUT (from research: 12.1-RESEARCH.md)

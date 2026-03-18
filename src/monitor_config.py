@@ -101,7 +101,6 @@ class Config:
     shutdown_minutes: int                  # From config.toml['shutdown_minutes'] or default 5
     soh_alert_threshold: float             # From config.toml['soh_alert'] or default 0.80
     model_dir: Path                        # ~/.config/ups-battery-monitor
-    config_dir: Path                       # ~/.config/ups-battery-monitor
     runtime_threshold_minutes: int         # 20 minutes (hardcoded constant)
     reference_load_percent: float          # 20.0% (hardcoded constant)
     ema_window_sec: int                    # 120 seconds (hardcoded constant)
@@ -147,7 +146,6 @@ def load_config() -> Config:
         shutdown_minutes=user_config['shutdown_minutes'],
         soh_alert_threshold=user_config['soh_alert'],
         model_dir=CONFIG_DIR,
-        config_dir=CONFIG_DIR,
         runtime_threshold_minutes=RUNTIME_THRESHOLD_MINUTES,
         capacity_ah=user_config['capacity_ah'],
         reference_load_percent=REFERENCE_LOAD_PERCENT,
@@ -253,7 +251,7 @@ def safe_save(model: BatteryModel) -> None:
     try:
         model.save()
     except OSError as e:
-        logger.error(f"Failed to persist model (disk full?): {e}")
+        logger.warning(f"Failed to persist model (disk full?): {e}")
 
 
 def write_health_endpoint(
@@ -355,4 +353,4 @@ def write_health_endpoint(
     except Exception as e:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
-        logger.error(f"Failed to write health endpoint: {e}")
+        logger.warning(f"Failed to write health endpoint: {e}")

@@ -28,7 +28,7 @@ class TestDischargeClassification:
             soh_threshold=0.80,
         )
 
-        reason = handler._classify_event_reason(buffer)
+        reason = handler._classify_discharge_trigger(buffer)
         assert reason == 'natural'
 
     def test_classify_test_initiated_recent_upscmd(self, temporary_model_path):
@@ -58,7 +58,7 @@ class TestDischargeClassification:
             soh_threshold=0.80,
         )
 
-        reason = handler._classify_event_reason(buffer)
+        reason = handler._classify_discharge_trigger(buffer)
         assert reason == 'test_initiated'
 
     def test_classify_natural_old_upscmd(self, temporary_model_path):
@@ -83,7 +83,7 @@ class TestDischargeClassification:
             soh_threshold=0.80,
         )
 
-        reason = handler._classify_event_reason(buffer)
+        reason = handler._classify_discharge_trigger(buffer)
         assert reason == 'natural'
 
     def test_classify_natural_no_buffer(self, temporary_model_path):
@@ -102,7 +102,7 @@ class TestDischargeClassification:
             soh_threshold=0.80,
         )
 
-        reason = handler._classify_event_reason(None)
+        reason = handler._classify_discharge_trigger(None)
         assert reason == 'natural'
 
 
@@ -125,7 +125,7 @@ class TestBlackoutCreditLogic:
         )
 
         # Simulate deep natural discharge (DoD = 0.92)
-        with patch.object(handler, '_classify_event_reason', return_value='natural'):
+        with patch.object(handler, '_classify_discharge_trigger', return_value='natural'):
             with patch('src.discharge_handler.logger'):
                 # We need to simulate the discharge event processing
                 # For this test, directly call set_blackout_credit

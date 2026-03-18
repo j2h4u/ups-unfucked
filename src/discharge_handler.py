@@ -54,7 +54,7 @@ class DischargeHandler:
         # Per-discharge state
         self.discharge_predicted_runtime: Optional[float] = None
 
-        self.capacity_locked_previously = False
+        self.baseline_lock_logged = False
 
         self.last_sulfation_score: Optional[float] = None
         self.last_sulfation_confidence: Optional[str] = None
@@ -174,7 +174,7 @@ class DischargeHandler:
         # Compute sulfation signals
         days_since_deep = self._calculate_days_since_deep()
         ir_trend_rate = self._estimate_ir_trend()
-        dod = self._estimate_dod_from_buffer(discharge_buffer)
+        depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
         cycle_budget = self._estimate_cycle_budget()
 
         try:
@@ -187,7 +187,7 @@ class DischargeHandler:
 
             roi = compute_cycle_roi(
                 days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
-                depth_of_discharge=dod,
+                depth_of_discharge=depth_of_discharge,
                 cycle_budget_remaining=cycle_budget,
                 ir_trend_rate=ir_trend_rate,
                 sulfation_score=sulfation_state.score,
@@ -208,7 +208,7 @@ class DischargeHandler:
         self.last_discharge_timestamp = datetime.now(timezone.utc).isoformat()
 
         # Classify once (deterministic for a given buffer)
-        event_reason = self._classify_event_reason(discharge_buffer)
+        event_reason = self._classify_discharge_trigger(discharge_buffer)
 
         # Persist to model.json
         self.battery_model.append_sulfation_history({
@@ -227,7 +227,7 @@ class DischargeHandler:
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'event_reason': event_reason,
             'duration_seconds': discharge_duration,
-            'depth_of_discharge': round(dod, 2),
+            'depth_of_discharge': round(depth_of_discharge, 2),
             'measured_capacity_ah': capacity_ah_used if soh_result else None,
             'cycle_roi': round(roi, 3)
         })
@@ -236,7 +236,7 @@ class DischargeHandler:
             'event_type': 'discharge_complete',
             'event_reason': event_reason,
             'duration_seconds': int(discharge_duration),
-            'depth_of_discharge': round(dod, 2),
+            'depth_of_discharge': round(depth_of_discharge, 2),
             'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
             'sulfation_confidence': 'high' if sulfation_state else None,
             'recovery_delta': round(self.last_recovery_delta, 3),
@@ -247,13 +247,13 @@ class DischargeHandler:
 
         # Grant blackout credit for natural deep discharges (≥90% DoD)
         BLACKOUT_CREDIT_DAYS = 7
-        if event_reason == 'natural' and dod >= 0.90:
+        if event_reason == 'natural' and depth_of_discharge >= 0.90:
             credit_expires = datetime.now(timezone.utc) + timedelta(days=BLACKOUT_CREDIT_DAYS)
             logger.info(
-                f"Natural blackout desulfation credit: DoD={dod:.0%}",
+                f"Natural blackout desulfation credit: DoD={depth_of_discharge:.0%}",
                 extra={
                     'event_type': 'blackout_credit_granted',
-                    'dod': round(dod, 2),
+                    'dod': round(depth_of_discharge, 2),
                     'credit_expires': credit_expires.isoformat(),
                 }
             )
@@ -388,28 +388,28 @@ class DischargeHandler:
             discharge_data: Dict with keys:
                 - voltage_series: List[float] voltage readings (V)
                 - time_series: List[float] unix timestamps (sec)
-                - current_series: List[float] load percent (%)
+                - load_series: List[float] load percent (%)
                 - timestamp: str ISO8601 timestamp
 
-        NOTE: Phase 12 does NOT modify full_capacity_ah_ref. Measured capacity lives
-        only in capacity_estimates[] array. Replacement of rated→measured is Phase 13 scope.
+        NOTE: Measured capacity lives only in capacity_estimates[] array.
+        Replacement of rated→measured happens on convergence.
         """
         voltage_series = discharge_data.get('voltage_series', [])
         time_series = discharge_data.get('time_series', [])
-        current_series = discharge_data.get('current_series', [])
+        load_series = discharge_data.get('load_series', discharge_data.get('current_series', []))
         timestamp = discharge_data.get('timestamp', datetime.now().isoformat())
 
         # Guard: need at least 2 samples
-        if len(voltage_series) < 2 or len(time_series) < 2 or len(current_series) < 2:
+        if len(voltage_series) < 2 or len(time_series) < 2 or len(load_series) < 2:
             logger.debug(f"Discharge data incomplete for capacity estimation: "
-                        f"{len(voltage_series)} V, {len(time_series)} t, {len(current_series)} I")
+                        f"{len(voltage_series)} V, {len(time_series)} t, {len(load_series)} I")
             return
 
         # Call CapacityEstimator
         result = self.capacity_estimator.estimate(
             voltage_series=voltage_series,
             time_series=time_series,
-            current_series=current_series,
+            load_series=load_series,
             lut=self.battery_model.data.get('lut', [])
         )
 
@@ -470,7 +470,7 @@ class DischargeHandler:
             self.battery_model.data['capacity_converged'] = True
 
             # Log baseline_lock event only once per convergence
-            if not self.capacity_locked_previously:
+            if not self.baseline_lock_logged:
                 logger.info(
                     f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
                     extra={
@@ -480,7 +480,7 @@ class DischargeHandler:
                         'timestamp': datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                self.capacity_locked_previously = True
+                self.baseline_lock_logged = True
 
             safe_save(self.battery_model)
 
@@ -584,7 +584,7 @@ class DischargeHandler:
         slope = (n * sum_xy - sum_x * sum_y) / denominator
         return max(0.0, slope)  # Clip to non-negative
 
-    def _classify_event_reason(self, discharge_buffer: Optional[object] = None) -> str:
+    def _classify_discharge_trigger(self, discharge_buffer: Optional[object] = None) -> str:
         """Classify discharge as natural or test-initiated.
 
         Compare discharge_buffer start time to last upscmd timestamp.
@@ -639,8 +639,8 @@ class DischargeHandler:
         v_nominal = 12.0
         v_floor = 10.5
 
-        dod = (v_max - v_min) / (v_nominal - v_floor) if (v_nominal - v_floor) > 0 else 0.0
-        return min(1.0, max(0.0, dod))
+        result = (v_max - v_min) / (v_nominal - v_floor) if (v_nominal - v_floor) > 0 else 0.0
+        return min(1.0, max(0.0, result))
 
     def _estimate_cycle_budget(self) -> int:
         """Estimate remaining cycle budget based on SoH.

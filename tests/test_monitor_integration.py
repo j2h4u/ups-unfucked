@@ -46,7 +46,7 @@ def test_config(temp_dir):
         shutdown_minutes=5,
         soh_alert_threshold=0.80,
         model_dir=temp_dir,
-        config_dir=temp_dir,
+
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,
@@ -343,7 +343,7 @@ def test_journald_event_filtering():
                 shutdown_minutes=5,
                 soh_alert_threshold=0.80,
                 model_dir=Path(tmp_path),
-                config_dir=Path(tmp_path),
+
                 runtime_threshold_minutes=20,
                 reference_load_percent=20.0,
                 ema_window_sec=120,
@@ -495,7 +495,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         shutdown_minutes=5,
         soh_alert_threshold=0.80,
         model_dir=tmp_path,
-        config_dir=tmp_path,
+
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,
@@ -634,7 +634,7 @@ class TestPollOnceCallChain:
             shutdown_minutes=5,
             soh_alert_threshold=0.80,
             model_dir=tmp_path,
-            config_dir=tmp_path,
+    
             runtime_threshold_minutes=20,
             reference_load_percent=20.0,
             ema_window_sec=120,

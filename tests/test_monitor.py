@@ -411,7 +411,6 @@ def test_config_dataclass(config_fixture):
     assert config_fixture.soh_alert_threshold == 0.80
     from pathlib import Path
     assert isinstance(config_fixture.model_dir, Path)
-    assert isinstance(config_fixture.config_dir, Path)
     assert config_fixture.runtime_threshold_minutes == 20
     assert config_fixture.reference_load_percent == 20.0
     assert config_fixture.ema_window_sec == 120
@@ -428,7 +427,6 @@ def test_config_dataclass(config_fixture):
         shutdown_minutes=10,
         soh_alert_threshold=0.70,
         model_dir=Path('/tmp/model'),
-        config_dir=Path('/tmp/config'),
         runtime_threshold_minutes=25,
         reference_load_percent=30.0,
         ema_window_sec=180,
@@ -1358,7 +1356,7 @@ class TestCapacityEstimatorIntegration:
         # Verify convergence check was performed
         daemon.capacity_estimator.has_converged.assert_called()
 
-    def test_new_battery_flag_stored_in_config(self, make_daemon):
+    def test_battery_replaced_stored_in_config(self, make_daemon):
         """Test 6: --new-battery CLI flag stored in config['new_battery_requested']."""
         daemon = make_daemon()
 
@@ -1418,8 +1416,8 @@ class TestCapacityEstimatorIntegration:
 # Task 2: Integration Tests for --new-battery CLI Flag
 # ==============================================================================
 
-def test_new_battery_flag_false(tmp_path):
-    """Test 1: MonitorDaemon(new_battery_flag=False) → model.data['new_battery_requested'] = False.
+def test_battery_replaced_false(tmp_path):
+    """Test 1: MonitorDaemon(battery_replaced=False) → model.data['new_battery_requested'] = False.
 
     This is the default when --new-battery is NOT passed.
     """
@@ -1451,20 +1449,20 @@ def test_new_battery_flag_false(tmp_path):
             shutdown_minutes=5,
             soh_alert_threshold=0.80,
             model_dir=tmp_path / "test_model",
-            config_dir=tmp_path / "test_config",
+
             runtime_threshold_minutes=20,
             reference_load_percent=20.0,
             ema_window_sec=120,
             capacity_ah=7.2,
         )
 
-        daemon = MonitorDaemon(config, new_battery_flag=False)
+        daemon = MonitorDaemon(config, battery_replaced=False)
 
         assert daemon.battery_model.data['new_battery_requested'] == False
 
 
-def test_new_battery_flag_true(tmp_path):
-    """Test 2: MonitorDaemon(new_battery_flag=True) → model.data['new_battery_requested'] = True.
+def test_battery_replaced_true(tmp_path):
+    """Test 2: MonitorDaemon(battery_replaced=True) → model.data['new_battery_requested'] = True.
 
     This is set when user passes --new-battery CLI flag.
     """
@@ -1496,19 +1494,19 @@ def test_new_battery_flag_true(tmp_path):
             shutdown_minutes=5,
             soh_alert_threshold=0.80,
             model_dir=tmp_path / "test_model",
-            config_dir=tmp_path / "test_config",
+
             runtime_threshold_minutes=20,
             reference_load_percent=20.0,
             ema_window_sec=120,
             capacity_ah=7.2,
         )
 
-        daemon = MonitorDaemon(config, new_battery_flag=True)
+        daemon = MonitorDaemon(config, battery_replaced=True)
 
         assert daemon.battery_model.data['new_battery_requested'] == True
 
 
-def test_new_battery_flag_persistence(tmp_path):
+def test_battery_replaced_persistence(tmp_path):
     """Test 3: new_battery_requested flag persists in model.json across save/reload.
 
     Ensures Phase 13 can read flag even if daemon restarts.
@@ -1541,7 +1539,7 @@ def test_new_battery_flag_persistence(tmp_path):
             shutdown_minutes=5,
             soh_alert_threshold=0.80,
             model_dir=tmp_path / "test_model",
-            config_dir=tmp_path / "test_config",
+
             runtime_threshold_minutes=20,
             reference_load_percent=20.0,
             ema_window_sec=120,
@@ -1549,7 +1547,7 @@ def test_new_battery_flag_persistence(tmp_path):
         )
 
         # Set flag via MonitorDaemon
-        daemon = MonitorDaemon(config, new_battery_flag=True)
+        daemon = MonitorDaemon(config, battery_replaced=True)
 
         # Explicitly save model (normally happens during discharge)
         daemon.battery_model.save()
@@ -1561,7 +1559,7 @@ def test_new_battery_flag_persistence(tmp_path):
         assert reloaded_model.data.get('new_battery_requested', False) == True
 
 
-def test_cli_new_battery_flag():
+def test_cli_battery_replaced():
     """Test 4: CLI --new-battery flag is parsed correctly by argparse.
 
     This is an end-to-end test of parse_args() argument parsing.

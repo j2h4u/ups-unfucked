@@ -196,12 +196,12 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self, config: Config, new_battery_flag: bool = False):
+    def __init__(self, config: Config, battery_replaced: bool = False):
         """Initialize daemon with provided configuration.
 
         Args:
             config: Config dataclass instance with all daemon parameters.
-            new_battery_flag: Boolean flag from CLI --new-battery; indicates battery swap.
+            battery_replaced: Boolean flag from CLI --new-battery; indicates battery swap.
                              When True, Phase 13 detection logic will check on next discharge.
         """
         self.running = True
@@ -275,8 +275,8 @@ class MonitorDaemon:
         self._discharge_predicted_runtime = None  # Snapshot for prediction error logging
 
         # Store new_battery_requested flag from CLI for detection logic
-        self.battery_model.data['new_battery_requested'] = new_battery_flag
-        if new_battery_flag:
+        self.battery_model.data['new_battery_requested'] = battery_replaced
+        if battery_replaced:
             logger.info("New battery flag set via --new-battery CLI; detection will check on next discharge")
             self._reset_battery_baseline()
 
@@ -310,7 +310,7 @@ class MonitorDaemon:
 
         self.calibration_last_written_index = 0
 
-        self.capacity_locked_previously = False
+        self.baseline_lock_logged = False
 
         # Signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -1045,7 +1045,7 @@ def main():
 
     try:
         config = load_config()
-        daemon = MonitorDaemon(config, new_battery_flag=args.new_battery)
+        daemon = MonitorDaemon(config, battery_replaced=args.new_battery)
         daemon.run()
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)
