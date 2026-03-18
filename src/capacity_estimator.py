@@ -5,7 +5,7 @@ import logging
 from typing import List, Dict, Optional, Tuple
 from src.soc_predictor import soc_from_voltage
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('ups-battery-monitor')
 
 
 class CapacityEstimator:

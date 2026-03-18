@@ -14,7 +14,7 @@ from typing import List, Optional, Tuple
 from src.soc_predictor import soc_from_voltage
 from src.model import BatteryModel
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('ups-battery-monitor')
 
 # Minimum ΔSoC for meaningful SoH update (5% depth too shallow)
 MIN_DELTA_SOC = 0.05

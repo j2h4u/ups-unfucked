@@ -118,13 +118,11 @@ class BatteryModel:
             logger.info("Model file not found; initializing with standard VRLA curve")
             self.data = self._default_vrla_lut()
 
-        # Initialize Phase 16 arrays for backward compatibility
+        # Ensure arrays/fields exist (backward compat with older model.json)
         self.data.setdefault('sulfation_history', [])
         self.data.setdefault('discharge_events', [])
         self.data.setdefault('roi_history', [])
         self.data.setdefault('natural_blackout_events', [])
-
-        # Initialize Phase 17 scheduling state fields for backward compatibility
         self.data.setdefault('last_upscmd_timestamp', None)
         self.data.setdefault('last_upscmd_type', None)
         self.data.setdefault('last_upscmd_status', None)

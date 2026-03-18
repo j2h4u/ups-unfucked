@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict
 from src.event_classifier import EventType
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('ups-battery-monitor')
 
 
 def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower") -> None:

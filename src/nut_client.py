@@ -12,6 +12,9 @@ from contextlib import contextmanager
 from typing import Tuple, Optional
 
 
+logger = logging.getLogger('ups-battery-monitor')
+
+
 class NUTClient:
     """
     NUT upsd client using raw TCP socket communication.
@@ -37,7 +40,6 @@ class NUTClient:
         self.port = port
         self.timeout = timeout
         self.ups_name = ups_name
-        self.logger = logging.getLogger('ups-battery-monitor')
         self.sock = None
 
     def _close_socket(self):
@@ -120,7 +122,7 @@ class NUTClient:
             parsed = self._parse_var_line(response)
             if parsed is not None:
                 return parsed[1]
-            self.logger.error(f"Unexpected NUT response: {response}")
+            logger.error(f"Unexpected NUT response: {response}")
             return None
 
     _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB

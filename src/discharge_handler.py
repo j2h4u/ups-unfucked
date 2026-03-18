@@ -560,9 +560,13 @@ class DischargeHandler:
                 entry_time = datetime.fromisoformat(entry.get('date', '').replace('Z', '+00:00'))
                 days_ago = (now - entry_time).total_seconds() / 86400.0
                 if days_ago <= 30:
+                    r_value = entry.get('r_ohm')
+                    if r_value is None:
+                        logger.warning(f"r_internal_history entry missing 'r_ohm' key: {list(entry.keys())}")
+                        continue
                     recent_entries.append({
                         'days_ago': days_ago,
-                        'r_internal': entry.get('r_internal', 0)
+                        'r_ohm': r_value,
                     })
             except (ValueError, KeyError):
                 continue
@@ -570,12 +574,10 @@ class DischargeHandler:
         if len(recent_entries) < 2:
             return 0.0
 
-        # Linear regression: fit r_internal = a * days_ago + b
-        # Return slope (a) in ohms/day
         n = len(recent_entries)
         sum_x = sum(e['days_ago'] for e in recent_entries)
-        sum_y = sum(e['r_internal'] for e in recent_entries)
-        sum_xy = sum(e['days_ago'] * e['r_internal'] for e in recent_entries)
+        sum_y = sum(e['r_ohm'] for e in recent_entries)
+        sum_xy = sum(e['days_ago'] * e['r_ohm'] for e in recent_entries)
         sum_x2 = sum(e['days_ago'] ** 2 for e in recent_entries)
 
         denominator = n * sum_x2 - sum_x ** 2

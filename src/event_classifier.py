@@ -3,7 +3,7 @@
 import logging
 from enum import Enum
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('ups-battery-monitor')
 
 
 # During battery test, UPS switches to battery but mains voltage stays (CyberPower shows ~220V).

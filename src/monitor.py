@@ -288,6 +288,8 @@ class MonitorDaemon:
         self.runtime_threshold_minutes = config.runtime_threshold_minutes
 
         self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
+        self.last_scheduling_reason: str = 'observing'
+        self.last_next_test_timestamp: str | None = None
         self.reference_load_percent = config.reference_load_percent
 
         # Scheduling configuration (always set by load_config; fallback for tests)
@@ -870,7 +872,7 @@ class MonitorDaemon:
             capacity_confidence=convergence_status.get('confidence_percent', 0.0) / 100.0,
             capacity_samples_count=convergence_status.get('sample_count', 0),
             capacity_converged=convergence_status.get('converged', False),
-            # Phase 16 NEW parameters (from discharge_handler state):
+            # Sulfation and scheduling state:
             sulfation_score=self.discharge_handler.last_sulfation_score,
             sulfation_confidence=self.discharge_handler.last_sulfation_confidence,
             days_since_deep=self.discharge_handler.last_days_since_deep,
@@ -878,8 +880,8 @@ class MonitorDaemon:
             recovery_delta=self.discharge_handler.last_recovery_delta,
             cycle_roi=self.discharge_handler.last_cycle_roi,
             cycle_budget_remaining=self.discharge_handler.last_cycle_budget_remaining,
-            scheduling_reason='observing',  # Phase 17 will update with actual reason
-            next_test_timestamp=None,  # Phase 17 will populate
+            scheduling_reason=self.last_scheduling_reason,
+            next_test_timestamp=self.last_next_test_timestamp,
             last_discharge_timestamp=self.discharge_handler.last_discharge_timestamp,
             natural_blackout_credit=None,
             )
@@ -943,6 +945,10 @@ class MonitorDaemon:
                     'soh_percent': f"{soh_percent:.1%}",
                     'timestamp': now.isoformat(),
                 })
+
+                # Store for health endpoint (persists between daily scheduler runs)
+                self.last_scheduling_reason = decision.reason_code
+                self.last_next_test_timestamp = decision.next_eligible_timestamp
 
                 # Update model.json with scheduled info
                 self.battery_model.update_scheduling_state(
