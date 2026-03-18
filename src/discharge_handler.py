@@ -136,8 +136,8 @@ class DischargeHandler:
                     try:
                         repl_dt = datetime.strptime(replacement_date, '%Y-%m-%d')
                         days_to_replacement = (repl_dt - datetime.now()).days
-                    except ValueError:
-                        pass
+                    except ValueError as e:
+                        logger.debug(f"Invalid replacement date format: {e}")
 
             alerter.alert_soh_below_threshold(
                 logger,
@@ -190,7 +190,7 @@ class DischargeHandler:
             roi = 0.0
 
         self.last_sulfation_score = sulfation_state.score if sulfation_state else None
-        self.last_sulfation_confidence = 'high' if sulfation_state else None
+        self.last_sulfation_confidence = self._assess_sulfation_confidence(days_since_deep, ir_trend_rate) if sulfation_state else None
         self.last_days_since_deep = days_since_deep
         self.last_ir_trend_rate = ir_trend_rate
         self.last_recovery_delta = soh_new - self.battery_model.get_soh() if soh_result else 0.0
@@ -210,7 +210,8 @@ class DischargeHandler:
             'ir_trend_rate': round(ir_trend_rate, 6),
             'recovery_delta': round(self.last_recovery_delta, 3),
             'temperature_celsius': 35.0,
-            'confidence_level': 'high'
+            'temperature_source': 'assumed_constant',
+            'confidence_level': self.last_sulfation_confidence or 'low'
         })
 
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
@@ -229,7 +230,7 @@ class DischargeHandler:
             'duration_seconds': int(discharge_duration),
             'depth_of_discharge': round(depth_of_discharge, 2),
             'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
-            'sulfation_confidence': 'high' if sulfation_state else None,
+            'sulfation_confidence': self.last_sulfation_confidence,
             'recovery_delta': round(self.last_recovery_delta, 3),
             'cycle_roi': round(roi, 3),
             'measured_capacity_ah': round(capacity_ah_used, 2) if capacity_ah_used else None,
@@ -520,7 +521,8 @@ class DischargeHandler:
                     now = datetime.now(timezone.utc)
                     days_ago = (now - event_time).total_seconds() / 86400.0
                     return days_ago
-                except (ValueError, KeyError):
+                except (ValueError, KeyError) as e:
+                    logger.debug(f"Skipping malformed discharge event: {e}")
                     continue
 
         return None
@@ -552,7 +554,8 @@ class DischargeHandler:
                         'days_ago': days_ago,
                         'r_ohm': r_value,
                     })
-            except (ValueError, KeyError):
+            except (ValueError, KeyError) as e:
+                logger.debug(f"Skipping malformed r_internal entry: {e}")
                 continue
 
         if len(recent_entries) < 2:
@@ -603,7 +606,7 @@ class DischargeHandler:
             else:
                 return 'natural'
         except (ValueError, TypeError):
-            logger.warning(f"Invalid timestamps in discharge classification: upscmd={last_upscmd}")
+            logger.warning(f"Invalid timestamps in discharge classification: upscmd={last_upscmd}", exc_info=True)
             return 'natural'
 
     def _estimate_dod_from_buffer(self, discharge_buffer: object) -> float:
@@ -637,3 +640,15 @@ class DischargeHandler:
         soh = self.battery_model.data.get('soh', 1.0)
         rated_cycles = 300
         return int(rated_cycles * soh)
+
+    def _assess_sulfation_confidence(self, days_since_deep: Optional[float], ir_trend_rate: float) -> str:
+        """Assess sulfation signal quality based on input data availability.
+
+        Returns: 'high', 'medium', or 'low'
+        """
+        r_history = self.battery_model.data.get('r_internal_history', [])
+        if days_since_deep is not None and len(r_history) >= 3:
+            return 'high'
+        elif days_since_deep is not None or len(r_history) >= 2:
+            return 'medium'
+        return 'low'

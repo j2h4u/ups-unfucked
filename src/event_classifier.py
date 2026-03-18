@@ -76,16 +76,33 @@ class EventClassifier:
                 if 0 < input_voltage < 100:
                     logger.warning(
                         f"Undefined voltage range {input_voltage}V during {ups_status}, "
-                        f"treating as BLACKOUT_REAL"
+                        f"treating as BLACKOUT_REAL",
+                        extra={
+                            'input_voltage': input_voltage,
+                            'ups_status': ups_status,
+                            'classified_as': 'BLACKOUT_REAL',
+                        }
                     )
                 new_state = EventType.BLACKOUT_REAL
         else:
-            logger.warning(f"Unknown UPS status: {ups_status}, keeping current state {self.state.name}")
+            logger.warning(
+                f"Unknown UPS status: {ups_status}, keeping current state {self.state.name}",
+                extra={
+                    'ups_status': ups_status,
+                    'current_state': self.state.name,
+                }
+            )
             new_state = self.state
 
         self.transition_occurred = new_state != self.state
         if self.transition_occurred:
-            logger.info(f"Event transition: {self.state.name} → {new_state.name}")
+            logger.info(
+                f"Event transition: {self.state.name} → {new_state.name}",
+                extra={
+                    'from_state': self.state.name,
+                    'to_state': new_state.name,
+                }
+            )
 
         self.state = new_state
         return new_state

@@ -17,7 +17,7 @@ from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
-from systemd.journal import JournalHandler
+# JournalHandler imported inside setup_logging try block below
 
 from src.model import BatteryModel
 from src.event_classifier import EventType
@@ -116,9 +116,16 @@ def load_config() -> Config:
     cfg_dict = {}
     for path in [CONFIG_DIR / 'config.toml', REPO_ROOT / 'config.toml']:
         if path.is_file():
-            with open(path, 'rb') as f:
-                cfg_dict = tomllib.load(f)
-            break
+            try:
+                with open(path, 'rb') as f:
+                    cfg_dict = tomllib.load(f)
+                break
+            except OSError as e:
+                logger.error(f"Cannot read config {path}: {e}")
+                raise SystemExit(f"Config file error: {path}: {e}") from e
+            except tomllib.TOMLDecodeError as e:
+                logger.error(f"Malformed config {path}: {e}")
+                raise SystemExit(f"Config parse error: {path}: {e}") from e
 
     user_config = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
 
@@ -214,6 +221,7 @@ logger.setLevel(logging.INFO)
 logger.handlers.clear()
 
 try:
+    from systemd.journal import JournalHandler
     handler = JournalHandler(identifier='ups-battery-monitor')
     handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)

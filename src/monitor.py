@@ -349,7 +349,11 @@ class MonitorDaemon:
             _ = self.nut_client.get_ups_vars()
             logger.info("NUT upsd reachable, polling started")
         except Exception:
-            logger.warning(f"NUT upsd unreachable at startup, will retry every {self.config.polling_interval}s", exc_info=True)
+            logger.warning(
+                f"NUT upsd unreachable at {self.config.nut_host}:{self.config.nut_port}, "
+                f"will retry every {self.config.polling_interval}s",
+                exc_info=True
+            )
 
     def _handle_event_transition(self):
         """
@@ -708,7 +712,7 @@ class MonitorDaemon:
                 self.battery_model.calibration_write(v, soc_est, t)
                 self.calibration_last_written_index = i + 1
             except Exception as e:
-                logger.error(f"Calibration write failed at index {i}: {e}")
+                logger.error(f"Calibration write failed at index {i}: {e}", exc_info=True)
                 break
 
         # Batch flush: persist all accumulated points once per REPORTING_INTERVAL
@@ -888,7 +892,7 @@ class MonitorDaemon:
             natural_blackout_credit=None,
             )
         except Exception as e:
-            logger.error(f"Health endpoint write failed: {e}")
+            logger.error(f"Health endpoint write failed: {e}", exc_info=True)
 
         # Daily scheduler evaluation
         now = datetime.now(timezone.utc)

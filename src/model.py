@@ -115,6 +115,9 @@ class BatteryModel:
             except json.JSONDecodeError as e:
                 logger.error(f"Malformed model.json: {e}; initializing with default VRLA curve")
                 self.data = self._default_vrla_lut()
+            except OSError as e:
+                logger.error(f"Cannot read {self.model_path}: {e}; initializing with default VRLA curve")
+                self.data = self._default_vrla_lut()
         else:
             logger.info("Model file not found; initializing with standard VRLA curve")
             self.data = self._default_vrla_lut()
