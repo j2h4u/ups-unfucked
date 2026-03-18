@@ -136,6 +136,15 @@ class BatteryModel:
         self.data.setdefault('test_block_reason', None)
         self.data.setdefault('blackout_credit', None)
 
+        # Clamp physics values to sane ranges (defense against corrupted model.json)
+        physics = self.data.get('physics', {})
+        if 'peukert_exponent' in physics:
+            physics['peukert_exponent'] = max(1.0, min(1.5, physics['peukert_exponent']))
+        soh = self.data.get('soh')
+        if soh is not None and (soh < 0 or soh > 1.0):
+            logger.warning(f"model.json soh={soh} out of range, clamping to [0, 1]")
+            self.data['soh'] = max(0.0, min(1.0, soh))
+
     def _default_vrla_lut(self) -> Dict[str, Any]:
         """
         Standard VRLA 12V discharge curve (7.2Ah reference capacity).

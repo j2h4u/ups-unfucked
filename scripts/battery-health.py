@@ -20,6 +20,11 @@ def main():
 
     # UPS identity from NUT
     ups_name = model_data.get('ups_name', 'cyberpower-virtual')
+    # Validate ups_name before passing to subprocess
+    import re
+    if not re.match(r'^[a-zA-Z0-9._-]+$', ups_name):
+        print(f"  WARNING: Invalid ups_name in model.json: {ups_name!r}")
+        ups_name = 'cyberpower-virtual'
     try:
         import subprocess
         nut_vars = subprocess.run(

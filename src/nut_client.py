@@ -5,6 +5,7 @@ Implements stateless polling pattern: connect → send → receive → close on 
 to enable automatic recovery from NUT service restarts.
 """
 
+import re
 import socket
 import logging
 import time
@@ -13,6 +14,17 @@ from typing import Tuple, Optional
 
 
 logger = logging.getLogger('ups-battery-monitor')
+
+_NUT_SAFE_NAME = re.compile(r'^[a-zA-Z0-9._-]+$')
+
+def _validate_nut_identifier(value: str, label: str) -> None:
+    """Validate a NUT protocol identifier (ups_name, var_name, cmd_name).
+
+    Raises ValueError if the identifier contains characters that could
+    alter NUT protocol parsing (spaces, quotes, newlines, etc.).
+    """
+    if not _NUT_SAFE_NAME.match(value):
+        raise ValueError(f"Invalid NUT {label}: {value!r} (must match [a-zA-Z0-9._-]+)")
 
 
 class NUTClient:
@@ -40,6 +52,7 @@ class NUTClient:
         self.port = port
         self.timeout = timeout
         self.ups_name = ups_name
+        _validate_nut_identifier(ups_name, 'ups_name')
         self.sock = None
 
     def _close_socket(self):
@@ -122,6 +135,7 @@ class NUTClient:
             socket.error: If socket communication fails
         """
         with self._socket_session():
+            _validate_nut_identifier(var_name, 'var_name')
             response = self.send_command(f'GET VAR {self.ups_name} {var_name}')
             parsed = self._parse_var_line(response)
             if parsed is not None:
@@ -234,7 +248,10 @@ class NUTClient:
                 if not response.startswith('OK'):
                     return (False, f"LOGIN failed: {response}")
 
+                _validate_nut_identifier(cmd_name, 'cmd_name')
                 if cmd_param is not None:
+                    if ' ' in cmd_param or '\n' in cmd_param:
+                        raise ValueError(f"Invalid NUT cmd_param: {cmd_param!r} (no spaces/newlines)")
                     cmd = f'INSTCMD {self.ups_name} {cmd_name} {cmd_param}'
                 else:
                     cmd = f'INSTCMD {self.ups_name} {cmd_name}'
