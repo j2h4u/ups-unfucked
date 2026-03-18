@@ -1,11 +1,21 @@
 """Capacity estimator: measures actual battery Ah from discharge events via coulomb counting."""
 
-import math
 import logging
 from typing import List, Dict, Optional, Tuple
 from src.soc_predictor import soc_from_voltage
 
 logger = logging.getLogger('ups-battery-monitor')
+
+
+def compute_cov(values: list) -> float:
+    """Coefficient of variation (population std / mean). Returns 0.0 for <2 values or zero mean."""
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    if mean == 0:
+        return 0.0
+    variance = sum((x - mean) ** 2 for x in values) / len(values)
+    return variance ** 0.5 / mean
 
 
 class CapacityEstimator:
@@ -259,37 +269,11 @@ class CapacityEstimator:
         return slope_mohms
 
     def _compute_confidence(self) -> float:
-        """
-        Compute confidence metric based on accumulated measurements.
-
-        Confidence = 1 - CoV, where CoV = std(Ah_values) / mean(Ah_values)
-        Using population std (÷n, not ÷n-1) for stability with small samples.
-
-        Rules:
-        - < 3 measurements: confidence = 0.0 (not enough data)
-        - >= 3 measurements: confidence = 1 - CoV, clamped to [0, 1]
-        - May fluctuate (not monotonic) when noisy samples added
-
-        Returns:
-            float: Confidence metric [0.0, 1.0].
-        """
+        """Confidence = 1 - CoV, clamped to [0, 1]. Returns 0.0 for <3 measurements."""
         if len(self.measurements) < 3:
             return 0.0
-
-        ah_values = [m[1] for m in self.measurements]
-        mean_ah = sum(ah_values) / len(ah_values)
-
-        if mean_ah == 0:
-            return 0.0
-
-        # Population std (÷n, not ÷n-1)
-        variance = sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)
-        std_ah = math.sqrt(variance)
-
-        cov = std_ah / mean_ah
-        confidence = max(0.0, min(1.0, 1.0 - cov))
-
-        return confidence
+        cov = compute_cov([m[1] for m in self.measurements])
+        return max(0.0, min(1.0, 1.0 - cov))
 
     def add_measurement(self, ah: float, timestamp: str, metadata: Dict) -> None:
         """
@@ -304,28 +288,10 @@ class CapacityEstimator:
         self.measurements.append((timestamp, ah, confidence, metadata))
 
     def has_converged(self) -> bool:
-        """
-        Check convergence: count >= 3 AND CoV < 0.10 (expert-approved threshold).
-
-        Returns:
-            bool: True if converged, False otherwise.
-        """
+        """Converged: count >= 3 AND CoV < 0.10."""
         if len(self.measurements) < 3:
             return False
-
-        ah_values = [m[1] for m in self.measurements]
-        mean_ah = sum(ah_values) / len(ah_values)
-
-        if mean_ah == 0:
-            return False
-
-        # Population std (÷n)
-        variance = sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)
-        std_ah = math.sqrt(variance)
-
-        cov = std_ah / mean_ah
-
-        return cov < 0.10
+        return compute_cov([m[1] for m in self.measurements]) < 0.10
 
     def get_weighted_estimate(self) -> float:
         """

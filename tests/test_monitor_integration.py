@@ -654,6 +654,7 @@ class TestPollOnceCallChain:
         # Attributes normally initialized in run(), needed by _poll_once
         d.poll_count = 0
         d._stabilization_logged = False
+        d._startup_logged = False
         d._consecutive_errors = 0
         d._startup_time = time.monotonic()
 

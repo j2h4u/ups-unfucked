@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from src.capacity_estimator import compute_cov
 
 
 logger = logging.getLogger('ups-battery-monitor')
@@ -492,10 +493,7 @@ class BatteryModel:
 
         # Compute CoV from all estimates
         ah_values = [e['ah_estimate'] for e in estimates]
-        mean_ah = sum(ah_values) / len(ah_values)
-        variance = sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)
-        std_ah = variance ** 0.5
-        cov = std_ah / mean_ah if mean_ah > 0 else 1.0
+        cov = compute_cov(ah_values)
 
         # Confidence: 0.0 for < 3 measurements, else 1 - CoV clamped to [0, 1]
         # (convergence_score = 1 - CoV; 0.0 for n<3 per design)

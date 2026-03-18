@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from src.model import BatteryModel
-from src.capacity_estimator import CapacityEstimator
+from src.capacity_estimator import CapacityEstimator, compute_cov
 from src.runtime_calculator import runtime_minutes
 from src.soc_predictor import soc_from_voltage
 from src.battery_math import calibrate_peukert, ScalarRLS
@@ -66,16 +66,33 @@ class DischargeHandler:
         self.last_discharge_timestamp: Optional[str] = None
 
     def update_battery_health(self, discharge_buffer: DischargeBuffer) -> None:
-        """Process completed discharge event: SoH, Peukert, replacement prediction, alerts.
+        """Process completed discharge: SoH, Peukert, replacement prediction, alerts, sulfation."""
+        soh_result = self._compute_soh(discharge_buffer)
+        if soh_result is None:
+            return
 
-        Called when discharge event completes (OB→OL transition or cooldown expiry).
-        Caller is responsible for clearing discharge_buffer after this returns.
+        soh_new, capacity_ah_used = soh_result
 
-        Args:
-            discharge_buffer: Completed discharge data (voltages, times, loads).
+        soh_regression = self._predict_replacement(soh_new, capacity_ah_used)
+        self._check_alerts(soh_new, soh_regression, discharge_buffer)
+        self._auto_calibrate_peukert(soh_new, discharge_buffer)
+
+        event_reason = self._classify_discharge_trigger(discharge_buffer)
+        self._score_and_persist_sulfation(soh_new, soh_result, discharge_buffer, event_reason)
+
+        self._log_discharge_prediction(discharge_buffer)
+
+        # Single save at end after all mutations
+        safe_save(self.battery_model)
+
+    def _compute_soh(self, discharge_buffer: DischargeBuffer):
+        """Calculate SoH from discharge data, persist history entry.
+
+        Returns (soh_new, capacity_ah_used) tuple, or None if discharge
+        is too short, has insufficient samples, or SoH calculation fails.
         """
         if len(discharge_buffer.voltages) < 2:
-            return  # No discharge detected; skip SoH update
+            return None  # No discharge detected; skip SoH update
 
         # Skip SoH/Peukert update for micro-discharges (<5 min).
         # Short discharges have terrible signal-to-noise: 105s discharge
@@ -85,7 +102,7 @@ class DischargeHandler:
         if discharge_duration < 300:
             logger.info(f"Discharge too short for model update ({discharge_duration:.0f}s < 300s); "
                         f"skipping SoH/Peukert calibration")
-            return
+            return None
 
         avg_load = (sum(discharge_buffer.loads) / len(discharge_buffer.loads)
                    if discharge_buffer.loads else self.reference_load_percent)
@@ -103,7 +120,7 @@ class DischargeHandler:
 
         if soh_result is None:
             logger.info("SoH update returned None; skipping history entry")
-            return
+            return None
 
         soh_new, capacity_ah_used = soh_result
 
@@ -112,6 +129,14 @@ class DischargeHandler:
 
         logger.info(f"SoH calculated: {soh_new:.2%}")
 
+        return (soh_new, capacity_ah_used)
+
+    def _predict_replacement(self, soh_new: float, capacity_ah_used: float):
+        """Check convergence and run linear regression for replacement prediction.
+
+        Returns the regression result tuple (slope, intercept, r2, replacement_date)
+        or None. Persists replacement_due date in the model.
+        """
         convergence = self.battery_model.get_convergence_status()
         if convergence.get('converged', False):
             soh_regression = replacement_predictor.linear_regression_soh(
@@ -128,6 +153,10 @@ class DischargeHandler:
         else:
             self.battery_model.set_replacement_due(None)
 
+        return soh_regression
+
+    def _check_alerts(self, soh_new: float, soh_regression, discharge_buffer: DischargeBuffer) -> None:
+        """SoH threshold check + runtime threshold check."""
         if soh_new < self.soh_threshold:
             days_to_replacement = None
             if soh_regression:
@@ -146,6 +175,9 @@ class DischargeHandler:
                 days_to_replacement
             )
 
+        avg_load = (sum(discharge_buffer.loads) / len(discharge_buffer.loads)
+                   if discharge_buffer.loads else self.reference_load_percent)
+
         time_rem_at_100pct = runtime_minutes(
             soc=1.0, load_percent=avg_load,
             capacity_ah=self.battery_model.get_capacity_ah(),
@@ -161,9 +193,19 @@ class DischargeHandler:
                 self.config.runtime_threshold_minutes
             )
 
-        # Auto-calibrate Peukert exponent from measured discharge
-        self._auto_calibrate_peukert(soh_new, discharge_buffer)
+    def _score_and_persist_sulfation(
+        self,
+        soh_new: float,
+        soh_result: tuple,
+        discharge_buffer: DischargeBuffer,
+        event_reason: str,
+    ) -> None:
+        """Compute sulfation score, persist sulfation/discharge history, grant blackout credit.
 
+        Updates in-memory last_* state, appends sulfation_history and discharge_event
+        entries, logs the discharge complete event, and grants blackout credit for
+        natural deep discharges (>=90% DoD).
+        """
         days_since_deep = self._calculate_days_since_deep()
         ir_trend_rate = self._estimate_ir_trend()
         depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
@@ -198,9 +240,6 @@ class DischargeHandler:
         self.last_cycle_budget_remaining = cycle_budget
         self.last_discharge_timestamp = datetime.now(timezone.utc).isoformat()
 
-        # Classify once (deterministic for a given buffer)
-        event_reason = self._classify_discharge_trigger(discharge_buffer)
-
         # Persist to model.json
         self.battery_model.append_sulfation_history({
             'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -215,12 +254,13 @@ class DischargeHandler:
         })
 
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
+        capacity_ah_used = soh_result[1] if soh_result else None
         self.battery_model.append_discharge_event({
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'event_reason': event_reason,
             'duration_seconds': discharge_duration,
             'depth_of_discharge': round(depth_of_discharge, 2),
-            'measured_capacity_ah': capacity_ah_used if soh_result else None,
+            'measured_capacity_ah': capacity_ah_used,
             'cycle_roi': round(roi, 3)
         })
 
@@ -256,11 +296,6 @@ class DischargeHandler:
                 'credit_expires': credit_expires.isoformat(),
                 'desulfation_credit': 0.15,  # Approximate desulfation benefit for ~90% DoD
             })
-
-        self._log_discharge_prediction(discharge_buffer)
-
-        # Single save at end after all mutations
-        safe_save(self.battery_model)
 
     def _auto_calibrate_peukert(self, current_soh: float, discharge_buffer: DischargeBuffer) -> None:
         """Auto-calibrate Peukert exponent from actual discharge duration.
@@ -313,7 +348,7 @@ class DischargeHandler:
             self.battery_model.set_rls_state(
                 'peukert', smoothed, new_P, self.rls_peukert.sample_count)
             logger.info(
-                f"Peukert calibrated: {old_exponent:.3f} → {smoothed:.3f} "
+                f"Peukert calibrated: {old_exponent:.3f} \u2192 {smoothed:.3f} "
                 f"(single-point={new_exponent:.3f}), "
                 f"confidence={self.rls_peukert.confidence:.0%}",
                 extra={
@@ -326,7 +361,7 @@ class DischargeHandler:
                     'sample_count': str(self.rls_peukert.sample_count),
                 })
         else:
-            logger.error("Peukert calibration returned None (unexpected — math undefined?)")
+            logger.error("Peukert calibration returned None (unexpected \u2014 math undefined?)")
 
     def _log_discharge_prediction(self, discharge_buffer: DischargeBuffer, current_soc: float = 0.0) -> None:
         """Log prediction vs actual runtime for model accuracy tracking.
@@ -368,7 +403,7 @@ class DischargeHandler:
     def handle_discharge_complete(self, discharge_data: dict) -> None:
         """Handle discharge completion: measure capacity via CapacityEstimator.
 
-        Called when OB→OL transition detected. Extracts discharge data,
+        Called when OB\u2192OL transition detected. Extracts discharge data,
         calls CapacityEstimator.estimate(), and stores result in model.json.
         Implements CAP-01 and CAP-05.
 
@@ -380,7 +415,7 @@ class DischargeHandler:
                 - timestamp: str ISO8601 timestamp
 
         NOTE: Measured capacity lives only in capacity_estimates[] array.
-        Replacement of rated→measured happens on convergence.
+        Replacement of rated\u2192measured happens on convergence.
         """
         voltage_series = discharge_data.get('voltage_series', [])
         time_series = discharge_data.get('time_series', [])
@@ -424,13 +459,9 @@ class DischargeHandler:
         # Compute CoV for human-readable message
         estimates = self.battery_model.data.get('capacity_estimates', [])
         ah_values = [e['ah_estimate'] for e in estimates]
-        if len(ah_values) >= 2:
-            mean_ah = sum(ah_values) / len(ah_values)
-            std_ah = (sum((x - mean_ah) ** 2 for x in ah_values) / len(ah_values)) ** 0.5
-            cov = std_ah / mean_ah if mean_ah > 0 else 0.0
-        else:
-            std_ah = 0.0
-            cov = 0.0
+        cov = compute_cov(ah_values)
+        mean_ah = sum(ah_values) / len(ah_values) if ah_values else 0.0
+        std_ah = cov * mean_ah
 
         confidence_pct = int(confidence * 100) if confidence else 0
 
@@ -440,7 +471,7 @@ class DischargeHandler:
         load_avg_percent = metadata.get('load_avg_percent', 0.0)
 
         logger.info(
-            f"capacity_measurement: {ah_estimate:.2f}Ah (±{std_ah:.2f}), CoV={cov:.3f} "
+            f"capacity_measurement: {ah_estimate:.2f}Ah (\u00b1{std_ah:.2f}), CoV={cov:.3f} "
             f"({sample_count} samples, {confidence_pct}% confidence)",
             extra={
                 'event_type': 'capacity_measurement',

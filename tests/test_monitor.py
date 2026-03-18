@@ -1416,8 +1416,8 @@ class TestCapacityEstimatorIntegration:
 # Task 2: Integration Tests for --new-battery CLI Flag
 # ==============================================================================
 
-def test_battery_replaced_false(tmp_path):
-    """Test 1: MonitorDaemon(battery_replaced=False) → model.data['new_battery_requested'] = False.
+def test_battery_replaced_false_default(tmp_path):
+    """Test 1: MonitorDaemon() without _reset_battery_baseline → no baseline reset.
 
     This is the default when --new-battery is NOT passed.
     """
@@ -1456,15 +1456,16 @@ def test_battery_replaced_false(tmp_path):
             capacity_ah=7.2,
         )
 
-        daemon = MonitorDaemon(config, battery_replaced=False)
+        daemon = MonitorDaemon(config)
 
-        assert daemon.battery_model.data['new_battery_requested'] == False
+        # new_battery_detected cleared on startup
+        assert daemon.battery_model.data['new_battery_detected'] == False
 
 
 def test_battery_replaced_true(tmp_path):
-    """Test 2: MonitorDaemon(battery_replaced=True) → model.data['new_battery_requested'] = True.
+    """Test 2: MonitorDaemon() + _reset_battery_baseline() resets SoH and capacity.
 
-    This is set when user passes --new-battery CLI flag.
+    This is the flow when user passes --new-battery CLI flag (main() calls _reset_battery_baseline).
     """
     from src.monitor import MonitorDaemon
     from src.monitor_config import Config
@@ -1501,15 +1502,18 @@ def test_battery_replaced_true(tmp_path):
             capacity_ah=7.2,
         )
 
-        daemon = MonitorDaemon(config, battery_replaced=True)
+        daemon = MonitorDaemon(config)
+        daemon._reset_battery_baseline()
 
-        assert daemon.battery_model.data['new_battery_requested'] == True
+        # Baseline reset sets SoH to 1.0 and clears capacity estimates
+        assert daemon.battery_model.data.get('soh') == 1.0
+        assert daemon.battery_model.data.get('capacity_estimates') == []
 
 
 def test_battery_replaced_persistence(tmp_path):
-    """Test 3: new_battery_requested flag persists in model.json across save/reload.
+    """Test 3: Baseline reset persists in model.json across save/reload.
 
-    Ensures Phase 13 can read flag even if daemon restarts.
+    Ensures reset state survives daemon restarts.
     """
     from src.monitor import MonitorDaemon
     from src.monitor_config import Config
@@ -1546,8 +1550,9 @@ def test_battery_replaced_persistence(tmp_path):
             capacity_ah=7.2,
         )
 
-        # Set flag via MonitorDaemon
-        daemon = MonitorDaemon(config, battery_replaced=True)
+        # Reset baseline via _reset_battery_baseline (same as main() with --new-battery)
+        daemon = MonitorDaemon(config)
+        daemon._reset_battery_baseline()
 
         # Explicitly save model (normally happens during discharge)
         daemon.battery_model.save()
@@ -1555,8 +1560,10 @@ def test_battery_replaced_persistence(tmp_path):
         # Reload model from disk
         reloaded_model = BatteryModel(tmp_path / 'test_model' / 'model.json')
 
-        # Flag should persist
-        assert reloaded_model.data.get('new_battery_requested', False) == True
+        # Baseline reset state should persist
+        assert reloaded_model.data.get('soh') == 1.0
+        assert reloaded_model.data.get('capacity_estimates') == []
+        assert reloaded_model.data.get('cycle_count') == 0
 
 
 def test_cli_battery_replaced():

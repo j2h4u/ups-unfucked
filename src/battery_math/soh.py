@@ -1,6 +1,8 @@
-"""Pure kernel function: SoH calculation from discharge curve analysis (AUC-based).
+"""DEPRECATED: AUC-based SoH kernel — superseded by soh_calculator.py (capacity-based).
 
-No I/O, no logging. Time injection for simulator support.
+This module is retained for year-simulation tests only. Production code uses
+src.soh_calculator.calculate_soh_from_discharge (capacity-based F19/F20/F21).
+Do not add new callers — this module will be removed in a future cleanup.
 """
 
 from typing import List, Dict, Optional

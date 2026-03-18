@@ -14,9 +14,9 @@ import pytest
 
 from src.battery_math import (
     BatteryState,
-    calculate_soh_from_discharge,
     peukert_runtime_hours,
 )
+from src.battery_math.soh import calculate_soh_from_discharge
 from src.soc_predictor import soc_from_voltage
 
 # ============================================================================

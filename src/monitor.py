@@ -196,13 +196,11 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self, config: Config, battery_replaced: bool = False):
+    def __init__(self, config: Config):
         """Initialize daemon with provided configuration.
 
         Args:
             config: Config dataclass instance with all daemon parameters.
-            battery_replaced: Boolean flag from CLI --new-battery; indicates battery swap.
-                             When True, new-battery detection logic will check on next discharge.
         """
         self.running = True
         self.config = config
@@ -274,13 +272,7 @@ class MonitorDaemon:
         )
         self._discharge_predicted_runtime = None  # Snapshot for prediction error logging
 
-        # Store new_battery_requested flag from CLI for detection logic
-        self.battery_model.data['new_battery_requested'] = battery_replaced
-        if battery_replaced:
-            logger.info("New battery flag set via --new-battery CLI; detection will check on next discharge")
-            self._reset_battery_baseline()
-
-        # Clear auto-detection flag after user confirmed via --new-battery
+        # Clear auto-detection flag on startup
         self.battery_model.data['new_battery_detected'] = False
         self.battery_model.save()
 
@@ -511,6 +503,99 @@ class MonitorDaemon:
                     'depth': event.get('depth_of_discharge', 0.0),
                 }
         return None
+
+    def _run_daily_scheduler(self, now: datetime) -> None:
+        """Evaluate test scheduling once daily at the configured UTC hour.
+
+        Gathers sulfation/ROI/SoH inputs, calls evaluate_test_scheduling(),
+        logs the decision, updates model.json, and dispatches if proposed.
+        Resets the evaluated flag after the scheduling window passes.
+        """
+        current_hour = now.hour
+        current_minute = now.minute
+
+        # Evaluate scheduler once daily at configured hour (default 08:00 UTC)
+        scheduler_hour = self.scheduling_config.scheduler_eval_hour_utc
+        if current_hour == scheduler_hour and current_minute < 10 and not self.scheduler_evaluated_today:
+            self.scheduler_evaluated_today = True
+
+            try:
+                # Gather inputs for scheduler
+                sulfation_score = self.discharge_handler.last_sulfation_score or 0.0
+                cycle_roi = self.discharge_handler.last_cycle_roi or 0.0
+                soh_percent = self.battery_model.get_soh()
+                days_since_last_test = self._calculate_days_since_last_test()
+                last_blackout = self._get_last_natural_blackout()
+                active_credit = self.battery_model.get_blackout_credit()
+                cycle_budget = self.discharge_handler.last_cycle_budget_remaining or 100
+
+                # Log verbose scheduling inputs if enabled
+                if self.scheduling_config.verbose_scheduling:
+                    logger.debug(
+                        "Scheduler inputs",
+                        extra={
+                            'event_type': 'scheduler_inputs',
+                            'sulfation_score': f"{sulfation_score:.3f}",
+                            'cycle_roi': f"{cycle_roi:.3f}",
+                            'soh_percent': f"{soh_percent:.1%}",
+                            'days_since_last_test': f"{days_since_last_test:.1f}",
+                            'cycle_budget': int(cycle_budget),
+                        }
+                    )
+
+                # Call scheduler with configurable thresholds
+                decision = evaluate_test_scheduling(
+                    sulfation_score=sulfation_score,
+                    cycle_roi=cycle_roi,
+                    soh_percent=soh_percent,
+                    days_since_last_test=days_since_last_test,
+                    last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
+                    active_blackout_credit=active_credit,
+                    cycle_budget_remaining=int(cycle_budget),
+                    grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
+                )
+
+                # Log decision (all three actions, for audit trail)
+                logger.info(f"Scheduler decision: {decision.action}", extra={
+                    'event_type': 'scheduler_decision',
+                    'action': decision.action,
+                    'reason_code': decision.reason_code,
+                    'sulfation_score': f"{sulfation_score:.3f}",
+                    'roi': f"{cycle_roi:.3f}",
+                    'soh_percent': f"{soh_percent:.1%}",
+                    'timestamp': now.isoformat(),
+                })
+
+                # Store for health endpoint (persists between daily scheduler runs)
+                self.last_scheduling_reason = decision.reason_code
+                self.last_next_test_timestamp = decision.next_eligible_timestamp
+
+                # Update model.json with scheduled info
+                self.battery_model.update_scheduling_state(
+                    scheduled_timestamp=decision.next_eligible_timestamp,
+                    reason=decision.reason_code,
+                    block_reason=decision.reason_code if decision.action == 'block_test' else None,
+                )
+
+                # If proposed, attempt dispatch
+                if decision.action == 'propose_test':
+                    dispatch_test_with_audit(
+                        nut_client=self.nut_client,
+                        battery_model=self.battery_model,
+                        decision=decision,
+                        current_metrics=self.current_metrics,
+                    )
+                else:
+                    logger.info(f"Test {decision.action}: {decision.reason_code}")
+
+                self.battery_model.save()
+            except Exception as e:
+                logger.error(f"Scheduler evaluation failed: {e}", exc_info=True)
+
+        else:
+            # Reset flag at midnight UTC
+            if current_hour != scheduler_hour:
+                self.scheduler_evaluated_today = False
 
     # --- Voltage sag tracking ---
 
@@ -836,7 +921,7 @@ class MonitorDaemon:
         self._consecutive_errors = 0  # Reset on successful NUT poll
 
         # F12: Log startup timing on first successful poll
-        if not hasattr(self, '_startup_logged'):
+        if not self._startup_logged:
             startup_delta_ms = (time.monotonic() - self._startup_time) * 1000
             logger.info(f"First successful poll completed: startup took {startup_delta_ms:.0f}ms")
             self._startup_logged = True
@@ -895,92 +980,7 @@ class MonitorDaemon:
             logger.error(f"Health endpoint write failed: {e}", exc_info=True)
 
         # Daily scheduler evaluation
-        now = datetime.now(timezone.utc)
-        current_hour = now.hour
-        current_minute = now.minute
-
-        # Evaluate scheduler once daily at configured hour (default 08:00 UTC)
-        scheduler_hour = self.scheduling_config.scheduler_eval_hour_utc
-        if current_hour == scheduler_hour and current_minute < 10 and not self.scheduler_evaluated_today:
-            self.scheduler_evaluated_today = True
-
-            try:
-                # Gather inputs for scheduler
-                sulfation_score = self.discharge_handler.last_sulfation_score or 0.0
-                cycle_roi = self.discharge_handler.last_cycle_roi or 0.0
-                soh_percent = self.battery_model.get_soh()
-                days_since_last_test = self._calculate_days_since_last_test()
-                last_blackout = self._get_last_natural_blackout()
-                active_credit = self.battery_model.get_blackout_credit()
-                cycle_budget = self.discharge_handler.last_cycle_budget_remaining or 100
-
-                # Log verbose scheduling inputs if enabled
-                if self.scheduling_config.verbose_scheduling:
-                    logger.debug(
-                        "Scheduler inputs",
-                        extra={
-                            'event_type': 'scheduler_inputs',
-                            'sulfation_score': f"{sulfation_score:.3f}",
-                            'cycle_roi': f"{cycle_roi:.3f}",
-                            'soh_percent': f"{soh_percent:.1%}",
-                            'days_since_last_test': f"{days_since_last_test:.1f}",
-                            'cycle_budget': int(cycle_budget),
-                        }
-                    )
-
-                # Call scheduler with configurable thresholds
-                decision = evaluate_test_scheduling(
-                    sulfation_score=sulfation_score,
-                    cycle_roi=cycle_roi,
-                    soh_percent=soh_percent,
-                    days_since_last_test=days_since_last_test,
-                    last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
-                    active_blackout_credit=active_credit,
-                    cycle_budget_remaining=int(cycle_budget),
-                    grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
-                )
-
-                # Log decision (all three actions, for audit trail)
-                logger.info(f"Scheduler decision: {decision.action}", extra={
-                    'event_type': 'scheduler_decision',
-                    'action': decision.action,
-                    'reason_code': decision.reason_code,
-                    'sulfation_score': f"{sulfation_score:.3f}",
-                    'roi': f"{cycle_roi:.3f}",
-                    'soh_percent': f"{soh_percent:.1%}",
-                    'timestamp': now.isoformat(),
-                })
-
-                # Store for health endpoint (persists between daily scheduler runs)
-                self.last_scheduling_reason = decision.reason_code
-                self.last_next_test_timestamp = decision.next_eligible_timestamp
-
-                # Update model.json with scheduled info
-                self.battery_model.update_scheduling_state(
-                    scheduled_timestamp=decision.next_eligible_timestamp,
-                    reason=decision.reason_code,
-                    block_reason=decision.reason_code if decision.action == 'block_test' else None,
-                )
-
-                # If proposed, attempt dispatch
-                if decision.action == 'propose_test':
-                    dispatch_test_with_audit(
-                        nut_client=self.nut_client,
-                        battery_model=self.battery_model,
-                        decision=decision,
-                        current_metrics=self.current_metrics,
-                    )
-                else:
-                    logger.info(f"Test {decision.action}: {decision.reason_code}")
-
-                self.battery_model.save()
-            except Exception as e:
-                logger.error(f"Scheduler evaluation failed: {e}", exc_info=True)
-
-        else:
-            # Reset flag at midnight UTC
-            if current_hour != scheduler_hour:
-                self.scheduler_evaluated_today = False
+        self._run_daily_scheduler(datetime.now(timezone.utc))
 
         # F11 fix: Report healthy to systemd AFTER critical writes succeed
         sd_notify('WATCHDOG=1')
@@ -998,6 +998,7 @@ class MonitorDaemon:
         logger.info("Starting main polling loop")
         self.poll_count = 0
         self._stabilization_logged = False
+        self._startup_logged = False
         self._consecutive_errors = 0
         self._startup_time = time.monotonic()  # F12: Startup timing marker
 
@@ -1049,7 +1050,9 @@ def main():
 
     try:
         config = load_config()
-        daemon = MonitorDaemon(config, battery_replaced=args.new_battery)
+        daemon = MonitorDaemon(config)
+        if args.new_battery:
+            daemon._reset_battery_baseline()
         daemon.run()
     except Exception as e:
         logger.critical(f"Fatal error: {e}", exc_info=True)

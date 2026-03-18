@@ -54,6 +54,7 @@ DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Prevents unbounded memory growth (~2.8h a
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
 
 
+@dataclass
 class SchedulingConfig:
     """User-configurable scheduling knobs.
 
@@ -61,27 +62,17 @@ class SchedulingConfig:
     thresholds, cycle budget, blackout credit window) live as named constants
     in their respective modules (scheduler.py constants, discharge_handler.py inline constants).
     """
-
-    def __init__(self,
-                 grid_stability_cooldown_hours: float = 4.0,
-                 scheduler_eval_hour_utc: int = 8,
-                 verbose_scheduling: bool = False):
-        self.grid_stability_cooldown_hours = grid_stability_cooldown_hours
-        self.scheduler_eval_hour_utc = scheduler_eval_hour_utc
-        self.verbose_scheduling = verbose_scheduling
+    grid_stability_cooldown_hours: float = 4.0
+    scheduler_eval_hour_utc: int = 8
+    verbose_scheduling: bool = False
 
     def validate(self) -> list[str]:
         """Return list of validation errors, empty if valid."""
         errors = []
-
-        # grid_stability_cooldown_hours: 0 is valid (disables gate), else ≥0
         if self.grid_stability_cooldown_hours < 0:
             errors.append("grid_stability_cooldown_hours must be ≥0 (0 disables gate)")
-
-        # scheduler_eval_hour_utc: 0–23
         if not (0 <= self.scheduler_eval_hour_utc <= 23):
             errors.append("scheduler_eval_hour_utc must be in [0, 23]")
-
         return errors
 
 
