@@ -36,26 +36,27 @@ def atomic_write_json(filepath, data):
 
     # Write to temporary file in same directory (ensures same filesystem)
     tmp_path = None
-    with tempfile.NamedTemporaryFile(
-        mode='w',
-        dir=str(filepath.parent),
-        delete=False,
-        suffix='.tmp'
-    ) as tmp:
-        tmp_path = Path(tmp.name)
-        json.dump(data, tmp, indent=2)
-        tmp.flush()
-        os.fdatasync(tmp.fileno())
-        os.fchmod(tmp.fileno(), 0o644)
-
     try:
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            dir=str(filepath.parent),
+            delete=False,
+            suffix='.tmp'
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            json.dump(data, tmp, indent=2)
+            tmp.flush()
+            os.fdatasync(tmp.fileno())
+            os.fchmod(tmp.fileno(), 0o644)
+
         # Atomic rename (unlink + link on POSIX)
         tmp_path.replace(filepath)
-        logger.info(f"Atomically wrote {filepath}")
+        logger.debug(f"Atomically wrote {filepath}")
 
     except Exception as e:
-        # Clean up temp file on error
-        tmp_path.unlink(missing_ok=True)
+        # Clean up temp file on write-phase or rename-phase error
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         logger.error(f"Atomic write failed: {e}")
         raise
 
@@ -575,14 +576,10 @@ class BatteryModel:
         self.save()
 
     def update_lut_from_calibration(self, new_lut: List[Dict]):
-        """
-        Replace LUT with interpolated calibration result and persist to disk.
-
-        Called after interpolate_cliff_region() completes to apply cliff region
-        interpolation to persistent model storage.
+        """Replace LUT with calibration result and persist to disk.
 
         Args:
-            new_lut: Updated LUT from interpolate_cliff_region()
+            new_lut: Updated LUT entries
         """
         old_count = len(self.data['lut'])
         self.data['lut'] = new_lut

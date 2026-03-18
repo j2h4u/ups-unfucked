@@ -48,7 +48,6 @@ def evaluate_test_scheduling(
     soh_percent: float,
     days_since_last_test: float,
     last_blackout_timestamp: Optional[str],
-    last_blackout_depth: float,
     active_blackout_credit: Optional[dict],
     cycle_budget_remaining: int,
     grid_stability_cooldown_hours: float = 4.0,
@@ -61,7 +60,6 @@ def evaluate_test_scheduling(
         soh_percent: State of health as decimal [0.0, 1.0]
         days_since_last_test: Days elapsed since last upscmd (inf if never tested)
         last_blackout_timestamp: ISO8601 timestamp of most recent natural blackout, or None
-        last_blackout_depth: Depth of discharge [0.0, 1.0] for that blackout
         active_blackout_credit: Dict with 'active', 'credit_expires' fields, or None
         cycle_budget_remaining: Cycles left before SoH=65% (mandatory replacement)
         grid_stability_cooldown_hours: Hours to wait after blackout (default 4.0, 0 = disabled)

@@ -220,10 +220,11 @@ try:
     handler = JournalHandler(identifier='ups-battery-monitor')
     handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
-except Exception:
+except Exception as e:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
+    logger.warning(f"JournalHandler unavailable, using stderr: {e}")
 
 
 def safe_save(model: BatteryModel) -> None:

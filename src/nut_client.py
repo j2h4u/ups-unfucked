@@ -249,9 +249,5 @@ class NUTClient:
                 else:
                     return (False, f"Unexpected response: {response}")
 
-            except socket.timeout:
-                raise  # Propagate timeout for caller retry logic
-            except socket.error:
-                raise  # Propagate socket error for caller retry logic
-            except Exception as e:
-                return (False, f"Unexpected error: {e}")
+            except (socket.timeout, socket.error):
+                raise  # Propagate for caller retry logic

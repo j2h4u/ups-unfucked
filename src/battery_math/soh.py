@@ -100,19 +100,3 @@ def calculate_soh_from_discharge(
     new_soh = max(0.0, min(1.0, new_soh))
 
     return new_soh
-
-
-def interpolate_cliff_region(lut: tuple) -> tuple:
-    """Pure function: smooth LUT near cutoff region.
-
-    Kernel function returns new LUT; orchestrator applies it.
-    No mutation of input — returns new tuple.
-
-    Args:
-        lut: Immutable tuple of (voltage, soc, source) tuples
-
-    Returns:
-        Smoothed LUT as new tuple
-    """
-    # Placeholder: return LUT unchanged
-    return lut

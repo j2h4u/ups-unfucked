@@ -365,64 +365,6 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     assert daemon.discharge_buffer.collecting is False
 
 
-@pytest.mark.xfail(reason="interpolate_cliff_region is Phase 12.1 placeholder — returns LUT unchanged")
-def test_auto_calibration_end_to_end(config_fixture):
-    """LUT updated with measured points from any discharge (no special mode needed)."""
-    from src.monitor import MonitorDaemon
-    from src.model import BatteryModel
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        model_path = Path(tmpdir) / "model.json"
-
-        with patch('src.monitor.NUTClient'), \
-             patch('src.monitor.EMAFilter'), \
-             patch('src.monitor.EventClassifier'), \
-             patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-             patch.object(MonitorDaemon, '_validate_model'):
-            # Replace mocked JournalHandler with real handler so logging works
-            from src.monitor_config import logger as monitor_logger
-            monitor_logger.handlers.clear()
-            monitor_logger.addHandler(logging.StreamHandler())
-
-            daemon = MonitorDaemon(config_fixture)
-
-            model = BatteryModel(model_path=model_path)
-            daemon.battery_model = model
-
-            model.data['lut'] = [
-                {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
-                {'v': 12.8, 'soc': 0.85, 'source': 'standard'},
-                {'v': 12.4, 'soc': 0.64, 'source': 'standard'},
-                {'v': 11.2, 'soc': 0.60, 'source': 'standard'},
-                {'v': 11.0, 'soc': 0.50, 'source': 'standard'},
-                {'v': 10.8, 'soc': 0.40, 'source': 'standard'},
-                {'v': 10.5, 'soc': 0.0, 'source': 'anchor'},
-            ]
-            model.save()
-
-            # Simulate measured discharge points in cliff region
-            model.calibration_write(voltage=10.95, soc=0.48, timestamp=1000.0)
-            model.calibration_write(voltage=10.65, soc=0.15, timestamp=1100.0)
-            model.calibration_write(voltage=10.55, soc=0.02, timestamp=1200.0)
-
-            measured_count = sum(1 for e in model.get_lut() if e['source'] == 'measured')
-            assert measured_count >= 3
-
-            # Cliff interpolation fills gaps between measured points
-            from src.battery_math.soh import interpolate_cliff_region
-            updated_lut = interpolate_cliff_region(model.data['lut'])
-            model.update_lut_from_calibration(updated_lut)
-
-            interpolated_count = sum(1 for e in model.get_lut() if e['source'] == 'interpolated')
-            assert interpolated_count > 0
-
-            # Verify persistence
-            reloaded = BatteryModel(model_path=model_path)
-            assert sum(1 for e in reloaded.get_lut() if e['source'] == 'interpolated') > 0
-            assert sum(1 for e in reloaded.get_lut() if e['source'] == 'measured') >= 3
-
-
 def test_current_metrics_dataclass(current_metrics_fixture):
     """Verify CurrentMetrics dataclass instantiation and field access."""
     from src.event_classifier import EventType
@@ -649,16 +591,10 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
     # Pre-setup: Mock soh_calculator and other dependencies to avoid complex physics
     with patch('src.discharge_handler.soh_calculator.calculate_soh_from_discharge') as mock_soh_calc, \
          patch('src.discharge_handler.replacement_predictor.linear_regression_soh') as mock_replace, \
-         patch('src.discharge_handler.runtime_minutes') as mock_runtime, \
-         patch('src.monitor.interpolate_cliff_region') as mock_interp:
+         patch('src.discharge_handler.runtime_minutes') as mock_runtime:
         mock_soh_calc.return_value = (0.95, 7.2)  # Assume 95% SoH after discharge, using rated capacity
         mock_replace.return_value = None  # No replacement prediction
         mock_runtime.return_value = 30.0  # 30 minutes runtime
-        mock_interp.return_value = [
-            {"v": 13.4, "soc": 1.0, "source": "standard"},
-            {"v": 12.4, "soc": 0.64, "source": "standard"},
-            {"v": 10.5, "soc": 0.0, "source": "anchor"},
-        ]
 
         # Mock battery model methods
         daemon.battery_model.get_soh = Mock(return_value=1.0)

@@ -9,6 +9,7 @@ discharge lifecycle extracted to discharge_handler.py.
 
 import time
 import signal
+import socket
 import sys
 import logging
 import argparse
@@ -29,7 +30,6 @@ from src.runtime_calculator import runtime_minutes, peukert_runtime_hours
 from src.event_classifier import EventClassifier, EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src.battery_math import calibrate_peukert, ScalarRLS
-from src.battery_math.soh import interpolate_cliff_region
 
 from src.monitor_config import (
     Config, CurrentMetrics, DischargeBuffer, SagState,
@@ -139,9 +139,20 @@ def dispatch_test_with_audit(
 
     # All preconditions passed, attempt to dispatch
     command = f'test.battery.start.{decision.test_type}'
-    success, error_msg = nut_client.send_instcmd(command)
-
     upscmd_timestamp = datetime.now(timezone.utc).isoformat()
+
+    try:
+        success, error_msg = nut_client.send_instcmd(command)
+    except (socket.error, OSError) as e:
+        battery_model.update_upscmd_result(
+            upscmd_timestamp=upscmd_timestamp,
+            upscmd_type=command,
+            upscmd_status=f'ERR_SOCKET: {e}',
+        )
+        battery_model.save()
+        logger.error(f"Test dispatch socket error: {e}", exc_info=True)
+        return False
+
     if success:
         # Success: update model with command result
         battery_model.update_upscmd_result(
@@ -263,13 +274,10 @@ class MonitorDaemon:
         )
         self._discharge_predicted_runtime = None  # Snapshot for prediction error logging
 
-        # Store new_battery_requested flag from CLI for Phase 13 detection logic
+        # Store new_battery_requested flag from CLI for detection logic
         self.battery_model.data['new_battery_requested'] = new_battery_flag
         if new_battery_flag:
-            logger.info("New battery flag set via --new-battery CLI; Phase 13 detection will check on next discharge")
-
-        # If user signals --new-battery, reset baseline (must be after discharge_handler creation)
-        if new_battery_flag or self.battery_model.data.get('new_battery_requested', False):
+            logger.info("New battery flag set via --new-battery CLI; detection will check on next discharge")
             self._reset_battery_baseline()
 
         # Clear auto-detection flag after user confirmed via --new-battery
@@ -341,7 +349,7 @@ class MonitorDaemon:
             _ = self.nut_client.get_ups_vars()
             logger.info("NUT upsd reachable, polling started")
         except Exception:
-            logger.warning(f"NUT upsd unreachable at startup, will retry every {self.config.polling_interval}s")
+            logger.warning(f"NUT upsd unreachable at startup, will retry every {self.config.polling_interval}s", exc_info=True)
 
     def _handle_event_transition(self):
         """
@@ -383,12 +391,6 @@ class MonitorDaemon:
             previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
             logger.info("Power restored; updating LUT with measured discharge points")
             self._update_battery_health()
-
-            # Refine cliff region (10.5-11.0V) if we have measured data there.
-            updated_lut = interpolate_cliff_region(self.battery_model.get_lut())
-            if updated_lut != self.battery_model.get_lut():
-                self.battery_model.update_lut_from_calibration(updated_lut)
-                logger.info("LUT cliff region updated from measured discharge data")
 
     # --- Delegation to DischargeHandler (F58) ---
 
@@ -817,7 +819,7 @@ class MonitorDaemon:
             }
             write_virtual_ups_dev(virtual_metrics)
         except Exception as e:
-            logger.error(f"Failed to write virtual UPS metrics: {e}")
+            logger.error(f"Failed to write virtual UPS metrics: {e}", exc_info=True)
 
     # --- Main loop ---
 
@@ -929,7 +931,6 @@ class MonitorDaemon:
                     soh_percent=soh_percent,
                     days_since_last_test=days_since_last_test,
                     last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
-                    last_blackout_depth=last_blackout.get('depth', 0.0) if last_blackout else 0.0,
                     active_blackout_credit=active_credit,
                     cycle_budget_remaining=int(cycle_budget),
                     grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,

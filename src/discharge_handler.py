@@ -57,7 +57,7 @@ class DischargeHandler:
         self.capacity_locked_previously = False
 
         self.last_sulfation_score: Optional[float] = None
-        self.last_sulfation_confidence: str = 'high'
+        self.last_sulfation_confidence: Optional[str] = None
         self.last_days_since_deep: Optional[float] = None
         self.last_ir_trend_rate: float = 0.0
         self.last_recovery_delta: float = 0.0
@@ -207,10 +207,13 @@ class DischargeHandler:
         self.last_cycle_budget_remaining = cycle_budget
         self.last_discharge_timestamp = datetime.now(timezone.utc).isoformat()
 
+        # Classify once (deterministic for a given buffer)
+        event_reason = self._classify_event_reason(discharge_buffer)
+
         # Persist to model.json
         self.battery_model.append_sulfation_history({
             'timestamp': datetime.now(timezone.utc).isoformat(),
-            'event_type': self._classify_event_reason(discharge_buffer),
+            'event_type': event_reason,
             'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
             'days_since_deep': round(days_since_deep, 1) if days_since_deep is not None else None,
             'ir_trend_rate': round(ir_trend_rate, 6),
@@ -222,34 +225,28 @@ class DischargeHandler:
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
         self.battery_model.append_discharge_event({
             'timestamp': datetime.now(timezone.utc).isoformat(),
-            'event_reason': self._classify_event_reason(discharge_buffer),
+            'event_reason': event_reason,
             'duration_seconds': discharge_duration,
             'depth_of_discharge': round(dod, 2),
             'measured_capacity_ah': capacity_ah_used if soh_result else None,
             'cycle_roi': round(roi, 3)
         })
 
-        # Log discharge completion to journald
-        try:
-            logger.info('Discharge complete', extra={
-                'event_type': 'discharge_complete',
-                'event_reason': self._classify_event_reason(discharge_buffer),
-                'duration_seconds': int(discharge_duration),
-                'depth_of_discharge': round(dod, 2),
-                'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
-                'sulfation_confidence': 'high' if sulfation_state else None,
-                'recovery_delta': round(self.last_recovery_delta, 3),
-                'cycle_roi': round(roi, 3),
-                'measured_capacity_ah': round(capacity_ah_used, 2) if capacity_ah_used else None,
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-            })
-        except Exception as e:
-            logger.warning(f"Failed to log discharge event: {e}")
+        logger.info('Discharge complete', extra={
+            'event_type': 'discharge_complete',
+            'event_reason': event_reason,
+            'duration_seconds': int(discharge_duration),
+            'depth_of_discharge': round(dod, 2),
+            'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
+            'sulfation_confidence': 'high' if sulfation_state else None,
+            'recovery_delta': round(self.last_recovery_delta, 3),
+            'cycle_roi': round(roi, 3),
+            'measured_capacity_ah': round(capacity_ah_used, 2) if capacity_ah_used else None,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        })
 
         # Grant blackout credit for natural deep discharges (≥90% DoD)
         BLACKOUT_CREDIT_DAYS = 7
-
-        event_reason = self._classify_event_reason(discharge_buffer)
         if event_reason == 'natural' and dod >= 0.90:
             credit_expires = datetime.now(timezone.utc) + timedelta(days=BLACKOUT_CREDIT_DAYS)
             logger.info(
@@ -506,7 +503,7 @@ class DischargeHandler:
 
                     self.battery_model.data['new_battery_detected'] = True
                     self.battery_model.data['new_battery_detected_timestamp'] = datetime.now().isoformat()
-                    self.battery_model.save()
+                    safe_save(self.battery_model)
 
                     logger.info(
                         "New battery flag set; MOTD will show alert next shell session. "
@@ -515,7 +512,7 @@ class DischargeHandler:
             else:
                 # First time convergence; store as baseline
                 self.battery_model.data['capacity_ah_measured'] = current_measured
-                self.battery_model.save()
+                safe_save(self.battery_model)
                 logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
 
     def _calculate_days_since_deep(self) -> Optional[float]:

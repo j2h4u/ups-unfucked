@@ -30,7 +30,7 @@ class TestSoHFloorGate:
             soh_percent=0.59,  # Below 60% constant
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -46,7 +46,7 @@ class TestSoHFloorGate:
             soh_percent=0.60,  # Exactly at threshold
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -66,7 +66,7 @@ class TestRateLimitGate:
             soh_percent=0.85,
             days_since_last_test=3.0,  # 3 days, less than 7
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -82,7 +82,7 @@ class TestRateLimitGate:
             soh_percent=0.85,
             days_since_last_test=7.0,  # Exactly at threshold
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -97,7 +97,7 @@ class TestRateLimitGate:
             soh_percent=0.85,
             days_since_last_test=float('inf'),  # Never tested
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -116,7 +116,7 @@ class TestBlackoutCreditGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit={
                 'active': True,
                 'credit_expires': credit_expires,
@@ -135,7 +135,7 @@ class TestBlackoutCreditGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit={
                 'active': True,
                 'credit_expires': credit_expires,
@@ -152,7 +152,7 @@ class TestBlackoutCreditGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit={
                 'active': False,
                 'credit_expires': None,
@@ -169,7 +169,7 @@ class TestBlackoutCreditGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -183,7 +183,7 @@ class TestBlackoutCreditGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit={
                 'active': True,
                 'credit_expires': 'INVALID_TIMESTAMP',
@@ -206,7 +206,7 @@ class TestGridStabilityGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=last_blackout,
-            last_blackout_depth=0.85,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
             grid_stability_cooldown_hours=4.0,  # 4h cooldown enabled
@@ -223,7 +223,7 @@ class TestGridStabilityGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=last_blackout,
-            last_blackout_depth=0.85,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
             grid_stability_cooldown_hours=0.0,  # DISABLED
@@ -242,7 +242,7 @@ class TestGridStabilityGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=last_blackout,
-            last_blackout_depth=0.85,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
             grid_stability_cooldown_hours=4.0,  # 4h cooldown
@@ -257,7 +257,7 @@ class TestGridStabilityGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
             grid_stability_cooldown_hours=4.0,
@@ -272,7 +272,7 @@ class TestGridStabilityGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp='INVALID_TIMESTAMP',
-            last_blackout_depth=0.85,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
             grid_stability_cooldown_hours=4.0,
@@ -291,7 +291,7 @@ class TestCycleBudgetGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=3,  # Critical: only 3 cycles left
         )
@@ -306,7 +306,7 @@ class TestCycleBudgetGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=5,  # At threshold
         )
@@ -325,7 +325,7 @@ class TestROIGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,  # Plenty of cycles
         )
@@ -340,7 +340,7 @@ class TestROIGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=15,  # < 20, so ROI gate doesn't apply
         )
@@ -355,7 +355,7 @@ class TestROIGate:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -373,7 +373,7 @@ class TestSulfationThreshold:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -389,7 +389,7 @@ class TestSulfationThreshold:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -405,7 +405,7 @@ class TestSulfationThreshold:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -421,7 +421,7 @@ class TestSulfationThreshold:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -437,7 +437,7 @@ class TestSulfationThreshold:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -457,7 +457,7 @@ class TestGateOrdering:
             soh_percent=0.55,  # Below floor
             days_since_last_test=2.0,  # Also below rate limit
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -474,7 +474,7 @@ class TestGateOrdering:
             soh_percent=0.85,
             days_since_last_test=2.0,  # Below rate limit
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit={
                 'active': True,
                 'credit_expires': credit_expires,
@@ -497,7 +497,7 @@ class TestRealWorldScenarios:
             soh_percent=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -512,7 +512,7 @@ class TestRealWorldScenarios:
             soh_percent=0.55,  # Below 60% floor
             days_since_last_test=30.0,  # Long time since test
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit=None,
             cycle_budget_remaining=50,
         )
@@ -528,7 +528,7 @@ class TestRealWorldScenarios:
             soh_percent=0.85,
             days_since_last_test=15.0,  # Long enough for rate limit
             last_blackout_timestamp=None,
-            last_blackout_depth=0.0,
+
             active_blackout_credit={
                 'active': True,
                 'credit_expires': credit_expires,
