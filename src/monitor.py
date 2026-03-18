@@ -117,7 +117,7 @@ def dispatch_test_with_audit(
     # Extract current state for precondition checks
     ups_status = getattr(current_metrics, 'ups_status_override', None) or "OL"
     soc = getattr(current_metrics, 'soc', 1.0)
-    recent_glitches = 0  # Not implemented — always 0 for now
+    recent_glitches = 0  # Placeholder: grid transition counting not implemented
     test_running = battery_model.data.get('test_running', False)
 
     # Validate preconditions
@@ -840,12 +840,18 @@ class MonitorDaemon:
         # Log significant changes
         if self._last_logged_soc is None or abs(soc - self._last_logged_soc) > 0.05:
             if self._last_logged_soc is not None:
-                logger.info(f"SoC updated: {self._last_logged_soc*100:.0f}% → {soc*100:.0f}%")
+                logger.info(
+                    f"SoC updated: {self._last_logged_soc*100:.0f}% → {soc*100:.0f}%",
+                    extra={'event_type': 'soc_change', 'soc_old': f'{self._last_logged_soc*100:.0f}', 'soc_new': f'{soc*100:.0f}'}
+                )
             else:
                 logger.info(f"SoC initial: {soc*100:.0f}%")
             self._last_logged_soc = soc
         if self._last_logged_time_rem is None or abs(time_rem - self._last_logged_time_rem) > 1.0:
-            logger.info(f"Remaining runtime: {time_rem:.1f} minutes")
+            logger.info(
+                f"Remaining runtime: {time_rem:.1f} minutes",
+                extra={'event_type': 'runtime_change', 'time_rem_minutes': f'{time_rem:.1f}'}
+            )
             self._last_logged_time_rem = time_rem
 
         return battery_charge, time_rem
@@ -867,7 +873,16 @@ class MonitorDaemon:
             f"Poll {self.poll_count}: V_ema={v_ema:.2f}V, L_ema={l_ema:.1f}%, "
             f"V_norm={v_norm_str}, charge={charge_str}, time_rem={time_rem_str}, "
             f"event={event_str}, stabilized={self.ema_filter.stabilized}, "
-            f"nut_latency={latency_str}, discharge_buf={discharge_sample_count}"
+            f"nut_latency={latency_str}, discharge_buf={discharge_sample_count}",
+            extra={
+                'event_type': 'poll_status',
+                'poll_count': str(self.poll_count),
+                'v_ema': f'{v_ema:.2f}' if v_ema else 'N/A',
+                'load_pct': f'{l_ema:.1f}' if l_ema else 'N/A',
+                'charge_pct': charge_str,
+                'time_rem': time_rem_str,
+                'event': event_str,
+            }
         )
 
     def _write_virtual_ups(self, ups_data, battery_charge, time_rem):

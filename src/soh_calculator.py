@@ -107,7 +107,15 @@ def calculate_soh_from_discharge(
     logger.info(
         f"SoH capacity-based: measured={measured_capacity:.2f}Ah, "
         f"rated={capacity_ah_ref:.2f}Ah, raw={soh_raw:.3f}, "
-        f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, weight={discharge_depth_weight:.2f})"
+        f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, discharge_depth_weight={discharge_depth_weight:.2f})",
+        extra={
+            'event_type': 'soh_calculation',
+            'measured_capacity_ah': f'{measured_capacity:.2f}',
+            'rated_capacity_ah': f'{capacity_ah_ref:.2f}',
+            'soh_raw': f'{soh_raw:.3f}',
+            'soh_blended': f'{soh_new:.3f}',
+            'delta_soc_pct': f'{delta_soc*100:.1f}',
+        }
     )
 
     return soh_new, capacity_ah_ref
