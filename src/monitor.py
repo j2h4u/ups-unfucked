@@ -514,21 +514,26 @@ class MonitorDaemon:
 
         self.battery_model.save()
 
+    def _should_run_scheduler(self, now: datetime) -> bool:
+        """Check if scheduler should run this poll. Resets daily flag when hour passes."""
+        current_hour = now.hour
+        scheduler_hour = self.scheduling_config.scheduler_eval_hour_utc
+
+        if current_hour != scheduler_hour:
+            self.scheduler_evaluated_today = False
+            return False
+
+        if self.scheduler_evaluated_today or now.minute >= 10:
+            return False
+
+        return True
+
     def _run_daily_scheduler(self, now: datetime) -> None:
         """Evaluate test scheduling once daily at the configured UTC hour.
 
         Orchestrates: gather inputs → evaluate → execute decision.
-        Resets the evaluated flag after the scheduling window passes.
         """
-        current_hour = now.hour
-        scheduler_hour = self.scheduling_config.scheduler_eval_hour_utc
-
-        # Reset flag once we leave the scheduling hour
-        if current_hour != scheduler_hour:
-            self.scheduler_evaluated_today = False
-            return
-
-        if self.scheduler_evaluated_today or now.minute >= 10:
+        if not self._should_run_scheduler(now):
             return
 
         self.scheduler_evaluated_today = True

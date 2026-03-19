@@ -209,12 +209,8 @@ def test_lb_flag_signal_latency(make_daemon):
                 daemon.current_metrics.event_type = EventType.BLACKOUT_REAL
                 daemon.current_metrics.time_rem_minutes = 3.0
 
-            event_type = daemon.current_metrics.event_type
-            is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
-
-            if is_discharging or daemon.poll_count % 6 == 0:
-                daemon._compute_metrics()
-                daemon._handle_event_transition()
+            # In production, _handle_event_transition runs every poll (ungated)
+            daemon._handle_event_transition()
 
         # Verify _handle_event_transition was called at poll 2 (immediately on OB)
         assert 2 in transition_call_times, \

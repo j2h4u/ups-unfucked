@@ -427,7 +427,7 @@ class TestValidationGates:
                     estimator.add_measurement(ah, f"2026-03-15T{discharge_num:02d}:00:00Z", meta)
 
             # Check convergence at sample 3
-            if len(estimator.capacity_measurements) >= 3:
+            if estimator.get_measurement_count() >= 3:
                 score = estimator.get_confidence()
                 if score >= 0.90:
                     converged_count += 1

@@ -576,6 +576,27 @@ class DischargeHandler:
 
         return None
 
+    def _parse_r_entry(self, entry: dict, now: datetime) -> tuple | None:
+        """Parse r_internal_history entry into (days_ago, r_ohm), or None if invalid/old."""
+        r_value = entry.get('r_ohm')
+        if r_value is None or not isinstance(r_value, (int, float)):
+            logger.warning("r_internal_history entry invalid 'r_ohm': %r (keys: %s)",
+                          r_value, list(entry.keys()),
+                          extra={'event_type': 'r_internal_invalid_entry'})
+            return None
+        date_str = entry.get('date', '')
+        try:
+            entry_time = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError) as e:
+            logger.warning("Skipping r_internal entry with bad date: %r — %s",
+                           date_str, e,
+                           extra={'event_type': 'r_internal_invalid_entry'})
+            return None
+        days_ago = (now - entry_time).total_seconds() / 86400.0
+        if days_ago > 30:
+            return None
+        return (days_ago, r_value)
+
     def _estimate_ir_trend(self) -> float:
         """Estimate IR trend rate (dR/dt) in ohms/day from last 30 days.
 
@@ -586,32 +607,12 @@ class DischargeHandler:
             return 0.0
 
         now = datetime.now(timezone.utc)
-        x_values = []
-        y_values = []
-        for entry in r_history:
-            date_str = entry.get('date', '')
-            r_value = entry.get('r_ohm')
-            if r_value is None or not isinstance(r_value, (int, float)):
-                logger.warning("r_internal_history entry invalid 'r_ohm': %r (keys: %s)",
-                              r_value, list(entry.keys()),
-                              extra={'event_type': 'r_internal_invalid_entry'})
-                continue
-            try:
-                # r_internal_history stores dates as YYYY-MM-DD, not full ISO8601
-                entry_time = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
-            except (ValueError, TypeError) as e:
-                logger.warning("Skipping r_internal entry with bad date: %r — %s",
-                               date_str, e,
-                               extra={'event_type': 'r_internal_invalid_entry'})
-                continue
-            days_ago = (now - entry_time).total_seconds() / 86400.0
-            if days_ago > 30:
-                continue
-            x_values.append(days_ago)
-            y_values.append(r_value)
+        points = [p for entry in r_history if (p := self._parse_r_entry(entry, now)) is not None]
 
-        if len(x_values) < 2:
+        if len(points) < 2:
             return 0.0
+        x_values = [p[0] for p in points]
+        y_values = [p[1] for p in points]
         slope = linear_regression_slope(x_values, y_values)
         return max(0.0, slope) if slope is not None else 0.0
 
