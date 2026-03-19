@@ -72,8 +72,7 @@ def validate_preconditions_before_upscmd(
         return False, "UPS_not_online_cannot_test_during_discharge"
 
     if soc < 0.95:
-        soc_percent = int(soc * 100)
-        return False, f"SoC_below_95_percent_{soc_percent}%"
+        return False, "soc_below_threshold"
 
     if recent_power_glitches > 2:
         return False, f"grid_unstable_{recent_power_glitches}_transitions_in_4h"
@@ -102,8 +101,8 @@ def dispatch_test_with_audit(
         bool: True if test was dispatched, False if blocked or failed
     """
     # Extract current state for precondition checks
-    ups_status = getattr(current_metrics, 'ups_status_override', None) or "OL"
-    soc = getattr(current_metrics, 'soc', 1.0)
+    ups_status = current_metrics.ups_status_override or "OL"
+    soc = current_metrics.soc if current_metrics.soc is not None else 1.0
     recent_power_glitches = 0
     test_already_running = battery_model.data.get('test_running', False)
 
@@ -125,8 +124,8 @@ def dispatch_test_with_audit(
     upscmd_timestamp = datetime.now(timezone.utc).isoformat()
 
     try:
-        success, response_msg = nut_client.send_instcmd(command)
-    except (socket.error, OSError) as e:
+        success, result_msg = nut_client.send_instcmd(command)
+    except (socket.error, OSError, ValueError) as e:
         battery_model.update_upscmd_result(
             upscmd_timestamp=upscmd_timestamp,
             upscmd_type=command,
@@ -140,7 +139,7 @@ def dispatch_test_with_audit(
         upscmd_status = 'OK'
         battery_model.data['test_running'] = True
     else:
-        upscmd_status = response_msg or 'ERR_UNKNOWN'
+        upscmd_status = result_msg or 'ERR_UNKNOWN'
 
     battery_model.update_upscmd_result(
         upscmd_timestamp=upscmd_timestamp,
@@ -158,10 +157,10 @@ def dispatch_test_with_audit(
         })
         return True
     else:
-        logger.error(f"Test dispatch failed: {response_msg or 'unknown error'}", extra={
+        logger.error(f"Test dispatch failed: {result_msg or 'unknown error'}", extra={
             'event_type': 'test_dispatch_failed',
             'command': command,
-            'error': response_msg or 'unknown',
+            'error': result_msg or 'unknown',
         })
         return False
 
@@ -268,6 +267,13 @@ class MonitorDaemon:
         self.calibration_last_written_index = 0
 
         self.has_logged_baseline_lock = False
+
+        # Runtime fields (initialized here, populated in run())
+        self.poll_count = 0
+        self._stabilization_logged = False
+        self._startup_logged = False
+        self._consecutive_errors = 0
+        self._startup_time: Optional[float] = None
 
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -472,21 +478,22 @@ class MonitorDaemon:
             'cycle_budget': self.discharge_handler.last_cycle_budget_remaining or 100,
         }
 
-    def _execute_scheduler_decision(self, decision: SchedulerDecision, scheduling_inputs: dict, now: datetime) -> None:
+    def _execute_scheduler_decision(self, decision: SchedulerDecision, scheduler_params: dict, now: datetime) -> None:
         """Act on a scheduler decision: log, persist, and dispatch if proposed.
 
         Args:
             decision: SchedulerDecision from evaluate_test_scheduling()
-            scheduling_inputs: Dict from _gather_scheduler_inputs() (for structured logging)
+            scheduler_params: Dict from _gather_scheduler_inputs() (for structured logging)
             now: Current UTC datetime
         """
         logger.info(f"Scheduler decision: {decision.action}", extra={
             'event_type': 'scheduler_decision',
             'action': decision.action,
             'reason_code': decision.reason_code,
-            'sulfation_score': f"{scheduling_inputs['sulfation_score']:.3f}",
-            'roi': f"{scheduling_inputs['cycle_roi']:.3f}",
-            'soh_fraction': f"{scheduling_inputs['soh_fraction']:.1%}",
+            'reason_detail': decision.reason_detail,
+            'sulfation_score': f"{scheduler_params['sulfation_score']:.3f}",
+            'roi': f"{scheduler_params['cycle_roi']:.3f}",
+            'soh_fraction': f"{scheduler_params['soh_fraction']:.1%}",
         })
 
         # Store for health endpoint (persists between daily scheduler runs)
@@ -509,7 +516,7 @@ class MonitorDaemon:
                 current_metrics=self.current_metrics,
             )
         else:
-            logger.info(f"Test {decision.action}: {decision.reason_code}")
+            logger.info(f"Test {decision.action}: {decision.reason_code} ({decision.reason_detail})")
 
         self.battery_model.save()
 
@@ -533,34 +540,34 @@ class MonitorDaemon:
         self.scheduler_evaluated_today = True
 
         try:
-            scheduling_inputs = self._gather_scheduler_inputs()
+            scheduler_params = self._gather_scheduler_inputs()
 
             if self.scheduling_config.verbose_scheduling:
                 logger.debug(
                     "Scheduler inputs",
                     extra={
                         'event_type': 'scheduler_inputs',
-                        'sulfation_score': f"{scheduling_inputs['sulfation_score']:.3f}",
-                        'cycle_roi': f"{scheduling_inputs['cycle_roi']:.3f}",
-                        'soh_fraction': f"{scheduling_inputs['soh_fraction']:.1%}",
-                        'days_since_last_test': f"{scheduling_inputs['days_since_last_test']:.1f}",
-                        'cycle_budget': int(scheduling_inputs['cycle_budget']),
+                        'sulfation_score': f"{scheduler_params['sulfation_score']:.3f}",
+                        'cycle_roi': f"{scheduler_params['cycle_roi']:.3f}",
+                        'soh_fraction': f"{scheduler_params['soh_fraction']:.1%}",
+                        'days_since_last_test': f"{scheduler_params['days_since_last_test']:.1f}",
+                        'cycle_budget': int(scheduler_params['cycle_budget']),
                     }
                 )
 
-            last_blackout = scheduling_inputs['last_blackout']
+            last_blackout = scheduler_params['last_blackout']
             decision = evaluate_test_scheduling(
-                sulfation_score=scheduling_inputs['sulfation_score'],
-                cycle_roi=scheduling_inputs['cycle_roi'],
-                soh_fraction=scheduling_inputs['soh_fraction'],
-                days_since_last_test=scheduling_inputs['days_since_last_test'],
+                sulfation_score=scheduler_params['sulfation_score'],
+                cycle_roi=scheduler_params['cycle_roi'],
+                soh_fraction=scheduler_params['soh_fraction'],
+                days_since_last_test=scheduler_params['days_since_last_test'],
                 last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
-                active_blackout_credit=scheduling_inputs['active_credit'],
-                cycle_budget_remaining=int(scheduling_inputs['cycle_budget']),
+                active_blackout_credit=scheduler_params['active_credit'],
+                cycle_budget_remaining=int(scheduler_params['cycle_budget']),
                 grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
             )
 
-            self._execute_scheduler_decision(decision, scheduling_inputs, now)
+            self._execute_scheduler_decision(decision, scheduler_params, now)
         except Exception as e:
             logger.error(f"Scheduler evaluation failed: {e}", exc_info=True,
                          extra={'event_type': 'scheduler_error', 'error_class': type(e).__name__})
@@ -625,7 +632,7 @@ class MonitorDaemon:
             logger.info("Model saved before shutdown", extra={'event_type': 'shutdown_save'})
         except Exception as e:
             logger.error(f"Failed to save model on shutdown: {e}",
-                         extra={'event_type': 'shutdown_save_failed'})
+                         exc_info=True, extra={'event_type': 'shutdown_save_failed'})
         self.running = False
 
     # --- Pipeline stages ---
@@ -1014,7 +1021,7 @@ class MonitorDaemon:
         self._stabilization_logged = False
         self._startup_logged = False
         self._consecutive_errors = 0
-        self._startup_time = time.monotonic()  # Startup timing marker
+        self._startup_time = time.monotonic()
 
         while self.running:
             try:

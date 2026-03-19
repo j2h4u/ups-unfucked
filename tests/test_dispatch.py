@@ -31,7 +31,7 @@ class TestPreconditionValidator:
             test_already_running=False,
         )
         assert can_proceed is False
-        assert "SoC" in reason
+        assert "soc" in reason
 
     def test_precondition_blocks_ob_state(self):
         """UPS on battery (OB) blocks dispatch."""
@@ -118,7 +118,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action='propose_test',
             test_type='deep',
-            reason_code='sulfation_0.72_roi_0.35',
+            reason_code='sulfation_high',
         )
 
         # Call dispatch
@@ -150,7 +150,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action='propose_test',
             test_type='deep',
-            reason_code='sulfation_0.72_roi_0.35',
+            reason_code='sulfation_high',
         )
 
         # Call dispatch
@@ -180,7 +180,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action='propose_test',
             test_type='quick',
-            reason_code='sulfation_0.52',
+            reason_code='sulfation_moderate',
         )
 
         # Call dispatch
