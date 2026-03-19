@@ -321,6 +321,8 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     daemon.ema_filter = MagicMock()
     daemon.ema_filter.load = 20.0
     daemon.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
+    daemon.discharge_handler.battery_model = mock_model
+    daemon.discharge_handler.rls_peukert = daemon.rls_peukert
     daemon._discharge_predicted_runtime = None
 
     from src.monitor_config import DischargeBuffer
@@ -369,6 +371,8 @@ def _setup_peukert_daemon(make_daemon):
     daemon.battery_model.set_rls_state = Mock()
     daemon.reference_load_percent = 20.0
     daemon.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
+    daemon.discharge_handler.battery_model = daemon.battery_model
+    daemon.discharge_handler.rls_peukert = daemon.rls_peukert
 
     daemon.ema_filter = Mock()
     daemon.ema_filter.load = 20.0
@@ -1130,6 +1134,8 @@ class TestCapacityEstimatorIntegration:
         # Mock dependencies
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
+        daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
+        daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 1,
@@ -1188,6 +1194,8 @@ class TestCapacityEstimatorIntegration:
 
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
+        daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
+        daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 1,
@@ -1226,6 +1234,8 @@ class TestCapacityEstimatorIntegration:
 
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
+        daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
+        daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 3,
@@ -1289,6 +1299,8 @@ class TestCapacityEstimatorIntegration:
         # Create real mocks for integration
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
+        daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
+        daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 1,
@@ -1532,6 +1544,7 @@ def test_journald_capacity_event_logged(make_daemon):
     }
 
     daemon.capacity_estimator = MagicMock()
+    daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
     daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
     daemon.capacity_estimator.has_converged.return_value = False
 
@@ -1605,6 +1618,7 @@ def test_journald_baseline_lock_event(make_daemon):
     }
 
     daemon.capacity_estimator = MagicMock()
+    daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
     daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
     daemon.capacity_estimator.has_converged.return_value = True
 

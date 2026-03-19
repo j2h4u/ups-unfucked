@@ -371,38 +371,21 @@ class MonitorDaemon:
                         extra={'event_type': 'power_restored'})
             self._update_battery_health()
 
-    def _sync_handler_refs(self):
-        """Sync mutable references to discharge handler.
-
-        Called internally by each delegating method (_update_battery_health,
-        _handle_discharge_complete, _auto_calibrate_peukert). Required because
-        tests may replace daemon.battery_model, daemon.capacity_estimator, or
-        daemon.rls_peukert after __init__.
-        """
-        dh = self.discharge_handler
-        dh.battery_model = self.battery_model
-        dh.capacity_estimator = self.capacity_estimator
-        dh.rls_peukert = self.rls_peukert
-
     def _update_battery_health(self):
         """Delegate to DischargeHandler; clear buffer after."""
-        self._sync_handler_refs()
         self.discharge_handler.update_battery_health(self.discharge_buffer)
         self.discharge_buffer = DischargeBuffer()
 
     def _handle_discharge_complete(self, discharge_data: dict) -> None:
         """Delegate to DischargeHandler."""
-        self._sync_handler_refs()
         self.discharge_handler.handle_discharge_complete(discharge_data)
 
     def _auto_calibrate_peukert(self, current_soh: float):
         """Delegate to DischargeHandler."""
-        self._sync_handler_refs()
         self.discharge_handler._auto_calibrate_peukert(current_soh, self.discharge_buffer)
 
     def _log_discharge_prediction(self):
         """Delegate to DischargeHandler."""
-        self._sync_handler_refs()
         self.discharge_handler._log_discharge_prediction(
             self.discharge_buffer, self.current_metrics.soc)
 

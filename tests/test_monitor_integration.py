@@ -388,6 +388,7 @@ def test_journald_event_filtering():
                 }
 
                 daemon.capacity_estimator = MagicMock()
+                daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
                 daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
                 daemon.capacity_estimator.has_converged.return_value = False
 
