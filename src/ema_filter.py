@@ -101,6 +101,16 @@ class EMAFilter:
     """
 
     def __init__(self, window_sec=120, poll_interval_sec=10, sensitivity=0.05):
+        """Initialize EMAFilter for voltage and load tracking.
+
+        Args:
+            window_sec: Smoothing window in seconds (convergence time).
+            poll_interval_sec: Expected interval between samples.
+            sensitivity: Relative deviation threshold [0, 1] for adaptive alpha.
+                When |new - ema| / |ema| exceeds sensitivity, alpha ramps toward
+                1.0 for instant reaction. Lower values = more reactive to small
+                changes. Default 0.05 (5% deviation triggers fast tracking).
+        """
         self.window_sec = window_sec
         self.poll_interval_sec = poll_interval_sec
         self.sensitivity = sensitivity

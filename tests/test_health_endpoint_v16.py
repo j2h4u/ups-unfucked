@@ -18,7 +18,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from src.monitor_config import write_health_endpoint
+from src.monitor_config import write_health_endpoint, HealthSnapshot
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def baseline_health_params():
 def test_write_health_endpoint_creates_file(health_endpoint_temp_file, baseline_health_params):
     """Verify write_health_endpoint() creates health.json file."""
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
-        write_health_endpoint(**baseline_health_params)
+        write_health_endpoint(HealthSnapshot(**baseline_health_params))
         assert health_endpoint_temp_file.exists(), "health.json file not created"
 
         # Verify valid JSON
@@ -69,14 +69,14 @@ def test_health_endpoint_includes_v16_sulfation_fields(health_endpoint_temp_file
     - recovery_delta (float or null)
     """
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
-        write_health_endpoint(
+        write_health_endpoint(HealthSnapshot(
             **baseline_health_params,
             sulfation_score=0.45,
             sulfation_confidence='high',
             days_since_deep=7.2,
             ir_trend_rate=0.000008,
             recovery_delta=0.12,
-        )
+        ))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
@@ -108,13 +108,13 @@ def test_health_endpoint_includes_v16_roi_fields(health_endpoint_temp_file, base
     - next_test_timestamp (int or null)
     """
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
-        write_health_endpoint(
+        write_health_endpoint(HealthSnapshot(
             **baseline_health_params,
             cycle_roi=0.52,
             cycle_budget_remaining=150,
             scheduling_reason='observing',
             next_test_timestamp=1710845400,
-        )
+        ))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
@@ -141,11 +141,11 @@ def test_health_endpoint_includes_v16_discharge_fields(health_endpoint_temp_file
     - natural_blackout_credit (float or null)
     """
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
-        write_health_endpoint(
+        write_health_endpoint(HealthSnapshot(
             **baseline_health_params,
             last_discharge_timestamp='2026-03-17T10:00:00Z',
             natural_blackout_credit=0.15,
-        )
+        ))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
@@ -162,7 +162,7 @@ def test_health_endpoint_nulls_when_sulfation_not_provided(health_endpoint_temp_
     """Verify health.json allows sulfation_score=None without error."""
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
         # Call without sulfation parameters (all default to None)
-        write_health_endpoint(**baseline_health_params)
+        write_health_endpoint(HealthSnapshot(**baseline_health_params))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
@@ -207,7 +207,7 @@ def test_health_endpoint_preserves_v20_fields(health_endpoint_temp_file, baselin
     - capacity_converged (bool)
     """
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
-        write_health_endpoint(**baseline_health_params)
+        write_health_endpoint(HealthSnapshot(**baseline_health_params))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
@@ -251,10 +251,10 @@ def test_health_endpoint_preserves_v20_fields(health_endpoint_temp_file, baselin
 def test_health_endpoint_iso8601_timestamps(health_endpoint_temp_file, baseline_health_params):
     """Verify last_poll and last_discharge_timestamp use ISO8601 format."""
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
-        write_health_endpoint(
+        write_health_endpoint(HealthSnapshot(
             **baseline_health_params,
             last_discharge_timestamp='2026-03-17T10:30:00Z',
-        )
+        ))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
@@ -276,7 +276,7 @@ def test_health_endpoint_unix_timestamp(health_endpoint_temp_file, baseline_heal
     fixed_time = 1710800000.0
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file), \
          patch('src.monitor_config.time.time', return_value=fixed_time):
-        write_health_endpoint(**baseline_health_params)
+        write_health_endpoint(HealthSnapshot(**baseline_health_params))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)

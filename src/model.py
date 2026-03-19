@@ -14,20 +14,20 @@ from src.capacity_estimator import compute_cov
 logger = logging.getLogger('ups-battery-monitor')
 
 
-def atomic_write_json(filepath, data):
+def atomic_write(filepath, content: str) -> None:
     """
-    Safely write JSON to filepath with atomic guarantees.
+    Safely write string content to filepath with atomic guarantees.
 
     Uses tempfile + fdatasync + os.replace pattern to prevent corruption
     on power loss or crash during write.
 
-    fdatasync (data-only sync) is used instead of fsync because JSON file
+    fdatasync (data-only sync) is used instead of fsync because file
     metadata (atime, ctime) is not critical for reading. This reduces I/O
     latency by ~50% by skipping unnecessary inode syncs.
 
     Args:
         filepath: Target file path (str or Path)
-        data: Python dict to serialize as JSON
+        content: String content to write
 
     Raises:
         IOError: If write or fdatasync fails
@@ -45,7 +45,7 @@ def atomic_write_json(filepath, data):
             suffix='.tmp'
         ) as tmp:
             tmp_path = Path(tmp.name)
-            json.dump(data, tmp, indent=2)
+            tmp.write(content)
             tmp.flush()
             os.fdatasync(tmp.fileno())
             os.fchmod(tmp.fileno(), 0o644)
@@ -60,6 +60,11 @@ def atomic_write_json(filepath, data):
             tmp_path.unlink(missing_ok=True)
         logger.error(f"Atomic write failed: {e}", exc_info=True)
         raise
+
+
+def atomic_write_json(filepath, data) -> None:
+    """Atomically write dict as JSON. Thin wrapper around atomic_write."""
+    atomic_write(filepath, json.dumps(data, indent=2))
 
 
 class BatteryModel:

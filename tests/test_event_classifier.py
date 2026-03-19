@@ -71,23 +71,22 @@ class TestEventUndefinedVoltage:
         classifier = EventClassifier()
         # Should not crash; should handle defensively
         result = classifier.classify(ups_status="OB DISCHRG", input_voltage=75)
-        # Should treat as real blackout or log warning
-        assert result in [EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST], \
-            f"Expected safe handling, got {result}"
+        assert result == EventType.BLACKOUT_REAL, \
+            f"Expected BLACKOUT_REAL for undefined voltage range, got {result}"
 
     def test_undefined_voltage_range_50v(self):
         """Test input.voltage=50V (boundary of undefined range)."""
         classifier = EventClassifier()
         result = classifier.classify(ups_status="OB DISCHRG", input_voltage=50)
-        assert result in [EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST], \
-            f"Expected safe handling at boundary, got {result}"
+        assert result == EventType.BLACKOUT_REAL, \
+            f"Expected BLACKOUT_REAL at 50V boundary, got {result}"
 
     def test_undefined_voltage_range_100v(self):
-        """Test input.voltage=100V (boundary of undefined range)."""
+        """Test input.voltage=100V (threshold boundary: >=100 = mains present)."""
         classifier = EventClassifier()
         result = classifier.classify(ups_status="OB DISCHRG", input_voltage=100)
-        assert result in [EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST], \
-            f"Expected safe handling at boundary, got {result}"
+        assert result == EventType.BLACKOUT_TEST, \
+            f"Expected BLACKOUT_TEST at 100V (>=threshold), got {result}"
 
 
 class TestFlagBasedMatching:

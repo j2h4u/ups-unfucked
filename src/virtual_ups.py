@@ -9,12 +9,11 @@ Key responsibilities:
 - compute_ups_status_override(): Status override logic for LB flag and event types
 """
 
-import os
-import tempfile
 import logging
 from pathlib import Path
 from typing import Any, Dict
 from src.event_classifier import EventType
+from src.model import atomic_write
 
 logger = logging.getLogger('ups-battery-monitor')
 
@@ -42,45 +41,18 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         - Error: "Failed to write virtual UPS metrics: {e}"
     """
     virtual_ups_path = Path("/run/ups-battery-monitor/ups-virtual.dev")
-    tmp_path = None
 
     try:
         # Guard against symlink attack: refuse to write through symlinks
         if virtual_ups_path.is_symlink():
             raise OSError(f"{virtual_ups_path} is a symlink, refusing to write")
 
-        virtual_ups_path.parent.mkdir(parents=True, exist_ok=True)
-
         # Build dummy-ups format: key: value\n per line
-        lines = []
-        for key, value in metrics.items():
-            line = f"{key}: {value}\n"
-            lines.append(line)
+        content = "".join(f"{key}: {value}\n" for key, value in metrics.items())
 
-        content = "".join(lines)
-
-        # Atomic write pattern: tempfile in same dir (/run/ups-battery-monitor) + fsync + rename
-        # Use delete=False to manage cleanup ourselves after fsync
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            dir=str(virtual_ups_path.parent),
-            delete=False,
-            suffix='.tmp',
-            prefix='ups-virtual-'
-        ) as tmp:
-            tmp_path = Path(tmp.name)
-            tmp.write(content)
-            tmp.flush()
-            os.fdatasync(tmp.fileno())
-            os.fchmod(tmp.fileno(), 0o644)
-
-        # Atomic rename (POSIX guarantees)
-        tmp_path.replace(virtual_ups_path)
-        logger.debug(f"Virtual UPS metrics written at {virtual_ups_path}")
+        atomic_write(virtual_ups_path, content)
 
     except Exception as e:
-        if tmp_path is not None:
-            tmp_path.unlink(missing_ok=True)
         logger.error(f"Failed to write virtual UPS metrics: {e}")
         raise
 

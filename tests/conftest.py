@@ -74,10 +74,10 @@ END LIST VAR cyberpower
 """
     mock_sock = Mock(spec=socket.socket)
 
-    def mock_recv_impl(bufsize):
+    def mock_recv(bufsize):
         return response
 
-    mock_sock.recv = Mock(side_effect=mock_recv_impl)
+    mock_sock.recv = Mock(side_effect=mock_recv)
     mock_sock.sendall = Mock(return_value=None)
     mock_sock.connect = Mock(return_value=None)
     mock_sock.close = Mock(return_value=None)

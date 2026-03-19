@@ -79,19 +79,19 @@ def compute_cycle_roi(
         (min(ir_trend_rate, 0.1) / 0.1 * 0.3)
     )
 
-    cycle_depletion = max(0.0, 1.0 - cycle_budget_remaining / 100.0)
+    cycle_budget_exhaustion = max(0.0, 1.0 - cycle_budget_remaining / 100.0)
     wear_cost = min(
         1.0,
         (depth_of_discharge * 0.5) +
-        (cycle_depletion * 0.5)
+        (cycle_budget_exhaustion * 0.5)
     )
 
     # Normalize: ROI = (benefit - cost) / (benefit + cost)
     # If both are near-zero, return 0.0 (break-even, skip to be safe)
-    total_magnitude = desulfation_benefit + wear_cost
-    if total_magnitude < 0.001:
+    benefit_cost_sum = desulfation_benefit + wear_cost
+    if benefit_cost_sum < 0.001:
         return 0.0
 
-    roi = (desulfation_benefit - wear_cost) / total_magnitude
+    roi = (desulfation_benefit - wear_cost) / benefit_cost_sum
 
     return max(-1.0, min(1.0, roi))

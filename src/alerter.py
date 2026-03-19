@@ -28,7 +28,7 @@ def alert_soh_below_threshold(
     else:
         msg += "; replacement date unknown"
 
-    logger.error(msg, extra={
+    logger.warning(msg, extra={
         'BATTERY_SOH': f'{current_soh:.4f}',
         'THRESHOLD': f'{threshold_soh:.4f}',
         'DAYS_TO_REPLACEMENT': f'{days_to_replacement:.0f}' if days_to_replacement else 'unknown',
@@ -52,7 +52,7 @@ def alert_runtime_below_threshold(
     """
     msg = f"Battery runtime at 100%% charge: {runtime_at_100_percent:.0f} min (threshold: {threshold_minutes:.0f} min)"
 
-    logger.error(msg, extra={
+    logger.warning(msg, extra={
         'RUNTIME_AT_100_PCT': f'{runtime_at_100_percent:.1f}',
         'THRESHOLD_MINUTES': f'{threshold_minutes:.1f}',
     })

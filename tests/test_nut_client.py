@@ -224,6 +224,38 @@ class TestINSTCMD:
         assert 'USERNAME failed' in msg, f"Expected 'USERNAME failed' in message, got {msg}"
 
 
+class TestTruncatedListVar:
+    """Tests for truncated LIST VAR responses (missing END sentinel)."""
+
+    def test_truncated_list_var_raises_timeout(self, mock_nut_socket):
+        """Truncated LIST VAR (no END sentinel) results in socket.timeout.
+
+        When NUT upsd sends partial data and then goes silent (no END LIST VAR),
+        _recv_until hits the socket timeout waiting for more data. This verifies
+        the client doesn't hang indefinitely.
+        """
+        truncated_response = (
+            'BEGIN LIST VAR cyberpower\n'
+            'VAR cyberpower battery.voltage "13.40"\n'
+            'VAR cyberpower ups.load "16"\n'
+            'VAR cyberpower ups.status "OL"\n'
+            # Missing: remaining VAR lines and END LIST VAR sentinel
+        ).encode()
+
+        # First recv returns partial data, second recv times out (no more data)
+        mock_nut_socket.recv.side_effect = [
+            truncated_response,
+            socket.timeout("timed out waiting for END LIST VAR"),
+        ]
+
+        client = NUTClient(timeout=0.1)
+        with pytest.raises(socket.timeout):
+            client.get_ups_vars()
+
+        # Socket must still be cleaned up
+        mock_nut_socket.close.assert_called_once()
+
+
 class TestNUTProtocolValidation:
     """Tests for NUT protocol injection prevention (commit cb6c552)."""
 

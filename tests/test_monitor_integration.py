@@ -132,29 +132,39 @@ class TestOrchestratorWiring:
             assert actual_load == expected_avg, \
                 f"Expected avg_load_percent={expected_avg}, got {actual_load}"
 
-    def test_call_order_soh_before_peukert(self, mock_daemon):
-        """Verify SoH calculation happens BEFORE Peukert calibration.
+    def test_soh_updated_before_peukert_uses_it(self, mock_daemon):
+        """Verify SoH is set before Peukert calibration consumes it.
 
-        Uses call ordering on mocks to verify SoH is computed before Peukert
-        calibration in _update_battery_health.
+        After _update_battery_health(), both SoH and Peukert should be updated
+        in the model, and Peukert calibration should receive the fresh SoH value.
         """
         mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 11.0]
         mock_daemon.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
         mock_daemon.discharge_buffer.loads = [20, 25, 22, 24, 20]
 
-        call_order = []
+        soh_seen_by_peukert = []
 
         with patch('src.discharge_handler.soh_calculator.calculate_soh_from_discharge') as mock_soh, \
              patch('src.discharge_handler.calibrate_peukert') as mock_peukert:
-            mock_soh.side_effect = lambda **kw: (call_order.append('soh'), (0.95, 7.0))[1]
-            mock_peukert.side_effect = lambda **kw: (call_order.append('peukert'), 1.15)[1]
+            mock_soh.return_value = (0.95, 7.0)
+
+            def capture_soh(**kw):
+                # Record the SoH that's already set in the model when Peukert runs
+                soh_seen_by_peukert.append(mock_daemon.battery_model.get_soh())
+                return 1.15
+            mock_peukert.side_effect = capture_soh
 
             mock_daemon._update_battery_health()
 
-        assert 'soh' in call_order, "SoH calculation was not called"
-        assert 'peukert' in call_order, "Peukert calibration was not called"
-        assert call_order.index('soh') < call_order.index('peukert'), \
-            f"SoH must be called before Peukert, got: {call_order}"
+        # SoH should be persisted in model
+        assert mock_daemon.battery_model.get_soh() == 0.95, \
+            "SoH not updated in model"
+        # Peukert should have been called and seen the fresh SoH
+        assert len(soh_seen_by_peukert) == 1, "Peukert calibration was not called"
+        assert soh_seen_by_peukert[0] == 0.95, \
+            f"Peukert saw SoH={soh_seen_by_peukert[0]}, expected 0.95 (set by SoH step)"
+        # Peukert exponent should be updated in model
+        assert 1.0 <= mock_daemon.battery_model.get_peukert_exponent() <= 1.4
 
     def test_guard_clause_sample_count(self, mock_daemon):
         """Guard clause 1: rejects if <2 discharge samples."""
@@ -468,7 +478,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
 
     import src.monitor
     from src.monitor import MonitorDaemon
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     from src.model import BatteryModel
     import src.monitor_config
 
@@ -523,7 +533,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     battery_model.data['capacity_estimates'] = []
     battery_model.save()
 
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=50.0,
         is_online=False,
         capacity_ah_measured=None,
@@ -531,7 +541,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         capacity_confidence=0.0,
         capacity_samples_count=0,
         capacity_converged=False
-    )
+    ))
 
     # Verify health endpoint written with capacity fields
     data_cycle1 = json.loads(health_file.read_text())
@@ -547,7 +557,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     battery_model.save()
 
     # Simulate get_convergence_status return for 1 sample
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=40.0,
         is_online=False,
         capacity_ah_measured=6.90,
@@ -555,7 +565,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         capacity_confidence=0.0,  # No confidence with < 3 samples
         capacity_samples_count=1,
         capacity_converged=False
-    )
+    ))
 
     data_cycle2 = json.loads(health_file.read_text())
     assert data_cycle2['capacity_samples_count'] == 1, "Cycle 2: expected 1 sample"
@@ -578,7 +588,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     # cov = 0.0286 / 6.917 = 0.00413 < 0.10 → converged!
     # confidence = 1 - cov = 0.99587 * 100 = 99.587%
 
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=30.0,
         is_online=False,
         capacity_ah_measured=6.95,
@@ -586,7 +596,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         capacity_confidence=0.996,  # ~99.6% (1 - 0.004 CoV)
         capacity_samples_count=3,
         capacity_converged=True
-    )
+    ))
 
     data_cycle3 = json.loads(health_file.read_text())
     assert data_cycle3['capacity_samples_count'] == 3, "Cycle 3: expected 3 samples"

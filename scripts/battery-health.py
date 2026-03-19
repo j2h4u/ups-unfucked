@@ -2,11 +2,13 @@
 """Battery health report — shows current battery condition and degradation trends."""
 
 import json
+import re
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 MODEL_PATH = Path.home() / '.config' / 'ups-battery-monitor' / 'model.json'
-HEALTH_PATH = Path('/dev/shm/ups-health.json')
 
 
 def main():
@@ -16,26 +18,28 @@ def main():
         print("  sudo systemctl restart ups-battery-monitor")
         sys.exit(1)
 
-    model_data = json.loads(MODEL_PATH.read_text())
+    try:
+        model_data = json.loads(MODEL_PATH.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Error reading {MODEL_PATH}: {e}")
+        sys.exit(1)
 
     # UPS identity from NUT
     ups_name = model_data.get('ups_name', 'cyberpower-virtual')
-    # Validate ups_name before passing to subprocess
-    import re
+    # Validate ups_name before passing to subprocess (same regex as nut_client._validate_nut_identifier)
     if not re.match(r'^[a-zA-Z0-9._-]+$', ups_name):
         print(f"  WARNING: Invalid ups_name in model.json: {ups_name!r}")
         ups_name = 'cyberpower-virtual'
     try:
-        import subprocess
         nut_vars = subprocess.run(
             ['upsc', f'{ups_name}@localhost'], capture_output=True, text=True, timeout=2
         ).stdout
         mfr = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.mfr:')), None)
-        model = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.model:')), None)
-        if mfr and model:
-            print(f"  UPS:              {mfr} {model}")
-    except Exception:
-        pass
+        ups_model_name = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.model:')), None)
+        if mfr and ups_model_name:
+            print(f"  UPS:              {mfr} {ups_model_name}")
+    except (OSError, subprocess.TimeoutExpired):
+        print("  UPS: (NUT unavailable)")
 
     # State of Health — how much usable capacity remains vs new battery
     soh = model_data.get('soh', 1.0)
@@ -54,9 +58,11 @@ def main():
     # Battery age and cycle count
     install_date = model_data.get('battery_install_date')
     if install_date:
-        from datetime import datetime as dt
-        age_days = (dt.now() - dt.strptime(install_date, '%Y-%m-%d')).days
-        print(f"  Battery age:      {age_days} days (installed {install_date})")
+        try:
+            age_days = (datetime.now() - datetime.strptime(install_date, '%Y-%m-%d')).days
+            print(f"  Battery age:      {age_days} days (installed {install_date})")
+        except ValueError:
+            print(f"  Battery age:      unknown (bad install_date: {install_date!r})")
     cycle_count = model_data.get('cycle_count', 0)
     cumulative_sec = model_data.get('cumulative_on_battery_sec', 0.0)
     cumulative_min = cumulative_sec / 60

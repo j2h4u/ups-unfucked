@@ -42,7 +42,7 @@ class TestCapacityBasedSoH:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
 
         assert result is not None
@@ -77,7 +77,7 @@ class TestCapacityBasedSoH:
             load_percent=30.0,  # 30% load = 10.625A
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
 
         assert result is not None
@@ -102,7 +102,7 @@ class TestCapacityBasedSoH:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
 
         assert result is None
@@ -121,7 +121,7 @@ class TestCapacityBasedSoH:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
 
         assert result is None
@@ -146,7 +146,7 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
 
         assert result is not None
@@ -176,7 +176,7 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
 
         assert result is not None
@@ -195,7 +195,7 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
         assert result is None
 
@@ -210,6 +210,6 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-            peukert_exponent=1.2,
+
         )
         assert result is None

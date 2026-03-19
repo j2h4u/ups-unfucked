@@ -140,8 +140,8 @@ def estimate_recovery_delta(
     Examples:
         SoH 0.95→0.96 (improvement) → delta = 1.0 (excellent desulfation)
         SoH 0.95→0.94 (1% drop as expected) → delta = 0.5 (neutral)
-        SoH 0.95→0.93 (2% drop) → delta = 0.0 (poor recovery, high sulfation)
-        SoH 0.95→0.95 (no change) → delta = 0.0 (unclear signal)
+        SoH 0.95→0.93 (2% drop) → delta = 0.0 (poor recovery, via formula: 1 - 2/2 = 0)
+        SoH 0.95→0.95 (no change) → delta = 0.0 (zero-guard: soh_drop == 0 returns early)
 
     Reasoning:
         The metric captures recovery quality relative to expected behavior.

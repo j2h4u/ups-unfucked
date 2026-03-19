@@ -33,15 +33,14 @@ def calculate_soh_from_discharge(
     load_percent: float,
     nominal_power_watts: float,
     nominal_voltage: float,
-    peukert_exponent: float,
 ) -> Optional[Tuple[float, float]]:
     """Calculate SoH for completed discharge using capacity-based method.
 
     Algorithm:
     1. Coulomb counting: integrate current over time → Ah delivered
     2. LUT lookup: ΔSoC from voltage start/end
-    3. Extrapolate: measured_capacity = Ah_delivered / ΔSoC
-    4. SoH = measured_capacity / rated_capacity
+    3. Extrapolate: extrapolated_capacity_ah = Ah_delivered / ΔSoC
+    4. SoH = extrapolated_capacity_ah / rated_capacity
     5. Bayesian blend with reference_soh weighted by ΔSoC
 
     Args:
@@ -52,7 +51,6 @@ def calculate_soh_from_discharge(
         load_percent: Average load during discharge (%)
         nominal_power_watts: UPS rated power (W)
         nominal_voltage: Battery nominal voltage (V)
-        peukert_exponent: Peukert coefficient (unused, retained for signature stability)
 
     Returns:
         Tuple of (soh_new, capacity_ah_ref) or None if calculation failed
@@ -94,10 +92,10 @@ def calculate_soh_from_discharge(
         return None
 
     # Extrapolate to full-discharge capacity
-    measured_capacity = ah_delivered / delta_soc
+    extrapolated_capacity_ah = ah_delivered / delta_soc
 
     capacity_ah_ref = battery_model.get_capacity_ah()  # Rated (7.2Ah)
-    soh_raw = min(1.0, measured_capacity / capacity_ah_ref)
+    soh_raw = min(1.0, extrapolated_capacity_ah / capacity_ah_ref)
 
     # Bayesian blend: weight by ΔSoC (deeper discharge = more reliable)
     blend_weight = min(delta_soc, 1.0)
@@ -105,12 +103,12 @@ def calculate_soh_from_discharge(
     soh_new = max(0.0, min(1.0, soh_new))
 
     logger.info(
-        f"SoH capacity-based: measured={measured_capacity:.2f}Ah, "
+        f"SoH capacity-based: measured={extrapolated_capacity_ah:.2f}Ah, "
         f"rated={capacity_ah_ref:.2f}Ah, raw={soh_raw:.3f}, "
         f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, blend_weight={blend_weight:.2f})",
         extra={
             'event_type': 'soh_calculation',
-            'measured_capacity_ah': f'{measured_capacity:.2f}',
+            'measured_capacity_ah': f'{extrapolated_capacity_ah:.2f}',
             'rated_capacity_ah': f'{capacity_ah_ref:.2f}',
             'soh_raw': f'{soh_raw:.3f}',
             'soh_blended': f'{soh_new:.3f}',

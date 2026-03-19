@@ -34,10 +34,13 @@ class TestEMAConvergence:
 class TestStabilizationGate:
     """Test stabilized property — requires elapsed time >= window_sec."""
 
-    def test_stabilization_false_before_window(self):
+    def test_stabilization_false_before_window(self, monkeypatch):
+        import time as time_mod
+        t0 = 1000.0
+        monkeypatch.setattr(time_mod, 'monotonic', lambda: t0)
         buf = EMAFilter(window_sec=120, poll_interval_sec=10)
         fill_samples(buf, 20)
-        # Samples added instantly — no real time elapsed
+        # Monotonic clock frozen — no real time elapsed
         assert buf.stabilized is False
 
     def test_stabilization_true_after_window(self, monkeypatch):

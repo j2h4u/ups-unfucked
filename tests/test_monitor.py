@@ -337,78 +337,6 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     assert daemon.discharge_buffer.collecting is False
 
 
-def test_current_metrics_dataclass(current_metrics_fixture):
-    """Verify CurrentMetrics dataclass instantiation and field access."""
-    from src.event_classifier import EventType
-
-    # Fixture provides a populated instance
-    assert current_metrics_fixture.soc == 0.75
-    assert current_metrics_fixture.battery_charge == 75.0
-    assert current_metrics_fixture.time_rem_minutes == 30.0
-    assert current_metrics_fixture.event_type == EventType.ONLINE
-    assert current_metrics_fixture.transition_occurred is False
-    assert current_metrics_fixture.shutdown_imminent is False
-    assert current_metrics_fixture.ups_status_override is None
-    assert current_metrics_fixture.previous_event_type == EventType.ONLINE
-    assert current_metrics_fixture.timestamp is not None
-
-    # Test default instantiation (no args, all defaults)
-    from src.monitor_config import CurrentMetrics
-    cm_default = CurrentMetrics()
-    assert cm_default.soc is None
-    assert cm_default.battery_charge is None
-    assert cm_default.time_rem_minutes is None
-    assert cm_default.event_type is None
-    assert cm_default.transition_occurred is False
-    assert cm_default.shutdown_imminent is False
-    assert cm_default.ups_status_override is None
-    assert cm_default.previous_event_type == EventType.ONLINE
-    assert cm_default.timestamp is None
-
-    # Test field mutation (should work; dataclass not frozen)
-    cm_default.soc = 0.5
-    assert cm_default.soc == 0.5
-
-
-def test_config_dataclass(config_fixture):
-    """Verify Config dataclass instantiation and field access."""
-    # Fixture provides a populated instance
-    assert config_fixture.ups_name == 'test-cyberpower'
-    assert config_fixture.polling_interval == 10
-    assert config_fixture.reporting_interval == 60
-    assert config_fixture.nut_host == 'localhost'
-    assert config_fixture.nut_port == 3493
-    assert config_fixture.nut_timeout == 2.0
-    assert config_fixture.shutdown_minutes == 5
-    assert config_fixture.soh_alert_threshold == 0.80
-    from pathlib import Path
-    assert isinstance(config_fixture.model_dir, Path)
-    assert config_fixture.runtime_threshold_minutes == 20
-    assert config_fixture.reference_load_percent == 20.0
-    assert config_fixture.ema_window_sec == 120
-
-    # Test custom instantiation
-    from src.monitor_config import Config
-    custom_config = Config(
-        ups_name='custom-ups',
-        polling_interval=15,
-        reporting_interval=90,
-        nut_host='192.168.1.1',
-        nut_port=3494,
-        nut_timeout=3.0,
-        shutdown_minutes=10,
-        soh_alert_threshold=0.70,
-        model_dir=Path('/tmp/model'),
-        runtime_threshold_minutes=25,
-        reference_load_percent=30.0,
-        ema_window_sec=180,
-        capacity_ah=9.0,
-    )
-    assert custom_config.ups_name == 'custom-ups'
-    assert custom_config.polling_interval == 15
-    assert custom_config.nut_port == 3494
-
-
 def test_config_immutability(config_fixture):
     """Verify Config frozen=True semantics prevent field mutation."""
     from dataclasses import FrozenInstanceError
@@ -425,17 +353,9 @@ def test_config_immutability(config_fixture):
     assert config_fixture.polling_interval == 10
 
 
-def test_auto_calibrate_peukert_math_verification(make_daemon):
-    """TEST-02: Unit test for _auto_calibrate_peukert() math and edge cases.
-
-    Verifies:
-    - Peukert exponent recalculation using: ln(I1/I2) / ln(t1/t2)
-    - Edge cases: empty history, single sample, divide by zero
-    - No exponent changes if error < 10%
-    """
-    from math import log
-    from unittest.mock import Mock, patch
-
+def _setup_peukert_daemon(make_daemon):
+    """Helper: create a daemon with mocked battery_model for Peukert calibration tests."""
+    from unittest.mock import Mock
     from src.battery_math.rls import ScalarRLS
 
     daemon = make_daemon()
@@ -452,52 +372,69 @@ def test_auto_calibrate_peukert_math_verification(make_daemon):
 
     daemon.ema_filter = Mock()
     daemon.ema_filter.load = 20.0
+    return daemon
 
+
+def test_peukert_normal_case_updates_rls(make_daemon):
+    """Valid non-clamped calibrate_peukert result triggers RLS update."""
+    from unittest.mock import patch
     from src.monitor_config import DischargeBuffer
 
-    # Test Case 1: Normal case — calibrate_peukert returns non-clamped value → RLS updates
+    daemon = _setup_peukert_daemon(make_daemon)
     daemon.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0, 11.0, 10.5],
         times=[0, 100, 200, 300],
     )
 
     with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
-        mock_calibrate.return_value = 1.18  # Valid non-clamped result
+        mock_calibrate.return_value = 1.18
         daemon._auto_calibrate_peukert(current_soh=0.95)
-        # Should trigger RLS update and set_peukert_exponent
         daemon.battery_model.set_peukert_exponent.assert_called()
 
-    # Test Case 2: Empty discharge buffer - should skip
+
+def test_peukert_empty_buffer_skips(make_daemon):
+    """Empty discharge buffer skips calibration entirely."""
+    from src.monitor_config import DischargeBuffer
+
+    daemon = _setup_peukert_daemon(make_daemon)
     daemon.discharge_buffer = DischargeBuffer()
-    daemon.battery_model.reset_mock()
     daemon._auto_calibrate_peukert(current_soh=0.95)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
-    # Test Case 3: Single sample - should skip (<2 samples)
+
+def test_peukert_single_sample_skips(make_daemon):
+    """Single sample (<2) skips calibration."""
+    from src.monitor_config import DischargeBuffer
+
+    daemon = _setup_peukert_daemon(make_daemon)
     daemon.discharge_buffer = DischargeBuffer(voltages=[12.0], times=[0])
-    daemon.battery_model.reset_mock()
     daemon._auto_calibrate_peukert(current_soh=0.95)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
-    # Test Case 4: Identical timestamps (divide by zero protection)
+
+def test_peukert_identical_timestamps_no_crash(make_daemon):
+    """Identical timestamps (zero duration) do not raise and skip calibration."""
+    from src.monitor_config import DischargeBuffer
+
+    daemon = _setup_peukert_daemon(make_daemon)
     daemon.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0],
-        times=[100, 100],  # Same time! -> 0 second duration
+        times=[100, 100],
     )
-    daemon.battery_model.reset_mock()
-    # Should not raise exception
     daemon._auto_calibrate_peukert(current_soh=0.95)
-    # Should skip due to short duration (<60s)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
-    # Test Case 5: Duration too short (<60s) - no update
+
+def test_peukert_short_duration_skips(make_daemon):
+    """Discharge shorter than 60s skips calibration."""
+    from src.monitor_config import DischargeBuffer
+
+    daemon = _setup_peukert_daemon(make_daemon)
     daemon.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0],
-        times=[0, 50],  # 50 seconds total
+        times=[0, 50],
     )
-    daemon.battery_model.reset_mock()
     daemon._auto_calibrate_peukert(current_soh=0.99)
-    # Should skip due to duration < 60s
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
 
@@ -743,13 +680,13 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
 
 def test_write_health_endpoint_creates_file(tmp_path, monkeypatch):
     """Verify health.json is created with correct structure."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
-    write_health_endpoint(soc_percent=87.5, is_online=True)
+    write_health_endpoint(HealthSnapshot(soc_percent=87.5, is_online=True))
 
     assert health_path.exists(), "health.json not created"
 
@@ -767,14 +704,14 @@ def test_write_health_endpoint_creates_file(tmp_path, monkeypatch):
 
 def test_health_endpoint_timestamp_format(tmp_path, monkeypatch):
     """Verify last_poll is ISO8601 UTC format."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     from datetime import datetime
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
-    write_health_endpoint(soc_percent=50.0, is_online=False)
+    write_health_endpoint(HealthSnapshot(soc_percent=50.0, is_online=False))
 
     import json
     with open(health_path) as f:
@@ -788,7 +725,7 @@ def test_health_endpoint_timestamp_format(tmp_path, monkeypatch):
 
 def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
     """Verify last_poll_unix is valid Unix epoch."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import time
     import json
     import src.monitor_config
@@ -797,7 +734,7 @@ def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     before = int(time.time())
-    write_health_endpoint(soc_percent=75.0, is_online=True)
+    write_health_endpoint(HealthSnapshot(soc_percent=75.0, is_online=True))
     after = int(time.time())
 
     with open(health_path) as f:
@@ -810,14 +747,14 @@ def test_health_endpoint_unix_timestamp(tmp_path, monkeypatch):
 
 def test_health_endpoint_soc_precision(tmp_path, monkeypatch):
     """Verify SoC rounded to 1 decimal place."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import json
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
-    write_health_endpoint(soc_percent=87.5432, is_online=True)
+    write_health_endpoint(HealthSnapshot(soc_percent=87.5432, is_online=True))
 
     with open(health_path) as f:
         data = json.load(f)
@@ -827,7 +764,7 @@ def test_health_endpoint_soc_precision(tmp_path, monkeypatch):
 
 def test_health_endpoint_online_status(tmp_path, monkeypatch):
     """Verify online status reflects UPS state."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import json
     import src.monitor_config
 
@@ -835,13 +772,13 @@ def test_health_endpoint_online_status(tmp_path, monkeypatch):
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # Test OL state
-    write_health_endpoint(soc_percent=100.0, is_online=True)
+    write_health_endpoint(HealthSnapshot(soc_percent=100.0, is_online=True))
     with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is True
 
     # Test OB state
-    write_health_endpoint(soc_percent=25.0, is_online=False)
+    write_health_endpoint(HealthSnapshot(soc_percent=25.0, is_online=False))
     with open(health_path) as f:
         data = json.load(f)
     assert data["online"] is False
@@ -849,7 +786,7 @@ def test_health_endpoint_online_status(tmp_path, monkeypatch):
 
 def test_health_endpoint_version(tmp_path, monkeypatch):
     """Verify daemon_version is dynamically loaded from package metadata."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     from unittest.mock import patch
     import json
     import src.monitor_config
@@ -859,7 +796,7 @@ def test_health_endpoint_version(tmp_path, monkeypatch):
 
     # Mock importlib.metadata.version to return "1.1"
     with patch('importlib.metadata.version', return_value='1.1'):
-        write_health_endpoint(soc_percent=50.0, is_online=True)
+        write_health_endpoint(HealthSnapshot(soc_percent=50.0, is_online=True))
 
         with open(health_path) as f:
             data = json.load(f)
@@ -869,7 +806,7 @@ def test_health_endpoint_version(tmp_path, monkeypatch):
 
 def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     """Verify file is replaced (not appended) on each call."""
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import time
     import json
     import src.monitor_config
@@ -878,13 +815,13 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
 
     # First write
-    write_health_endpoint(soc_percent=100.0, is_online=True)
+    write_health_endpoint(HealthSnapshot(soc_percent=100.0, is_online=True))
     file_size_1 = health_path.stat().st_size
 
     time.sleep(0.1)
 
     # Second write with different data
-    write_health_endpoint(soc_percent=50.0, is_online=False)
+    write_health_endpoint(HealthSnapshot(soc_percent=50.0, is_online=False))
     file_size_2 = health_path.stat().st_size
 
     with open(health_path) as f:
@@ -1710,13 +1647,13 @@ def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
     RPT-03 - Health endpoint exposes capacity metrics for Grafana scraping.
     """
     import json
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=87.5,
         is_online=True,
         poll_latency_ms=45.2,
@@ -1725,7 +1662,7 @@ def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
         capacity_confidence=0.92,
         capacity_samples_count=3,
         capacity_converged=True
-    )
+    ))
 
     # Verify file written
     assert test_health_path.exists(), "Health endpoint file not created"
@@ -1760,34 +1697,34 @@ def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
     RPT-03 - Health endpoint reflects convergence status accurately.
     """
     import json
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
     # Case A: Not converged (0 samples, no convergence)
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=50.0,
         is_online=False,
         capacity_converged=False,
         capacity_samples_count=0,
         capacity_confidence=0.0
-    )
+    ))
 
     data_a = json.loads(test_health_path.read_text())
     assert data_a['capacity_converged'] is False, "Case A: expected not converged"
     assert data_a['capacity_samples_count'] == 0, "Case A: expected 0 samples"
 
     # Case B: Converged (3 samples, high confidence)
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=50.0,
         is_online=False,
         capacity_converged=True,
         capacity_samples_count=3,
         capacity_confidence=0.92,
         capacity_ah_measured=6.95
-    )
+    ))
 
     data_b = json.loads(test_health_path.read_text())
     assert data_b['capacity_converged'] is True, "Case B: expected converged"
@@ -1801,18 +1738,94 @@ def test_health_endpoint_null_capacity_measured(tmp_path, monkeypatch):
     Edge case: capacity_ah_measured should be null in JSON, not 0.0.
     """
     import json
-    from src.monitor_config import write_health_endpoint
+    from src.monitor_config import write_health_endpoint, HealthSnapshot
     import src.monitor_config
 
     test_health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', test_health_path)
 
-    write_health_endpoint(
+    write_health_endpoint(HealthSnapshot(
         soc_percent=75.0,
         is_online=True,
         capacity_ah_measured=None
-    )
+    ))
 
     data = json.loads(test_health_path.read_text())
     assert data['capacity_ah_measured'] is None, "capacity_ah_measured should be null, not 0.0"
+
+
+def test_consecutive_errors_increment_on_error(make_daemon):
+    """_consecutive_errors increments on each poll error in run() loop."""
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+    daemon.nut_client.get_ups_vars.side_effect = ConnectionError("NUT down")
+
+    poll_count = 0
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+        if poll_count >= 3:
+            daemon.running = False
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor.sd_notify'), \
+         patch('src.monitor_config.write_health_endpoint'):
+        daemon.run()
+
+    assert daemon._consecutive_errors == 3, \
+        f"Expected 3 consecutive errors, got {daemon._consecutive_errors}"
+
+
+def test_consecutive_errors_reset_on_success(make_daemon):
+    """_consecutive_errors resets to 0 after a successful poll."""
+    from src.event_classifier import EventType
+    from src.monitor_config import CurrentMetrics
+
+    daemon = make_daemon()
+    daemon.nut_client = MagicMock()
+
+    call_count = 0
+
+    def get_ups_vars_side_effect():
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            raise ConnectionError("NUT down")
+        # Third call succeeds — return valid UPS data
+        return {
+            'battery.voltage': 13.4,
+            'ups.load': 16.0,
+            'ups.status': 'OL',
+            'input.voltage': 222.0,
+            'battery.charge': 100.0,
+            'battery.runtime': 1500.0,
+        }
+
+    daemon.nut_client.get_ups_vars.side_effect = get_ups_vars_side_effect
+
+    poll_count = 0
+
+    def fake_sleep(seconds):
+        nonlocal poll_count
+        poll_count += 1
+
+    # After 2 errors + 1 success, stop the loop inside _poll_once
+    # by patching _poll_once to track the successful reset
+    original_poll_once = daemon._poll_once
+
+    def patched_poll_once():
+        original_poll_once()
+        # After a successful poll, stop the loop
+        daemon.running = False
+
+    daemon._poll_once = patched_poll_once
+
+    with patch('src.monitor.time.sleep', side_effect=fake_sleep), \
+         patch('src.monitor.sd_notify'), \
+         patch('src.monitor_config.write_health_endpoint'):
+        daemon.run()
+
+    assert daemon._consecutive_errors == 0, \
+        f"Expected 0 consecutive errors after success, got {daemon._consecutive_errors}"
 

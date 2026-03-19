@@ -4,22 +4,17 @@ Extracted from monitor.py (F58) to separate configuration/infrastructure
 from daemon orchestration logic.
 """
 
-import json
-import os
 import time
 import logging
 import sys
 import tomllib
-import tempfile
 import importlib.metadata
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
-# JournalHandler imported inside try block at module level (line ~220)
-
-from src.model import BatteryModel
+from src.model import BatteryModel, atomic_write_json
 from src.event_classifier import EventType
 
 
@@ -95,7 +90,7 @@ class Config:
     reference_load_percent: float
     ema_window_sec: int
     capacity_ah: float
-    scheduling: SchedulingConfig = None
+    scheduling: Optional[SchedulingConfig] = None
 
 
 def load_config() -> Config:
@@ -204,7 +199,7 @@ class DischargeBuffer:
 
 
 class SagState(Enum):
-    """Voltage sag measurement state machine: IDLE → ARMED → MEASURING → COMPLETE."""
+    """Voltage sag measurement state machine: IDLE → MEASURING → COMPLETE."""
     IDLE = "idle"            # Waiting for OL→OB transition
     MEASURING = "measuring"  # Collecting samples (fast poll active)
     COMPLETE = "complete"    # Sag recorded, back to normal polling
@@ -221,11 +216,11 @@ try:
     handler = JournalHandler(identifier='ups-battery-monitor')
     handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
-except Exception as e:
+except (ImportError, OSError, ValueError) as e:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
     logger.addHandler(handler)
-    logger.warning(f"JournalHandler unavailable, using stderr: {e}")
+    logger.info(f"JournalHandler unavailable, using stderr: {e}")
 
 
 def safe_save(model: BatteryModel) -> None:
@@ -253,7 +248,7 @@ def safe_save(model: BatteryModel) -> None:
     """
     try:
         model.save()
-    except OSError as e:
+    except Exception as e:
         logger.warning(f"Failed to persist model (disk full?): {e}")
 
 
@@ -280,33 +275,12 @@ class HealthSnapshot:
     cycle_roi: Optional[float] = None
     cycle_budget_remaining: Optional[int] = None
     scheduling_reason: str = 'observing'
-    next_test_timestamp: Optional[int] = None
+    next_test_timestamp: Optional[str] = None
     last_discharge_timestamp: Optional[str] = None
     natural_blackout_credit: Optional[float] = None
 
 
-def write_health_endpoint(
-    soc_percent: float,
-    is_online: bool,
-    poll_latency_ms: Optional[float] = None,
-    capacity_ah_measured: Optional[float] = None,
-    capacity_ah_rated: float = 7.2,
-    capacity_confidence: float = 0.0,
-    capacity_samples_count: int = 0,
-    capacity_converged: bool = False,
-    # Sulfation and scheduling parameters:
-    sulfation_score: Optional[float] = None,
-    sulfation_confidence: str = 'high',
-    days_since_deep: Optional[float] = None,
-    ir_trend_rate: Optional[float] = None,
-    recovery_delta: Optional[float] = None,
-    cycle_roi: Optional[float] = None,
-    cycle_budget_remaining: Optional[int] = None,
-    scheduling_reason: str = 'observing',
-    next_test_timestamp: Optional[int] = None,
-    last_discharge_timestamp: Optional[str] = None,
-    natural_blackout_credit: Optional[float] = None,
-) -> None:
+def write_health_endpoint(snapshot: HealthSnapshot) -> None:
     """Write daemon health state to file for external monitoring tools.
 
     Updates every poll (10s) with current daemon metrics. Tools like Grafana,
@@ -317,74 +291,50 @@ def write_health_endpoint(
     - Daemon version tracking
     - Capacity metrics (measured Ah, confidence, convergence status)
 
-    Uses atomic write pattern (tempfile + fdatasync + rename) to prevent
-    partial writes on crash or power loss.
+    Uses atomic_write_json for crash-safe writes.
     """
     try:
         daemon_version = importlib.metadata.version('ups-unfucked')
     except importlib.metadata.PackageNotFoundError:
         daemon_version = "unknown"
 
+    s = snapshot
     health_data = {
         "last_poll": datetime.now(timezone.utc).isoformat(),
         "last_poll_unix": int(time.time()),
-        "current_soc_percent": round(soc_percent, 1),
-        "online": is_online,
+        "current_soc_percent": round(s.soc_percent, 1),
+        "online": s.is_online,
         "daemon_version": daemon_version,
-        "poll_latency_ms": round(poll_latency_ms, 1) if poll_latency_ms is not None else None,
+        "poll_latency_ms": round(s.poll_latency_ms, 1) if s.poll_latency_ms is not None else None,
         # Capacity metrics
-        "capacity_ah_measured": round(capacity_ah_measured, 2) if capacity_ah_measured else None,
-        "capacity_ah_rated": round(capacity_ah_rated, 2),
-        "capacity_confidence": round(capacity_confidence, 3),
-        "capacity_samples_count": capacity_samples_count,
-        "capacity_converged": capacity_converged,
+        "capacity_ah_measured": round(s.capacity_ah_measured, 2) if s.capacity_ah_measured else None,
+        "capacity_ah_rated": round(s.capacity_ah_rated, 2),
+        "capacity_confidence": round(s.capacity_confidence, 3),
+        "capacity_samples_count": s.capacity_samples_count,
+        "capacity_converged": s.capacity_converged,
         # Sulfation metrics
-        "sulfation_score": round(sulfation_score, 3) if sulfation_score is not None else None,
-        "sulfation_score_confidence": sulfation_confidence,
-        "days_since_deep": round(days_since_deep, 1) if days_since_deep is not None else None,
-        "ir_trend_rate": round(ir_trend_rate, 6) if ir_trend_rate is not None else None,
-        "recovery_delta": round(recovery_delta, 3) if recovery_delta is not None else None,
+        "sulfation_score": round(s.sulfation_score, 3) if s.sulfation_score is not None else None,
+        "sulfation_score_confidence": s.sulfation_confidence,
+        "days_since_deep": round(s.days_since_deep, 1) if s.days_since_deep is not None else None,
+        "ir_trend_rate": round(s.ir_trend_rate, 6) if s.ir_trend_rate is not None else None,
+        "recovery_delta": round(s.recovery_delta, 3) if s.recovery_delta is not None else None,
         # ROI metrics
-        "cycle_roi": round(cycle_roi, 3) if cycle_roi is not None else None,
-        "cycle_budget_remaining": cycle_budget_remaining,
-        "scheduling_reason": scheduling_reason,
-        "next_test_timestamp": next_test_timestamp,
+        "cycle_roi": round(s.cycle_roi, 3) if s.cycle_roi is not None else None,
+        "cycle_budget_remaining": s.cycle_budget_remaining,
+        "scheduling_reason": s.scheduling_reason,
+        "next_test_timestamp": s.next_test_timestamp,
         # Discharge metrics
-        "last_discharge_timestamp": last_discharge_timestamp,
-        "natural_blackout_credit": round(natural_blackout_credit, 3) if natural_blackout_credit is not None else None,
+        "last_discharge_timestamp": s.last_discharge_timestamp,
+        "natural_blackout_credit": round(s.natural_blackout_credit, 3) if s.natural_blackout_credit is not None else None,
     }
     health_path = HEALTH_ENDPOINT_PATH
-    tmp_path = None
 
     try:
         # Guard against symlink attack
         if health_path.is_symlink():
             raise OSError(f"{health_path} is a symlink, refusing to write")
 
-        health_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Atomic write pattern: tempfile in same mount + fdatasync + rename
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            dir=str(health_path.parent),
-            delete=False,
-            suffix='.tmp',
-            prefix='ups-health-'
-        ) as tmp:
-            tmp_path = Path(tmp.name)
-            json.dump(health_data, tmp, indent=2)
-            tmp.flush()
-            os.fdatasync(tmp.fileno())
-            os.fchmod(tmp.fileno(), 0o644)
-
-        # Atomic rename (POSIX guarantees)
-        tmp_path.replace(health_path)
-        logger.debug(f"Health endpoint written to {health_path}")
+        atomic_write_json(health_path, health_data)
 
     except Exception as e:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         logger.warning(f"Failed to write health endpoint: {e}")

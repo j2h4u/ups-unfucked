@@ -47,7 +47,7 @@ class CapacityEstimator:
         self.nominal_voltage = nominal_voltage
         self.nominal_power_watts = nominal_power_watts
         self.capacity_ah = capacity_ah
-        self.measurements: List[Tuple] = []  # [(timestamp, ah, confidence, metadata), ...]
+        self.capacity_measurements: List[Tuple] = []  # [(timestamp, ah, confidence, metadata), ...]
 
     def estimate(
         self,
@@ -165,9 +165,9 @@ class CapacityEstimator:
 
         ah_total = 0.0
         for i in range(len(load_percent) - 1):
-            current_amps_left = (load_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
-            current_amps_right = (load_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
-            i_avg = (current_amps_left + current_amps_right) / 2.0
+            current_a_start = (load_percent[i] / 100.0) * nominal_power_watts / nominal_voltage
+            current_a_end = (load_percent[i + 1] / 100.0) * nominal_power_watts / nominal_voltage
+            i_avg = (current_a_start + current_a_end) / 2.0
             dt = time_sec[i + 1] - time_sec[i]
             ah_total += i_avg * dt / 3600.0
 
@@ -270,9 +270,9 @@ class CapacityEstimator:
 
     def _compute_confidence(self) -> float:
         """Confidence = 1 - CoV, clamped to [0, 1]. Returns 0.0 for <3 measurements."""
-        if len(self.measurements) < 3:
+        if len(self.capacity_measurements) < 3:
             return 0.0
-        cov = compute_cov([m[1] for m in self.measurements])
+        cov = compute_cov([m[1] for m in self.capacity_measurements])
         return max(0.0, min(1.0, 1.0 - cov))
 
     def add_measurement(self, ah: float, timestamp: str, metadata: Dict) -> None:
@@ -285,13 +285,13 @@ class CapacityEstimator:
             metadata: Measurement metadata (delta_soc_percent, duration_sec, etc.).
         """
         confidence = self._compute_confidence()
-        self.measurements.append((timestamp, ah, confidence, metadata))
+        self.capacity_measurements.append((timestamp, ah, confidence, metadata))
 
     def has_converged(self) -> bool:
         """Converged: count >= 3 AND CoV < 0.10."""
-        if len(self.measurements) < 3:
+        if len(self.capacity_measurements) < 3:
             return False
-        return compute_cov([m[1] for m in self.measurements]) < 0.10
+        return compute_cov([m[1] for m in self.capacity_measurements]) < 0.10
 
     def get_weighted_estimate(self) -> float:
         """
@@ -306,19 +306,19 @@ class CapacityEstimator:
         Returns:
             float: Weighted capacity estimate (Ah).
         """
-        if not self.measurements:
+        if not self.capacity_measurements:
             return 7.2  # Fallback to rated
 
-        total_delta_soc = sum(m[3].get('delta_soc_percent', 0) for m in self.measurements)
+        total_delta_soc = sum(m[3].get('delta_soc_percent', 0) for m in self.capacity_measurements)
 
         if total_delta_soc == 0:
             # Fallback: equal weight
-            ah_sum = sum(m[1] for m in self.measurements)
-            return ah_sum / len(self.measurements)
+            ah_sum = sum(m[1] for m in self.capacity_measurements)
+            return ah_sum / len(self.capacity_measurements)
 
         # Weighted average
         weighted_ah = 0.0
-        for timestamp, ah, confidence, metadata in self.measurements:
+        for timestamp, ah, confidence, metadata in self.capacity_measurements:
             delta_soc_percent = metadata.get('delta_soc_percent', 0)
             weight = delta_soc_percent / total_delta_soc
             weighted_ah += weight * ah
@@ -341,7 +341,7 @@ class CapacityEstimator:
         Returns:
             int: Count of measurements.
         """
-        return len(self.measurements)
+        return len(self.capacity_measurements)
 
     def get_measurements(self) -> List[Tuple]:
         """
@@ -350,4 +350,4 @@ class CapacityEstimator:
         Returns:
             list: [(timestamp, ah, confidence, metadata), ...].
         """
-        return self.measurements
+        return self.capacity_measurements

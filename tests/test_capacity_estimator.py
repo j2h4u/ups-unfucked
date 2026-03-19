@@ -375,9 +375,9 @@ class TestValidationGates:
         """
         estimator = CapacityEstimator(peukert_exponent=1.2)
 
-        V, t, I, lut = synthetic_discharge_47min_fixture
+        voltage_series, time_series, load_series, lut = synthetic_discharge_47min_fixture
 
-        result = estimator.estimate(V, t, I, lut)
+        result = estimator.estimate(voltage_series, time_series, load_series, lut)
         assert result is not None, "2026-03-12 discharge should pass quality filter"
 
         ah_estimate, confidence, metadata = result
@@ -407,6 +407,7 @@ class TestValidationGates:
         (convergence_score = 1 - CoV, converged when CoV < 0.10)
         """
         import random
+        random.seed(42)
 
         converged_count = 0
 
@@ -414,19 +415,19 @@ class TestValidationGates:
             estimator = CapacityEstimator(peukert_exponent=1.2)
 
             # Simulate 3 deep discharges with noise
-            V_base, t_base, I_base, lut = synthetic_discharge_fixture
+            voltage_base, time_base, load_base, lut = synthetic_discharge_fixture
 
             for discharge_num in range(3):
-                V = [v + random.gauss(0, 0.1) for v in V_base]
-                I = [i * (1 + random.gauss(0, 0.05)) for i in I_base]
+                voltage_noisy = [v + random.gauss(0, 0.1) for v in voltage_base]
+                load_noisy = [i * (1 + random.gauss(0, 0.05)) for i in load_base]
 
-                result = estimator.estimate(V, t_base, I, lut)
+                result = estimator.estimate(voltage_noisy, time_base, load_noisy, lut)
                 if result:
                     ah, conf, meta = result
                     estimator.add_measurement(ah, f"2026-03-15T{discharge_num:02d}:00:00Z", meta)
 
             # Check convergence at sample 3
-            if len(estimator.measurements) >= 3:
+            if len(estimator.capacity_measurements) >= 3:
                 score = estimator.get_confidence()
                 if score >= 0.90:
                     converged_count += 1
@@ -454,13 +455,13 @@ class TestValidationGates:
             # Generate synthetic discharge at constant load
             # Duration: 4000s (~67 min) to ensure ΔSoC > 50% across all loads
             num_points = 400
-            t = [float(i * 10) for i in range(num_points)]
+            time_series = [float(i * 10) for i in range(num_points)]
 
             # Voltage drop: 13.2V → 10.5V (50% ΔSoC)
-            V = [13.2 - (i / num_points) * 2.7 for i in range(num_points)]
+            voltage_series = [13.2 - (i / num_points) * 2.7 for i in range(num_points)]
 
             # Constant load at specified percent
-            I = [float(load_percent)] * num_points
+            load_series = [float(load_percent)] * num_points
 
             # Standard LUT
             lut = [
@@ -473,7 +474,7 @@ class TestValidationGates:
             ]
 
             estimator = CapacityEstimator(peukert_exponent=1.2)
-            result = estimator.estimate(V, t, I, lut)
+            result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
             # All loads should pass quality filter (ΔSoC > 25%, duration > 300s)
             assert result is not None, \
@@ -481,11 +482,11 @@ class TestValidationGates:
 
             ah_estimate, confidence, metadata = result
 
-            # Coulomb counting: ah = I_avg * t / 3600
+            # Coulomb counting: ah = I_avg * time_series / 3600
             # For load_percent at 425W/12V nominal:
             # I_avg_amps = (load_percent / 100) * 425 / 12
             i_avg_amps = (load_percent / 100.0) * 425.0 / 12.0
-            expected_ah = i_avg_amps * (t[-1] - t[0]) / 3600.0
+            expected_ah = i_avg_amps * (time_series[-1] - time_series[0]) / 3600.0
 
             # Verify estimate is within ±3% of expected coulomb result
             accuracy_ratio = ah_estimate / expected_ah

@@ -1,8 +1,9 @@
 """Linear regression predictor for battery replacement date."""
 
-import statistics
 from datetime import datetime, timedelta
 from typing import Any, List, Dict, Optional, Tuple
+
+from src.battery_math.regression import linear_regression
 
 
 def linear_regression_soh(
@@ -28,7 +29,9 @@ def linear_regression_soh(
         - Insufficient data (< 3 points)
         - R² < 0.5 (unreliable fit)
         - No degradation (slope >= 0)
-        - SoH already below threshold (returns today's date as ISO8601 string)
+        - SoH already below threshold: returns today's date ("overdue").
+          This path is only reachable after passing the r_squared >= 0.5
+          and slope < 0 gates, so the returned fit is always valid.
 
     Edge cases handled:
         - Non-monotonic dates: sorting applied implicitly via index order
@@ -74,30 +77,14 @@ def linear_regression_soh(
         return None
 
     first_date = dates[0]
-    days_since_first = [(d - first_date).days for d in dates]
+    days_since_first = [float((d - first_date).days) for d in dates]
 
-    # Least-squares regression
-    n = len(days_since_first)
-    x_mean = statistics.mean(days_since_first)
-    y_mean = statistics.mean(soh_values)
-
-    # slope = Σ((x - x̄)(y - ȳ)) / Σ((x - x̄)²)
-    numerator = sum((days_since_first[i] - x_mean) * (soh_values[i] - y_mean) for i in range(n))
-    denominator = sum((days_since_first[i] - x_mean) ** 2 for i in range(n))
-
-    if denominator == 0:
-        # No variance in x-axis; can't fit
+    fit = linear_regression(days_since_first, soh_values)
+    if fit is None:
         return None
 
-    slope = numerator / denominator
-    intercept = y_mean - slope * x_mean
+    slope, intercept, r_squared = fit
 
-    # R² = 1 - (SS_res / SS_tot)
-    ss_res = sum((soh_values[i] - (slope * days_since_first[i] + intercept)) ** 2 for i in range(n))
-    ss_tot = sum((y - y_mean) ** 2 for y in soh_values)
-    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-
-    # Validation
     if r_squared < 0.5:
         # High scatter; unreliable prediction
         return None
