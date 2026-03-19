@@ -575,7 +575,7 @@ class MonitorDaemon:
             )
 
             self._execute_scheduler_decision(decision, scheduler_params, now)
-        except Exception as e:
+        except (KeyError, ValueError, OSError, ConnectionError, TimeoutError) as e:
             logger.error(f"Scheduler evaluation failed: {e}", exc_info=True,
                          extra={'event_type': 'scheduler_error', 'error_class': type(e).__name__})
 
@@ -814,8 +814,9 @@ class MonitorDaemon:
                 self.battery_model.calibration_batch_flush()
                 logger.info(f"Batch flushed {points_written} calibration points to disk",
                             extra={'event_type': 'calibration_batch_flush', 'points_written': points_written})
-            except Exception as e:
-                logger.error(f"Calibration batch flush failed: {e}", exc_info=True)
+            except OSError as e:
+                logger.error(f"Calibration batch flush failed: {e}", exc_info=True,
+                             extra={'event_type': 'calibration_flush_failed'})
 
     def _log_soc_change(self, soc, soc_prev):
         """Log SoC when it changes by more than 5% or on first reading."""
