@@ -114,23 +114,27 @@ class BatteryModel:
                 self._seen_timestamps = {
                     e['timestamp'] for e in self.data.get('lut', []) if 'timestamp' in e
                 }
-                logger.info(f"Loaded model from {self.model_path}")
+                logger.info("Loaded model from %s", self.model_path,
+                            extra={'event_type': 'model_loaded', 'model_path': str(self.model_path)})
             except json.JSONDecodeError as e:
                 backup = self.model_path.with_suffix('.json.corrupt')
-                logger.error(f"Malformed model.json: {e}; backing up to {backup.name}, starting fresh")
+                logger.error("Malformed model.json: %s; backing up to %s, starting fresh", e, backup.name,
+                             extra={'event_type': 'model_corrupt', 'model_path': str(self.model_path)})
                 try:
                     self.model_path.rename(backup)
-                except OSError:
-                    pass
+                except OSError as rename_err:
+                    logger.warning("Failed to back up corrupt model.json: %s", rename_err,
+                                   extra={'event_type': 'model_backup_failed'})
                 self.data = self._default_vrla_lut()
             except OSError as e:
                 raise SystemExit(f"Cannot read {self.model_path}: {e}") from e
         else:
-            logger.info("Model file not found; initializing with standard VRLA curve")
+            logger.info("Model file not found; initializing with standard VRLA curve",
+                        extra={'event_type': 'model_init_default', 'model_path': str(self.model_path)})
             self.data = self._default_vrla_lut()
 
         self._apply_defaults()
-        self._clamp_physics()
+        self._validate_and_clamp_fields()
         self._validate_lut()
 
     def _apply_defaults(self):
@@ -138,7 +142,8 @@ class BatteryModel:
         required_keys = {'lut', 'soh', 'physics'}
         missing_keys = required_keys - set(self.data.keys())
         if missing_keys:
-            logger.warning(f"Model missing required keys: {missing_keys}; using default values")
+            logger.warning("Model missing required keys: %s; using default values", missing_keys,
+                          extra={'event_type': 'model_missing_keys'})
 
         self.data.setdefault('sulfation_history', [])
         self.data.setdefault('discharge_events', [])
@@ -152,30 +157,34 @@ class BatteryModel:
         self.data.setdefault('test_block_reason', None)
         self.data.setdefault('blackout_credit', None)
 
-    def _clamp_physics(self):
+    def _validate_and_clamp_fields(self):
         """Clamp physics values and validate scheduling field types."""
         physics = self.data.get('physics', {})
         if 'peukert_exponent' in physics:
             physics['peukert_exponent'] = max(1.0, min(1.5, physics['peukert_exponent']))
         soh = self.data.get('soh')
         if soh is not None and (soh < 0 or soh > 1.0):
-            logger.warning(f"model.json soh={soh} out of range, clamping to [0, 1]")
+            logger.warning("model.json soh=%s out of range, clamping to [0, 1]", soh,
+                          extra={'event_type': 'model_field_clamped'})
             self.data['soh'] = max(0.0, min(1.0, soh))
 
         capacity_ref = self.data.get('full_capacity_ah_ref')
         if capacity_ref is not None and (not isinstance(capacity_ref, (int, float)) or capacity_ref <= 0):
-            logger.warning(f"model.json full_capacity_ah_ref={capacity_ref} invalid, resetting to 7.2")
+            logger.warning("model.json full_capacity_ah_ref=%s invalid, resetting to 7.2", capacity_ref,
+                          extra={'event_type': 'model_field_clamped'})
             self.data['full_capacity_ah_ref'] = 7.2
 
         for field in ('last_upscmd_timestamp', 'scheduled_test_timestamp'):
             val = self.data.get(field)
             if val is not None and not isinstance(val, str):
-                logger.warning(f"model.json {field}={val!r} is not a string, clearing")
+                logger.warning("model.json %s=%r is not a string, clearing", field, val,
+                              extra={'event_type': 'model_field_clamped'})
                 self.data[field] = None
 
         credit = self.data.get('blackout_credit')
         if credit is not None and not isinstance(credit, dict):
-            logger.warning(f"model.json blackout_credit is not a dict, clearing")
+            logger.warning("model.json blackout_credit is not a dict, clearing",
+                          extra={'event_type': 'model_field_clamped'})
             self.data['blackout_credit'] = None
 
     def _validate_lut(self):
@@ -187,7 +196,8 @@ class BatteryModel:
             if isinstance(v, (int, float)) and isinstance(soc, (int, float)):
                 valid_lut.append(entry)
             else:
-                logger.warning(f"Dropping invalid LUT entry: {entry}")
+                logger.warning("Dropping invalid LUT entry: %s", entry,
+                              extra={'event_type': 'model_lut_invalid_entry'})
         if len(valid_lut) != len(lut):
             self.data['lut'] = valid_lut
 
@@ -268,6 +278,7 @@ class BatteryModel:
         return self.data.get('cycle_count', 0)
 
     def increment_cycle_count(self):
+        """Increment OL→OB transition counter (includes flicker events, not just full discharges)."""
         self.data['cycle_count'] = self.data.get('cycle_count', 0) + 1
 
     def get_cumulative_on_battery_sec(self) -> float:
@@ -282,6 +293,7 @@ class BatteryModel:
         self.data['replacement_due'] = date_str
 
     def add_on_battery_time(self, seconds: float):
+        """Accumulate on-battery time (additive, unit: seconds, no upper bound)."""
         self.data['cumulative_on_battery_sec'] = self.data.get('cumulative_on_battery_sec', 0.0) + seconds
 
     # --- Physics setters ---
@@ -420,11 +432,11 @@ class BatteryModel:
         return self.data.get('soh', 1.0)
 
     def set_soh(self, value: float):
-        """Update SoH estimate, clamped to [0.0, 1.0]."""
+        """Update SoH estimate (stored as-is; clamping applied at load() time by _validate_and_clamp_fields)."""
         self.data['soh'] = value
 
     def get_capacity_ah(self):
-        """Reference full capacity in Ah (default 7.2 for UT850)."""
+        """Rated reference capacity in Ah (default 7.2 for UT850). Not measured — see get_latest_capacity()."""
         return self.data.get('full_capacity_ah_ref', 7.2)
 
     def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
@@ -490,8 +502,8 @@ class BatteryModel:
 
         Side effects:
             - Appends entry to model.data['capacity_estimates']
-            - Calls _prune_list('capacity_estimates') to limit array to 30 entries
-            - Calls self.save() for atomic persistence
+            - Calls _cap_history_entries('capacity_estimates') to limit array to 30 entries
+            - Calls self.save() for atomic persistence (may silently fail on OSError)
         """
         if 'capacity_estimates' not in self.data:
             self.data['capacity_estimates'] = []
@@ -506,8 +518,9 @@ class BatteryModel:
         self._cap_history_entries('capacity_estimates')
         try:
             self.save()
-        except OSError as e:
-            logger.error(f"Failed to persist capacity estimate: {e}", exc_info=True)
+        except (OSError, TypeError, ValueError) as e:
+            logger.error(f"Failed to persist capacity estimate: {e}",
+                         exc_info=True, extra={'event_type': 'capacity_persist_failed'})
 
     def get_capacity_estimates(self) -> List[Dict]:
         """
@@ -645,8 +658,9 @@ class BatteryModel:
         self.data['lut'] = new_lut
         self.save()
         logger.info(
-            f"LUT updated from calibration: {len(new_lut)} entries, "
-            f"cliff region interpolated (was {old_count} entries)"
+            "LUT updated from calibration: %d entries, cliff region interpolated (was %d entries)",
+            len(new_lut), old_count,
+            extra={'event_type': 'lut_calibration_updated'}
         )
 
     # --- Scheduling State Management ---
