@@ -56,11 +56,11 @@ class NUTClient:
         self.sock = None
 
     def _close_socket(self):
-        """Close socket, swallowing errors."""
+        """Close socket, swallowing I/O errors."""
         try:
             if self.sock:
                 self.sock.close()
-        except Exception as e:
+        except OSError as e:
             logger.debug(f"Socket close error (ignored): {e}")
 
     @staticmethod
@@ -140,7 +140,8 @@ class NUTClient:
             parsed = self._parse_var_line(response)
             if parsed is not None:
                 return parsed[1]
-            logger.error(f"Unexpected NUT response for {var_name}: {response}",
+            logger.error("Unexpected NUT response for %s: %.200s",
+                         var_name, response,
                          extra={'event_type': 'nut_unexpected_response', 'var_name': var_name})
             return None
 
@@ -173,7 +174,7 @@ class NUTClient:
                 break
             buf += chunk
             if len(buf) > self._MAX_RECV_BYTES:
-                raise socket.timeout("LIST VAR response too large")
+                raise ConnectionError("LIST VAR response too large (>64KB) — possible protocol violation")
         return buf.decode()
 
     def get_ups_vars(self):
