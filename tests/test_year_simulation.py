@@ -882,6 +882,7 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
     VRLA can recover capacity via sulfation reversal. Model should handle
     SoH stability or increase gracefully (no clamping guards triggered).
     """
+    random.seed(42)
     state = initial_battery_state
     initial_soh = state.soh
 
@@ -954,6 +955,7 @@ def test_seasonal_thermal_variation(initial_battery_state):
     """
     import statistics
 
+    random.seed(42)
     state = initial_battery_state
     capacity_estimates = []
 

@@ -15,6 +15,7 @@ class ScalarRLS:
     """
 
     def __init__(self, theta: float, P: float = 1.0, forgetting_factor: float = 0.97):
+        """Initialize RLS estimator. Callers must clamp theta after each update() call."""
         self.theta = theta
         self.P = P
         self.forgetting_factor = forgetting_factor

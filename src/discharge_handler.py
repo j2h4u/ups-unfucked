@@ -32,7 +32,7 @@ BLACKOUT_CREDIT_DAYS = 7
 def _parse_iso_utc(s: str) -> datetime:
     """Parse ISO8601 timestamp, normalizing 'Z' suffix to '+00:00' for fromisoformat."""
     return datetime.fromisoformat(s.replace('Z', '+00:00'))
-RATED_CYCLE_LIFE = 300  # CyberPower UT850 rated cycles (per datasheet)
+RATED_CYCLE_LIFE = 300  # CyberPower UT850EG datasheet: 300 cycles @ 100% DoD, 25°C
 
 
 class DischargeHandler:
@@ -215,7 +215,6 @@ class DischargeHandler:
             )
 
     def _avg_load(self, discharge_buffer: DischargeBuffer) -> float:
-        """Average load during discharge, falling back to reference load."""
         if discharge_buffer.loads:
             return sum(discharge_buffer.loads) / len(discharge_buffer.loads)
         return self.reference_load_percent
@@ -301,6 +300,8 @@ class DischargeHandler:
             'recovery_delta': round(self.last_recovery_delta, 3),
             'cycle_roi': round(roi, 3) if roi is not None else None,
             'measured_capacity_ah': round(capacity_ah_ref, 2) if capacity_ah_ref is not None else None,
+            'temperature_celsius': 35.0,
+            'temperature_source': 'assumed_constant',
             'timestamp': now_iso,
         })
 
@@ -372,7 +373,7 @@ class DischargeHandler:
 
             old_exponent = self.battery_model.get_peukert_exponent()
             smoothed, new_P = self.rls_peukert.update(new_exponent)
-            smoothed = max(1.0, min(1.4, smoothed))  # physical bounds
+            smoothed = max(1.0, min(1.4, smoothed))
             self.battery_model.set_peukert_exponent(smoothed)
             self.battery_model.set_rls_state(
                 'peukert', smoothed, new_P, self.rls_peukert.sample_count)
@@ -432,18 +433,14 @@ class DischargeHandler:
         """Handle discharge completion: measure capacity via CapacityEstimator.
 
         Called when OB\u2192OL transition detected. Extracts discharge data,
-        calls CapacityEstimator.estimate(), and stores result in model.json.
-        Implements CAP-01 and CAP-05.
-
+        calls CapacityEstimator.estimate(), stores result in model.json,
+        and checks for capacity convergence / new-battery detection.
         Args:
             discharge_data: Dict with keys:
                 - voltage_series: List[float] voltage readings (V)
                 - time_series: List[float] unix timestamps (sec)
                 - load_series: List[float] load percent (%)
                 - timestamp: str ISO8601 timestamp
-
-        NOTE: Measured capacity lives only in capacity_estimates[] array.
-        Replacement of rated\u2192measured happens on convergence.
         """
         voltage_series = discharge_data.get('voltage_series', [])
         time_series = discharge_data.get('time_series', [])
@@ -505,50 +502,54 @@ class DischargeHandler:
         )
 
         if self.capacity_estimator.has_converged():
-            self.battery_model.data['capacity_converged'] = True
+            self._handle_capacity_convergence(convergence_status)
 
-            if not self.has_logged_baseline_lock:
-                logger.info(
-                    f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
+    def _handle_capacity_convergence(self, convergence_status: dict) -> None:
+        """Check convergence state: lock baseline, detect new battery, persist."""
+        self.battery_model.data['capacity_converged'] = True
+
+        if not self.has_logged_baseline_lock:
+            logger.info(
+                f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
+                extra={
+                    'event_type': 'baseline_lock',
+                    'capacity_ah': f'{convergence_status["latest_ah"]:.2f}',
+                    'sample_count': str(convergence_status['sample_count']),
+                }
+            )
+            self.has_logged_baseline_lock = True
+
+        current_measured = convergence_status.get('latest_ah')
+        stored_baseline = self.battery_model.data.get('capacity_ah_measured', None)
+
+        if stored_baseline is not None:
+            delta_ah = abs(current_measured - stored_baseline)
+            delta_percent = (delta_ah / stored_baseline) * 100
+
+            if delta_percent > 10.0:
+                logger.warning(
+                    f"New battery detection: measured capacity {current_measured:.2f}Ah "
+                    f"differs from baseline {stored_baseline:.2f}Ah ({delta_percent:.1f}% > 10% threshold)",
                     extra={
-                        'event_type': 'baseline_lock',
-                        'capacity_ah': f'{convergence_status["latest_ah"]:.2f}',
-                        'sample_count': str(convergence_status['sample_count']),
+                        'event_type': 'new_battery_detected',
+                        'current_ah': f'{current_measured:.2f}',
+                        'baseline_ah': f'{stored_baseline:.2f}',
+                        'delta_percent': f'{delta_percent:.1f}',
                     }
                 )
-                self.has_logged_baseline_lock = True
 
-            current_measured = convergence_status.get('latest_ah')
-            stored_baseline = self.battery_model.data.get('capacity_ah_measured', None)
+                self.battery_model.data['new_battery_detected'] = True
+                self.battery_model.data['new_battery_detected_timestamp'] = datetime.now().isoformat()
 
-            if stored_baseline is not None:
-                delta_ah = abs(current_measured - stored_baseline)
-                delta_percent = (delta_ah / stored_baseline) * 100
+                logger.info(
+                    "New battery flag set; MOTD will show alert next shell session. "
+                    "User can confirm with: ups-battery-monitor --new-battery"
+                )
+        else:
+            self.battery_model.data['capacity_ah_measured'] = current_measured
+            logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
 
-                if delta_percent > 10.0:  # >10% threshold
-                    logger.warning(
-                        f"New battery detection: measured capacity {current_measured:.2f}Ah "
-                        f"differs from baseline {stored_baseline:.2f}Ah ({delta_percent:.1f}% > 10% threshold)",
-                        extra={
-                            'event_type': 'new_battery_detected',
-                            'current_ah': f'{current_measured:.2f}',
-                            'baseline_ah': f'{stored_baseline:.2f}',
-                            'delta_percent': f'{delta_percent:.1f}',
-                        }
-                    )
-
-                    self.battery_model.data['new_battery_detected'] = True
-                    self.battery_model.data['new_battery_detected_timestamp'] = datetime.now().isoformat()
-
-                    logger.info(
-                        "New battery flag set; MOTD will show alert next shell session. "
-                        "User can confirm with: ups-battery-monitor --new-battery"
-                    )
-            else:
-                self.battery_model.data['capacity_ah_measured'] = current_measured
-                logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
-
-            safe_save(self.battery_model)
+        safe_save(self.battery_model)
 
     def _calculate_days_since_deep(self) -> Optional[float]:
         """Calculate days since last deep discharge (>70% DoD).
@@ -594,9 +595,12 @@ class DischargeHandler:
                               extra={'event_type': 'r_internal_invalid_entry'})
                 continue
             try:
-                entry_time = _parse_iso_utc(date_str)
+                # r_internal_history stores dates as YYYY-MM-DD, not full ISO8601
+                entry_time = datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
             except (ValueError, TypeError) as e:
-                logger.debug(f"Skipping malformed r_internal entry: {e}")
+                logger.warning("Skipping r_internal entry with bad date: %r — %s",
+                               date_str, e,
+                               extra={'event_type': 'r_internal_invalid_entry'})
                 continue
             days_ago = (now - entry_time).total_seconds() / 86400.0
             if days_ago > 30:

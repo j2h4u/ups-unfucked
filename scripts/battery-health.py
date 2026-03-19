@@ -25,23 +25,24 @@ def main():
         sys.exit(1)
 
     # UPS identity from NUT
-    nut_ups_id = model_data.get('ups_name', 'cyberpower-virtual')
+    ups_name = model_data.get('ups_name', 'cyberpower-virtual')
     # Validate before passing to subprocess — reject leading hyphens to prevent argument injection
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', nut_ups_id):
-        print(f"  WARNING: Invalid ups_name in model.json: {nut_ups_id!r}")
-        nut_ups_id = 'cyberpower-virtual'
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', ups_name):
+        print(f"  WARNING: Invalid ups_name in model.json: {ups_name!r}")
+        ups_name = 'cyberpower-virtual'
     try:
-        result = subprocess.run(
-            ['upsc', f'{nut_ups_id}@localhost'], capture_output=True, text=True, timeout=2
+        upsc_proc = subprocess.run(
+            ['upsc', f'{ups_name}@localhost'], capture_output=True, text=True, timeout=2
         )
-        if result.returncode != 0:
-            print(f"  UPS: (upsc failed: {result.stderr.strip() or 'exit ' + str(result.returncode)})")
+        if upsc_proc.returncode != 0:
+            stderr_msg = (upsc_proc.stderr.strip() or f'exit {upsc_proc.returncode}')[:200]
+            print(f"  UPS: (upsc failed: {stderr_msg})")
         else:
-            nut_vars = {k: v for k, v in (line.split(': ', 1) for line in result.stdout.splitlines() if ': ' in line)}
+            nut_vars = {k: v for k, v in (line.split(': ', 1) for line in upsc_proc.stdout.splitlines() if ': ' in line)}
             mfr = nut_vars.get('device.mfr')
-            ups_model_name = nut_vars.get('device.model')
-            if mfr and ups_model_name:
-                print(f"  UPS:              {mfr} {ups_model_name}")
+            device_model = nut_vars.get('device.model')
+            if mfr and device_model:
+                print(f"  UPS:              {mfr} {device_model}")
     except FileNotFoundError:
         print("  UPS: (upsc not installed)")
     except subprocess.TimeoutExpired:
@@ -95,9 +96,9 @@ def main():
     if len(soh_history) >= 3:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from src.replacement_predictor import linear_regression_soh
-        soh_regression = linear_regression_soh(soh_history, threshold_soh=0.80)
-        if soh_regression:
-            slope, intercept, r2, date = soh_regression
+        replacement_prediction = linear_regression_soh(soh_history, threshold_soh=0.80)
+        if replacement_prediction:
+            slope, intercept, r2, date = replacement_prediction
             print(f"  Replace battery:  ~{date} (trend confidence R²={r2:.2f})")
         else:
             print(f"  Replace battery:  no degradation trend detected yet")
@@ -110,9 +111,9 @@ def main():
         latest = r_hist[-1]
         print(f"  R_internal:       {latest['r_ohm']*1000:.1f} mΩ (measured {latest['date']})")
         if len(r_hist) >= 3:
-            delta = (r_hist[-1]['r_ohm'] - r_hist[0]['r_ohm']) * 1000
-            direction = "rising ⚠" if delta > 0.5 else "stable" if delta > -0.5 else "improving"
-            print(f"  R_internal trend: {delta:+.1f} mΩ since {r_hist[0]['date']} ({direction})")
+            delta_mohm = (r_hist[-1]['r_ohm'] - r_hist[0]['r_ohm']) * 1000
+            direction = "rising ⚠" if delta_mohm > 0.5 else "stable" if delta_mohm > -0.5 else "improving"
+            print(f"  R_internal trend: {delta_mohm:+.1f} mΩ since {r_hist[0]['date']} ({direction})")
 
 
 if __name__ == '__main__':

@@ -157,14 +157,15 @@ elif grep -q "cyberpower-virtual" "$NUT_CONFIG" 2>/dev/null; then
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would update [cyberpower-virtual] port in $NUT_CONFIG"
     else
-        python3 -c "
+        python3 -c '
 import re, sys
-content = open('$NUT_CONFIG').read()
-content = re.sub(r'\n\[cyberpower-virtual\].*?(?=\n\[|\Z)', '', content, flags=re.DOTALL)
-content = content.rstrip('\n') + '\n'
-content += open('$DUMMY_UPS_CONFIG').read()
-open('$NUT_CONFIG', 'w').write(content)
-"
+nut_config, dummy_config = sys.argv[1], sys.argv[2]
+content = open(nut_config).read()
+content = re.sub(r"\n\[cyberpower-virtual\].*?(?=\n\[|\Z)", "", content, flags=re.DOTALL)
+content = content.rstrip("\n") + "\n"
+content += open(dummy_config).read()
+open(nut_config, "w").write(content)
+' "$NUT_CONFIG" "$DUMMY_UPS_CONFIG"
         log_ok "Updated [cyberpower-virtual] port path in $NUT_CONFIG"
     fi
 else

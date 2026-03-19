@@ -60,7 +60,7 @@ NUT_STATUS_ONLINE = "OL"
 NUT_STATUS_DISCHARGING = "OB DISCHRG"
 NUT_STATUS_LOW_BATTERY = "OB DISCHRG LB"
 
-SAFETY_LB_FLOOR_MINUTES = 2
+SAFETY_LB_FLOOR_MINUTES = 2  # Triggers upsmon FSD (forced shutdown) via LB flag
 
 
 def compute_ups_status_override(

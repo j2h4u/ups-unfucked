@@ -45,7 +45,7 @@ _CONFIGURABLE_DEFAULTS = {
 SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of last 3 for noise rejection
 DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Prevents unbounded memory growth (~2.8h at default poll rate)
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
-MIN_DISCHARGE_DURATION_SEC = 300     # Discharges shorter than 5 min have terrible signal-to-noise (incident 2026-03-16)
+from src.battery_math.constants import MIN_DISCHARGE_DURATION_SEC  # Re-exported for existing consumers
 
 
 @dataclass
@@ -94,6 +94,9 @@ class Config:
 
 def load_config() -> Config:
     """Load user config from TOML, falling back to defaults for missing keys.
+
+    Search order: CONFIG_DIR/config.toml (~/.config/ups-battery-monitor/)
+    then REPO_ROOT/config.toml. First found wins.
 
     Returns: Config dataclass instance with all fields populated.
     Raises: ValueError if scheduling configuration is invalid.
@@ -174,7 +177,6 @@ def get_scheduling_config(config_dict: dict) -> SchedulingConfig:
 class CurrentMetrics:
     """Current UPS battery state snapshot, updated every poll.
 
-    Fields correspond to the 9-key dict in monitor.py.__init__.
     Type hints enable IDE autocomplete and mypy validation.
     """
     soc: Optional[float] = None                      # State of Charge, 0-1
@@ -295,7 +297,7 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
     for crash-safe writes. Refuses to write through symlinks (security guard).
     Silently swallows OSError on write failure (logs warning).
 
-    Monitored by: Grafana, check_mk, custom scripts (liveness: last_poll < 30s).
+    Monitored by: Grafana Alloy, custom scripts (liveness: last_poll < 30s).
     """
     try:
         daemon_version = importlib.metadata.version('ups-unfucked')  # pyproject.toml package name

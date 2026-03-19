@@ -64,7 +64,7 @@ class TestPreconditionValidator:
             test_already_running=False,
         )
         assert can_proceed is False
-        assert "glitch" in reason.lower() or "transition" in reason.lower()
+        assert reason == "grid_unstable"
 
     def test_precondition_blocks_test_running(self):
         """Test already running blocks dispatch."""

@@ -62,15 +62,14 @@ else
 fi
 
 # Format and color SoH as percentage
-if [[ -n "$soh" && "$soh" != "?" ]]; then
-    # Convert float to integer percentage (e.g. 0.997 → 100%)
+if [[ -n "$soh" && "$soh" != "?" && "$soh" =~ ^[0-9]*\.?[0-9]+$ ]]; then
     soh_pct=$(printf "%.0f" "$(awk "BEGIN {print $soh * 100}")")
     soh_fmt="${soh_pct}%"
 
     # Color based on health
-    if (( $(echo "$soh >= 0.80" | bc -l 2>/dev/null) )) || [[ "$soh_pct" -ge 80 ]]; then
+    if [[ "$soh_pct" -ge 80 ]]; then
         soh_color="$GREEN"
-    elif (( $(echo "$soh >= 0.60" | bc -l 2>/dev/null) )) || [[ "$soh_pct" -ge 60 ]]; then
+    elif [[ "$soh_pct" -ge 60 ]]; then
         soh_color="$YELLOW"
     else
         soh_color="$RED"

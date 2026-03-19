@@ -27,8 +27,10 @@ score_pct=$(printf "%.0f" "$(echo "$sulfation * 100" | bc -l)")
 # Calculate days until next test
 if [[ "$next_test" != "null" && "$next_test" != "" ]]; then
     now=$(date +%s)
-    days_until=$((($next_test - $now) / 86400))
-    if [[ $days_until -lt 0 ]]; then
+    next_epoch=$(date -d "$next_test" +%s 2>/dev/null) || next_epoch=""
+    if [[ -z "$next_epoch" ]]; then
+        test_str="unknown"
+    elif days_until=$(( (next_epoch - now) / 86400 )); [[ $days_until -lt 0 ]]; then
         test_str="overdue"
     elif [[ $days_until -eq 0 ]]; then
         test_str="today"

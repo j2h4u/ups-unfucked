@@ -75,7 +75,7 @@ def validate_preconditions_before_upscmd(
         return False, "soc_below_threshold"
 
     if recent_power_glitches > 2:
-        return False, f"grid_unstable_{recent_power_glitches}_transitions_in_4h"
+        return False, "grid_unstable"
 
     if test_already_running:
         return False, "test_already_running"
@@ -87,7 +87,7 @@ def dispatch_test_with_audit(
     nut_client,
     battery_model: BatteryModel,
     decision: SchedulerDecision,
-    current_metrics,
+    current_metrics: CurrentMetrics,
 ) -> bool:
     """Dispatch test command with full precondition checks and journald logging.
 
@@ -281,7 +281,14 @@ class MonitorDaemon:
         logger.info(
             f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, "
             f"poll={config.polling_interval}s, model={model_path}, nut={config.nut_host}:{config.nut_port}",
-            extra={'event_type': 'daemon_init'}
+            extra={
+                'event_type': 'daemon_init',
+                'shutdown_threshold_minutes': self.shutdown_threshold_minutes,
+                'poll_interval_sec': config.polling_interval,
+                'model_path': str(model_path),
+                'nut_host': config.nut_host,
+                'nut_port': config.nut_port,
+            }
         )
 
         # Fail fast on misconfigured NUT rather than silently looping
@@ -328,7 +335,6 @@ class MonitorDaemon:
         event_type = self.current_metrics.event_type
         previous_event_type = self.current_metrics.previous_event_type
 
-        # EVT-02
         if event_type == EventType.BLACKOUT_REAL:
             time_rem = self.current_metrics.time_rem_minutes
             if time_rem is not None and time_rem < self.shutdown_threshold_minutes:
@@ -343,20 +349,17 @@ class MonitorDaemon:
             else:
                 self.current_metrics.shutdown_imminent = False
 
-        # EVT-03
         if event_type == EventType.BLACKOUT_TEST:
             logger.info("Battery test detected; collecting calibration data, no shutdown",
                         extra={'event_type': 'battery_test_detected'})
             self.current_metrics.shutdown_imminent = False
 
-        # EVT-04
         self.current_metrics.ups_status_override = compute_ups_status_override(
             event_type,
             self.current_metrics.time_rem_minutes or 0,
             self.shutdown_threshold_minutes
         )
 
-        # EVT-05
         if (self.current_metrics.transition_occurred and
             event_type == EventType.ONLINE and
             previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
@@ -367,7 +370,8 @@ class MonitorDaemon:
     def _sync_handler_refs(self):
         """Sync mutable references to discharge handler.
 
-        Must be called before any delegation to DischargeHandler. Required because
+        Called internally by each delegating method (_update_battery_health,
+        _handle_discharge_complete, _auto_calibrate_peukert). Required because
         tests may replace daemon.battery_model, daemon.capacity_estimator, or
         daemon.rls_peukert after __init__.
         """
@@ -410,7 +414,7 @@ class MonitorDaemon:
         self.battery_model.data['capacity_ah_measured'] = None
 
         today = datetime.now().strftime('%Y-%m-%d')
-        self.battery_model.data['soh'] = 1.0  # New battery assumed 100% SoH
+        self.battery_model.data['soh'] = 1.0
         self.battery_model.add_soh_history_entry(
             date=today,
             soh=1.0,
@@ -507,14 +511,17 @@ class MonitorDaemon:
             block_reason=decision.reason_code if decision.action == 'block_test' else None,
         )
 
-        # If proposed, attempt dispatch
         if decision.action == 'propose_test':
-            dispatch_test_with_audit(
+            dispatched = dispatch_test_with_audit(
                 nut_client=self.nut_client,
                 battery_model=self.battery_model,
                 decision=decision,
                 current_metrics=self.current_metrics,
             )
+            if not dispatched:
+                logger.warning("Test proposed but dispatch failed",
+                               extra={'event_type': 'test_dispatch_not_sent',
+                                      'reason_code': decision.reason_code})
         else:
             logger.info(f"Test {decision.action}: {decision.reason_code} ({decision.reason_detail})")
 
@@ -593,7 +600,7 @@ class MonitorDaemon:
         if nominal_voltage > 0:
             ir_k_measured = r_ohm * nominal_power_watts / (nominal_voltage * 100.0)
             new_ir_k, new_P = self.rls_ir_k.update(ir_k_measured)
-            new_ir_k = max(0.005, min(0.025, new_ir_k))  # physical bounds
+            new_ir_k = max(0.005, min(0.025, new_ir_k))
             self.ir_k = new_ir_k
             self.battery_model.set_ir_k(new_ir_k)
             self.battery_model.set_rls_state(
@@ -646,10 +653,12 @@ class MonitorDaemon:
 
         # Voltage bounds check (8.0-15.0V) and load bounds check (0-100%)
         if not (8.0 <= voltage <= 15.0):
-            logger.warning(f"Voltage {voltage:.2f}V out of bounds [8.0-15.0V]; skipping sample")
+            logger.warning(f"Voltage {voltage:.2f}V out of bounds [8.0-15.0V]; skipping sample",
+                           extra={'event_type': 'sensor_out_of_bounds', 'field': 'voltage', 'value': f'{voltage:.2f}'})
             return None, None
         if not (0 <= load <= 100):
-            logger.warning(f"Load {load:.1f}% out of bounds [0-100%]; skipping sample")
+            logger.warning(f"Load {load:.1f}% out of bounds [0-100%]; skipping sample",
+                           extra={'event_type': 'sensor_out_of_bounds', 'field': 'load', 'value': f'{load:.1f}'})
             return None, None
 
         self.ema_filter.add_sample(voltage, load)
@@ -763,7 +772,8 @@ class MonitorDaemon:
                 self._start_discharge_collection(timestamp)
             if voltage is not None:
                 if len(self.discharge_buffer.voltages) >= DISCHARGE_BUFFER_MAX_SAMPLES:
-                    logger.warning(f"Discharge buffer capped at {DISCHARGE_BUFFER_MAX_SAMPLES} samples")
+                    logger.warning(f"Discharge buffer capped at {DISCHARGE_BUFFER_MAX_SAMPLES} samples",
+                                   extra={'event_type': 'discharge_buffer_capped', 'max_samples': DISCHARGE_BUFFER_MAX_SAMPLES})
                 else:
                     self.discharge_buffer.voltages.append(voltage)
                     self.discharge_buffer.times.append(timestamp)
@@ -932,7 +942,8 @@ class MonitorDaemon:
             }
             write_virtual_ups_dev(virtual_metrics)
         except Exception as e:
-            logger.error(f"Failed to write virtual UPS metrics: {e}", exc_info=True)
+            logger.error(f"Failed to write virtual UPS metrics: {e}", exc_info=True,
+                         extra={'event_type': 'virtual_ups_write_failed'})
 
     # --- Main loop ---
 
@@ -966,7 +977,7 @@ class MonitorDaemon:
     def _poll_once(self) -> None:
         """Execute a single poll cycle: fetch UPS data, update metrics, write outputs."""
         timestamp = time.time()
-        nut_vars = self.nut_client.get_ups_vars()
+        ups_data = self.nut_client.get_ups_vars()
         poll_latency_ms = (time.time() - timestamp) * 1000
 
         self._consecutive_errors = 0  # Reset on successful NUT poll
@@ -976,13 +987,13 @@ class MonitorDaemon:
             logger.info(f"First successful poll completed: startup took {startup_delta_ms:.0f}ms",
                         extra={'event_type': 'startup_complete', 'startup_ms': f'{startup_delta_ms:.0f}'})
             self._startup_logged = True
-        voltage, load = self._update_ema(nut_vars)
+        voltage, load = self._update_ema(ups_data)
         if voltage is None:
             logger.warning(f"Poll {self.poll_count}: Missing voltage or load data")
             time.sleep(self.config.polling_interval)
             return
 
-        self._classify_event(nut_vars)
+        self._classify_event(ups_data)
         self._track_voltage_sag(voltage)
         self._track_discharge(voltage, timestamp)
 
@@ -991,6 +1002,7 @@ class MonitorDaemon:
 
         # Event transition handling runs EVERY poll (not gated)
         self._handle_event_transition()
+        # Default to ONLINE when classifier returned None (no status data)
         self.current_metrics.previous_event_type = self.current_metrics.event_type or EventType.ONLINE
 
         reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
@@ -998,7 +1010,7 @@ class MonitorDaemon:
             logger.debug(f"Metrics gate: is_discharging={is_discharging}, poll_count={self.poll_count}")
             battery_charge, time_rem = self._compute_metrics()
             self._log_status(battery_charge, time_rem, poll_latency_ms)
-            self._write_virtual_ups(nut_vars, battery_charge, time_rem)
+            self._write_virtual_ups(ups_data, battery_charge, time_rem)
 
         self._write_health_snapshot(poll_latency_ms)
         self._run_daily_scheduler(datetime.now(timezone.utc))

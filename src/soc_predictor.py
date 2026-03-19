@@ -66,7 +66,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
     # Build reversed voltage list for bisect (which expects ascending order)
     voltages_asc = [e["v"] for e in reversed(lut)]
     pos = bisect.bisect_left(voltages_asc, voltage)
-    i = len(lut) - 1 - pos
+    i = len(lut) - 1 - pos  # Convert ascending-bisect index back to descending-LUT index
     v1_entry = None
     v2_entry = None
     if 0 <= i < len(lut) - 1:

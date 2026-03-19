@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from src.replacement_predictor import linear_regression_soh
 
 
@@ -46,17 +47,19 @@ def test_r_squared_validation():
 
 def test_soh_already_below_threshold():
     """Current SoH = 0.75, threshold = 0.80. Returns today's date (overdue)."""
+    fixed_now = datetime(2026, 3, 20, 12, 0, 0)
     history = [
         {'date': '2026-03-10', 'soh': 0.90},
         {'date': '2026-03-12', 'soh': 0.85},
         {'date': '2026-03-14', 'soh': 0.75},
     ]
-    result = linear_regression_soh(history, threshold_soh=0.80)
+    with patch('src.replacement_predictor.datetime') as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        mock_dt.strptime = datetime.strptime
+        result = linear_regression_soh(history, threshold_soh=0.80)
     assert result is not None
     slope, intercept, r2, replacement_date = result
-    # Should return today's date since already below threshold
-    today = datetime.now().strftime('%Y-%m-%d')
-    assert replacement_date == today
+    assert replacement_date == '2026-03-20'
 
 
 def test_no_degradation():

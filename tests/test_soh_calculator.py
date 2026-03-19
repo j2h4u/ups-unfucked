@@ -182,8 +182,8 @@ class TestBayesianBlend:
 
         assert result is not None
         soh_new, _ = result
-        # Should be between measured and reference (blended)
-        assert 0.0 < soh_new <= 1.0
+        # Blended result: partial discharge pulls toward measured, reference pulls toward 0.95
+        assert 0.80 <= soh_new <= 0.99, f"Expected blend near reference 0.95, got {soh_new:.3f}"
 
     def test_insufficient_samples_returns_none(self):
         """< 2 voltage samples → returns None."""

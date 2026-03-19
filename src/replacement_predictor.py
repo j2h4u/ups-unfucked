@@ -59,15 +59,15 @@ def linear_regression_soh(
     if capacity_ah_ref is not None:
         # Keep only entries matching the baseline
         # Default missing field to 7.2Ah (original rated capacity)
-        baseline_matched = [
+        filtered_history = [
             e for e in soh_history
             if e.get('capacity_ah_ref', 7.2) == capacity_ah_ref
         ]
 
-        if len(baseline_matched) < 3:
+        if len(filtered_history) < 3:
             return None
 
-        soh_history = baseline_matched
+        soh_history = filtered_history
 
     if len(soh_history) < 3:
         return None

@@ -119,7 +119,6 @@ class EMAFilter:
         self.voltage_ema = MetricEMA("voltage", window_sec, poll_interval_sec, sensitivity)
         self.load_ema = MetricEMA("load", window_sec, poll_interval_sec, sensitivity)
 
-        # Expose alpha for backward compatibility
         self.alpha = self.voltage_ema.alpha
 
     def add_sample(self, voltage: float, load: float):

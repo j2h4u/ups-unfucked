@@ -3,6 +3,7 @@
 import logging
 from typing import List, Dict, Optional, Tuple, NamedTuple
 from src.soc_predictor import soc_from_voltage
+from src.battery_math.constants import MIN_DISCHARGE_DURATION_SEC
 
 
 class CapacityMeasurement(NamedTuple):
@@ -134,7 +135,7 @@ class CapacityEstimator:
         """
         # Check duration
         duration = time_series[-1] - time_series[0]
-        min_duration = 300  # Shared with MIN_DISCHARGE_DURATION_SEC (circular import prevents direct use)
+        min_duration = MIN_DISCHARGE_DURATION_SEC
         if duration < min_duration:
             logger.debug(f"Discharge rejected: duration {duration:.0f}s < {min_duration}s (micro)")
             return False

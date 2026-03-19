@@ -48,7 +48,7 @@ def atomic_write(filepath, content: str) -> None:
             tmp.write(content)
             tmp.flush()
             os.fdatasync(tmp.fileno())
-            os.fchmod(tmp.fileno(), 0o644)
+            os.fchmod(tmp.fileno(), 0o600)
 
         tmp_path.replace(filepath)  # atomic on POSIX (unlink + link)
         logger.debug(f"Atomically wrote {filepath}")
@@ -122,9 +122,19 @@ class BatteryModel:
                              extra={'event_type': 'model_corrupt', 'model_path': str(self.model_path)})
                 try:
                     self.model_path.rename(backup)
-                except OSError as rename_err:
-                    logger.warning("Failed to back up corrupt model.json: %s", rename_err,
-                                   extra={'event_type': 'model_backup_failed'})
+                except OSError:
+                    # Target may already exist from a previous corrupt load;
+                    # use timestamped name to avoid overwriting earlier backup
+                    ts = datetime.now().strftime('%Y%m%dT%H%M%S')
+                    fallback = self.model_path.with_suffix(f'.json.corrupt.{ts}')
+                    try:
+                        self.model_path.rename(fallback)
+                        logger.warning("Backed up corrupt model.json to %s (primary target existed)",
+                                       fallback.name, extra={'event_type': 'model_backup_fallback'})
+                    except OSError as rename_err:
+                        logger.error("Cannot back up corrupt model.json: %s — refusing to overwrite",
+                                     rename_err, extra={'event_type': 'model_backup_failed'})
+                        raise SystemExit(f"Cannot back up corrupt {self.model_path}: {rename_err}") from rename_err
                 self.data = self._default_vrla_lut()
             except OSError as e:
                 raise SystemExit(f"Cannot read {self.model_path}: {e}") from e
@@ -633,7 +643,6 @@ class BatteryModel:
 
         bisect.insort(self.data['lut'], entry, key=lambda x: -x['v'])
 
-        # Log point accumulation (no write yet)
         logger.debug(f"Calibration point accumulated: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")
 
     def calibration_batch_flush(self) -> None:

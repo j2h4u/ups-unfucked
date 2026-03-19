@@ -2,6 +2,7 @@
 
 import tempfile
 import socket
+from pathlib import Path
 from unittest.mock import Mock, patch
 import pytest
 
@@ -18,8 +19,6 @@ def mock_socket_ok():
     mock_sock = Mock(spec=socket.socket)
 
     def mock_recv(bufsize):
-        # Return a complete response for a typical NUT protocol query
-        # Format: "VAR <ups-name> <variable> <value>\n"
         return b'VAR cyberpower battery.voltage 13.4\n'
 
     mock_sock.recv = Mock(side_effect=mock_recv)
@@ -99,11 +98,7 @@ def temporary_model_path():
 
     yield tmp_path
 
-    import os
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass  # File might already be deleted by test
+    Path(tmp_path).unlink(missing_ok=True)
 
 
 @pytest.fixture
