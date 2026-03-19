@@ -17,7 +17,6 @@ from src.model import BatteryModel, atomic_write_json
 from src.event_classifier import EventType
 
 
-# === CONFIGURATION ===
 # Precedence: config.toml > code defaults. Physics params (IR_K, etc.) live in model.json.
 
 CONFIG_DIR = Path.home() / '.config' / 'ups-battery-monitor'
@@ -112,7 +111,7 @@ def load_config() -> Config:
                 logger.error(f"Malformed config {path}: {e}")
                 raise SystemExit(f"Config parse error: {path}: {e}") from e
 
-    user_config = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
+    resolved_config = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
 
     # Validate scheduling configuration
     sched_config = get_scheduling_config(cfg_dict)
@@ -128,17 +127,17 @@ def load_config() -> Config:
         )
 
     return Config(
-        ups_name=user_config['ups_name'],
+        ups_name=resolved_config['ups_name'],
         polling_interval=POLL_INTERVAL,
         reporting_interval=REPORTING_INTERVAL_POLLS * POLL_INTERVAL,
         nut_host=NUT_HOST,
         nut_port=NUT_PORT,
         nut_timeout=NUT_TIMEOUT,
-        shutdown_minutes=user_config['shutdown_minutes'],
-        soh_alert_threshold=user_config['soh_alert'],
+        shutdown_minutes=resolved_config['shutdown_minutes'],
+        soh_alert_threshold=resolved_config['soh_alert'],
         model_dir=CONFIG_DIR,
         runtime_threshold_minutes=RUNTIME_THRESHOLD_MINUTES,
-        capacity_ah=user_config['capacity_ah'],
+        capacity_ah=resolved_config['capacity_ah'],
         reference_load_percent=REFERENCE_LOAD_PERCENT,
         ema_window_sec=EMA_WINDOW,
         scheduling=sched_config,
@@ -157,12 +156,12 @@ def get_scheduling_config(config_dict: dict) -> SchedulingConfig:
     Raises:
         ValueError: If any parameter is invalid
     """
-    scheduling_raw = config_dict.get('scheduling', {})
+    scheduling_section = config_dict.get('scheduling', {})
     known_fields = {f.name for f in fields(SchedulingConfig)}
-    unknown_keys = set(scheduling_raw) - known_fields
+    unknown_keys = set(scheduling_section) - known_fields
     if unknown_keys:
         logger.warning("Unknown scheduling config keys ignored: %s", ', '.join(sorted(unknown_keys)))
-    scheduling_params = {k: v for k, v in scheduling_raw.items() if k in known_fields}
+    scheduling_params = {k: v for k, v in scheduling_section.items() if k in known_fields}
     sched_config = SchedulingConfig(**scheduling_params)
     errors = sched_config.validate()
     if errors:
@@ -212,13 +211,13 @@ logger.handlers.clear()
 
 try:
     from systemd.journal import JournalHandler
-    handler = JournalHandler(identifier='ups-battery-monitor')
-    handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-    logger.addHandler(handler)
+    log_handler = JournalHandler(identifier='ups-battery-monitor')
+    log_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    logger.addHandler(log_handler)
 except (ImportError, OSError, ValueError) as e:
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-    logger.addHandler(handler)
+    log_handler = logging.StreamHandler(sys.stderr)
+    log_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    logger.addHandler(log_handler)
     logger.info(f"JournalHandler unavailable, using stderr: {e}")
 
 
@@ -262,21 +261,21 @@ class HealthSnapshot:
     Groups the 16+ metrics written to health.json every poll.
     Construct in monitor.py, pass to write_health_endpoint().
     """
-    soc_percent: float = 0.0
+    soc_percent: float = 0.0                          # [0, 100]
     is_online: bool = False
-    poll_latency_ms: Optional[float] = None
-    capacity_ah_measured: Optional[float] = None
-    capacity_ah_rated: float = 7.2
-    capacity_confidence: float = 0.0
+    poll_latency_ms: Optional[float] = None            # NUT TCP round-trip (ms)
+    capacity_ah_measured: Optional[float] = None       # Latest single measurement (Ah)
+    capacity_ah_rated: float = 7.2                     # Firmware rated capacity (Ah)
+    capacity_confidence: float = 0.0                   # [0.0, 1.0] — derived from 1-CoV
     capacity_samples_count: int = 0
-    capacity_converged: bool = False
-    sulfation_score: Optional[float] = None
-    sulfation_confidence: Optional[str] = None
-    days_since_deep: Optional[float] = None
-    ir_trend_rate: Optional[float] = None
-    recovery_delta: Optional[float] = None
-    cycle_roi: Optional[float] = None
-    cycle_budget_remaining: Optional[int] = None
+    capacity_converged: bool = False                   # count >= 3 AND CoV < 0.10
+    sulfation_score: Optional[float] = None            # [0.0, 1.0]
+    sulfation_confidence: Optional[str] = None         # 'high' | 'medium' | 'low'
+    days_since_deep: Optional[float] = None            # Days since last >70% DoD discharge
+    ir_trend_rate: Optional[float] = None              # Ω/day (positive = degrading)
+    recovery_delta: Optional[float] = None             # SoH change this discharge [0, 1]
+    cycle_roi: Optional[float] = None                  # [0.0, 1.0]
+    cycle_budget_remaining: Optional[int] = None       # Estimated remaining cycles
     scheduling_reason: str = 'observing'
     next_test_timestamp: Optional[str] = None
     last_discharge_timestamp: Optional[str] = None
@@ -298,34 +297,33 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
     Monitored by: Grafana, check_mk, custom scripts (liveness: last_poll < 30s).
     """
     try:
-        daemon_version = importlib.metadata.version('ups-unfucked')
+        daemon_version = importlib.metadata.version('ups-unfucked')  # pyproject.toml package name
     except importlib.metadata.PackageNotFoundError:
         daemon_version = "unknown"
 
-    snap = snapshot
     health_data = {
         "last_poll": datetime.now(timezone.utc).isoformat(),
         "last_poll_unix": int(time.time()),
-        "current_soc_percent": round(snap.soc_percent, 1),
-        "online": snap.is_online,
+        "current_soc_percent": round(snapshot.soc_percent, 1),
+        "online": snapshot.is_online,
         "daemon_version": daemon_version,
-        "poll_latency_ms": _opt_round(snap.poll_latency_ms, 1),
-        "capacity_ah_measured": _opt_round(snap.capacity_ah_measured, 2),
-        "capacity_ah_rated": round(snap.capacity_ah_rated, 2),
-        "capacity_confidence": round(snap.capacity_confidence, 3),
-        "capacity_samples_count": snap.capacity_samples_count,
-        "capacity_converged": snap.capacity_converged,
-        "sulfation_score": _opt_round(snap.sulfation_score, 3),
-        "sulfation_score_confidence": snap.sulfation_confidence,
-        "days_since_deep": _opt_round(snap.days_since_deep, 1),
-        "ir_trend_rate": _opt_round(snap.ir_trend_rate, 6),
-        "recovery_delta": _opt_round(snap.recovery_delta, 3),
-        "cycle_roi": _opt_round(snap.cycle_roi, 3),
-        "cycle_budget_remaining": snap.cycle_budget_remaining,
-        "scheduling_reason": snap.scheduling_reason,
-        "next_test_timestamp": snap.next_test_timestamp,
-        "last_discharge_timestamp": snap.last_discharge_timestamp,
-        "consecutive_errors": snap.consecutive_errors,
+        "poll_latency_ms": _opt_round(snapshot.poll_latency_ms, 1),
+        "capacity_ah_measured": _opt_round(snapshot.capacity_ah_measured, 2),
+        "capacity_ah_rated": round(snapshot.capacity_ah_rated, 2),
+        "capacity_confidence": round(snapshot.capacity_confidence, 3),
+        "capacity_samples_count": snapshot.capacity_samples_count,
+        "capacity_converged": snapshot.capacity_converged,
+        "sulfation_score": _opt_round(snapshot.sulfation_score, 3),
+        "sulfation_score_confidence": snapshot.sulfation_confidence,
+        "days_since_deep": _opt_round(snapshot.days_since_deep, 1),
+        "ir_trend_rate": _opt_round(snapshot.ir_trend_rate, 6),
+        "recovery_delta": _opt_round(snapshot.recovery_delta, 3),
+        "cycle_roi": _opt_round(snapshot.cycle_roi, 3),
+        "cycle_budget_remaining": snapshot.cycle_budget_remaining,
+        "scheduling_reason": snapshot.scheduling_reason,
+        "next_test_timestamp": snapshot.next_test_timestamp,
+        "last_discharge_timestamp": snapshot.last_discharge_timestamp,
+        "consecutive_errors": snapshot.consecutive_errors,
     }
     health_path = HEALTH_ENDPOINT_PATH
 

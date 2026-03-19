@@ -1,7 +1,6 @@
 """Tests for logging and alerter output."""
 
 import logging
-from unittest.mock import MagicMock
 import pytest
 
 from src import alerter
@@ -10,53 +9,31 @@ from src import alerter
 class TestAlerterOutput:
     """Test alerter functions produce correct log messages."""
 
-    def _make_logger(self):
-        """Create a logger with a capturing handler for testing."""
-        logger = logging.getLogger(f"test-{id(self)}")
-        logger.setLevel(logging.DEBUG)
-        logger.handlers.clear()
-        mock_handler = logging.StreamHandler()
-        mock_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-        logger.addHandler(mock_handler)
-        return logger
-
-    def test_alert_soh_below_threshold(self, capsys):
+    def test_alert_soh_below_threshold(self, caplog):
         """SoH alert includes current value, threshold, and days to replacement."""
-        logger = self._make_logger()
+        with caplog.at_level(logging.WARNING):
+            alerter.alert_soh_below_threshold(
+                current_soh=0.75,
+                threshold_soh=0.80,
+                days_to_replacement=90
+            )
+        assert "75.0%" in caplog.text
 
-        alerter.alert_soh_below_threshold(
-            logger,
-            current_soh=0.75,
-            threshold_soh=0.80,
-            days_to_replacement=90
-        )
-
-        captured = capsys.readouterr()
-        assert "75" in captured.err or "0.75" in captured.err
-
-    def test_alert_runtime_below_threshold(self, capsys):
+    def test_alert_runtime_below_threshold(self, caplog):
         """Runtime alert includes runtime value and threshold."""
-        logger = self._make_logger()
+        with caplog.at_level(logging.WARNING):
+            alerter.alert_runtime_below_threshold(
+                runtime_at_100_percent=18.5,
+                threshold_minutes=20.0
+            )
+        assert "18 min" in caplog.text
 
-        alerter.alert_runtime_below_threshold(
-            logger,
-            runtime_at_100_percent=18.5,
-            threshold_minutes=20.0
-        )
-
-        captured = capsys.readouterr()
-        assert "18" in captured.err or "18.5" in captured.err
-
-    def test_alert_none_days_to_replacement(self, capsys):
+    def test_alert_none_days_to_replacement(self, caplog):
         """SoH alert handles None days_to_replacement gracefully."""
-        logger = self._make_logger()
-
-        alerter.alert_soh_below_threshold(
-            logger,
-            current_soh=0.75,
-            threshold_soh=0.80,
-            days_to_replacement=None
-        )
-
-        captured = capsys.readouterr()
-        assert "unknown" in captured.err.lower(), "Expected 'unknown' in output for None days"
+        with caplog.at_level(logging.WARNING):
+            alerter.alert_soh_below_threshold(
+                current_soh=0.75,
+                threshold_soh=0.80,
+                days_to_replacement=None
+            )
+        assert "unknown" in caplog.text.lower()

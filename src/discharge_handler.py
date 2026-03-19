@@ -3,8 +3,9 @@
 Contains the discharge event processing pipeline that runs on OB→OL transition.
 
 Methods here run on OB→OL transition (discharge complete) and during
-capacity estimation. No exception handling — all errors propagate to
-MonitorDaemon.run() per SRE requirement.
+capacity estimation. Errors propagate to MonitorDaemon.run() except
+sulfation scoring, which catches ValueError/TypeError to allow the
+rest of the discharge pipeline to complete.
 """
 
 import math
@@ -74,7 +75,12 @@ class DischargeHandler:
         self.last_discharge_timestamp: Optional[str] = None
 
     def update_battery_health(self, discharge_buffer: DischargeBuffer) -> None:
-        """Process completed discharge: SoH, Peukert, replacement prediction, alerts, sulfation."""
+        """Process completed discharge: SoH, Peukert, replacement prediction, alerts, sulfation.
+
+        Returns early (skipping all steps) if discharge is too short (<300s)
+        or has insufficient samples (<2 voltages). Only discharges that pass
+        _compute_soh validation trigger the full pipeline.
+        """
         soh_before = self.battery_model.get_soh()
         soh_result = self._compute_soh(discharge_buffer)
         if soh_result is None:
@@ -182,7 +188,6 @@ class DischargeHandler:
                         logger.debug(f"Invalid replacement date format: {e}")
 
             alerter.alert_soh_below_threshold(
-                logger,
                 soh_new,
                 self.soh_threshold,
                 days_to_replacement
@@ -200,7 +205,6 @@ class DischargeHandler:
         )
         if time_rem_at_100pct < self.config.runtime_threshold_minutes:
             alerter.alert_runtime_below_threshold(
-                logger,
                 time_rem_at_100pct,
                 self.config.runtime_threshold_minutes
             )
@@ -259,7 +263,6 @@ class DischargeHandler:
         self.last_cycle_budget_remaining = cycle_budget
         self.last_discharge_timestamp = now_iso
 
-        # Persist to model.json
         self.battery_model.append_sulfation_history({
             'timestamp': now_iso,
             'event_type': discharge_trigger,
@@ -341,7 +344,6 @@ class DischargeHandler:
             logger.debug(f"Peukert calibration skipped: invalid load ({avg_load})")
             return
 
-        # Data validated; call pure kernel function
         # Use RATED capacity (self.config.capacity_ah), not measured (VAL-02)
         new_exponent = calibrate_peukert(
             actual_duration_sec=actual_duration_sec,
@@ -417,7 +419,6 @@ class DischargeHandler:
                 'actual_minutes': f'{actual_minutes:.1f}',
                 'avg_load_percent': f'{avg_load:.1f}',
                 'start_soc': f'{current_soc:.3f}',
-                'timestamp': datetime.now(timezone.utc).isoformat(),
             })
 
         self.discharge_predicted_runtime = None
@@ -444,13 +445,11 @@ class DischargeHandler:
         load_series = discharge_data.get('load_series', [])
         timestamp = discharge_data.get('timestamp', datetime.now().isoformat())
 
-        # Guard: need at least 2 samples
         if len(voltage_series) < 2 or len(time_series) < 2 or len(load_series) < 2:
             logger.debug(f"Discharge data incomplete for capacity estimation: "
                         f"{len(voltage_series)} V, {len(time_series)} t, {len(load_series)} I")
             return
 
-        # Call CapacityEstimator
         result = self.capacity_estimator.estimate(
             voltage_series=voltage_series,
             time_series=time_series,
@@ -458,15 +457,12 @@ class DischargeHandler:
             lut=self.battery_model.data.get('lut', [])
         )
 
-        # Quality filter rejection (VAL-01: micro/shallow discharges rejected)
         if result is None:
             logger.debug("Discharge rejected by CapacityEstimator quality filter")
             return
 
-        # Success: unpack estimate
         ah_estimate, confidence, metadata = result
 
-        # Store in model
         self.battery_model.add_capacity_estimate(
             ah_estimate=ah_estimate,
             confidence=confidence,
@@ -474,11 +470,9 @@ class DischargeHandler:
             timestamp=timestamp
         )
 
-        # Structured journald logging
         convergence_status = self.battery_model.get_convergence_status()
         sample_count = convergence_status['sample_count']
 
-        # Compute CoV for human-readable message
         estimates = self.battery_model.data.get('capacity_estimates', [])
         ah_values = [e['ah_estimate'] for e in estimates]
         cov = compute_cov(ah_values)
@@ -487,7 +481,6 @@ class DischargeHandler:
 
         confidence_pct = int(confidence * 100) if confidence else 0
 
-        # Extract metadata fields with safe defaults
         delta_soc_percent = metadata.get('delta_soc_percent', 0.0)
         duration_sec = metadata.get('duration_sec', 0)
         load_avg_percent = metadata.get('load_avg_percent', 0.0)
@@ -506,11 +499,9 @@ class DischargeHandler:
             }
         )
 
-        # Convergence: baseline lock + new battery detection
         if self.capacity_estimator.has_converged():
             self.battery_model.data['capacity_converged'] = True
 
-            # Log baseline_lock event only once per convergence
             if not self.has_logged_baseline_lock:
                 logger.info(
                     f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
@@ -518,12 +509,10 @@ class DischargeHandler:
                         'event_type': 'baseline_lock',
                         'capacity_ah': f'{convergence_status["latest_ah"]:.2f}',
                         'sample_count': str(convergence_status['sample_count']),
-                        'timestamp': datetime.now(timezone.utc).isoformat(),
                     }
                 )
                 self.has_logged_baseline_lock = True
 
-            # New battery detection (post-discharge)
             current_measured = convergence_status.get('latest_ah')
             stored_baseline = self.battery_model.data.get('capacity_ah_measured', None)
 
@@ -551,7 +540,6 @@ class DischargeHandler:
                         "User can confirm with: ups-battery-monitor --new-battery"
                     )
             else:
-                # First time convergence; store as baseline
                 self.battery_model.data['capacity_ah_measured'] = current_measured
                 logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
 
@@ -590,7 +578,8 @@ class DischargeHandler:
             return 0.0
 
         now = datetime.now(timezone.utc)
-        recent_entries = []
+        x_values = []
+        y_values = []
         for entry in r_history:
             date_str = entry.get('date', '')
             r_value = entry.get('r_ohm')
@@ -605,13 +594,11 @@ class DischargeHandler:
             days_ago = (now - entry_time).total_seconds() / 86400.0
             if days_ago > 30:
                 continue
-            recent_entries.append({'days_ago': days_ago, 'r_ohm': r_value})
+            x_values.append(days_ago)
+            y_values.append(r_value)
 
-        if len(recent_entries) < 2:
+        if len(x_values) < 2:
             return 0.0
-
-        x_values = [e['days_ago'] for e in recent_entries]
-        y_values = [e['r_ohm'] for e in recent_entries]
         slope = linear_regression_slope(x_values, y_values)
         return max(0.0, slope) if slope is not None else 0.0
 

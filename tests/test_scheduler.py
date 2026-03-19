@@ -27,7 +27,7 @@ class TestSoHFloorGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.72,
             cycle_roi=0.4,
-            soh_percent=0.59,  # Below 60% constant
+            soh_fraction=0.59,  # Below 60% constant
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -43,7 +43,7 @@ class TestSoHFloorGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.60,  # Exactly at threshold
+            soh_fraction=0.60,  # Exactly at threshold
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -63,7 +63,7 @@ class TestRateLimitGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=3.0,  # 3 days, less than 7
             last_blackout_timestamp=None,
 
@@ -79,7 +79,7 @@ class TestRateLimitGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=7.0,  # Exactly at threshold
             last_blackout_timestamp=None,
 
@@ -94,7 +94,7 @@ class TestRateLimitGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=float('inf'),  # Never tested
             last_blackout_timestamp=None,
 
@@ -113,7 +113,7 @@ class TestBlackoutCreditGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -132,7 +132,7 @@ class TestBlackoutCreditGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -149,7 +149,7 @@ class TestBlackoutCreditGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -166,7 +166,7 @@ class TestBlackoutCreditGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -180,7 +180,7 @@ class TestBlackoutCreditGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -203,7 +203,7 @@ class TestGridStabilityGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=last_blackout,
 
@@ -220,7 +220,7 @@ class TestGridStabilityGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=last_blackout,
 
@@ -239,7 +239,7 @@ class TestGridStabilityGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=last_blackout,
 
@@ -254,7 +254,7 @@ class TestGridStabilityGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -269,7 +269,7 @@ class TestGridStabilityGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp='INVALID_TIMESTAMP',
 
@@ -288,7 +288,7 @@ class TestCycleBudgetGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -303,7 +303,7 @@ class TestCycleBudgetGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -322,7 +322,7 @@ class TestROIGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.1,  # Low ROI
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -337,7 +337,7 @@ class TestROIGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.1,  # Low ROI
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -352,7 +352,7 @@ class TestROIGate:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.25,  # Above 0.2 threshold
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -370,7 +370,7 @@ class TestSulfationThreshold:
         decision = evaluate_test_scheduling(
             sulfation_score=0.72,
             cycle_roi=0.35,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -386,7 +386,7 @@ class TestSulfationThreshold:
         decision = evaluate_test_scheduling(
             sulfation_score=0.52,
             cycle_roi=0.25,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -402,7 +402,7 @@ class TestSulfationThreshold:
         decision = evaluate_test_scheduling(
             sulfation_score=0.32,
             cycle_roi=0.25,  # Good ROI so ROI gate doesn't interfere
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -418,7 +418,7 @@ class TestSulfationThreshold:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -434,7 +434,7 @@ class TestSulfationThreshold:
         decision = evaluate_test_scheduling(
             sulfation_score=0.40,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -454,7 +454,7 @@ class TestGateOrdering:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.55,  # Below floor
+            soh_fraction=0.55,  # Below floor
             days_since_last_test=2.0,  # Also below rate limit
             last_blackout_timestamp=None,
 
@@ -471,7 +471,7 @@ class TestGateOrdering:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=2.0,  # Below rate limit
             last_blackout_timestamp=None,
 
@@ -494,7 +494,7 @@ class TestRealWorldScenarios:
         decision = evaluate_test_scheduling(
             sulfation_score=0.72,  # > 0.65 for deep test
             cycle_roi=0.34,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=10.0,
             last_blackout_timestamp=None,
 
@@ -509,7 +509,7 @@ class TestRealWorldScenarios:
         decision = evaluate_test_scheduling(
             sulfation_score=0.8,  # High sulfation, would propose
             cycle_roi=0.5,  # Good ROI
-            soh_percent=0.55,  # Below 60% floor
+            soh_fraction=0.55,  # Below 60% floor
             days_since_last_test=30.0,  # Long time since test
             last_blackout_timestamp=None,
 
@@ -525,7 +525,7 @@ class TestRealWorldScenarios:
         decision = evaluate_test_scheduling(
             sulfation_score=0.65,
             cycle_roi=0.3,
-            soh_percent=0.85,
+            soh_fraction=0.85,
             days_since_last_test=15.0,  # Long enough for rate limit
             last_blackout_timestamp=None,
 

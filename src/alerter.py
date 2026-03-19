@@ -4,9 +4,10 @@ import logging
 import logging.handlers
 from typing import Optional
 
+logger = logging.getLogger('ups-battery-monitor')
+
 
 def alert_soh_below_threshold(
-    logger: logging.Logger,
     current_soh: float,
     threshold_soh: float,
     days_to_replacement: Optional[float] = None
@@ -15,7 +16,6 @@ def alert_soh_below_threshold(
     Log SoH alert to journald.
 
     Args:
-        logger: Configured logger instance
         current_soh: Current state of health (0.0-1.0)
         threshold_soh: Alert threshold (0.0-1.0)
         days_to_replacement: Predicted days until SoH < threshold (or None)
@@ -37,7 +37,6 @@ def alert_soh_below_threshold(
 
 
 def alert_runtime_below_threshold(
-    logger: logging.Logger,
     runtime_at_100_percent: float,
     threshold_minutes: float
 ):
@@ -45,7 +44,6 @@ def alert_runtime_below_threshold(
     Log runtime alert to journald.
 
     Args:
-        logger: Configured logger instance
         runtime_at_100_percent: Predicted runtime at full charge (minutes)
         threshold_minutes: Alert threshold (minutes)
 

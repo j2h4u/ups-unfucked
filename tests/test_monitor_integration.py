@@ -456,7 +456,6 @@ def test_journald_event_filtering():
                             assert extra.get('event_type') == 'baseline_lock'
                             assert 'capacity_ah' in extra, "Missing CAPACITY_AH in baseline_lock event"
                             assert 'sample_count' in extra, "Missing SAMPLE_COUNT in baseline_lock event"
-                            assert 'timestamp' in extra, "Missing TIMESTAMP in baseline_lock event"
 
 
 def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):

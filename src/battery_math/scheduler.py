@@ -49,7 +49,7 @@ class SchedulerDecision:
 def evaluate_test_scheduling(
     sulfation_score: float,
     cycle_roi: float,
-    soh_percent: float,
+    soh_fraction: float,
     days_since_last_test: float,
     last_blackout_timestamp: Optional[str],
     active_blackout_credit: Optional[dict],
@@ -61,7 +61,7 @@ def evaluate_test_scheduling(
     Args:
         sulfation_score: Current sulfation level [0.0, 1.0] where 1.0 = critical
         cycle_roi: Return-on-investment for discharge [-1.0, 1.0]
-        soh_percent: State of health as decimal [0.0, 1.0]
+        soh_fraction: State of health as decimal [0.0, 1.0]
         days_since_last_test: Days elapsed since last upscmd (inf if never tested)
         last_blackout_timestamp: ISO8601 timestamp of most recent natural blackout, or None
         active_blackout_credit: Dict with 'active', 'credit_expires' fields, or None
@@ -83,8 +83,8 @@ def evaluate_test_scheduling(
     now = datetime.now(timezone.utc)
 
     # GATE 1: SoH floor (hard block)
-    if soh_percent < SOH_FLOOR:
-        floor_percent = int(soh_percent * 100)
+    if soh_fraction < SOH_FLOOR:
+        floor_percent = int(soh_fraction * 100)
         next_eligible = (now + timedelta(days=30)).isoformat()
         return SchedulerDecision(
             action='block_test',

@@ -140,7 +140,8 @@ class NUTClient:
             parsed = self._parse_var_line(response)
             if parsed is not None:
                 return parsed[1]
-            logger.error(f"Unexpected NUT response: {response}")
+            logger.error(f"Unexpected NUT response for {var_name}: {response}",
+                         extra={'event_type': 'nut_unexpected_response', 'var_name': var_name})
             return None
 
     _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB
@@ -193,12 +194,12 @@ class NUTClient:
             self.sock.sendall(f'LIST VAR {self.ups_name}\n'.encode())
             raw = self._recv_until(f'END LIST VAR {self.ups_name}')
 
-            result = {}
+            ups_vars = {}
             for line in raw.splitlines():
                 parsed = self._parse_var_line(line)
                 if parsed is not None:
-                    result[parsed[0]] = parsed[1]
-            return result
+                    ups_vars[parsed[0]] = parsed[1]
+            return ups_vars
 
     def send_instcmd(self, cmd_name: str, cmd_param: Optional[str] = None) -> Tuple[bool, str]:
         """
@@ -222,7 +223,7 @@ class NUTClient:
 
         Protocol flow (RFC 9271):
             1. USERNAME upsmon    → OK
-            2. PASSWORD           → OK  (v3.0 assumes upsd.users permits upsmon without password)
+            2. PASSWORD           → OK  (requires upsd.users to allow passwordless auth for upsmon)
             3. LOGIN <upsname>    → OK
             4. INSTCMD <upsname> <cmd> [param] → OK or ERR
             5. LOGOUT (implicit via socket close)

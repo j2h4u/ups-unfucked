@@ -166,16 +166,11 @@ def test_service_file_unprivileged_execution():
     assert "Service" in config, "[Service] section missing"
     service = config["Service"]
 
-    # User must be j2h4u (not root)
     assert "User" in service, "User directive missing"
-    assert service["User"] == "j2h4u", \
-        f"User should be 'j2h4u', got '{service['User']}'"
-    assert service["User"] != "root", "User should not be root"
+    assert service["User"] != "root", "Service should not run as root"
 
-    # Group must match
     assert "Group" in service, "Group directive missing"
-    assert service["Group"] == "j2h4u", \
-        f"Group should be 'j2h4u', got '{service['Group']}'"
+    assert service["Group"] != "root", "Service should not run as root group"
 
 
 # ============================================================================

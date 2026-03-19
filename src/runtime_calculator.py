@@ -4,6 +4,7 @@ Production wrapper: applies 24h cap for zero-load to prevent false LB flags.
 """
 
 from src.battery_math.peukert import peukert_runtime_hours as _peukert_runtime_hours
+from src.battery_math.peukert import runtime_minutes as _kernel_runtime_minutes
 
 
 def peukert_runtime_hours(
@@ -37,17 +38,12 @@ def runtime_minutes(
 ) -> float:
     """Predict remaining battery runtime in minutes.
 
-    Production wrapper — delegates to battery_math kernel via the local
-    peukert_runtime_hours (which applies the 24h zero-load cap).
-
-    Returns 0.0 if SoC=0. Returns capped value (via peukert_runtime_hours) if load=0.
+    Production wrapper — applies 24h cap for zero load (kernel returns 0.0,
+    which would trigger a false LB flag), then delegates to kernel.
     """
-    if soc <= 0:
-        return 0.0
-
-    T_hours = peukert_runtime_hours(
-        load_percent, capacity_ah, peukert_exponent,
-        nominal_voltage, nominal_power_watts
-    ) * soc * soh
-
-    return max(0.0, T_hours * 60)
+    if load_percent <= 0:
+        return 24.0 * 60  # 24h cap in minutes
+    return _kernel_runtime_minutes(
+        soc, load_percent, capacity_ah, soh,
+        peukert_exponent, nominal_voltage, nominal_power_watts
+    )

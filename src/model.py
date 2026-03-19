@@ -98,34 +98,47 @@ class BatteryModel:
         """
         Load model.json from disk or initialize with standard VRLA curve.
 
-        If file exists: parse JSON
+        If file exists: parse JSON, apply defaults, validate
         If missing: create default VRLA curve
-        If malformed: log error, initialize with default curve (B3 fix: don't re-raise)
+        If malformed JSON: backup corrupt file to .corrupt, start fresh
+        If unreadable (permission/IO error): raise SystemExit to prevent
+            silent fallback that would overwrite good data on next save()
+
+        Raises:
+            SystemExit: If model.json exists but cannot be read (OSError).
         """
         if self.model_path.exists():
             try:
                 with open(self.model_path, 'r') as f:
                     self.data = json.load(f)
-
-                # Schema validation — check for required keys
-                required_keys = {'lut', 'soh', 'physics'}
-                missing_keys = required_keys - set(self.data.keys())
-                if missing_keys:
-                    logger.warning(f"Model missing required keys: {missing_keys}; using default values")
-
                 self._seen_timestamps = {
                     e['timestamp'] for e in self.data.get('lut', []) if 'timestamp' in e
                 }
                 logger.info(f"Loaded model from {self.model_path}")
             except json.JSONDecodeError as e:
-                logger.error(f"Malformed model.json: {e}; initializing with default VRLA curve")
+                backup = self.model_path.with_suffix('.json.corrupt')
+                logger.error(f"Malformed model.json: {e}; backing up to {backup.name}, starting fresh")
+                try:
+                    self.model_path.rename(backup)
+                except OSError:
+                    pass
                 self.data = self._default_vrla_lut()
             except OSError as e:
-                logger.error(f"Cannot read {self.model_path}: {e}; initializing with default VRLA curve")
-                self.data = self._default_vrla_lut()
+                raise SystemExit(f"Cannot read {self.model_path}: {e}") from e
         else:
             logger.info("Model file not found; initializing with standard VRLA curve")
             self.data = self._default_vrla_lut()
+
+        self._apply_defaults()
+        self._clamp_physics()
+        self._validate_lut()
+
+    def _apply_defaults(self):
+        """Set default values for optional fields not present in loaded data."""
+        required_keys = {'lut', 'soh', 'physics'}
+        missing_keys = required_keys - set(self.data.keys())
+        if missing_keys:
+            logger.warning(f"Model missing required keys: {missing_keys}; using default values")
 
         self.data.setdefault('sulfation_history', [])
         self.data.setdefault('discharge_events', [])
@@ -139,7 +152,8 @@ class BatteryModel:
         self.data.setdefault('test_block_reason', None)
         self.data.setdefault('blackout_credit', None)
 
-        # Clamp physics values to sane ranges (defense against corrupted model.json)
+    def _clamp_physics(self):
+        """Clamp physics values and validate scheduling field types."""
         physics = self.data.get('physics', {})
         if 'peukert_exponent' in physics:
             physics['peukert_exponent'] = max(1.0, min(1.5, physics['peukert_exponent']))
@@ -148,13 +162,24 @@ class BatteryModel:
             logger.warning(f"model.json soh={soh} out of range, clamping to [0, 1]")
             self.data['soh'] = max(0.0, min(1.0, soh))
 
-        # Validate critical numerics that would cause division-by-zero or math errors
         capacity_ref = self.data.get('full_capacity_ah_ref')
         if capacity_ref is not None and (not isinstance(capacity_ref, (int, float)) or capacity_ref <= 0):
             logger.warning(f"model.json full_capacity_ah_ref={capacity_ref} invalid, resetting to 7.2")
             self.data['full_capacity_ah_ref'] = 7.2
 
-        # Validate LUT entries — drop entries with missing or non-numeric v/soc
+        for field in ('last_upscmd_timestamp', 'scheduled_test_timestamp'):
+            val = self.data.get(field)
+            if val is not None and not isinstance(val, str):
+                logger.warning(f"model.json {field}={val!r} is not a string, clearing")
+                self.data[field] = None
+
+        credit = self.data.get('blackout_credit')
+        if credit is not None and not isinstance(credit, dict):
+            logger.warning(f"model.json blackout_credit is not a dict, clearing")
+            self.data['blackout_credit'] = None
+
+    def _validate_lut(self):
+        """Drop LUT entries with missing or non-numeric v/soc values."""
         lut = self.data.get('lut', [])
         valid_lut = []
         for entry in lut:
@@ -181,8 +206,8 @@ class BatteryModel:
         - 10.5V: cutoff anchor (0%, physical limit)
         """
         return {
-            'full_capacity_ah_ref': 7.2,  # Estimated from UT850EG 425W
-            'soh': 1.0,  # State of Health (100% = new battery)
+            'full_capacity_ah_ref': 7.2,
+            'soh': 1.0,
             'physics': {
                 'peukert_exponent': 1.2,
                 'nominal_voltage': 12.0,
@@ -209,9 +234,9 @@ class BatteryModel:
                 {'date': datetime.now().strftime('%Y-%m-%d'), 'soh': 1.0}
             ],
             # Enterprise-equivalent counters (accumulated over battery lifetime)
-            'battery_install_date': None,  # Set on first startup, reset on battery replacement
+            'battery_install_date': None,
             'cycle_count': 0,              # OL→OB transitions (= transfer count)
-            'cumulative_on_battery_sec': 0.0,  # Total seconds spent on battery
+            'cumulative_on_battery_sec': 0.0,
         }
 
     # --- Physics getters ---
@@ -374,8 +399,9 @@ class BatteryModel:
         Atomically write model to disk with history pruning.
 
         Prunes soh_history, r_internal_history, capacity_estimates,
-        sulfation_history, and discharge_events to prevent unbounded growth.
-        Use only at discharge event completion, not on every sample.
+        sulfation_history, discharge_events (each capped at 30 entries),
+        and LUT (deduplicates measured entries within ±0.1V, keeps most
+        recent 200) to prevent unbounded growth.
         """
         self._cap_history_entries('soh_history')
         self._cap_history_entries('r_internal_history')
@@ -426,7 +452,16 @@ class BatteryModel:
         return self.data.get('soh_history', [])
 
     def add_r_internal_entry(self, date, r_ohm, v_before, v_sag, load_percent, event_type):
-        """Add internal resistance measurement from voltage sag."""
+        """Add internal resistance measurement from voltage sag observation.
+
+        Args:
+            date: ISO8601 date string (e.g., '2026-03-16')
+            r_ohm: Calculated internal resistance (ohms)
+            v_before: Battery voltage before load transition (V)
+            v_sag: Battery voltage during sag (V)
+            load_percent: UPS load at time of measurement (0-100)
+            event_type: EventType enum value; stored as event_type.name string
+        """
         if 'r_internal_history' not in self.data:
             self.data['r_internal_history'] = []
         self.data['r_internal_history'].append({
@@ -469,7 +504,10 @@ class BatteryModel:
         }
         self.data['capacity_estimates'].append(entry)
         self._cap_history_entries('capacity_estimates')
-        self.save()
+        try:
+            self.save()
+        except OSError as e:
+            logger.error(f"Failed to persist capacity estimate: {e}", exc_info=True)
 
     def get_capacity_estimates(self) -> List[Dict]:
         """
@@ -508,7 +546,9 @@ class BatteryModel:
                 'latest_ah': float | None,  # Latest measured capacity
                 'rated_ah': float,  # Firmware rated capacity (7.2 for UT850)
                 'converged': bool,  # True if count >= 3 AND CoV < 0.10
-                'capacity_ah_measured': float | None  # Measured capacity baseline (for new battery detection)
+                'capacity_ah_measured': float | None  # Baseline stored on first convergence;
+                    # None until first convergence. Distinct from latest_ah — this is the
+                    # locked baseline used for new-battery detection, not the most recent measurement.
             }
         """
         estimates = self.data.get('capacity_estimates', [])

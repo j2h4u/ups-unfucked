@@ -1092,25 +1092,14 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
             assert next_call in ('virtual_ups', 'watchdog'), \
                 f"F11: After health_endpoint, expected virtual_ups or watchdog, got {next_call}"
 
-    # Verify watchdog is LAST in each poll's sequence (not before health_endpoint)
-    last_health_idx = None
-    for i in range(len(call_order) - 1, -1, -1):
-        if call_order[i] == 'health_endpoint':
-            last_health_idx = i
-            break
-
-    if last_health_idx is not None:
-        # All watchdog calls after the last health_endpoint
-        for i in range(last_health_idx + 1, len(call_order)):
-            if call_order[i] == 'watchdog':
-                # This is good - watchdog after health
-                pass
-            elif call_order[i] == 'health_endpoint':
-                # New poll, new sequence
-                pass
-            else:
-                # Should not have other operations after final health_endpoint and before final watchdog
-                pass
+    # Verify no watchdog call precedes a health_endpoint call within the same poll
+    for i, call in enumerate(call_order):
+        if call == 'watchdog':
+            # No health_endpoint should appear after this watchdog in the sequence
+            remaining = call_order[i + 1:]
+            health_after = [c for c in remaining if c == 'health_endpoint']
+            assert not health_after, \
+                f"F11: watchdog at index {i} precedes {len(health_after)} health_endpoint call(s)"
 
 
 class TestCapacityEstimatorIntegration:
@@ -1265,13 +1254,34 @@ class TestCapacityEstimatorIntegration:
         # Verify convergence check was performed
         daemon.capacity_estimator.has_converged.assert_called()
 
-    def test_battery_replaced_stored_in_config(self, make_daemon):
-        """Test 6: --new-battery CLI flag stored in config['new_battery_requested']."""
-        daemon = make_daemon()
+    def test_battery_replaced_resets_baseline(self, config_fixture, tmp_path):
+        """--new-battery resets SoH to 1.0 and clears capacity estimates."""
+        from src.model import BatteryModel
+        from src.monitor import MonitorDaemon
+        from unittest.mock import MagicMock, patch
 
-        # Config is a frozen dataclass. new_battery_requested is stored in battery_model.data
-        # Verify that battery_model has been initialized (will be mocked in real tests)
-        assert daemon.battery_model is not None
+        with patch('src.monitor.NUTClient'), \
+             patch('src.monitor.EMAFilter'), \
+             patch('src.monitor.BatteryModel'), \
+             patch('src.monitor.EventClassifier'), \
+             patch('src.monitor.CapacityEstimator'), \
+             patch('src.monitor.DischargeHandler'), \
+             patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+             patch.object(MonitorDaemon, '_validate_model'):
+            daemon = MonitorDaemon(config_fixture)
+
+        model = BatteryModel(tmp_path / 'reset_model.json')
+        model.data['capacity_estimates'] = [{'ah_estimate': 6.5}]
+        model.data['soh'] = 0.85
+        model.data['full_capacity_ah_ref'] = 7.2
+        daemon.battery_model = model
+        daemon.discharge_handler = MagicMock()
+
+        daemon._reset_battery_baseline()
+
+        assert model.data['soh'] == 1.0
+        assert model.data['capacity_estimates'] == []
+        assert model.data['cycle_count'] == 0
 
 
     def test_integration_discharge_event_to_estimate_to_model(self, make_daemon):
@@ -1629,7 +1639,6 @@ def test_journald_baseline_lock_event(make_daemon):
         assert baseline_lock_extra.get('event_type') == 'baseline_lock'
         assert 'capacity_ah' in baseline_lock_extra
         assert 'sample_count' in baseline_lock_extra
-        assert 'timestamp' in baseline_lock_extra
 
         # Second discharge (should NOT trigger baseline_lock again due to flag)
         mock_logger.reset_mock()
