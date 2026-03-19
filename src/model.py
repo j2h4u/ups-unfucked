@@ -90,8 +90,12 @@ def atomic_write(filepath, content: str) -> None:
     except Exception as e:
         # Clean up temp file on write-phase or rename-phase error
         if tmp_path is not None:
-            tmp_path.unlink(missing_ok=True)
-        logger.error(f"Atomic write failed: {e}", exc_info=True)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass  # Don't mask the original exception
+        logger.error(f"Atomic write failed: {e}", exc_info=True,
+                     extra={'event_type': 'atomic_write_failed'})
         raise
 
 
@@ -151,24 +155,7 @@ class BatteryModel:
                 logger.info("Loaded model from %s", self.model_path,
                             extra={'event_type': 'model_loaded', 'model_path': str(self.model_path)})
             except json.JSONDecodeError as e:
-                backup = self.model_path.with_suffix('.json.corrupt')
-                logger.error("Malformed model.json: %s; backing up to %s, starting fresh", e, backup.name,
-                             extra={'event_type': 'model_corrupt', 'model_path': str(self.model_path)})
-                try:
-                    self.model_path.rename(backup)
-                except OSError:
-                    # Target may already exist from a previous corrupt load;
-                    # use timestamped name to avoid overwriting earlier backup
-                    ts = datetime.now().strftime('%Y%m%dT%H%M%S')
-                    fallback = self.model_path.with_suffix(f'.json.corrupt.{ts}')
-                    try:
-                        self.model_path.rename(fallback)
-                        logger.warning("Backed up corrupt model.json to %s (primary target existed)",
-                                       fallback.name, extra={'event_type': 'model_backup_fallback'})
-                    except OSError as rename_err:
-                        logger.error("Cannot back up corrupt model.json: %s — refusing to overwrite",
-                                     rename_err, extra={'event_type': 'model_backup_failed'})
-                        raise SystemExit(f"Cannot back up corrupt {self.model_path}: {rename_err}") from rename_err
+                self._backup_corrupt_model(e)
                 self.data = self._default_vrla_lut()
             except OSError as e:
                 raise SystemExit(f"Cannot read {self.model_path}: {e}") from e
@@ -181,6 +168,30 @@ class BatteryModel:
         self._sync_physics_from_data()
         self._validate_and_clamp_fields()
         self._validate_lut()
+
+    def _backup_corrupt_model(self, parse_error: Exception) -> None:
+        """Back up corrupt model.json, raising SystemExit if backup fails."""
+        backup = self.model_path.with_suffix('.json.corrupt')
+        logger.error("Malformed model.json: %s; backing up to %s, starting fresh",
+                     parse_error, backup.name,
+                     extra={'event_type': 'model_corrupt', 'model_path': str(self.model_path)})
+        try:
+            self.model_path.rename(backup)
+        except OSError:
+            # Target may already exist from a previous corrupt load;
+            # use timestamped name to avoid overwriting earlier backup
+            ts = datetime.now().strftime('%Y%m%dT%H%M%S')
+            fallback = self.model_path.with_suffix(f'.json.corrupt.{ts}')
+            try:
+                self.model_path.rename(fallback)
+                logger.warning("Backed up corrupt model.json to %s (primary target existed)",
+                               fallback.name, extra={'event_type': 'model_backup_fallback'})
+            except OSError as rename_err:
+                logger.error("Cannot back up corrupt model.json: %s — refusing to overwrite",
+                             rename_err, extra={'event_type': 'model_backup_failed'})
+                raise SystemExit(
+                    f"Cannot back up corrupt {self.model_path}: {rename_err}"
+                ) from parse_error
 
     def _sync_physics_from_data(self):
         """Populate self.physics from self.data['physics'] dict."""
