@@ -14,8 +14,6 @@ fi
 # Parse JSON safely with jq
 sulfation=$(jq -r '.sulfation_score // "null"' "$HEALTH_FILE" 2>/dev/null)
 next_test=$(jq -r '.next_test_timestamp // null' "$HEALTH_FILE" 2>/dev/null)
-blackout_credit=$(jq -r '.natural_blackout_credit // null' "$HEALTH_FILE" 2>/dev/null)
-
 # Exit if jq failed or sulfation not available
 if [[ "$sulfation" == "null" || "$sulfation" == "" ]]; then
     exit 0
@@ -43,12 +41,6 @@ fi
 
 # Format output
 output="Battery health: Sulfation ${score_pct}% · Next test ${test_str}"
-
-# Add blackout credit if available
-if [[ "$blackout_credit" != "null" && "$blackout_credit" != "" ]]; then
-    credit_pct=$(printf "%.0f" "$(echo "$blackout_credit * 100" | bc -l)")
-    output="${output} · Blackout credit ${credit_pct}%"
-fi
 
 echo "$output"
 exit 0

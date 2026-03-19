@@ -101,7 +101,7 @@ if [[ -n "$replacement_date" ]]; then
     # Color red if within 3 months
     if [[ "$replacement_date" =~ ^[0-9]{4}-[0-9]{2} ]]; then
         current_date=$(date +%s)
-        repl_date_sec=$(date -d "${replacement_date%-*}-${replacement_date#*-}-01" +%s 2>/dev/null || echo "$current_date")
+        repl_date_sec=$(date -d "$replacement_date" +%s 2>/dev/null || echo "$current_date")
         days_diff=$(( ($repl_date_sec - $current_date) / 86400 ))
         if [[ $days_diff -le 90 ]]; then
             repl_color="$RED"

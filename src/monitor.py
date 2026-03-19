@@ -400,7 +400,7 @@ class MonitorDaemon:
         """Delegate to DischargeHandler."""
         self._sync_handler_refs()
         self.discharge_handler._log_discharge_prediction(
-            self.discharge_buffer, self.current_metrics.soc or 0.0)
+            self.discharge_buffer, self.current_metrics.soc)
 
     # --- Battery baseline reset (stays here — touches rls_ir_k) ---
 

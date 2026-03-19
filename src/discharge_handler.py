@@ -424,7 +424,7 @@ class DischargeHandler:
                 'predicted_minutes': f'{self.discharge_predicted_runtime:.1f}',
                 'actual_minutes': f'{actual_minutes:.1f}',
                 'avg_load_percent': f'{avg_load:.1f}',
-                'start_soc': f'{current_soc:.3f}',
+                'start_soc': f'{current_soc:.3f}' if current_soc is not None else 'N/A',
             })
 
         self.discharge_predicted_runtime = None
