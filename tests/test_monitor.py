@@ -1562,16 +1562,16 @@ def test_journald_capacity_event_logged(make_daemon):
         capacity_call = calls[0]
         assert capacity_call is not None
 
-        # Check extra dict has required fields
-        if 'extra' in capacity_call.kwargs:
-            extra = capacity_call.kwargs['extra']
-            assert extra.get('event_type') == 'capacity_measurement'
-            assert 'capacity_ah' in extra
-            assert 'confidence_percent' in extra
-            assert 'sample_count' in extra
-            assert 'delta_soc_percent' in extra
-            assert 'duration_sec' in extra
-            assert 'load_avg_percent' in extra
+        # Check extra dict has required fields (unconditional — extra must be present)
+        assert 'extra' in capacity_call.kwargs, "capacity_measurement log call missing extra= dict"
+        extra = capacity_call.kwargs['extra']
+        assert extra.get('event_type') == 'capacity_measurement'
+        assert 'capacity_ah' in extra
+        assert 'confidence_percent' in extra
+        assert 'sample_count' in extra
+        assert 'delta_soc_percent' in extra
+        assert 'duration_sec' in extra
+        assert 'load_avg_percent' in extra
 
 
 def test_journald_baseline_lock_event(make_daemon):
