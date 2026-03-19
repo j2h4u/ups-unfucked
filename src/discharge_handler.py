@@ -254,7 +254,9 @@ class DischargeHandler:
                 sulfation_score=sulfation_state.score,
             )
         except (ValueError, TypeError) as e:
-            logger.warning(f"Sulfation scoring failed: {e}", exc_info=True)
+            logger.warning(f"Sulfation scoring failed: {e}", exc_info=True,
+                          extra={'event_type': 'sulfation_scoring_failed',
+                                 'error_class': type(e).__name__})
             sulfation_state = None
             roi = None
 
