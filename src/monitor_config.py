@@ -225,29 +225,7 @@ except (ImportError, OSError, ValueError) as e:
 
 
 def safe_save(model: BatteryModel) -> None:
-    """Save model to disk, log errors gracefully if disk full.
-
-    PERSISTENCE MODEL: Memory is source of truth. model.json is written on
-    real events (discharge complete, battery replacement, capacity convergence,
-    graceful shutdown) and on capacity estimate accumulation — NOT on every poll
-    or sag measurement. Between events, the file can be safely edited externally;
-    daemon picks up changes on restart.
-
-    If you need to edit model.json while daemon is running:
-        systemctl stop ups-battery-monitor
-        # edit model.json
-        systemctl start ups-battery-monitor
-
-    Args:
-        model: BatteryModel instance to persist
-
-    Side effects:
-        - Logs to logger at WARNING level if save fails
-        - Does NOT raise exception; allows daemon to continue
-
-    Raises:
-        None; errors are logged only
-    """
+    """Save model to disk; log and swallow errors so daemon continues."""
     try:
         model.save()
     except (OSError, TypeError, ValueError) as e:

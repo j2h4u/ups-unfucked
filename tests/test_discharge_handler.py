@@ -1,4 +1,4 @@
-"""Tests for Phase 17 blackout credit and discharge classification logic."""
+"""Tests for blackout credit and discharge classification logic."""
 
 import pytest
 from datetime import datetime, timezone, timedelta

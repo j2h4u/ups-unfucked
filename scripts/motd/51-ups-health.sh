@@ -24,7 +24,7 @@ MODEL_FILE="${HOME}/.config/ups-battery-monitor/model.json"
 # Path to health endpoint (tmpfs, written every poll)
 HEALTH_FILE="/run/ups-battery-monitor/ups-health.json"
 
-# Read virtual UPS metrics (Phase 3 infrastructure)
+# Read virtual UPS metrics
 # Format: `upsc` returns key: value pairs
 ups_data=$(upsc cyberpower-virtual@localhost 2>/dev/null) || exit 0
 

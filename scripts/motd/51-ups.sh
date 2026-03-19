@@ -105,7 +105,7 @@ if [[ -n "$latest_ah" && "$latest_ah" != "null" ]]; then
     echo -e "  Capacity: ${latest_ah}Ah (measured) vs ${rated_ah}Ah (rated) · ${status_color}${status_badge}${NC} · ${sample_count}/3 samples · ${confidence_pct}% confidence"
 fi
 
-# Phase 13: Check for new battery detection flag
+# Check for new battery detection flag
 if [[ "$(jq -r '.new_battery_detected // false' "$MODEL_FILE")" == "true" ]]; then
     TIMESTAMP=$(jq -r '.new_battery_detected_timestamp // "unknown"' "$MODEL_FILE")
     echo "  ⚠️  Possible new battery detected (flagged at $TIMESTAMP)"

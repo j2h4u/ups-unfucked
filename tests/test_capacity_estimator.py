@@ -361,7 +361,7 @@ class TestWeightedAveraging:
 
 
 class TestValidationGates:
-    """Expert panel validation gates (Phase 12 Plan 03)."""
+    """Expert panel validation gates."""
 
     def test_real_discharge_validation(self, synthetic_discharge_47min_fixture):
         """

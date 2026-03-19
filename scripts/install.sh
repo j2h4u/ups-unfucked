@@ -221,7 +221,7 @@ MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 HEALTH_SRC="$REPO_ROOT/scripts/motd/51-ups-health.sh"
 HEALTH_DST="$MOTD_DIR/51-ups-health.sh"
 
-# Install sulfation status script (Phase 16)
+# Install sulfation status script
 SULFATION_SRC="$REPO_ROOT/scripts/motd/55-sulfation.sh"
 SULFATION_DST="$MOTD_DIR/55-sulfation.sh"
 

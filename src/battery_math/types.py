@@ -20,7 +20,7 @@ class BatteryState:
     """Rated capacity from manufacturer label (Ah)"""
 
     capacity_ah_measured: Optional[float]
-    """Measured capacity from discharge analysis (Ah), None until Phase 12 converges"""
+    """Measured capacity from discharge analysis (Ah), None until capacity estimation converges"""
 
     lut: tuple
     """Voltage→SoC lookup table (immutable tuple of tuples: ((V, SoC, source), ...))"""

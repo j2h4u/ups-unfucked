@@ -159,7 +159,7 @@ class TestBayesianBlend:
         # soh_raw = 1.947/7.2 = 0.27
         # With full weight: soh = 0.50*(1-1.0) + 0.27*1.0 = 0.27
         # The reference (0.50) should be almost completely overridden
-        assert abs(soh_new - 0.50) > 0.1, "Full ΔSoC should override reference"
+        assert 0.20 <= soh_new <= 0.35, f"Full ΔSoC should override reference to ~0.27, got {soh_new}"
 
     def test_soh_blend_with_reference(self):
         """Partial ΔSoC → blended result between reference and measured."""

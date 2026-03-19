@@ -8,28 +8,6 @@ import pytest
 
 
 @pytest.fixture
-def mock_socket_ok():
-    """
-    Fixture that returns valid NUT protocol response string.
-
-    Standard TCP response format (text-based key-value), simulating successful
-    communication with NUT upsd daemon. Includes responses for common UPS variables:
-    battery.voltage, ups.load, ups.status, input.voltage.
-    """
-    mock_sock = Mock(spec=socket.socket)
-
-    def mock_recv(bufsize):
-        return b'VAR cyberpower battery.voltage 13.4\n'
-
-    mock_sock.recv = Mock(side_effect=mock_recv)
-    mock_sock.sendall = Mock(return_value=None)
-    mock_sock.connect = Mock(return_value=None)
-    mock_sock.close = Mock(return_value=None)
-
-    return mock_sock
-
-
-@pytest.fixture
 def mock_socket_timeout():
     """
     Fixture that simulates socket.timeout exception on recv().
@@ -99,19 +77,6 @@ def temporary_model_path():
     yield tmp_path
 
     Path(tmp_path).unlink(missing_ok=True)
-
-
-@pytest.fixture
-def nut_protocol_samples():
-    """Real NUT protocol response samples for parsing tests."""
-    return {
-        'voltage': 'VAR cyberpower battery.voltage 13.4',
-        'load': 'VAR cyberpower ups.load 25',
-        'status': 'VAR cyberpower ups.status OL',
-        'runtime': 'VAR cyberpower battery.runtime 3600',
-        'charge': 'VAR cyberpower battery.charge 100',
-        'input_voltage': 'VAR cyberpower input.voltage 230',
-    }
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """Tests for discharge event logging and persistence (RPT-03).
 
-Phase 16 integration test scaffold for discharge event logging layer.
+Integration test scaffold for discharge event logging layer.
 Tests cover:
 - Appending discharge events to model
 - Schema validation (required fields)

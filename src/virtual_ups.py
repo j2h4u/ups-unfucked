@@ -1,8 +1,8 @@
 """Virtual UPS module for tmpfs-based atomic metric writing and NUT format compliance.
 
-Phase 3 infrastructure: Writes metrics to /run/ups-battery-monitor/ups-virtual.dev in NUT format
-without SSD wear. Enables transparent data source switching for monitoring tools
-(upsmon, Grafana) by providing a virtual UPS device that reports calculated values.
+Writes metrics to /run/ups-battery-monitor/ups-virtual.dev in NUT format without SSD wear.
+Enables transparent data source switching for monitoring tools (upsmon, Grafana) by providing
+a virtual UPS device that reports calculated values.
 
 Key responsibilities:
 - write_virtual_ups_dev(): Atomic tmpfs write with fsync safety
@@ -74,7 +74,7 @@ def compute_ups_status_override(
     Determines the correct ups.status value including LB (LOW_BATTERY) flag based on
     event classification and remaining runtime. This replaces unreliable firmware flags.
 
-    Pattern from RESEARCH.md Phase 3:
+    Decision logic:
     - ONLINE → "OL"
     - Any discharge + time_rem < 2 min → "OB DISCHRG LB" (F41 safety floor)
     - BLACKOUT_TEST → "OB DISCHRG" (no LB, allow calibration data collection)

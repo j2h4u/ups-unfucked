@@ -184,7 +184,7 @@ class DischargeHandler:
         if soh_new < self.soh_threshold:
             days_to_replacement = None
             if replacement_prediction:
-                slope, intercept, r2, replacement_date = replacement_prediction
+                *_, replacement_date = replacement_prediction
                 if replacement_date and replacement_date != 'overdue':
                     try:
                         repl_dt = datetime.strptime(replacement_date, '%Y-%m-%d')

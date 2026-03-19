@@ -697,7 +697,7 @@ class TestFdatasyncOptimization:
 
 
 class TestCapacityEstimates:
-    """Test BatteryModel capacity_estimates array for Phase 12 Plan 02."""
+    """Test BatteryModel capacity_estimates array."""
 
     def test_add_capacity_estimate_creates_array_if_missing(self, tmp_path):
         """Test 1: model.add_capacity_estimate() creates array if not present."""
@@ -947,11 +947,11 @@ class TestSoHHistoryVersioning:
         assert history[2]['capacity_ah_ref'] == 6.9
 
 
-class TestPhase17SchedulingSchema:
-    """Phase 17 scheduling state schema backward compatibility tests."""
+class TestSchedulingSchema:
+    """Scheduling state schema backward compatibility tests."""
 
-    def test_phase17_schema_fields_initialized(self, temporary_model_path):
-        """Phase 17 fields initialized to None on new model creation."""
+    def test_scheduling_schema_fields_initialized(self, temporary_model_path):
+        """Scheduling fields initialized to None on new model creation."""
         model = BatteryModel(temporary_model_path)
         assert model.data.get('last_upscmd_timestamp') is None
         assert model.data.get('last_upscmd_type') is None
@@ -961,11 +961,11 @@ class TestPhase17SchedulingSchema:
         assert model.data.get('test_block_reason') is None
         assert model.data.get('blackout_credit') is None
 
-    def test_phase17_fields_persist_after_save(self, temporary_model_path):
-        """Phase 17 fields persist correctly through save/reload cycle."""
+    def test_scheduling_fields_persist_after_save(self, temporary_model_path):
+        """Scheduling fields persist correctly through save/reload cycle."""
         model = BatteryModel(temporary_model_path)
 
-        # Set Phase 17 fields
+        # Set scheduling fields
         model.data['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
         model.data['last_upscmd_type'] = 'test.battery.start.deep'
         model.data['last_upscmd_status'] = 'OK'
@@ -1026,11 +1026,11 @@ class TestPhase17SchedulingSchema:
         assert model.data['last_upscmd_type'] == 'test.battery.start.deep'
         assert model.data['last_upscmd_status'] == 'OK'
 
-    def test_phase16_model_loads_with_phase17_code(self, temporary_model_path):
-        """Phase 16 model.json (no Phase 17 fields) loads correctly with Phase 17 code."""
+    def test_legacy_model_loads_with_scheduling_code(self, temporary_model_path):
+        """Legacy model.json (no scheduling fields) loads correctly with scheduling code."""
         import json
-        # Create Phase 16-style model.json (no Phase 17 fields)
-        phase16_data = {
+        # Create legacy model.json (no scheduling fields)
+        legacy_data = {
             'full_capacity_ah_ref': 7.2,
             'soh': 0.95,
             'physics': {},
@@ -1043,21 +1043,21 @@ class TestPhase17SchedulingSchema:
             'discharge_events': [],
         }
         with open(temporary_model_path, 'w') as f:
-            json.dump(phase16_data, f)
+            json.dump(legacy_data, f)
 
-        # Load with Phase 17 code
+        # Load with scheduling code
         model = BatteryModel(temporary_model_path)
 
-        # Verify Phase 17 fields are initialized
+        # Verify scheduling fields are initialized
         assert model.data.get('last_upscmd_timestamp') is None
         assert model.data.get('blackout_credit') is None
-        assert model.get_soh() == 0.95  # Phase 16 data still intact
+        assert model.get_soh() == 0.95  # Legacy data still intact
 
-    def test_phase17_fields_not_stripped_on_save(self, temporary_model_path):
-        """model.save() preserves Phase 17 fields (forward compatibility)."""
+    def test_scheduling_fields_not_stripped_on_save(self, temporary_model_path):
+        """model.save() preserves scheduling fields (forward compatibility)."""
         model = BatteryModel(temporary_model_path)
 
-        # Set Phase 17 fields
+        # Set scheduling fields
         model.data['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
         model.data['blackout_credit'] = {
             'active': True,

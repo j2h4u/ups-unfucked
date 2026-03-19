@@ -1,4 +1,4 @@
-"""Tests for precondition validator and test dispatch functions (Phase 17)."""
+"""Tests for precondition validator and test dispatch functions."""
 
 import pytest
 from datetime import datetime, timezone

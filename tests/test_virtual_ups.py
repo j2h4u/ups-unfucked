@@ -1,6 +1,6 @@
 """Test suite for virtual UPS tmpfs writing and NUT format compliance.
 
-Phase 3 requirements: VUPS-01 through SHUT-03 stubbed with comprehensive test structure.
+Requirements: VUPS-01 through SHUT-03 stubbed with comprehensive test structure.
 Tests ensure virtual UPS metrics are written atomically to tmpfs without SSD wear and
 format is fully NUT-compatible for transparent data source switching.
 """

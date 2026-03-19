@@ -261,13 +261,13 @@ class TestPeukertClampSkip:
 
 
 class TestSoHRecalibrationFlow:
-    """Tests for Phase 13 SoH recalibration and new battery detection."""
+    """Tests for SoH recalibration and new battery detection."""
 
     def test_soh_recalibration_flow(self, mock_daemon):
         """SOH-01,02,03 integration: measured capacity → SoH update → regression filter.
 
         Scenario:
-        1. Phase 12 capacity converges to 6.8Ah (3 deep discharge samples)
+        1. Capacity converges to 6.8Ah (3 deep discharge samples)
         2. Monitor updates SoH with capacity_ah_ref=6.8Ah tagged
         3. Old SoH entries (7.2Ah baseline) are kept in history
         4. Regression filters by baseline; only 6.8Ah entries used for trend
@@ -281,7 +281,7 @@ class TestSoHRecalibrationFlow:
             {'date': '2026-03-01', 'soh': 0.96, 'capacity_ah_ref': 7.2},
         ]
 
-        # Setup: Phase 12 capacity has converged to 6.8Ah (3 samples, CoV < 10%)
+        # Setup: capacity has converged to 6.8Ah (3 samples, CoV < 10%)
         mock_daemon.battery_model.data['capacity_estimates'] = [
             {'timestamp': '2026-02-15', 'ah_estimate': 6.7, 'confidence': 0.65, 'metadata': {}},
             {'timestamp': '2026-03-01', 'ah_estimate': 6.8, 'confidence': 0.78, 'metadata': {}},
@@ -309,7 +309,7 @@ class TestSoHRecalibrationFlow:
 
 
 def test_journald_event_filtering():
-    """Test 3 (Phase 14 Plan 02): Verify journald events can be queried by EVENT_TYPE.
+    """Verify journald events can be queried by EVENT_TYPE.
 
     Requirement: RPT-02 - journald events are queryable by EVENT_TYPE field.
 
@@ -460,7 +460,7 @@ def test_journald_event_filtering():
 
 
 def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
-    """Phase 14 Plan 03 Task 3: Verify health endpoint updates capacity fields across discharge cycles.
+    """Verify health endpoint updates capacity fields across discharge cycles.
 
     RPT-03 - Health endpoint capacity metrics persist and update correctly across multiple discharges.
     Integration test validates that _write_health_endpoint receives correct capacity parameters

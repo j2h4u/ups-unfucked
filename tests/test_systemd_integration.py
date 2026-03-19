@@ -2,7 +2,7 @@
 Systemd service configuration validation tests (OPS-01, OPS-03, OPS-04).
 
 These tests verify the systemd service file (systemd/ups-battery-monitor.service)
-meets Phase 5 requirements without requiring root or systemctl.
+meets requirements without requiring root or systemctl.
 
 Tests parse and validate the service file directly against systemd.service(5)
 specifications and project OPS requirements.

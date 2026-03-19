@@ -14,7 +14,7 @@ VRLA_REFERENCE_LUT = (
 
 @pytest.fixture
 def initial_battery_state():
-    """Healthy battery at start of Phase 12.1."""
+    """Healthy battery with default parameters."""
     return BatteryState(
         soh=1.0,
         peukert_exponent=1.2,
@@ -79,7 +79,7 @@ def test_battery_state_fields():
 
 
 def test_battery_state_measured_capacity_optional():
-    """capacity_ah_measured can be None (Phase 12.1 before convergence)."""
+    """capacity_ah_measured can be None (before convergence)."""
     state = BatteryState(
         soh=1.0,
         peukert_exponent=1.2,

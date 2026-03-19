@@ -314,7 +314,7 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     mock_model.get_peukert_exponent.return_value = 1.2
     mock_model.get_nominal_voltage.return_value = 12.0
     mock_model.get_nominal_power_watts.return_value = 425.0
-    # Phase 13: Mock convergence status (measured capacity not converged by default)
+    # Mock convergence status (measured capacity not converged by default)
     mock_model.get_convergence_status.return_value = {'converged': False, 'sample_count': 1}
     daemon.battery_model = mock_model
 
@@ -1104,7 +1104,7 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
 
 
 class TestCapacityEstimatorIntegration:
-    """Test MonitorDaemon integration with CapacityEstimator for Phase 12 Plan 02."""
+    """Test MonitorDaemon integration with CapacityEstimator."""
 
     def test_daemon_initializes_capacity_estimator(self, make_daemon):
         """Test 1: MonitorDaemon creates CapacityEstimator instance at init."""
@@ -1512,7 +1512,7 @@ def test_cli_battery_replaced():
 
 
 def test_journald_capacity_event_logged(make_daemon):
-    """Test 1 (Phase 14 Plan 02): Verify capacity_measurement event logged with structured fields.
+    """Verify capacity_measurement event logged with structured fields.
 
     Requirement: RPT-02 - journald logs capacity estimation events with EVENT_TYPE and custom fields.
 
@@ -1585,7 +1585,7 @@ def test_journald_capacity_event_logged(make_daemon):
 
 
 def test_journald_baseline_lock_event(make_daemon):
-    """Test 2 (Phase 14 Plan 02): Verify baseline_lock event logged once on convergence.
+    """Verify baseline_lock event logged once on convergence.
 
     Requirement: RPT-02 - journald logs baseline_lock events when convergence detected.
 
@@ -1662,7 +1662,7 @@ def test_journald_baseline_lock_event(make_daemon):
 
 
 def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
-    """Phase 14 Plan 03 Task 2: Verify health endpoint includes all capacity fields.
+    """Verify health endpoint includes all capacity fields.
 
     RPT-03 - Health endpoint exposes capacity metrics for Grafana scraping.
     """
@@ -1712,7 +1712,7 @@ def test_health_endpoint_capacity_fields(tmp_path, monkeypatch):
 
 
 def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
-    """Phase 14 Plan 03 Task 2: Verify convergence flag state matches input.
+    """Verify convergence flag state matches input.
 
     RPT-03 - Health endpoint reflects convergence status accurately.
     """
@@ -1753,7 +1753,7 @@ def test_health_endpoint_convergence_flag(tmp_path, monkeypatch):
 
 
 def test_health_endpoint_null_capacity_measured(tmp_path, monkeypatch):
-    """Phase 14 Plan 03 Task 2: Verify capacity_ah_measured is null when not measured.
+    """Verify capacity_ah_measured is null when not measured.
 
     Edge case: capacity_ah_measured should be null in JSON, not 0.0.
     """

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Live validation: Send INSTCMD test.battery.start.quick/deep to real UT850EG
 # Requires: NUT upsd running locally, CyberPower UPS configured
-# Purpose: Validate RFC 9271 INSTCMD protocol works on target hardware before Phase 17 scheduling
+# Purpose: Validate RFC 9271 INSTCMD protocol works on target hardware
 
 # Script usage
 usage() {

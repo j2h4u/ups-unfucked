@@ -1,4 +1,4 @@
-"""Tests for Phase 17 scheduling configuration schema and validation."""
+"""Tests for scheduling configuration schema and validation."""
 
 import pytest
 from src.monitor_config import SchedulingConfig, get_scheduling_config
