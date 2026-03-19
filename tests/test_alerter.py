@@ -10,7 +10,7 @@ def test_alert_soh_below_threshold(caplog):
     with caplog.at_level(logging.WARNING):
         alerter.alert_soh_below_threshold(0.78, 0.80, 45)
     assert len(caplog.records) > 0
-    assert caplog.records[0].levelname == "WARNING"
+    assert caplog.records[0].levelname == "ERROR"
     assert "78.0%" in caplog.text
 
 
@@ -19,7 +19,7 @@ def test_alert_runtime_below_threshold(caplog):
     with caplog.at_level(logging.WARNING):
         alerter.alert_runtime_below_threshold(18.0, 20.0)
     assert len(caplog.records) > 0
-    assert caplog.records[0].levelname == "WARNING"
+    assert caplog.records[0].levelname == "ERROR"
     assert "18 min" in caplog.text
 
 

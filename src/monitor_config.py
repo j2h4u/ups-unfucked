@@ -45,6 +45,7 @@ _CONFIGURABLE_DEFAULTS = {
 SAG_SAMPLES_REQUIRED = 5             # Collect 5 voltage samples, take median of last 3 for noise rejection
 DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Prevents unbounded memory growth (~2.8h at default poll rate)
 ERROR_LOG_BURST = 10                 # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
+MIN_DISCHARGE_DURATION_SEC = 300     # Discharges shorter than 5 min have terrible signal-to-noise (incident 2026-03-16)
 
 
 @dataclass
@@ -76,18 +77,18 @@ class Config:
     Created at startup, passed to MonitorDaemon.__init__.
     """
     ups_name: str
-    polling_interval: int
-    reporting_interval: int
+    polling_interval: int                   # seconds between NUT polls
+    reporting_interval: int                 # seconds between status log lines (REPORTING_INTERVAL_POLLS * POLL_INTERVAL)
     nut_host: str
     nut_port: int
-    nut_timeout: float
+    nut_timeout: float                      # NUT socket timeout (seconds)
     shutdown_minutes: int
-    soh_alert_threshold: float
+    soh_alert_threshold: float              # SoH fraction [0.0, 1.0] below which to alert
     model_dir: Path
     runtime_threshold_minutes: int
-    reference_load_percent: float
-    ema_window_sec: int
-    capacity_ah: float
+    reference_load_percent: float           # UPS load percentage used in Peukert/IR calculations (0-100)
+    ema_window_sec: int                     # EMA smoothing window for voltage (seconds)
+    capacity_ah: float                      # Rated battery capacity (Ah)
     scheduling: Optional[SchedulingConfig] = None
 
 
@@ -332,7 +333,7 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
             raise OSError(f"{health_path} is a symlink, refusing to write")
         atomic_write_json(health_path, health_data)
     except (OSError, TypeError, ValueError) as e:
-        logger.warning(
+        logger.error(
             "Failed to write health endpoint: %s", e,
             extra={'event_type': 'health_endpoint_write_failed'}
         )
