@@ -334,8 +334,13 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
         if health_path.is_symlink():
             raise OSError(f"{health_path} is a symlink, refusing to write")
         atomic_write_json(health_path, health_data)
-    except (OSError, TypeError, ValueError) as e:
+    except OSError as e:
         logger.error(
             "Failed to write health endpoint: %s", e,
             extra={'event_type': 'health_endpoint_write_failed'}
+        )
+    except (TypeError, ValueError) as e:
+        logger.error(
+            "Health endpoint serialization bug: %s", e, exc_info=True,
+            extra={'event_type': 'health_endpoint_serialization_bug'}
         )
