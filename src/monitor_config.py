@@ -251,7 +251,7 @@ def safe_save(model: BatteryModel) -> None:
     try:
         model.save()
     except (OSError, TypeError, ValueError) as e:
-        logger.warning(
+        logger.error(
             "Failed to persist model: %s", e,
             extra={'event_type': 'model_save_failed'}
         )

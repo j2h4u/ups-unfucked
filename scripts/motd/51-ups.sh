@@ -44,7 +44,7 @@ import math
 try:
     with open(os.path.expanduser('~/.config/ups-battery-monitor/model.json')) as f:
         model = json.load(f)
-except:
+except (OSError, json.JSONDecodeError):
     print("unknown,0,0")
     exit(0)
 

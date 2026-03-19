@@ -63,7 +63,7 @@ fi
 
 # Format and color SoH as percentage
 if [[ -n "$soh" && "$soh" != "?" && "$soh" =~ ^[0-9]*\.?[0-9]+$ ]]; then
-    soh_pct=$(printf "%.0f" "$(awk "BEGIN {print $soh * 100}")")
+    soh_pct=$(printf "%.0f" "$(awk -v soh="$soh" 'BEGIN {printf "%.0f\n", soh * 100}')")
     soh_fmt="${soh_pct}%"
 
     # Color based on health

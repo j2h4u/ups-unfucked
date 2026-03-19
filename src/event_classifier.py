@@ -78,6 +78,7 @@ class EventClassifier:
                         f"Undefined voltage range {input_voltage}V during {ups_status}, "
                         f"treating as BLACKOUT_REAL",
                         extra={
+                            'event_type': 'undefined_voltage_range',
                             'input_voltage': input_voltage,
                             'ups_status': ups_status,
                             'classified_as': 'BLACKOUT_REAL',

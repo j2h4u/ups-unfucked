@@ -318,7 +318,7 @@ class MonitorDaemon:
         try:
             _ = self.nut_client.get_ups_vars()
             logger.info("NUT upsd reachable, polling started", extra={'event_type': 'nut_reachable'})
-        except (socket.error, OSError, ConnectionError, TimeoutError):
+        except (socket.error, OSError, ConnectionError, TimeoutError, ValueError):
             logger.warning(
                 f"NUT upsd unreachable at {self.config.nut_host}:{self.config.nut_port}, "
                 f"will retry every {self.config.polling_interval}s",
@@ -989,7 +989,8 @@ class MonitorDaemon:
             self._startup_logged = True
         voltage, load = self._update_ema(ups_data)
         if voltage is None:
-            logger.warning(f"Poll {self.poll_count}: Missing voltage or load data")
+            logger.warning(f"Poll {self.poll_count}: Missing voltage or load data",
+                          extra={'event_type': 'missing_poll_data', 'poll_count': self.poll_count})
             time.sleep(self.config.polling_interval)
             return
 
