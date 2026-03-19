@@ -1,7 +1,6 @@
 """UPS Battery Monitor — configuration, dataclasses, constants, and helpers.
 
-Extracted from monitor.py (F58) to separate configuration/infrastructure
-from daemon orchestration logic.
+Separates configuration/infrastructure from daemon orchestration logic.
 """
 
 import time
@@ -248,8 +247,11 @@ def safe_save(model: BatteryModel) -> None:
     """
     try:
         model.save()
-    except Exception as e:
-        logger.warning(f"Failed to persist model (disk full?): {e}")
+    except OSError as e:
+        logger.warning(
+            "Failed to persist model: %s", e,
+            extra={'event_type': 'model_save_failed'}
+        )
 
 
 @dataclass
@@ -268,7 +270,7 @@ class HealthSnapshot:
     capacity_samples_count: int = 0
     capacity_converged: bool = False
     sulfation_score: Optional[float] = None
-    sulfation_confidence: str = 'high'
+    sulfation_confidence: Optional[str] = None
     days_since_deep: Optional[float] = None
     ir_trend_rate: Optional[float] = None
     recovery_delta: Optional[float] = None
@@ -278,63 +280,62 @@ class HealthSnapshot:
     next_test_timestamp: Optional[str] = None
     last_discharge_timestamp: Optional[str] = None
     natural_blackout_credit: Optional[float] = None
+    consecutive_errors: int = 0
+
+
+def _opt_round(v: Optional[float], n: int) -> Optional[float]:
+    """Round v to n decimal places, or return None if v is None."""
+    return round(v, n) if v is not None else None
 
 
 def write_health_endpoint(snapshot: HealthSnapshot) -> None:
     """Write daemon health state to file for external monitoring tools.
 
-    Updates every poll (10s) with current daemon metrics. Tools like Grafana,
-    check_mk, and custom scripts can read this file to track:
-    - Daemon liveness (last_poll < 30s = healthy)
-    - Current battery state (soc_percent, online status)
-    - Poll latency for performance monitoring
-    - Daemon version tracking
-    - Capacity metrics (measured Ah, confidence, convergence status)
+    Updates every poll (10s) with current daemon metrics. Uses atomic_write_json
+    for crash-safe writes. Refuses to write through symlinks (security guard).
+    Silently swallows OSError on write failure (logs warning).
 
-    Uses atomic_write_json for crash-safe writes.
+    Monitored by: Grafana, check_mk, custom scripts (liveness: last_poll < 30s).
     """
     try:
         daemon_version = importlib.metadata.version('ups-unfucked')
     except importlib.metadata.PackageNotFoundError:
         daemon_version = "unknown"
 
-    s = snapshot
+    snap = snapshot
     health_data = {
         "last_poll": datetime.now(timezone.utc).isoformat(),
         "last_poll_unix": int(time.time()),
-        "current_soc_percent": round(s.soc_percent, 1),
-        "online": s.is_online,
+        "current_soc_percent": round(snap.soc_percent, 1),
+        "online": snap.is_online,
         "daemon_version": daemon_version,
-        "poll_latency_ms": round(s.poll_latency_ms, 1) if s.poll_latency_ms is not None else None,
-        # Capacity metrics
-        "capacity_ah_measured": round(s.capacity_ah_measured, 2) if s.capacity_ah_measured else None,
-        "capacity_ah_rated": round(s.capacity_ah_rated, 2),
-        "capacity_confidence": round(s.capacity_confidence, 3),
-        "capacity_samples_count": s.capacity_samples_count,
-        "capacity_converged": s.capacity_converged,
-        # Sulfation metrics
-        "sulfation_score": round(s.sulfation_score, 3) if s.sulfation_score is not None else None,
-        "sulfation_score_confidence": s.sulfation_confidence,
-        "days_since_deep": round(s.days_since_deep, 1) if s.days_since_deep is not None else None,
-        "ir_trend_rate": round(s.ir_trend_rate, 6) if s.ir_trend_rate is not None else None,
-        "recovery_delta": round(s.recovery_delta, 3) if s.recovery_delta is not None else None,
-        # ROI metrics
-        "cycle_roi": round(s.cycle_roi, 3) if s.cycle_roi is not None else None,
-        "cycle_budget_remaining": s.cycle_budget_remaining,
-        "scheduling_reason": s.scheduling_reason,
-        "next_test_timestamp": s.next_test_timestamp,
-        # Discharge metrics
-        "last_discharge_timestamp": s.last_discharge_timestamp,
-        "natural_blackout_credit": round(s.natural_blackout_credit, 3) if s.natural_blackout_credit is not None else None,
+        "poll_latency_ms": _opt_round(snap.poll_latency_ms, 1),
+        "capacity_ah_measured": _opt_round(snap.capacity_ah_measured, 2),
+        "capacity_ah_rated": round(snap.capacity_ah_rated, 2),
+        "capacity_confidence": round(snap.capacity_confidence, 3),
+        "capacity_samples_count": snap.capacity_samples_count,
+        "capacity_converged": snap.capacity_converged,
+        "sulfation_score": _opt_round(snap.sulfation_score, 3),
+        "sulfation_score_confidence": snap.sulfation_confidence,
+        "days_since_deep": _opt_round(snap.days_since_deep, 1),
+        "ir_trend_rate": _opt_round(snap.ir_trend_rate, 6),
+        "recovery_delta": _opt_round(snap.recovery_delta, 3),
+        "cycle_roi": _opt_round(snap.cycle_roi, 3),
+        "cycle_budget_remaining": snap.cycle_budget_remaining,
+        "scheduling_reason": snap.scheduling_reason,
+        "next_test_timestamp": snap.next_test_timestamp,
+        "last_discharge_timestamp": snap.last_discharge_timestamp,
+        "natural_blackout_credit": _opt_round(snap.natural_blackout_credit, 3),
+        "consecutive_errors": snap.consecutive_errors,
     }
     health_path = HEALTH_ENDPOINT_PATH
 
     try:
-        # Guard against symlink attack
         if health_path.is_symlink():
             raise OSError(f"{health_path} is a symlink, refusing to write")
-
         atomic_write_json(health_path, health_data)
-
-    except Exception as e:
-        logger.warning(f"Failed to write health endpoint: {e}")
+    except (OSError, TypeError, ValueError) as e:
+        logger.warning(
+            "Failed to write health endpoint: %s", e,
+            extra={'event_type': 'health_endpoint_write_failed'}
+        )

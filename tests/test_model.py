@@ -827,7 +827,7 @@ class TestCapacityEstimates:
         assert status['latest_ah'] is None
         assert status['rated_ah'] == 7.2
         assert status['converged'] is False
-        assert status['capacity_ah_ref'] is None
+        assert status['capacity_ah_measured'] is None
 
     def test_get_convergence_status_two_measurements(self, tmp_path):
         """Test: get_convergence_status() with 2 measurements (not converged)."""

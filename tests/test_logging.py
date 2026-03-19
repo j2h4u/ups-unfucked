@@ -51,12 +51,12 @@ class TestAlerterOutput:
         """SoH alert handles None days_to_replacement gracefully."""
         logger = self._make_logger()
 
-        try:
-            alerter.alert_soh_below_threshold(
-                logger,
-                current_soh=0.75,
-                threshold_soh=0.80,
-                days_to_replacement=None
-            )
-        except Exception as e:
-            pytest.fail(f"Alert crashed with None days: {e}")
+        alerter.alert_soh_below_threshold(
+            logger,
+            current_soh=0.75,
+            threshold_soh=0.80,
+            days_to_replacement=None
+        )
+
+        captured = capsys.readouterr()
+        assert "unknown" in captured.err.lower(), "Expected 'unknown' in output for None days"

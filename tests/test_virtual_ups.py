@@ -37,25 +37,6 @@ class TestVirtualUPSWriting:
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
 
-            with patch("src.virtual_ups.Path") as mock_path_class:
-                mock_path_class.return_value = test_file
-                # Bypass the is_symlink guard
-                test_file_mock = Mock()
-                test_file_mock.is_symlink.return_value = False
-                test_file_mock.parent = test_file.parent
-                test_file_mock.__str__ = lambda self: str(test_file)
-                test_file_mock.replace = test_file.replace
-                mock_path_class.return_value = test_file_mock
-
-                # Call production function with real tmpdir
-                with patch("src.virtual_ups.Path") as mp:
-                    # Patch only the constant path inside the function
-                    real_path = test_file
-                    mp.side_effect = lambda *a, **kw: real_path if "/run/ups-battery-monitor" in str(a) else Path(*a, **kw)
-                    # Simpler approach: patch at the module level constant
-                    pass
-
-            # Use the simplest correct approach: patch the output path directly
             with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
                 test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
             )):
@@ -466,10 +447,8 @@ class TestEventTypeIntegration:
         assert hasattr(EventType, 'BLACKOUT_REAL')
         assert hasattr(EventType, 'BLACKOUT_TEST')
 
-    def test_compute_status_override_signature(self):
-        """Verify compute_ups_status_override has correct signature and accepts EventType."""
-        import inspect
-        sig = inspect.signature(compute_ups_status_override)
-        assert 'event_type' in sig.parameters
-        assert 'time_rem_minutes' in sig.parameters
-        assert 'shutdown_threshold_minutes' in sig.parameters
+    def test_compute_status_override_accepts_all_event_types(self):
+        """Verify compute_ups_status_override handles all EventType values without error."""
+        for et in EventType:
+            result = compute_ups_status_override(et, time_rem_minutes=10.0, shutdown_threshold_minutes=5)
+            assert isinstance(result, str), f"Expected str for {et}, got {type(result)}"

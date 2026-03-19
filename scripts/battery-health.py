@@ -31,13 +31,17 @@ def main():
         print(f"  WARNING: Invalid ups_name in model.json: {ups_name!r}")
         ups_name = 'cyberpower-virtual'
     try:
-        nut_vars = subprocess.run(
+        result = subprocess.run(
             ['upsc', f'{ups_name}@localhost'], capture_output=True, text=True, timeout=2
-        ).stdout
-        mfr = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.mfr:')), None)
-        ups_model_name = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.model:')), None)
-        if mfr and ups_model_name:
-            print(f"  UPS:              {mfr} {ups_model_name}")
+        )
+        if result.returncode != 0:
+            print(f"  UPS: (upsc failed: {result.stderr.strip() or 'exit ' + str(result.returncode)})")
+        else:
+            nut_vars = result.stdout
+            mfr = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.mfr:')), None)
+            ups_device_model = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.model:')), None)
+            if mfr and ups_device_model:
+                print(f"  UPS:              {mfr} {ups_device_model}")
     except (OSError, subprocess.TimeoutExpired):
         print("  UPS: (NUT unavailable)")
 
@@ -87,9 +91,9 @@ def main():
     if len(soh_history) >= 3:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from src.replacement_predictor import linear_regression_soh
-        soh_regression = linear_regression_soh(soh_history, threshold_soh=0.80)
-        if soh_regression:
-            slope, intercept, r2, date = soh_regression
+        soh_trend_result = linear_regression_soh(soh_history, threshold_soh=0.80)
+        if soh_trend_result:
+            slope, intercept, r2, date = soh_trend_result
             print(f"  Replace battery:  ~{date} (trend confidence R²={r2:.2f})")
         else:
             print(f"  Replace battery:  no degradation trend detected yet")

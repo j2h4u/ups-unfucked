@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('ups-battery-monitor')
 
 # Algorithmic constants — internal to scheduler, not user-configurable.
 SOH_FLOOR = 0.60                    # Below 60% SoH, testing accelerates degradation (IEEE-450 guidance)

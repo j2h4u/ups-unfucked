@@ -47,7 +47,6 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         if virtual_ups_path.is_symlink():
             raise OSError(f"{virtual_ups_path} is a symlink, refusing to write")
 
-        # Build dummy-ups format: key: value\n per line
         content = "".join(f"{key}: {value}\n" for key, value in metrics.items())
 
         atomic_write(virtual_ups_path, content)
@@ -57,7 +56,7 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         raise
 
 
-# Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type (F41).
+# Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type.
 # Prevents deep test from draining battery to hardware cutoff without graceful shutdown.
 SAFETY_LB_FLOOR_MINUTES = 2
 
@@ -96,7 +95,7 @@ def compute_ups_status_override(
     """
     if event_type == EventType.ONLINE:
         return "OL"
-    # F41: Safety floor — any discharge state with <2 min runtime gets LB
+    # Safety floor — any discharge state with <2 min runtime gets LB
     if time_rem_minutes < SAFETY_LB_FLOOR_MINUTES:
         return "OB DISCHRG LB"
     if event_type == EventType.BLACKOUT_TEST:
@@ -105,5 +104,4 @@ def compute_ups_status_override(
         if time_rem_minutes < shutdown_threshold_minutes:
             return "OB DISCHRG LB"
         return "OB DISCHRG"
-    # Default to online if unknown event type
     return "OL"

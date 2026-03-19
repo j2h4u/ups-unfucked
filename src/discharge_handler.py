@@ -1,7 +1,6 @@
 """Discharge lifecycle handler — SoH, capacity, Peukert calibration, alerts.
 
-Extracted from MonitorDaemon (F58) to contain the discharge event processing
-pipeline that accretes 10-20 lines per feature.
+Contains the discharge event processing pipeline that runs on OB→OL transition.
 
 Methods here run on OB→OL transition (discharge complete) and during
 capacity estimation. No exception handling — all errors propagate to
@@ -27,6 +26,7 @@ from src.monitor_config import DischargeBuffer, safe_save
 logger = logging.getLogger('ups-battery-monitor')
 
 BLACKOUT_CREDIT_DAYS = 7
+RATED_CYCLE_LIFE = 300  # CyberPower UT850 rated cycles (per datasheet)
 
 
 class DischargeHandler:
@@ -80,15 +80,15 @@ class DischargeHandler:
         if soh_result is None:
             return
 
-        soh_new, capacity_ah_ref = soh_result
+        soh_after, capacity_ah_ref = soh_result
 
-        replacement_prediction = self._predict_replacement(soh_new, capacity_ah_ref)
-        self._check_alerts(soh_new, replacement_prediction, discharge_buffer)
-        self._auto_calibrate_peukert(soh_new, discharge_buffer)
+        replacement_prediction = self._predict_replacement(soh_after, capacity_ah_ref)
+        self._check_alerts(soh_after, replacement_prediction, discharge_buffer)
+        self._auto_calibrate_peukert(soh_after, discharge_buffer)
 
         event_reason = self._classify_discharge_trigger(discharge_buffer)
-        soh_delta = soh_new - soh_before
-        self._score_and_persist_sulfation(soh_new, soh_delta, discharge_buffer, event_reason, capacity_ah_ref)
+        soh_delta = soh_after - soh_before
+        self._score_and_persist_sulfation(soh_after, soh_delta, discharge_buffer, event_reason, capacity_ah_ref)
 
         self._log_discharge_prediction(discharge_buffer)
 
@@ -130,14 +130,14 @@ class DischargeHandler:
             logger.info("SoH update returned None; skipping history entry")
             return None
 
-        soh_new, capacity_ah_ref = soh_result
+        soh_after, capacity_ah_ref = soh_result
 
         today = datetime.now().strftime('%Y-%m-%d')
-        self.battery_model.add_soh_history_entry(today, soh_new, capacity_ah_ref=capacity_ah_ref)
+        self.battery_model.add_soh_history_entry(today, soh_after, capacity_ah_ref=capacity_ah_ref)
 
-        logger.info(f"SoH calculated: {soh_new:.2%}")
+        logger.info(f"SoH calculated: {soh_after:.2%}")
 
-        return (soh_new, capacity_ah_ref)
+        return (soh_after, capacity_ah_ref)
 
     def _predict_replacement(self, soh_new: float, capacity_ah_ref: float):
         """Check convergence and run linear regression for replacement prediction.
@@ -234,7 +234,6 @@ class DischargeHandler:
             )
 
             roi = compute_cycle_roi(
-                days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
                 depth_of_discharge=depth_of_discharge,
                 cycle_budget_remaining=cycle_budget,
                 ir_trend_rate=ir_trend_rate,
@@ -243,7 +242,7 @@ class DischargeHandler:
         except (ValueError, TypeError) as e:
             logger.warning(f"Sulfation scoring failed: {e}", exc_info=True)
             sulfation_state = None
-            roi = 0.0
+            roi = None
 
         self.last_sulfation_score = sulfation_state.score if sulfation_state else None
         self.last_sulfation_confidence = self._assess_sulfation_confidence(days_since_deep, ir_trend_rate) if sulfation_state else None
@@ -275,7 +274,7 @@ class DischargeHandler:
             'duration_seconds': discharge_duration,
             'depth_of_discharge': round(depth_of_discharge, 2),
             'measured_capacity_ah': capacity_ah_ref,
-            'cycle_roi': round(roi, 3)
+            'cycle_roi': round(roi, 3) if roi is not None else None
         })
 
         logger.info('Discharge complete', extra={
@@ -286,7 +285,7 @@ class DischargeHandler:
             'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
             'sulfation_confidence': self.last_sulfation_confidence,
             'recovery_delta': round(self.last_recovery_delta, 3),
-            'cycle_roi': round(roi, 3),
+            'cycle_roi': round(roi, 3) if roi is not None else None,
             'measured_capacity_ah': round(capacity_ah_ref, 2) if capacity_ah_ref else None,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         })
@@ -350,7 +349,7 @@ class DischargeHandler:
 
         # Handle kernel result: RLS smoothing instead of direct set
         if new_exponent is not None:
-            # F30: Skip RLS update if result hit clamp bounds — carries no information
+            # Skip RLS update if result hit clamp bounds — carries no information
             if new_exponent <= 1.0 or new_exponent >= 1.4:
                 logger.debug(
                     f"Peukert calibration hit clamp bound ({new_exponent:.3f}); "
@@ -529,7 +528,13 @@ class DischargeHandler:
                 if delta_percent > 10.0:  # >10% threshold
                     logger.warning(
                         f"New battery detection: measured capacity {current_measured:.2f}Ah "
-                        f"differs from baseline {stored_baseline:.2f}Ah ({delta_percent:.1f}% > 10% threshold)"
+                        f"differs from baseline {stored_baseline:.2f}Ah ({delta_percent:.1f}% > 10% threshold)",
+                        extra={
+                            'event_type': 'new_battery_detected',
+                            'current_ah': f'{current_measured:.2f}',
+                            'baseline_ah': f'{stored_baseline:.2f}',
+                            'delta_percent': f'{delta_percent:.1f}',
+                        }
                     )
 
                     self.battery_model.data['new_battery_detected'] = True
@@ -550,56 +555,51 @@ class DischargeHandler:
         """Calculate days since last deep discharge (>70% DoD).
 
         Returns None if no deep discharge in history.
-        Returns float days since last deep discharge otherwise.
         """
         discharge_events = self.battery_model.data.get('discharge_events', [])
+        now = datetime.now(timezone.utc)
 
-        # Find most recent deep discharge (DoD > 0.7)
         for event in reversed(discharge_events):
-            if event.get('depth_of_discharge', 0) > 0.7:
-                # Parse timestamp (ISO8601) and calculate days ago
-                try:
-                    timestamp_str = event['timestamp']
-                    event_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                    now = datetime.now(timezone.utc)
-                    days_ago = (now - event_time).total_seconds() / 86400.0
-                    return days_ago
-                except (ValueError, KeyError) as e:
-                    logger.debug(f"Skipping malformed discharge event: {e}")
-                    continue
+            if event.get('depth_of_discharge', 0) <= 0.7:
+                continue
+            timestamp_str = event.get('timestamp')
+            if not timestamp_str:
+                continue
+            try:
+                event_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                return (now - event_time).total_seconds() / 86400.0
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Skipping malformed discharge event: {e}")
+                continue
 
         return None
 
     def _estimate_ir_trend(self) -> float:
-        """Estimate IR trend rate (dR/dt) in ohms/day.
+        """Estimate IR trend rate (dR/dt) in ohms/day from last 30 days.
 
-        Queries r_internal_history (existing v2.0 field), calculates slope.
-        Returns 0.0 if insufficient data.
+        Returns 0.0 if insufficient data (<2 recent entries).
         """
         r_history = self.battery_model.data.get('r_internal_history', [])
-
         if len(r_history) < 2:
             return 0.0
 
-        # Keep only last 30 days of data
         now = datetime.now(timezone.utc)
         recent_entries = []
         for entry in r_history:
+            date_str = entry.get('date', '')
+            r_value = entry.get('r_ohm')
+            if r_value is None:
+                logger.warning(f"r_internal_history entry missing 'r_ohm' key: {list(entry.keys())}")
+                continue
             try:
-                entry_time = datetime.fromisoformat(entry.get('date', '').replace('Z', '+00:00'))
-                days_ago = (now - entry_time).total_seconds() / 86400.0
-                if days_ago <= 30:
-                    r_value = entry.get('r_ohm')
-                    if r_value is None:
-                        logger.warning(f"r_internal_history entry missing 'r_ohm' key: {list(entry.keys())}")
-                        continue
-                    recent_entries.append({
-                        'days_ago': days_ago,
-                        'r_ohm': r_value,
-                    })
-            except (ValueError, KeyError) as e:
+                entry_time = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping malformed r_internal entry: {e}")
                 continue
+            days_ago = (now - entry_time).total_seconds() / 86400.0
+            if days_ago > 30:
+                continue
+            recent_entries.append({'days_ago': days_ago, 'r_ohm': r_value})
 
         if len(recent_entries) < 2:
             return 0.0
@@ -630,11 +630,11 @@ class DischargeHandler:
 
         try:
             upscmd_dt = datetime.fromisoformat(last_upscmd)
-            time_delta = (discharge_start_dt - upscmd_dt).total_seconds()
+            seconds_since_upscmd = (discharge_start_dt - upscmd_dt).total_seconds()
 
-            if 0 <= time_delta <= 60:
+            if 0 <= seconds_since_upscmd <= 60:
                 logger.info(
-                    f"Discharge classified as test-initiated: {time_delta:.1f}s after upscmd",
+                    f"Discharge classified as test-initiated: {seconds_since_upscmd:.1f}s after upscmd",
                     extra={'event_type': 'discharge_classification', 'reason': 'test_initiated'}
                 )
                 return 'test_initiated'
@@ -644,7 +644,7 @@ class DischargeHandler:
             logger.warning(f"Invalid timestamps in discharge classification: upscmd={last_upscmd}", exc_info=True)
             return 'natural'
 
-    def _estimate_dod_from_buffer(self, discharge_buffer: object) -> float:
+    def _estimate_dod_from_buffer(self, discharge_buffer: DischargeBuffer) -> float:
         """Estimate depth of discharge from voltage swing (heuristic, not true DoD).
 
         Uses (Vmax - Vmin) / (Vnominal - Vfloor) as a rough proxy.
@@ -671,14 +671,9 @@ class DischargeHandler:
         return min(1.0, max(0.0, result))
 
     def _estimate_cycle_budget(self) -> int:
-        """Estimate remaining cycle budget based on SoH.
-
-        CyberPower UT850 rated at 300 cycles (per datasheet).
-        Estimate remaining = 300 * SoH
-        """
+        """Estimate remaining cycle budget: RATED_CYCLE_LIFE * current SoH."""
         soh = self.battery_model.data.get('soh', 1.0)
-        rated_cycles = 300
-        return int(rated_cycles * soh)
+        return int(RATED_CYCLE_LIFE * soh)
 
     def _assess_sulfation_confidence(self, days_since_deep: Optional[float], ir_trend_rate: float) -> str:
         """Assess sulfation signal quality based on input data availability.

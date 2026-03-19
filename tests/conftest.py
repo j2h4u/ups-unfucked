@@ -15,7 +15,6 @@ def mock_socket_ok():
     communication with NUT upsd daemon. Includes responses for common UPS variables:
     battery.voltage, ups.load, ups.status, input.voltage.
     """
-    # Create a mock socket that returns valid responses
     mock_sock = Mock(spec=socket.socket)
 
     def mock_recv(bufsize):
@@ -41,7 +40,6 @@ def mock_socket_timeout():
     """
     mock_sock = Mock(spec=socket.socket)
 
-    # Socket recv() will raise timeout exception
     mock_sock.recv = Mock(side_effect=socket.timeout("Connection timed out"))
     mock_sock.sendall = Mock(return_value=None)
     mock_sock.connect = Mock(return_value=None)
@@ -101,7 +99,6 @@ def temporary_model_path():
 
     yield tmp_path
 
-    # Cleanup: remove temporary file
     import os
     try:
         os.unlink(tmp_path)
@@ -256,9 +253,7 @@ def synthetic_discharge_fixture(mock_lut_standard):
     # Voltage drops linearly from 13.2V to 10.5V (50% ΔSoC)
     voltage_series = [13.2 - (i * 0.027) for i in range(100)]
 
-    # Constant load: 35A at 12V = (35 * 12 / 425) * 100 ≈ 99% load
-    # For realistic testing, use 30% load: (30 * 425 / 100 / 12) ≈ 10.6A
-    load_series = [30.0] * 100
+    load_series = [30.0] * 100  # 30% load ≈ 10.6A
 
     return voltage_series, time_series, load_series, mock_lut_standard
 

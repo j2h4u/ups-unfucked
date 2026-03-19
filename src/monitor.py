@@ -117,15 +117,15 @@ def dispatch_test_with_audit(
     # Extract current state for precondition checks
     ups_status = getattr(current_metrics, 'ups_status_override', None) or "OL"
     soc = getattr(current_metrics, 'soc', 1.0)
-    recent_power_glitches = 0  # Placeholder: grid transition counting not implemented
-    test_running = battery_model.data.get('test_running', False)
+    recent_power_glitches = 0
+    is_test_running = battery_model.data.get('test_running', False)
 
     # Validate preconditions
     preconditions_ok, block_reason = validate_preconditions_before_upscmd(
         ups_status=ups_status,
         soc=soc,
         recent_power_glitches=recent_power_glitches,
-        test_already_running=test_running,
+        test_already_running=is_test_running,
     )
 
     if not preconditions_ok:
@@ -509,22 +509,21 @@ class MonitorDaemon:
             'cycle_budget': self.discharge_handler.last_cycle_budget_remaining or 100,
         }
 
-    def _execute_scheduler_decision(self, decision: SchedulerDecision, inputs: dict, now: datetime) -> None:
+    def _execute_scheduler_decision(self, decision: SchedulerDecision, sched_inputs: dict, now: datetime) -> None:
         """Act on a scheduler decision: log, persist, and dispatch if proposed.
 
         Args:
             decision: SchedulerDecision from evaluate_test_scheduling()
-            inputs: Dict from _gather_scheduler_inputs() (for structured logging)
+            sched_inputs: Dict from _gather_scheduler_inputs() (for structured logging)
             now: Current UTC datetime
         """
-        # Log decision (all three actions, for audit trail)
         logger.info(f"Scheduler decision: {decision.action}", extra={
             'event_type': 'scheduler_decision',
             'action': decision.action,
             'reason_code': decision.reason_code,
-            'sulfation_score': f"{inputs['sulfation_score']:.3f}",
-            'roi': f"{inputs['cycle_roi']:.3f}",
-            'soh_percent': f"{inputs['soh_percent']:.1%}",
+            'sulfation_score': f"{sched_inputs['sulfation_score']:.3f}",
+            'roi': f"{sched_inputs['cycle_roi']:.3f}",
+            'soh_percent': f"{sched_inputs['soh_percent']:.1%}",
             'timestamp': now.isoformat(),
         })
 
@@ -559,50 +558,49 @@ class MonitorDaemon:
         Resets the evaluated flag after the scheduling window passes.
         """
         current_hour = now.hour
-        current_minute = now.minute
-
-        # Evaluate scheduler once daily at configured hour (default 08:00 UTC)
         scheduler_hour = self.scheduling_config.scheduler_eval_hour_utc
-        if current_hour == scheduler_hour and current_minute < 10 and not self.scheduler_evaluated_today:
-            self.scheduler_evaluated_today = True
 
-            try:
-                inputs = self._gather_scheduler_inputs()
+        # Reset flag once we leave the scheduling hour
+        if current_hour != scheduler_hour:
+            self.scheduler_evaluated_today = False
+            return
 
-                # Log verbose scheduling inputs if enabled
-                if self.scheduling_config.verbose_scheduling:
-                    logger.debug(
-                        "Scheduler inputs",
-                        extra={
-                            'event_type': 'scheduler_inputs',
-                            'sulfation_score': f"{inputs['sulfation_score']:.3f}",
-                            'cycle_roi': f"{inputs['cycle_roi']:.3f}",
-                            'soh_percent': f"{inputs['soh_percent']:.1%}",
-                            'days_since_last_test': f"{inputs['days_since_last_test']:.1f}",
-                            'cycle_budget': int(inputs['cycle_budget']),
-                        }
-                    )
+        if self.scheduler_evaluated_today or now.minute >= 10:
+            return
 
-                last_blackout = inputs['last_blackout']
-                decision = evaluate_test_scheduling(
-                    sulfation_score=inputs['sulfation_score'],
-                    cycle_roi=inputs['cycle_roi'],
-                    soh_percent=inputs['soh_percent'],
-                    days_since_last_test=inputs['days_since_last_test'],
-                    last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
-                    active_blackout_credit=inputs['active_credit'],
-                    cycle_budget_remaining=int(inputs['cycle_budget']),
-                    grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
+        self.scheduler_evaluated_today = True
+
+        try:
+            sched_inputs = self._gather_scheduler_inputs()
+
+            if self.scheduling_config.verbose_scheduling:
+                logger.debug(
+                    "Scheduler inputs",
+                    extra={
+                        'event_type': 'scheduler_inputs',
+                        'sulfation_score': f"{sched_inputs['sulfation_score']:.3f}",
+                        'cycle_roi': f"{sched_inputs['cycle_roi']:.3f}",
+                        'soh_percent': f"{sched_inputs['soh_percent']:.1%}",
+                        'days_since_last_test': f"{sched_inputs['days_since_last_test']:.1f}",
+                        'cycle_budget': int(sched_inputs['cycle_budget']),
+                    }
                 )
 
-                self._execute_scheduler_decision(decision, inputs, now)
-            except Exception as e:
-                logger.error(f"Scheduler evaluation failed: {e}", exc_info=True)
+            last_blackout = sched_inputs['last_blackout']
+            decision = evaluate_test_scheduling(
+                sulfation_score=sched_inputs['sulfation_score'],
+                cycle_roi=sched_inputs['cycle_roi'],
+                soh_percent=sched_inputs['soh_percent'],
+                days_since_last_test=sched_inputs['days_since_last_test'],
+                last_blackout_timestamp=last_blackout.get('timestamp') if last_blackout else None,
+                active_blackout_credit=sched_inputs['active_credit'],
+                cycle_budget_remaining=int(sched_inputs['cycle_budget']),
+                grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
+            )
 
-        else:
-            # Reset flag at midnight UTC
-            if current_hour != scheduler_hour:
-                self.scheduler_evaluated_today = False
+            self._execute_scheduler_decision(decision, sched_inputs, now)
+        except Exception as e:
+            logger.error(f"Scheduler evaluation failed: {e}", exc_info=True)
 
     # --- Voltage sag tracking ---
 
@@ -826,7 +824,7 @@ class MonitorDaemon:
                 self.battery_model.calibration_batch_flush()
                 logger.info(f"Batch flushed {points_written} calibration points to disk")
             except Exception as e:
-                logger.error(f"Calibration batch flush failed: {e}")
+                logger.error(f"Calibration batch flush failed: {e}", exc_info=True)
 
     def _log_soc_change(self, soc, soc_prev):
         """Log SoC when it changes by more than 5% or on first reading."""
@@ -838,7 +836,10 @@ class MonitorDaemon:
                 extra={'event_type': 'soc_change', 'soc_old': f'{soc_prev*100:.0f}', 'soc_new': f'{soc*100:.0f}'}
             )
         else:
-            logger.info(f"SoC initial: {soc*100:.0f}%")
+            logger.info(
+                f"SoC initial: {soc*100:.0f}%",
+                extra={'event_type': 'soc_initial', 'soc': f'{soc*100:.0f}'}
+            )
         self._last_logged_soc = soc
 
     def _compute_metrics(self):
@@ -891,13 +892,12 @@ class MonitorDaemon:
         time_rem_str = f"{time_rem:.1f}min" if time_rem is not None else "N/A"
         event_type = self.current_metrics.event_type
         event_str = event_type.name if event_type else "N/A"
-        discharge_buffer_sample_count = len(self.discharge_buffer.voltages)
         latency_str = f"{poll_latency_ms:.0f}ms" if poll_latency_ms is not None else "N/A"
         logger.info(
             f"Poll {self.poll_count}: V_ema={v_ema:.2f}V, L_ema={l_ema:.1f}%, "
             f"V_norm={v_norm_str}, charge={charge_str}, time_rem={time_rem_str}, "
             f"event={event_str}, stabilized={self.ema_filter.stabilized}, "
-            f"nut_latency={latency_str}, discharge_buf={discharge_buffer_sample_count}",
+            f"nut_latency={latency_str}, discharge_buf={len(self.discharge_buffer.voltages)}",
             extra={
                 'event_type': 'poll_status',
                 'poll_count': str(self.poll_count),
@@ -906,6 +906,7 @@ class MonitorDaemon:
                 'charge_pct': charge_str,
                 'time_rem': time_rem_str,
                 'event': event_str,
+                'nut_latency_ms': f'{poll_latency_ms:.0f}' if poll_latency_ms is not None else 'N/A',
             }
         )
 
@@ -928,8 +929,8 @@ class MonitorDaemon:
             replacement_due = self.battery_model.get_replacement_due() or ""
             # R_internal: median of non-zero measurements, require ≥3 for noise rejection.
             r_internal_history = self.battery_model.get_r_internal_history()
-            nonzero = [e["r_ohm"] for e in r_internal_history if e["r_ohm"] > 0]
-            r_internal_mohm = round(sorted(nonzero)[len(nonzero) // 2] * 1000, 1) if len(nonzero) >= 3 else 0
+            valid_r_measurements = [e["r_ohm"] for e in r_internal_history if e["r_ohm"] > 0]
+            r_internal_mohm = round(sorted(valid_r_measurements)[len(valid_r_measurements) // 2] * 1000, 1) if len(valid_r_measurements) >= 3 else 0
 
             virtual_metrics = {
                 "battery.runtime": int(time_rem * 60) if time_rem is not None else int(float(ups_data.get("battery.runtime", 0))),
@@ -974,6 +975,7 @@ class MonitorDaemon:
             scheduling_reason=self.last_scheduling_reason,
             next_test_timestamp=self.last_next_test_timestamp,
             last_discharge_timestamp=dh.last_discharge_timestamp,
+            consecutive_errors=self._consecutive_errors,
         )
         write_health_endpoint(snapshot)
 

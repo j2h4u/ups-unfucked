@@ -35,7 +35,7 @@ def atomic_write(filepath, content: str) -> None:
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write to temporary file in same directory (ensures same filesystem)
+    # Same directory ensures same filesystem for atomic rename
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -50,8 +50,7 @@ def atomic_write(filepath, content: str) -> None:
             os.fdatasync(tmp.fileno())
             os.fchmod(tmp.fileno(), 0o644)
 
-        # Atomic rename (unlink + link on POSIX)
-        tmp_path.replace(filepath)
+        tmp_path.replace(filepath)  # atomic on POSIX (unlink + link)
         logger.debug(f"Atomically wrote {filepath}")
 
     except Exception as e:
@@ -108,7 +107,7 @@ class BatteryModel:
                 with open(self.model_path, 'r') as f:
                     self.data = json.load(f)
 
-                # F4: Schema validation - check for required keys
+                # Schema validation — check for required keys
                 required_keys = {'lut', 'soh', 'physics'}
                 missing_keys = required_keys - set(self.data.keys())
                 if missing_keys:
@@ -128,7 +127,6 @@ class BatteryModel:
             logger.info("Model file not found; initializing with standard VRLA curve")
             self.data = self._default_vrla_lut()
 
-        # Ensure arrays/fields exist
         self.data.setdefault('sulfation_history', [])
         self.data.setdefault('discharge_events', [])
         self.data.setdefault('roi_history', [])
@@ -293,9 +291,9 @@ class BatteryModel:
         Strategy: keep all non-measured entries (standard, anchor, interpolated)
         plus most recent keep_count measured entries by timestamp.
 
-        F7: Dedup measured entries within ±0.01V — keep only the most recent per
+        Dedup measured entries within ±0.1V — keep only the most recent per
         voltage band. Without this, ~80% of measured entries are duplicates at the
-        same voltage (e.g., 24/31), wasting the 200-entry prune budget.
+        same voltage, wasting the 200-entry prune budget.
 
         Args:
             keep_count: Maximum number of measured entries to retain (default 200)
@@ -304,13 +302,13 @@ class BatteryModel:
         non_measured = [e for e in lut if e.get('source') != 'measured']
         measured = [e for e in lut if e.get('source') == 'measured']
 
-        # F7: Dedup — when multiple entries share voltage within ±0.1V, keep most recent
+        # Dedup — when multiple entries share voltage within ±0.1V, keep most recent
         if measured:
             measured.sort(key=lambda x: x.get('timestamp', 0))
             buckets: dict[int, dict] = {}
-            for entry in measured:
-                bucket_key = round(entry['v'] * 10)  # ±0.05V buckets
-                buckets[bucket_key] = entry  # later (newer) overwrites earlier
+            for lut_entry in measured:
+                bucket_key = round(lut_entry['v'] * 10)  # ±0.05V buckets
+                buckets[bucket_key] = lut_entry  # later (newer) overwrites earlier
             measured = list(buckets.values())
 
         if len(measured) > keep_count:
@@ -356,7 +354,8 @@ class BatteryModel:
         """
         Atomically write model to disk with history pruning.
 
-        Prunes soh_history and r_internal_history to prevent unbounded growth.
+        Prunes soh_history, r_internal_history, capacity_estimates,
+        sulfation_history, and discharge_events to prevent unbounded growth.
         Use only at discharge event completion, not on every sample.
         """
         self._prune_list('soh_history')
@@ -502,10 +501,9 @@ class BatteryModel:
                 'latest_ah': None,
                 'rated_ah': 7.2,
                 'converged': False,
-                'capacity_ah_ref': None
+                'capacity_ah_measured': None
             }
 
-        # Compute CoV from all estimates
         ah_values = [e['ah_estimate'] for e in estimates]
         cov = compute_cov(ah_values)
 
@@ -595,7 +593,7 @@ class BatteryModel:
                 f"cliff region interpolated (was {old_count} entries)"
             )
         except Exception as e:
-            logger.error(f"Failed to update LUT from calibration: {e}")
+            logger.error(f"Failed to update LUT from calibration: {e}", exc_info=True)
             raise
 
     # --- Scheduling State Management ---

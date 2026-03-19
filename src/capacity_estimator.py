@@ -78,10 +78,10 @@ class CapacityEstimator:
         soc_start, soc_end = self._get_soc_range(voltage_series, lut)
         delta_soc = soc_start - soc_end
 
-        ah_voltage = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
+        voltage_curve_ah = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
 
-        if ah_voltage > 0 and abs(ah_coulomb - ah_voltage) / max(ah_coulomb, ah_voltage) > 0.75:
-            logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage:.2f}Ah "
+        if voltage_curve_ah > 0 and abs(ah_coulomb - voltage_curve_ah) / max(ah_coulomb, voltage_curve_ah) > 0.75:
+            logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {voltage_curve_ah:.2f}Ah "
                           f"disagree >75%; rejecting measurement")
             return None
 
@@ -96,7 +96,7 @@ class CapacityEstimator:
             'discharge_slope_mohm': discharge_slope_mohm,
             'load_avg_percent': sum(load_series) / len(load_series) if load_series else 0,
             'coulomb_ah': ah_coulomb,
-            'voltage_check_ah': ah_voltage
+            'voltage_check_ah': voltage_curve_ah
         }
 
         # Confidence: 0.0 for first measurement, increases as CoV decreases (with more samples)
@@ -232,9 +232,9 @@ class CapacityEstimator:
             return 0.0
 
         # Estimate Ah as: nominal_ah * (observed_voltage_drop / typical_full_discharge_drop)
-        ah_voltage = nominal_ah * (voltage_drop / typical_full_discharge_voltage_drop)
+        voltage_curve_ah = nominal_ah * (voltage_drop / typical_full_discharge_voltage_drop)
 
-        return ah_voltage
+        return voltage_curve_ah
 
     def _compute_discharge_slope(self, voltage_series: List[float], load_percent: List[float]) -> float:
         """
@@ -316,7 +316,6 @@ class CapacityEstimator:
             ah_sum = sum(m[1] for m in self.capacity_measurements)
             return ah_sum / len(self.capacity_measurements)
 
-        # Weighted average
         weighted_ah = 0.0
         for timestamp, ah, confidence, metadata in self.capacity_measurements:
             delta_soc_percent = metadata.get('delta_soc_percent', 0)
@@ -326,28 +325,13 @@ class CapacityEstimator:
         return weighted_ah
 
     def get_confidence(self) -> float:
-        """
-        Get current confidence based on accumulated measurements.
-
-        Returns:
-            float: Confidence metric [0.0, 1.0].
-        """
+        """Current confidence metric [0.0, 1.0] based on accumulated measurements."""
         return self._compute_confidence()
 
     def get_measurement_count(self) -> int:
-        """
-        Get number of accumulated measurements.
-
-        Returns:
-            int: Count of measurements.
-        """
+        """Count of accumulated capacity measurements."""
         return len(self.capacity_measurements)
 
     def get_measurements(self) -> List[Tuple]:
-        """
-        Get all accumulated measurements (for persistence).
-
-        Returns:
-            list: [(timestamp, ah, confidence, metadata), ...].
-        """
+        """All accumulated measurements: [(timestamp, ah, confidence, metadata), ...]."""
         return self.capacity_measurements

@@ -74,7 +74,7 @@ def test_motd_capacity_displays(model_json_with_capacity):
 
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -119,7 +119,7 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
 
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -147,7 +147,7 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
 
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -195,7 +195,7 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
     # Execute: Run 51-ups.sh with HOME override
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -232,7 +232,7 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
     # Execute: Run 51-ups.sh again with 3 samples
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -282,7 +282,7 @@ def test_motd_shows_new_battery_alert(temp_model_json):
 
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),
@@ -309,7 +309,7 @@ def test_motd_shows_new_battery_alert(temp_model_json):
 
     result = subprocess.run(
         ['bash', str(motd_script)],
-        env={'HOME': str(tmp_path)},
+        env={**os.environ, 'HOME': str(tmp_path)},
         capture_output=True,
         text=True,
         cwd=str(Path(__file__).resolve().parent.parent),

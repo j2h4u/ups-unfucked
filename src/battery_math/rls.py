@@ -21,15 +21,15 @@ class ScalarRLS:
         self.sample_count = 0
 
     def update(self, measurement: float) -> tuple[float, float]:
-        """Feed one measurement, return (theta_new, P_new).
+        """Feed one measurement; mutates self.theta and self.P in-place AND returns them.
+
+        The returned (theta, P) are the same values as self.theta/self.P after
+        mutation — callers may use either the return value or read the attributes.
 
         P is the error covariance scalar — starts at 1.0 (high uncertainty),
         decreases toward 0 as confidence grows. Callers should clamp theta
         after update to physical bounds (this creates minor P/theta inconsistency
         bounded by the narrow clamp ranges).
-
-        Note: self.theta and self.P are mutated in-place. If clamping externally,
-        use set_rls_state() to keep theta/P consistent.
         """
         K = self.P / (self.forgetting_factor + self.P)
         self.theta += K * (measurement - self.theta)

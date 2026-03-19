@@ -83,7 +83,7 @@ class TestCapacityBasedSoH:
         assert result is not None
         soh_new, capacity_ah_ref = result
         # measured_capacity = Ah/ΔSoC; if < rated → SoH < 1.0
-        assert 0.2 < soh_new < 0.95
+        assert 0.2 < soh_new < 0.70, f"Degraded battery SoH={soh_new:.3f} should be well below reference 0.90"
         assert capacity_ah_ref == 7.2
 
     def test_shallow_discharge_rejected(self):
