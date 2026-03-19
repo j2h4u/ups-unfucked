@@ -196,6 +196,61 @@ class MonitorDaemon:
             poll_interval_sec=config.polling_interval
         )
 
+        self._init_battery_model_and_estimators(config)
+
+        self.current_metrics = CurrentMetrics()
+        self._last_logged_soc = None
+        self._last_logged_time_rem = None
+
+        self.discharge_buffer = DischargeBuffer()
+        self._discharge_start_time = None  # Timestamp when OL→OB occurred (for cumulative on-battery tracking)
+        self.discharge_buffer_clear_countdown = None  # Cooldown timer (60s) before clearing buffer after OL
+        self.soh_threshold = config.soh_alert_threshold
+        self.runtime_threshold_minutes = config.runtime_threshold_minutes
+
+        self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
+        self.last_scheduling_reason: str = 'observing'
+        self.last_next_test_timestamp: str | None = None
+        self.reference_load_percent = config.reference_load_percent
+
+        self.scheduling_config = config.scheduling or SchedulingConfig()
+
+        self.sag_state = SagState.IDLE
+        self.v_before_sag = None
+        self.sag_buffer = []
+
+        self.calibration_last_written_index = 0
+
+        self.has_logged_baseline_lock = False
+
+        # Runtime fields (initialized here, populated in run())
+        self.poll_count = 0
+        self._stabilization_logged = False
+        self._startup_logged = False
+        self._consecutive_errors = 0
+        self._startup_time: Optional[float] = None
+
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+        logger.info(
+            f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, "
+            f"poll={config.polling_interval}s, model={self.battery_model.model_path}, nut={config.nut_host}:{config.nut_port}",
+            extra={
+                'event_type': 'daemon_init',
+                'shutdown_threshold_minutes': self.shutdown_threshold_minutes,
+                'poll_interval_sec': config.polling_interval,
+                'model_path': str(self.battery_model.model_path),
+                'nut_host': config.nut_host,
+                'nut_port': config.nut_port,
+            }
+        )
+
+        # Fail fast on misconfigured NUT rather than silently looping
+        self._check_nut_connectivity()
+
+    def _init_battery_model_and_estimators(self, config: Config):
+        """Initialize battery model, capacity estimator, RLS filters, and discharge handler."""
         model_path = config.model_dir / 'model.json'
         self.battery_model = BatteryModel(model_path)
         self.battery_model.data['full_capacity_ah_ref'] = config.capacity_ah
@@ -242,57 +297,6 @@ class MonitorDaemon:
 
         self.battery_model.data['new_battery_detected'] = False
         self.battery_model.save()
-
-        self.current_metrics = CurrentMetrics()
-        self._last_logged_soc = None
-        self._last_logged_time_rem = None
-
-        self.discharge_buffer = DischargeBuffer()
-        self._discharge_start_time = None  # Timestamp when OL→OB occurred (for cumulative on-battery tracking)
-        self.discharge_buffer_clear_countdown = None  # Cooldown timer (60s) before clearing buffer after OL
-        self.soh_threshold = config.soh_alert_threshold
-        self.runtime_threshold_minutes = config.runtime_threshold_minutes
-
-        self.scheduler_evaluated_today = False  # Flag to run scheduler once daily
-        self.last_scheduling_reason: str = 'observing'
-        self.last_next_test_timestamp: str | None = None
-        self.reference_load_percent = config.reference_load_percent
-
-        self.scheduling_config = config.scheduling or SchedulingConfig()
-
-        self.sag_state = SagState.IDLE
-        self.v_before_sag = None
-        self.sag_buffer = []
-
-        self.calibration_last_written_index = 0
-
-        self.has_logged_baseline_lock = False
-
-        # Runtime fields (initialized here, populated in run())
-        self.poll_count = 0
-        self._stabilization_logged = False
-        self._startup_logged = False
-        self._consecutive_errors = 0
-        self._startup_time: Optional[float] = None
-
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-        logger.info(
-            f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, "
-            f"poll={config.polling_interval}s, model={model_path}, nut={config.nut_host}:{config.nut_port}",
-            extra={
-                'event_type': 'daemon_init',
-                'shutdown_threshold_minutes': self.shutdown_threshold_minutes,
-                'poll_interval_sec': config.polling_interval,
-                'model_path': str(model_path),
-                'nut_host': config.nut_host,
-                'nut_port': config.nut_port,
-            }
-        )
-
-        # Fail fast on misconfigured NUT rather than silently looping
-        self._check_nut_connectivity()
 
     def _validate_model(self):
         """Validate battery model has minimum viable data for SoC/runtime predictions."""
@@ -738,35 +742,42 @@ class MonitorDaemon:
                     extra={'event_type': 'discharge_start', 'discharge_type': event_type.name,
                            'cycle_count': self.battery_model.get_cycle_count()})
 
-    def _track_discharge(self, voltage, timestamp):
-        """Accumulate discharge samples (voltage/time/load) and write calibration points.
+    def _handle_discharge_cooldown(self) -> bool:
+        """Manage 60s cooldown timer after OB→OL transition.
 
-        Implements discharge cooldown logic: OB→OL→OB within 60s is treated as a single
-        discharge event, not two separate events. Only clear buffer after 60s confirmed OL.
+        OB→OL→OB within 60s is treated as a single discharge event.
+        Returns True if cooldown expired and buffer was processed (caller should return).
         """
         event_type = self.current_metrics.event_type
         previous_event_type = self.current_metrics.previous_event_type
+        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
-        if event_type not in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+        if not is_discharging:
             if previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
-                # OB→OL transition detected: start cooldown
                 logger.info("Power loss detected; starting 60s discharge cooldown",
                             extra={'event_type': 'discharge_cooldown_start'})
                 self.discharge_buffer_clear_countdown = 60
 
-        if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
-            if self.discharge_buffer_clear_countdown is not None:
-                logger.info("Power restored during cooldown; treating as discharge continuation",
-                            extra={'event_type': 'discharge_cooldown_cancelled'})
-                self.discharge_buffer_clear_countdown = None  # Cancel cooldown, keep buffer
+        if is_discharging and self.discharge_buffer_clear_countdown is not None:
+            logger.info("Power restored during cooldown; treating as discharge continuation",
+                        extra={'event_type': 'discharge_cooldown_cancelled'})
+            self.discharge_buffer_clear_countdown = None
 
         if self.discharge_buffer_clear_countdown is not None:
             self.discharge_buffer_clear_countdown -= self.config.polling_interval
             if self.discharge_buffer_clear_countdown <= 0:
                 logger.info("Cooldown expired (60s OL confirmed); clearing discharge buffer and calling _update_battery_health")
-                self._update_battery_health()  # Triggers SoH update and buffer clear
-                return  # Early exit; _update_battery_health already clears buffer
+                self._update_battery_health()
+                return True
 
+        return False
+
+    def _track_discharge(self, voltage, timestamp):
+        """Accumulate discharge samples (voltage/time/load) and write calibration points."""
+        if self._handle_discharge_cooldown():
+            return
+
+        event_type = self.current_metrics.event_type
         if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
             if not self.discharge_buffer.collecting:
                 self._start_discharge_collection(timestamp)
