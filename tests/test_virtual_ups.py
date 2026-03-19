@@ -362,8 +362,8 @@ class TestMonitorIntegration:
             assert var_dict["battery.voltage"] == "13.4"
             assert var_dict["ups.load"] == "25"
 
-    def test_monitor_virtual_ups_below_threshold(self):
-        """Variation: Test with time_rem below threshold (LB flag should be set)."""
+    def test_status_override_below_threshold_sets_lb(self):
+        """Verify compute_ups_status_override sets LB flag when time_rem < threshold."""
         real_ups_data = {
             "battery.voltage": "11.2",
             "ups.load": "45",

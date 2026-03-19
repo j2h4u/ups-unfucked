@@ -807,7 +807,6 @@ def test_health_endpoint_version(tmp_path, monkeypatch):
 def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     """Verify file is replaced (not appended) on each call."""
     from src.monitor_config import write_health_endpoint, HealthSnapshot
-    import time
     import json
     import src.monitor_config
 
@@ -817,8 +816,6 @@ def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
     # First write
     write_health_endpoint(HealthSnapshot(soc_percent=100.0, is_online=True))
     file_size_1 = health_path.stat().st_size
-
-    time.sleep(0.1)
 
     # Second write with different data
     write_health_endpoint(HealthSnapshot(soc_percent=50.0, is_online=False))
