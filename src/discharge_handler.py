@@ -22,11 +22,16 @@ from src.battery_math.regression import linear_regression_slope
 from src.battery_math.sulfation import compute_sulfation_score
 from src.battery_math.cycle_roi import compute_cycle_roi
 from src import soh_calculator, replacement_predictor, alerter
-from src.monitor_config import DischargeBuffer, safe_save
+from src.monitor_config import DischargeBuffer, safe_save, MIN_DISCHARGE_DURATION_SEC
 
 logger = logging.getLogger('ups-battery-monitor')
 
 BLACKOUT_CREDIT_DAYS = 7
+
+
+def _parse_iso_utc(s: str) -> datetime:
+    """Parse ISO8601 timestamp, normalizing 'Z' suffix to '+00:00' for fromisoformat."""
+    return datetime.fromisoformat(s.replace('Z', '+00:00'))
 RATED_CYCLE_LIFE = 300  # CyberPower UT850 rated cycles (per datasheet)
 
 
@@ -115,9 +120,9 @@ class DischargeHandler:
         # caused SoH to drop from 99.7% to 88.6% (incident 2026-03-16).
         # Cycle count and on-battery time are still tracked (in _track_discharge).
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
-        if discharge_duration < 300:
+        if discharge_duration < MIN_DISCHARGE_DURATION_SEC:
             logger.info(
-                f"Discharge too short for model update ({discharge_duration:.0f}s < 300s); "
+                f"Discharge too short for model update ({discharge_duration:.0f}s < {MIN_DISCHARGE_DURATION_SEC}s); "
                 f"skipping SoH/Peukert calibration",
                 extra={'event_type': 'micro_discharge_skip', 'duration_sec': int(discharge_duration)}
             )
@@ -126,8 +131,8 @@ class DischargeHandler:
         avg_load = self._avg_load(discharge_buffer)
 
         soh_result = soh_calculator.calculate_soh_from_discharge(
-            discharge_voltage_series=discharge_buffer.voltages,
-            discharge_time_series=discharge_buffer.times,
+            voltage_series=discharge_buffer.voltages,
+            time_series=discharge_buffer.times,
             reference_soh=self.battery_model.get_soh(),
             battery_model=self.battery_model,
             load_percent=avg_load,
@@ -560,7 +565,7 @@ class DischargeHandler:
             if not timestamp_str:
                 continue
             try:
-                event_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                event_time = _parse_iso_utc(timestamp_str)
                 return (now - event_time).total_seconds() / 86400.0
             except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping malformed discharge event: {e}")
@@ -583,11 +588,13 @@ class DischargeHandler:
         for entry in r_history:
             date_str = entry.get('date', '')
             r_value = entry.get('r_ohm')
-            if r_value is None:
-                logger.warning(f"r_internal_history entry missing 'r_ohm' key: {list(entry.keys())}")
+            if r_value is None or not isinstance(r_value, (int, float)):
+                logger.warning("r_internal_history entry invalid 'r_ohm': %r (keys: %s)",
+                              r_value, list(entry.keys()),
+                              extra={'event_type': 'r_internal_invalid_entry'})
                 continue
             try:
-                entry_time = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                entry_time = _parse_iso_utc(date_str)
             except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping malformed r_internal entry: {e}")
                 continue

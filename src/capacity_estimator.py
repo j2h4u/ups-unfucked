@@ -91,10 +91,10 @@ class CapacityEstimator:
         soc_start, soc_end = self._get_soc_range(voltage_series, lut)
         delta_soc = soc_start - soc_end
 
-        voltage_curve_ah = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
+        ah_voltage_estimate = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
 
-        if voltage_curve_ah > 0 and abs(ah_coulomb - voltage_curve_ah) / max(ah_coulomb, voltage_curve_ah) > 0.75:
-            logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {voltage_curve_ah:.2f}Ah "
+        if ah_voltage_estimate > 0 and abs(ah_coulomb - ah_voltage_estimate) / max(ah_coulomb, ah_voltage_estimate) > 0.75:
+            logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage_estimate:.2f}Ah "
                           f"disagree >75%; rejecting measurement")
             return None
 
@@ -109,7 +109,7 @@ class CapacityEstimator:
             'discharge_slope_mohm': discharge_slope_mohm,
             'load_avg_percent': sum(load_series) / len(load_series) if load_series else 0,
             'coulomb_ah': ah_coulomb,
-            'voltage_check_ah': voltage_curve_ah
+            'voltage_check_ah': ah_voltage_estimate
         }
 
         # Confidence: 0.0 for first measurement, increases as CoV decreases (with more samples)
@@ -134,8 +134,9 @@ class CapacityEstimator:
         """
         # Check duration
         duration = time_series[-1] - time_series[0]
-        if duration < 300:
-            logger.debug(f"Discharge rejected: duration {duration:.0f}s < 300s (micro)")
+        min_duration = 300  # Shared with MIN_DISCHARGE_DURATION_SEC (circular import prevents direct use)
+        if duration < min_duration:
+            logger.debug(f"Discharge rejected: duration {duration:.0f}s < {min_duration}s (micro)")
             return False
 
         # Check ΔSoC (F24: 15% gate accepts typical blackouts with ~15% depth)
@@ -223,31 +224,15 @@ class CapacityEstimator:
         if delta_soc <= 0:
             return 0.0
 
-        # Voltage drop magnitude
-        voltage_start = voltage_series[0]
-        voltage_end = voltage_series[-1]
-        voltage_drop = voltage_start - voltage_end
-
-        # Rough heuristic: voltage drop correlates to depth
-        # VRLA typical: 3.5V drop over full discharge (0.0 → 1.0 SoC)
-        # So we estimate Ah based on observed voltage drop vs full range
-        typical_full_discharge_voltage_drop = 3.5
-
-        # Scale by delta_soc: if delta_soc = 0.5 and we see 1.75V drop, it checks out
-        expected_voltage_drop = typical_full_discharge_voltage_drop * delta_soc
-
-        # F26: Use constructor param instead of hardcoded 7.2
-        nominal_ah = self.capacity_ah
-
-        # Voltage-based estimate (very rough): proportional to depth-of-discharge
-        # Avoid division by zero
+        voltage_drop = voltage_series[0] - voltage_series[-1]
         if voltage_drop <= 0:
             return 0.0
 
-        # Estimate Ah as: nominal_ah * (observed_voltage_drop / typical_full_discharge_drop)
-        voltage_curve_ah = nominal_ah * (voltage_drop / typical_full_discharge_voltage_drop)
+        # VRLA typical: 3.5V drop over full discharge (0.0 → 1.0 SoC)
+        typical_full_discharge_voltage_drop = 3.5
+        ah_voltage_estimate = self.capacity_ah * (voltage_drop / typical_full_discharge_voltage_drop)
 
-        return voltage_curve_ah
+        return ah_voltage_estimate
 
     def _compute_discharge_slope(self, voltage_series: List[float], load_percent: List[float]) -> float:
         """
@@ -290,7 +275,12 @@ class CapacityEstimator:
 
     def add_measurement(self, ah: float, timestamp: str, metadata: Dict) -> None:
         """
-        Accumulate a new capacity measurement.
+        Accumulate a new capacity measurement for confidence/convergence tracking.
+
+        Must be called after estimate() to populate the in-memory accumulator that
+        get_confidence() and has_converged() read from. estimate() does not call
+        this automatically — the two-step contract allows callers to decide
+        persistence (model.json) independently of in-memory tracking.
 
         Args:
             ah: Measured capacity (Ah).
@@ -317,7 +307,7 @@ class CapacityEstimator:
         If all ΔSoC = 0 (degenerate case), fall back to arithmetic mean.
 
         Returns:
-            float: Weighted capacity estimate (Ah).
+            float: Weighted capacity estimate (Ah). Returns 7.2 (rated) if no measurements exist.
         """
         if not self.capacity_measurements:
             return 7.2  # Fallback to rated

@@ -13,21 +13,17 @@ import logging
 from typing import List, Optional, Tuple
 from src.soc_predictor import soc_from_voltage
 from src.model import BatteryModel
+from src.monitor_config import MIN_DISCHARGE_DURATION_SEC
 
 logger = logging.getLogger('ups-battery-monitor')
 
 # Minimum ΔSoC for meaningful SoH update (5% depth too shallow)
 MIN_DELTA_SOC = 0.05
 
-# Minimum discharge duration for SoH calculation (seconds).
-# F22: This operational guard is stricter than the kernel's 30s (battery_math/soh.py)
-# which uses 30s for year-simulation flexibility. Real discharges must be ≥300s.
-MIN_DURATION_SEC = 300
-
 
 def calculate_soh_from_discharge(
-    discharge_voltage_series: List[float],
-    discharge_time_series: List[float],
+    voltage_series: List[float],
+    time_series: List[float],
     reference_soh: float,
     battery_model: BatteryModel,
     load_percent: float,
@@ -44,8 +40,8 @@ def calculate_soh_from_discharge(
     5. Bayesian blend with reference_soh weighted by ΔSoC
 
     Args:
-        discharge_voltage_series: List of voltage readings (V)
-        discharge_time_series: List of time readings (s)
+        voltage_series: List of voltage readings during discharge (V)
+        time_series: List of time readings during discharge (s)
         reference_soh: Current SoH estimate before update
         battery_model: BatteryModel instance with LUT and convergence data
         load_percent: Average load during discharge (%)
@@ -57,12 +53,12 @@ def calculate_soh_from_discharge(
         - soh_new: Updated SoH estimate [0.0, 1.0]
         - capacity_ah_ref: Rated capacity used as reference (Ah)
     """
-    if len(discharge_voltage_series) < 2 or len(discharge_time_series) < 2:
+    if len(voltage_series) < 2 or len(time_series) < 2:
         return None
 
-    duration = discharge_time_series[-1] - discharge_time_series[0]
-    if duration < MIN_DURATION_SEC:
-        logger.debug(f"SoH skipped: discharge too short ({duration:.0f}s < {MIN_DURATION_SEC}s)")
+    duration = time_series[-1] - time_series[0]
+    if duration < MIN_DISCHARGE_DURATION_SEC:
+        logger.debug(f"SoH skipped: discharge too short ({duration:.0f}s < {MIN_DISCHARGE_DURATION_SEC}s)")
         return None
 
     lut = battery_model.get_lut()
@@ -71,8 +67,8 @@ def calculate_soh_from_discharge(
         return None
 
     # ΔSoC from voltage series via LUT
-    soc_start = soc_from_voltage(discharge_voltage_series[0], lut)
-    soc_end = soc_from_voltage(discharge_voltage_series[-1], lut)
+    soc_start = soc_from_voltage(voltage_series[0], lut)
+    soc_end = soc_from_voltage(voltage_series[-1], lut)
     delta_soc = soc_start - soc_end
 
     if delta_soc < MIN_DELTA_SOC:
@@ -81,8 +77,8 @@ def calculate_soh_from_discharge(
 
     # Coulomb counting: Ah delivered during discharge
     ah_delivered = 0.0
-    for i in range(len(discharge_time_series) - 1):
-        dt = discharge_time_series[i + 1] - discharge_time_series[i]
+    for i in range(len(time_series) - 1):
+        dt = time_series[i + 1] - time_series[i]
         if dt <= 0:
             continue
         current_a = load_percent / 100.0 * nominal_power_watts / nominal_voltage

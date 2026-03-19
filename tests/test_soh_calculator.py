@@ -35,8 +35,8 @@ class TestCapacityBasedSoH:
         model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=voltage_series,
-            discharge_time_series=time_series,
+            voltage_series=voltage_series,
+            time_series=time_series,
             reference_soh=1.0,
             battery_model=model,
             load_percent=20.0,
@@ -70,8 +70,8 @@ class TestCapacityBasedSoH:
         model = _mock_battery_model(capacity_ah=7.2)
 
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=voltage_series,
-            discharge_time_series=time_series,
+            voltage_series=voltage_series,
+            time_series=time_series,
             reference_soh=0.90,
             battery_model=model,
             load_percent=30.0,  # 30% load = 10.625A
@@ -96,8 +96,8 @@ class TestCapacityBasedSoH:
         model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=voltage_series,
-            discharge_time_series=time_series,
+            voltage_series=voltage_series,
+            time_series=time_series,
             reference_soh=1.0,
             battery_model=model,
             load_percent=20.0,
@@ -115,8 +115,8 @@ class TestCapacityBasedSoH:
         model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=voltage_series,
-            discharge_time_series=time_series,
+            voltage_series=voltage_series,
+            time_series=time_series,
             reference_soh=1.0,
             battery_model=model,
             load_percent=20.0,
@@ -140,8 +140,8 @@ class TestBayesianBlend:
         model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=voltage_series,
-            discharge_time_series=time_series,
+            voltage_series=voltage_series,
+            time_series=time_series,
             reference_soh=0.50,  # Very different reference
             battery_model=model,
             load_percent=20.0,
@@ -170,8 +170,8 @@ class TestBayesianBlend:
         model = _mock_battery_model()
 
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=voltage_series,
-            discharge_time_series=time_series,
+            voltage_series=voltage_series,
+            time_series=time_series,
             reference_soh=0.95,
             battery_model=model,
             load_percent=20.0,
@@ -189,8 +189,8 @@ class TestBayesianBlend:
         """< 2 voltage samples → returns None."""
         model = _mock_battery_model()
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=[13.0],
-            discharge_time_series=[0.0],
+            voltage_series=[13.0],
+            time_series=[0.0],
             reference_soh=1.0,
             battery_model=model,
             load_percent=20.0,
@@ -204,8 +204,8 @@ class TestBayesianBlend:
         """Empty LUT → returns None."""
         model = _mock_battery_model(lut=[])
         result = calculate_soh_from_discharge(
-            discharge_voltage_series=[13.0, 12.0],
-            discharge_time_series=[0.0, 600.0],
+            voltage_series=[13.0, 12.0],
+            time_series=[0.0, 600.0],
             reference_soh=1.0,
             battery_model=model,
             load_percent=20.0,
