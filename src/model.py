@@ -7,8 +7,42 @@ import tempfile
 import logging
 from pathlib import Path
 from datetime import datetime
+from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 from src.capacity_estimator import compute_cov
+
+
+@dataclass
+class IRCompensation:
+    """IR voltage compensation parameters."""
+    k_volts_per_percent: float = 0.015
+    reference_load_percent: float = 20.0
+
+
+@dataclass
+class RLSParams:
+    """Scalar RLS estimator state for a single parameter."""
+    theta: float = 0.0
+    P: float = 1.0
+    sample_count: int = 0
+    forgetting_factor: float = 0.97
+
+    def to_dict(self) -> dict:
+        return {'theta': self.theta, 'P': self.P,
+                'sample_count': self.sample_count, 'forgetting_factor': self.forgetting_factor}
+
+
+@dataclass
+class PhysicsParams:
+    """Typed view of the physics sub-dict in model.json."""
+    peukert_exponent: float = 1.2
+    nominal_voltage: float = 12.0
+    nominal_power_watts: float = 425.0
+    ir_compensation: IRCompensation = field(default_factory=IRCompensation)
+    rls_state: Dict[str, RLSParams] = field(default_factory=lambda: {
+        'ir_k': RLSParams(theta=0.015),
+        'peukert': RLSParams(theta=1.2),
+    })
 
 
 logger = logging.getLogger('ups-battery-monitor')
@@ -144,8 +178,51 @@ class BatteryModel:
             self.data = self._default_vrla_lut()
 
         self._apply_defaults()
+        self._sync_physics_from_data()
         self._validate_and_clamp_fields()
         self._validate_lut()
+
+    def _sync_physics_from_data(self):
+        """Populate self.physics from self.data['physics'] dict."""
+        p = self.data.get('physics', {})
+        ir = p.get('ir_compensation', {})
+        rls_data = p.get('rls_state', {})
+
+        rls = {}
+        for name, default_theta in [('ir_k', 0.015), ('peukert', 1.2)]:
+            d = rls_data.get(name, {})
+            rls[name] = RLSParams(
+                theta=d.get('theta', default_theta),
+                P=d.get('P', 1.0),
+                sample_count=d.get('sample_count', 0),
+                forgetting_factor=d.get('forgetting_factor', 0.97),
+            )
+
+        self.physics = PhysicsParams(
+            peukert_exponent=p.get('peukert_exponent', 1.2),
+            nominal_voltage=p.get('nominal_voltage', 12.0),
+            nominal_power_watts=p.get('nominal_power_watts', 425.0),
+            ir_compensation=IRCompensation(
+                k_volts_per_percent=ir.get('k_volts_per_percent', 0.015),
+                reference_load_percent=ir.get('reference_load_percent', 20.0),
+            ),
+            rls_state=rls,
+        )
+
+    def _sync_physics_to_data(self):
+        """Write self.physics back to self.data['physics'] for JSON serialization."""
+        self.data['physics'] = {
+            'peukert_exponent': self.physics.peukert_exponent,
+            'nominal_voltage': self.physics.nominal_voltage,
+            'nominal_power_watts': self.physics.nominal_power_watts,
+            'ir_compensation': {
+                'k_volts_per_percent': self.physics.ir_compensation.k_volts_per_percent,
+                'reference_load_percent': self.physics.ir_compensation.reference_load_percent,
+            },
+            'rls_state': {
+                name: rls.to_dict() for name, rls in self.physics.rls_state.items()
+            },
+        }
 
     def _apply_defaults(self):
         """Set default values for optional fields not present in loaded data."""
@@ -169,9 +246,7 @@ class BatteryModel:
 
     def _validate_and_clamp_fields(self):
         """Clamp physics values and validate scheduling field types."""
-        physics = self.data.get('physics', {})
-        if 'peukert_exponent' in physics:
-            physics['peukert_exponent'] = max(1.0, min(1.5, physics['peukert_exponent']))
+        self.physics.peukert_exponent = max(1.0, min(1.5, self.physics.peukert_exponent))
         soh = self.data.get('soh')
         if soh is not None and (soh < 0 or soh > 1.0):
             logger.warning("model.json soh=%s out of range, clamping to [0, 1]", soh,
@@ -259,22 +334,20 @@ class BatteryModel:
             'cumulative_on_battery_sec': 0.0,
         }
 
-    # --- Physics getters ---
-
     def get_peukert_exponent(self) -> float:
-        return self.data.get('physics', {}).get('peukert_exponent', 1.2)
+        return self.physics.peukert_exponent
 
     def get_nominal_voltage(self) -> float:
-        return self.data.get('physics', {}).get('nominal_voltage', 12.0)
+        return self.physics.nominal_voltage
 
     def get_nominal_power_watts(self) -> float:
-        return self.data.get('physics', {}).get('nominal_power_watts', 425.0)
+        return self.physics.nominal_power_watts
 
     def get_ir_k(self) -> float:
-        return self.data.get('physics', {}).get('ir_compensation', {}).get('k_volts_per_percent', 0.015)
+        return self.physics.ir_compensation.k_volts_per_percent
 
     def get_ir_reference_load(self) -> float:
-        return self.data.get('physics', {}).get('ir_compensation', {}).get('reference_load_percent', 20.0)
+        return self.physics.ir_compensation.reference_load_percent
 
     # --- Enterprise-equivalent counters ---
 
@@ -306,43 +379,34 @@ class BatteryModel:
         """Accumulate on-battery time (additive, unit: seconds, no upper bound)."""
         self.data['cumulative_on_battery_sec'] = self.data.get('cumulative_on_battery_sec', 0.0) + seconds
 
-    # --- Physics setters ---
-
     def set_peukert_exponent(self, value: float):
-        self.data.setdefault('physics', {})['peukert_exponent'] = value
+        self.physics.peukert_exponent = value
 
     def set_ir_k(self, value: float):
-        self.data.setdefault('physics', {}).setdefault('ir_compensation', {})['k_volts_per_percent'] = value
-
-    # --- RLS state persistence ---
-
-    _RLS_DEFAULTS = {
-        'ir_k': {'theta': 0.015, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
-        'peukert': {'theta': 1.2, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
-    }
+        self.physics.ir_compensation.k_volts_per_percent = value
 
     def get_rls_state(self, name: str) -> dict:
-        """Get RLS estimator state by name. Returns defaults if missing."""
-        rls = self.data.get('physics', {}).get('rls_state', {})
-        fallback = self._RLS_DEFAULTS.get(name, {'theta': 0.0, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97})
-        return rls.get(name, dict(fallback))
+        """Get RLS estimator state as dict (for ScalarRLS.from_dict compatibility)."""
+        rls = self.physics.rls_state.get(name)
+        if rls is None:
+            return RLSParams().to_dict()
+        return rls.to_dict()
 
     def set_rls_state(self, name: str, theta: float, P: float, sample_count: int) -> None:
-        """Persist RLS estimator state to model.json."""
-        physics = self.data.setdefault('physics', {})
-        rls = physics.setdefault('rls_state', {})
-        existing = rls.get(name, {})
-        rls[name] = {
-            'theta': theta,
-            'P': P,
-            'sample_count': sample_count,
-            'forgetting_factor': existing.get('forgetting_factor', 0.97),
-        }
+        """Update RLS estimator state (persisted on next save)."""
+        rls = self.physics.rls_state.get(name)
+        if rls is None:
+            rls = RLSParams()
+            self.physics.rls_state[name] = rls
+        rls.theta = theta
+        rls.P = P
+        rls.sample_count = sample_count
 
     def reset_rls_state(self) -> None:
         """Reset all RLS estimators to defaults (e.g., on battery replacement)."""
-        self.data.setdefault('physics', {})['rls_state'] = {
-            k: dict(v) for k, v in self._RLS_DEFAULTS.items()
+        self.physics.rls_state = {
+            'ir_k': RLSParams(theta=0.015),
+            'peukert': RLSParams(theta=1.2),
         }
 
     def _cap_history_entries(self, key: str, keep_count: int = 30) -> None:
@@ -425,6 +489,7 @@ class BatteryModel:
         and LUT (deduplicates measured entries within ±0.1V, keeps most
         recent 200) to prevent unbounded growth.
         """
+        self._sync_physics_to_data()
         self._cap_history_entries('soh_history')
         self._cap_history_entries('r_internal_history')
         self._prune_lut()
