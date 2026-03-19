@@ -81,7 +81,7 @@ ups-unfucked daemon (10s poll)
     │ Event classifier → SoH tracking → Replacement prediction
     │ Sulfation model → Cycle ROI → Test scheduler (daily)
     ▼
-/dev/shm/ups-virtual.dev (atomic tmpfs write)
+/run/ups-battery-monitor/ups-virtual.dev (atomic tmpfs write)
     │
     ▼
 NUT dummy-ups → upsd → upsmon (shutdown decisions)

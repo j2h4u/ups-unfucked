@@ -37,12 +37,16 @@ def main():
         if result.returncode != 0:
             print(f"  UPS: (upsc failed: {result.stderr.strip() or 'exit ' + str(result.returncode)})")
         else:
-            nut_vars = result.stdout
-            mfr = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.mfr:')), None)
-            ups_device_model = next((line.split(': ', 1)[1] for line in nut_vars.splitlines() if line.startswith('device.model:')), None)
-            if mfr and ups_device_model:
-                print(f"  UPS:              {mfr} {ups_device_model}")
-    except (OSError, subprocess.TimeoutExpired):
+            nut_vars = {k: v for k, v in (line.split(': ', 1) for line in result.stdout.splitlines() if ': ' in line)}
+            mfr = nut_vars.get('device.mfr')
+            ups_model_name = nut_vars.get('device.model')
+            if mfr and ups_model_name:
+                print(f"  UPS:              {mfr} {ups_model_name}")
+    except FileNotFoundError:
+        print("  UPS: (upsc not installed)")
+    except subprocess.TimeoutExpired:
+        print("  UPS: (upsc timed out)")
+    except OSError:
         print("  UPS: (NUT unavailable)")
 
     # State of Health — how much usable capacity remains vs new battery
@@ -91,9 +95,9 @@ def main():
     if len(soh_history) >= 3:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from src.replacement_predictor import linear_regression_soh
-        soh_trend_result = linear_regression_soh(soh_history, threshold_soh=0.80)
-        if soh_trend_result:
-            slope, intercept, r2, date = soh_trend_result
+        soh_regression = linear_regression_soh(soh_history, threshold_soh=0.80)
+        if soh_regression:
+            slope, intercept, r2, date = soh_regression
             print(f"  Replace battery:  ~{date} (trend confidence R²={r2:.2f})")
         else:
             print(f"  Replace battery:  no degradation trend detected yet")

@@ -138,13 +138,11 @@ def test_health_endpoint_includes_v16_discharge_fields(health_endpoint_temp_file
 
     Required fields:
     - last_discharge_timestamp (ISO8601 string or null)
-    - natural_blackout_credit (float or null)
     """
     with patch('src.monitor_config.HEALTH_ENDPOINT_PATH', health_endpoint_temp_file):
         write_health_endpoint(HealthSnapshot(
             **baseline_health_params,
             last_discharge_timestamp='2026-03-17T10:00:00Z',
-            natural_blackout_credit=0.15,
         ))
 
         with open(health_endpoint_temp_file) as f:
@@ -152,9 +150,6 @@ def test_health_endpoint_includes_v16_discharge_fields(health_endpoint_temp_file
 
         assert 'last_discharge_timestamp' in data, "Missing last_discharge_timestamp field"
         assert data['last_discharge_timestamp'] == '2026-03-17T10:00:00Z'
-
-        assert 'natural_blackout_credit' in data, "Missing natural_blackout_credit field"
-        assert data['natural_blackout_credit'] == 0.15, f"Expected 0.15, got {data['natural_blackout_credit']}"
 
 
 @pytest.mark.integration
@@ -185,9 +180,6 @@ def test_health_endpoint_nulls_when_sulfation_not_provided(health_endpoint_temp_
 
         assert 'last_discharge_timestamp' in data, "last_discharge_timestamp field missing"
         assert data['last_discharge_timestamp'] is None
-
-        assert 'natural_blackout_credit' in data, "natural_blackout_credit field missing"
-        assert data['natural_blackout_credit'] is None
 
 
 @pytest.mark.integration

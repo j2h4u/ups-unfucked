@@ -86,9 +86,9 @@ class DischargeHandler:
         self._check_alerts(soh_after, replacement_prediction, discharge_buffer)
         self._auto_calibrate_peukert(soh_after, discharge_buffer)
 
-        event_reason = self._classify_discharge_trigger(discharge_buffer)
+        discharge_trigger = self._classify_discharge_trigger(discharge_buffer)
         soh_delta = soh_after - soh_before
-        self._score_and_persist_sulfation(soh_after, soh_delta, discharge_buffer, event_reason, capacity_ah_ref)
+        self._score_and_persist_sulfation(soh_after, soh_delta, discharge_buffer, discharge_trigger, capacity_ah_ref)
 
         self._log_discharge_prediction(discharge_buffer)
 
@@ -110,8 +110,11 @@ class DischargeHandler:
         # Cycle count and on-battery time are still tracked (in _track_discharge).
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
         if discharge_duration < 300:
-            logger.info(f"Discharge too short for model update ({discharge_duration:.0f}s < 300s); "
-                        f"skipping SoH/Peukert calibration")
+            logger.info(
+                f"Discharge too short for model update ({discharge_duration:.0f}s < 300s); "
+                f"skipping SoH/Peukert calibration",
+                extra={'event_type': 'micro_discharge_skip', 'duration_sec': int(discharge_duration)}
+            )
             return None
 
         avg_load = self._avg_load(discharge_buffer)
@@ -135,7 +138,9 @@ class DischargeHandler:
         today = datetime.now().strftime('%Y-%m-%d')
         self.battery_model.add_soh_history_entry(today, soh_after, capacity_ah_ref=capacity_ah_ref)
 
-        logger.info(f"SoH calculated: {soh_after:.2%}")
+        logger.info(f"SoH calculated: {soh_after:.2%}", extra={
+            'event_type': 'soh_calculation', 'soh': f'{soh_after:.4f}',
+        })
 
         return (soh_after, capacity_ah_ref)
 
@@ -211,8 +216,8 @@ class DischargeHandler:
         soh_new: float,
         soh_delta: float,
         discharge_buffer: DischargeBuffer,
-        event_reason: str,
-        capacity_ah_ref: float = None,
+        discharge_trigger: str,
+        capacity_ah_ref: Optional[float] = None,
     ) -> None:
         """Compute sulfation score, persist sulfation/discharge history, grant blackout credit.
 
@@ -220,6 +225,7 @@ class DischargeHandler:
         entries, logs the discharge complete event, and grants blackout credit for
         natural deep discharges (>=90% DoD).
         """
+        now_iso = datetime.now(timezone.utc).isoformat()
         days_since_deep = self._calculate_days_since_deep()
         ir_trend_rate = self._estimate_ir_trend()
         depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
@@ -251,12 +257,12 @@ class DischargeHandler:
         self.last_recovery_delta = soh_delta
         self.last_cycle_roi = roi
         self.last_cycle_budget_remaining = cycle_budget
-        self.last_discharge_timestamp = datetime.now(timezone.utc).isoformat()
+        self.last_discharge_timestamp = now_iso
 
         # Persist to model.json
         self.battery_model.append_sulfation_history({
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'event_type': event_reason,
+            'timestamp': now_iso,
+            'event_type': discharge_trigger,
             'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
             'days_since_deep': round(days_since_deep, 1) if days_since_deep is not None else None,
             'ir_trend_rate': round(ir_trend_rate, 6),
@@ -269,8 +275,8 @@ class DischargeHandler:
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
         # capacity_ah_ref passed from caller (update_battery_health)
         self.battery_model.append_discharge_event({
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'event_reason': event_reason,
+            'timestamp': now_iso,
+            'event_reason': discharge_trigger,
             'duration_seconds': discharge_duration,
             'depth_of_discharge': round(depth_of_discharge, 2),
             'measured_capacity_ah': capacity_ah_ref,
@@ -279,22 +285,22 @@ class DischargeHandler:
 
         logger.info('Discharge complete', extra={
             'event_type': 'discharge_complete',
-            'event_reason': event_reason,
+            'discharge_trigger': discharge_trigger,
             'duration_seconds': int(discharge_duration),
             'depth_of_discharge': round(depth_of_discharge, 2),
             'sulfation_score': round(sulfation_state.score, 3) if sulfation_state else None,
             'sulfation_confidence': self.last_sulfation_confidence,
             'recovery_delta': round(self.last_recovery_delta, 3),
             'cycle_roi': round(roi, 3) if roi is not None else None,
-            'measured_capacity_ah': round(capacity_ah_ref, 2) if capacity_ah_ref else None,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'measured_capacity_ah': round(capacity_ah_ref, 2) if capacity_ah_ref is not None else None,
+            'timestamp': now_iso,
         })
 
-        self._grant_blackout_credit(event_reason, depth_of_discharge)
+        self._grant_blackout_credit(discharge_trigger, depth_of_discharge)
 
-    def _grant_blackout_credit(self, event_reason: str, depth_of_discharge: float) -> None:
+    def _grant_blackout_credit(self, discharge_trigger: str, depth_of_discharge: float) -> None:
         """Grant blackout credit for natural deep discharges (>=90% DoD)."""
-        if event_reason != 'natural' or depth_of_discharge < 0.90:
+        if discharge_trigger != 'natural' or depth_of_discharge < 0.90:
             return
 
         credit_expires = datetime.now(timezone.utc) + timedelta(days=BLACKOUT_CREDIT_DAYS)
@@ -641,7 +647,11 @@ class DischargeHandler:
             else:
                 return 'natural'
         except (ValueError, TypeError):
-            logger.warning(f"Invalid timestamps in discharge classification: upscmd={last_upscmd}", exc_info=True)
+            buf_start = discharge_buffer.times[0] if discharge_buffer.times else None
+            logger.warning(
+                f"Invalid timestamps in discharge classification: upscmd={last_upscmd}, buf_start={buf_start}",
+                exc_info=True
+            )
             return 'natural'
 
     def _estimate_dod_from_buffer(self, discharge_buffer: DischargeBuffer) -> float:

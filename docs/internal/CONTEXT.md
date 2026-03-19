@@ -27,7 +27,7 @@ ups-battery-monitor daemon (10s poll interval)
     ↓ Enterprise counters (cycle count, cumulative on-battery time, install date)
     ↓ Per-poll writes during OB state (no 60s lag on LB flag)
     ↓
-/dev/shm/ups-virtual.dev (atomic tmpfs write, fdatasync)
+/run/ups-battery-monitor/ups-virtual.dev (atomic tmpfs write, fdatasync)
     ↓
 NUT dummy-ups → upsd → upsmon (shutdown) / Grafana (dashboards) / MOTD
     ↑

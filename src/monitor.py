@@ -149,20 +149,24 @@ def dispatch_test_with_audit(
             upscmd_type=command,
             upscmd_status=f'ERR_SOCKET: {e}',
         )
-        battery_model.save()
+        safe_save(battery_model)
         logger.error(f"Test dispatch socket error: {e}", exc_info=True)
         return False
 
     if success:
-        # Success: update model with command result
-        battery_model.update_upscmd_result(
-            upscmd_timestamp=upscmd_timestamp,
-            upscmd_type=command,
-            upscmd_status='OK',
-        )
+        upscmd_status = 'OK'
         battery_model.data['test_running'] = True
-        battery_model.save()
+    else:
+        upscmd_status = response_msg or 'ERR_UNKNOWN'
 
+    battery_model.update_upscmd_result(
+        upscmd_timestamp=upscmd_timestamp,
+        upscmd_type=command,
+        upscmd_status=upscmd_status,
+    )
+    safe_save(battery_model)
+
+    if success:
         logger.info(f"Test dispatched: {command}", extra={
             'event_type': 'test_dispatched',
             'test_type': decision.test_type,
@@ -172,14 +176,6 @@ def dispatch_test_with_audit(
         })
         return True
     else:
-        # Failure: update model with error
-        battery_model.update_upscmd_result(
-            upscmd_timestamp=upscmd_timestamp,
-            upscmd_type=command,
-            upscmd_status=response_msg or 'ERR_UNKNOWN',
-        )
-        battery_model.save()
-
         logger.error(f"Test dispatch failed: {response_msg or 'unknown error'}", extra={
             'event_type': 'test_dispatch_failed',
             'command': command,
@@ -308,9 +304,13 @@ class MonitorDaemon:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        logger.info(f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, poll={config.polling_interval}s, model={model_path}, nut={config.nut_host}:{config.nut_port}")
+        logger.info(
+            f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, "
+            f"poll={config.polling_interval}s, model={model_path}, nut={config.nut_host}:{config.nut_port}",
+            extra={'event_type': 'daemon_init'}
+        )
 
-        # H1 fix: Check NUT connectivity at startup
+        # Fail fast on misconfigured NUT rather than silently looping
         self._check_nut_connectivity()
 
     def _validate_model(self):
@@ -336,12 +336,13 @@ class MonitorDaemon:
         """Verify NUT upsd is reachable before entering main loop."""
         try:
             _ = self.nut_client.get_ups_vars()
-            logger.info("NUT upsd reachable, polling started")
+            logger.info("NUT upsd reachable, polling started", extra={'event_type': 'nut_reachable'})
         except Exception:
             logger.warning(
                 f"NUT upsd unreachable at {self.config.nut_host}:{self.config.nut_port}, "
                 f"will retry every {self.config.polling_interval}s",
-                exc_info=True
+                exc_info=True,
+                extra={'event_type': 'nut_unreachable'}
             )
 
     def _handle_event_transition(self):
@@ -368,7 +369,8 @@ class MonitorDaemon:
 
         # EVT-03
         if event_type == EventType.BLACKOUT_TEST:
-            logger.info("Battery test detected; collecting calibration data, no shutdown")
+            logger.info("Battery test detected; collecting calibration data, no shutdown",
+                        extra={'event_type': 'battery_test_detected'})
             self.current_metrics.shutdown_imminent = False
 
         # EVT-04
@@ -382,7 +384,8 @@ class MonitorDaemon:
         if (self.current_metrics.transition_occurred and
             event_type == EventType.ONLINE and
             previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)):
-            logger.info("Power restored; updating LUT with measured discharge points")
+            logger.info("Power restored; updating LUT with measured discharge points",
+                        extra={'event_type': 'power_restored'})
             self._update_battery_health()
 
     # --- Delegation to DischargeHandler ---
@@ -641,8 +644,17 @@ class MonitorDaemon:
                     'sample_count': str(self.rls_ir_k.sample_count),
                 })
 
-        logger.info(f"Voltage sag: {self.v_before_sag:.2f}V → {v_sag:.2f}V, "
-                    f"R_internal={r_ohm*1000:.1f}mΩ at {load:.1f}% load")
+        logger.info(
+            f"Voltage sag: {self.v_before_sag:.2f}V → {v_sag:.2f}V, "
+            f"R_internal={r_ohm*1000:.1f}mΩ at {load:.1f}% load",
+            extra={
+                'event_type': 'voltage_sag',
+                'v_before': f'{self.v_before_sag:.2f}',
+                'v_sag': f'{v_sag:.2f}',
+                'r_internal_mohm': f'{r_ohm*1000:.1f}',
+                'load_pct': f'{load:.1f}',
+            }
+        )
 
     def _signal_handler(self, signum, frame):
         """Handle SIGTERM/SIGINT: persist model, then stop polling loop."""
@@ -752,21 +764,23 @@ class MonitorDaemon:
         discharge event, not two separate events. Only clear buffer after 60s confirmed OL.
         """
         event_type = self.current_metrics.event_type
-        previous_event = self.current_metrics.previous_event_type
+        previous_event_type = self.current_metrics.previous_event_type
 
         # Handle cooldown state transitions
         if event_type not in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
             # We are now in OL (online) state
-            if previous_event in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+            if previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
                 # OB→OL transition detected: start cooldown
-                logger.info("Power loss detected; starting 60s discharge cooldown")
+                logger.info("Power loss detected; starting 60s discharge cooldown",
+                            extra={'event_type': 'discharge_cooldown_start'})
                 self.discharge_buffer_clear_countdown = 60
 
         if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
             # We are in OB (blackout) state
             if self.discharge_buffer_clear_countdown is not None:
                 # Power restored during cooldown
-                logger.info("Power restored during cooldown; treating as discharge continuation")
+                logger.info("Power restored during cooldown; treating as discharge continuation",
+                            extra={'event_type': 'discharge_cooldown_cancelled'})
                 self.discharge_buffer_clear_countdown = None  # Cancel cooldown, keep buffer
 
         # Count down cooldown timer on each poll (POLL_INTERVAL = config.polling_interval)
@@ -822,7 +836,8 @@ class MonitorDaemon:
         if points_written > 0:
             try:
                 self.battery_model.calibration_batch_flush()
-                logger.info(f"Batch flushed {points_written} calibration points to disk")
+                logger.info(f"Batch flushed {points_written} calibration points to disk",
+                            extra={'event_type': 'calibration_batch_flush', 'points_written': points_written})
             except Exception as e:
                 logger.error(f"Calibration batch flush failed: {e}", exc_info=True)
 
@@ -930,7 +945,11 @@ class MonitorDaemon:
             # R_internal: median of non-zero measurements, require ≥3 for noise rejection.
             r_internal_history = self.battery_model.get_r_internal_history()
             valid_r_measurements = [e["r_ohm"] for e in r_internal_history if e["r_ohm"] > 0]
-            r_internal_mohm = round(sorted(valid_r_measurements)[len(valid_r_measurements) // 2] * 1000, 1) if len(valid_r_measurements) >= 3 else 0
+            if len(valid_r_measurements) >= 3:
+                sorted_r = sorted(valid_r_measurements)
+                r_internal_mohm = round(sorted_r[len(sorted_r) // 2] * 1000, 1)
+            else:
+                r_internal_mohm = 0
 
             virtual_metrics = {
                 "battery.runtime": int(time_rem * 60) if time_rem is not None else int(float(ups_data.get("battery.runtime", 0))),
@@ -982,7 +1001,7 @@ class MonitorDaemon:
     def _poll_once(self) -> None:
         """Execute a single poll cycle: fetch UPS data, update metrics, write outputs."""
         timestamp = time.time()
-        ups_data = self.nut_client.get_ups_vars()
+        nut_vars = self.nut_client.get_ups_vars()
         poll_latency_ms = (time.time() - timestamp) * 1000
 
         self._consecutive_errors = 0  # Reset on successful NUT poll
@@ -992,13 +1011,13 @@ class MonitorDaemon:
             startup_delta_ms = (time.monotonic() - self._startup_time) * 1000
             logger.info(f"First successful poll completed: startup took {startup_delta_ms:.0f}ms")
             self._startup_logged = True
-        voltage, load = self._update_ema(ups_data)
+        voltage, load = self._update_ema(nut_vars)
         if voltage is None:
             logger.warning(f"Poll {self.poll_count}: Missing voltage or load data")
             time.sleep(self.config.polling_interval)
             return
 
-        self._classify_event(ups_data)
+        self._classify_event(nut_vars)
         self._track_voltage_sag(voltage)
         self._track_discharge(voltage, timestamp)
 
@@ -1016,7 +1035,7 @@ class MonitorDaemon:
             logger.debug(f"Metrics gate: is_discharging={is_discharging}, poll_count={self.poll_count}")
             battery_charge, time_rem = self._compute_metrics()
             self._log_status(battery_charge, time_rem, poll_latency_ms)
-            self._write_virtual_ups(ups_data, battery_charge, time_rem)
+            self._write_virtual_ups(nut_vars, battery_charge, time_rem)
 
         # Write health endpoint for external monitoring (every poll)
         self._write_health_snapshot(poll_latency_ms)
@@ -1054,11 +1073,25 @@ class MonitorDaemon:
                 self._consecutive_errors += 1
                 # Reset sag state so we don't get stuck in 1s sleep on persistent errors
                 self.sag_state = SagState.IDLE
-                # Rate-limit: full traceback for first 10, then summary every 6th (~60s)
+                # Always log traceback when error type changes (new root cause)
+                error_type = type(e).__name__
+                error_type_changed = error_type != getattr(self, '_last_error_type', None)
+                self._last_error_type = error_type
+                # Rate-limit: full traceback for first 10 or on type change, then summary every 6th (~60s)
                 reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
-                if self._consecutive_errors <= ERROR_LOG_BURST or self._consecutive_errors % reporting_interval_polls == 0:
-                    logger.error(f"Error in polling loop ({self._consecutive_errors} consecutive): {e}",
-                                 exc_info=(self._consecutive_errors <= ERROR_LOG_BURST))
+                should_log = (self._consecutive_errors <= ERROR_LOG_BURST
+                              or error_type_changed
+                              or self._consecutive_errors % reporting_interval_polls == 0)
+                if should_log:
+                    logger.error(
+                        f"Error in polling loop ({self._consecutive_errors} consecutive): {e}",
+                        exc_info=(self._consecutive_errors <= ERROR_LOG_BURST or error_type_changed),
+                        extra={
+                            'event_type': 'poll_error',
+                            'consecutive_errors': self._consecutive_errors,
+                            'error_class': error_type,
+                        }
+                    )
                 time.sleep(self.config.polling_interval)
 
         logger.info("Polling loop ended; daemon shutting down")

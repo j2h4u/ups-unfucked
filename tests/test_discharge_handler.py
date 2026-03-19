@@ -147,7 +147,7 @@ class TestBlackoutCreditLogic:
             handler._score_and_persist_sulfation(
                 soh_new=0.95, soh_delta=-0.02,
                 discharge_buffer=self._deep_discharge_buffer(),
-                event_reason='natural',
+                discharge_trigger='natural',
             )
 
         credit = model.get_blackout_credit()
@@ -164,7 +164,7 @@ class TestBlackoutCreditLogic:
             handler._score_and_persist_sulfation(
                 soh_new=0.95, soh_delta=-0.01,
                 discharge_buffer=self._shallow_discharge_buffer(),
-                event_reason='natural',
+                discharge_trigger='natural',
             )
 
         credit = model.get_blackout_credit()
@@ -179,14 +179,14 @@ class TestBlackoutCreditLogic:
             handler._score_and_persist_sulfation(
                 soh_new=0.95, soh_delta=-0.03,
                 discharge_buffer=self._deep_discharge_buffer(),
-                event_reason='test_initiated',
+                discharge_trigger='test_initiated',
             )
 
         credit = model.get_blackout_credit()
         assert credit is None
 
     def test_blackout_credit_expires(self, temporary_model_path):
-        """Blackout credit expires after 7 days: credit_expires < now means inactive."""
+        """Blackout credit expires after 7 days: callers check credit_expires < now."""
         model = BatteryModel(temporary_model_path)
 
         # Set expired credit (expired 1 day ago)
@@ -198,12 +198,21 @@ class TestBlackoutCreditLogic:
             'desulfation_credit': 0.15,
         })
 
-        # Verify credit is stored but actually expired (credit_expires < now)
+        # Verify get_blackout_credit() returns the credit dict
         credit = model.get_blackout_credit()
         assert credit is not None
+        assert credit['active'] is True
+
+        # Verify the expiry check that callers (scheduler) must perform
         expires_dt = datetime.fromisoformat(credit['credit_expires'])
         now = datetime.now(timezone.utc)
-        assert expires_dt < now, "Credit should be expired (credit_expires in the past)"
+        is_expired = expires_dt < now
+        assert is_expired, "Credit with credit_expires in the past should be detected as expired"
+
+        # Verify clear_blackout_credit() deactivates it
+        model.clear_blackout_credit()
+        credit_after = model.get_blackout_credit()
+        assert credit_after['active'] is False
 
     def test_blackout_credit_cleared_manually(self, temporary_model_path):
         """clear_blackout_credit() sets active=False."""
@@ -249,7 +258,7 @@ class TestBlackoutCreditEventLogging:
         with patch('src.discharge_handler.logger') as mock_logger:
             handler._score_and_persist_sulfation(
                 soh_new=0.95, soh_delta=-0.02,
-                discharge_buffer=buf, event_reason='natural',
+                discharge_buffer=buf, discharge_trigger='natural',
             )
 
         # Verify blackout_credit_granted was logged

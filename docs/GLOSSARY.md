@@ -176,7 +176,7 @@ Standard Linux software for UPS management. Consists of:
 Our daemon **does not replace** NUT — it reads data from it and computes its own metrics (SoC, SoH, runtime) that are more accurate than the built-in ones.
 
 ### Virtual UPS
-A file on tmpfs (`/dev/shm/ups-virtual.dev`) where the daemon writes computed metrics in NUT format. A second NUT instance (`dummy-ups`) reads this file and serves the data as if it were a real UPS.
+A file on tmpfs (`/run/ups-battery-monitor/ups-virtual.dev`) where the daemon writes computed metrics in NUT format. A second NUT instance (`dummy-ups`) reads this file and serves the data as if it were a real UPS.
 
 Why: `upsmon` can trigger shutdown when `battery.runtime < threshold`. But CyberPower's native metrics lie. The virtual UPS substitutes them with computed values.
 

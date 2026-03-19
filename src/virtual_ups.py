@@ -42,18 +42,15 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
     """
     virtual_ups_path = Path("/run/ups-battery-monitor/ups-virtual.dev")
 
-    try:
-        # Guard against symlink attack: refuse to write through symlinks
-        if virtual_ups_path.is_symlink():
-            raise OSError(f"{virtual_ups_path} is a symlink, refusing to write")
+    # Guard against symlink attack: refuse to write through symlinks
+    if virtual_ups_path.is_symlink():
+        raise OSError(f"{virtual_ups_path} is a symlink, refusing to write")
 
-        content = "".join(f"{key}: {value}\n" for key, value in metrics.items())
+    # Sanitize values: strip newlines to prevent NUT field injection via model.json data
+    sanitized = {k: str(v).replace('\n', '').replace('\r', '') for k, v in metrics.items()}
+    content = "".join(f"{key}: {value}\n" for key, value in sanitized.items())
 
-        atomic_write(virtual_ups_path, content)
-
-    except Exception as e:
-        logger.error(f"Failed to write virtual UPS metrics: {e}")
-        raise
+    atomic_write(virtual_ups_path, content)
 
 
 # Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type.

@@ -1,8 +1,16 @@
 """Capacity estimator: measures actual battery Ah from discharge events via coulomb counting."""
 
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, NamedTuple
 from src.soc_predictor import soc_from_voltage
+
+
+class CapacityMeasurement(NamedTuple):
+    """Single capacity measurement from a discharge event."""
+    timestamp: str
+    ah: float
+    confidence: float
+    metadata: Dict
 
 logger = logging.getLogger('ups-battery-monitor')
 
@@ -47,7 +55,7 @@ class CapacityEstimator:
         self.nominal_voltage = nominal_voltage
         self.nominal_power_watts = nominal_power_watts
         self.capacity_ah = capacity_ah
-        self.capacity_measurements: List[Tuple] = []  # [(timestamp, ah, confidence, metadata), ...]
+        self.capacity_measurements: List[CapacityMeasurement] = []
 
     def estimate(
         self,
@@ -67,6 +75,11 @@ class CapacityEstimator:
 
         Returns:
             (Ah_estimate, confidence, metadata) tuple, or None if quality filter rejects.
+
+        Note: confidence is computed from self.capacity_measurements (in-memory accumulator).
+            Callers must separately call add_measurement() to populate this accumulator;
+            estimate() does not do so automatically. BatteryModel.add_capacity_estimate()
+            is the separate persistence path to model.json.
         """
         # VAL-01: Quality filter
         if not self._passes_quality_filter(voltage_series, time_series, load_series, lut):
@@ -272,7 +285,7 @@ class CapacityEstimator:
         """Confidence = 1 - CoV, clamped to [0, 1]. Returns 0.0 for <3 measurements."""
         if len(self.capacity_measurements) < 3:
             return 0.0
-        cov = compute_cov([m[1] for m in self.capacity_measurements])
+        cov = compute_cov([m.ah for m in self.capacity_measurements])
         return max(0.0, min(1.0, 1.0 - cov))
 
     def add_measurement(self, ah: float, timestamp: str, metadata: Dict) -> None:
@@ -285,7 +298,7 @@ class CapacityEstimator:
             metadata: Measurement metadata (delta_soc_percent, duration_sec, etc.).
         """
         confidence = self._compute_confidence()
-        self.capacity_measurements.append((timestamp, ah, confidence, metadata))
+        self.capacity_measurements.append(CapacityMeasurement(timestamp, ah, confidence, metadata))
 
     def has_converged(self) -> bool:
         """Converged: count >= 3 AND CoV < 0.10."""
@@ -309,11 +322,11 @@ class CapacityEstimator:
         if not self.capacity_measurements:
             return 7.2  # Fallback to rated
 
-        total_delta_soc = sum(m[3].get('delta_soc_percent', 0) for m in self.capacity_measurements)
+        total_delta_soc = sum(m.metadata.get('delta_soc_percent', 0) for m in self.capacity_measurements)
 
         if total_delta_soc == 0:
             # Fallback: equal weight
-            ah_sum = sum(m[1] for m in self.capacity_measurements)
+            ah_sum = sum(m.ah for m in self.capacity_measurements)
             return ah_sum / len(self.capacity_measurements)
 
         weighted_ah = 0.0
@@ -332,6 +345,6 @@ class CapacityEstimator:
         """Count of accumulated capacity measurements."""
         return len(self.capacity_measurements)
 
-    def get_measurements(self) -> List[Tuple]:
-        """All accumulated measurements: [(timestamp, ah, confidence, metadata), ...]."""
+    def get_measurements(self) -> List[CapacityMeasurement]:
+        """All accumulated measurements."""
         return self.capacity_measurements

@@ -85,7 +85,7 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
 
     # Fallback: no valid bracket found
     if v1_entry is None or v2_entry is None:
-        logger.warning(f"No LUT bracket found for voltage {voltage}")
+        logger.info(f"No LUT bracket found for voltage {voltage}")
         return SOC_FALLBACK
 
     # Linear interpolation

@@ -139,7 +139,7 @@ def test_prune_discharge_events_keeps_last_30(battery_model_with_discharge_event
         event['timestamp'] = f"2026-03-{17+i:02d}T10:30:00Z"
         model.append_discharge_event(event)
 
-    model._prune_list('discharge_events', keep_count=30)
+    model._cap_history_entries('discharge_events', keep_count=30)
     assert len(model.data['discharge_events']) == 30
 
 

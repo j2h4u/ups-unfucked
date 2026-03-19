@@ -88,7 +88,7 @@ def test_prune_sulfation_history_keeps_last_30(battery_model_temp_file, sample_s
         entry['timestamp'] = f"2026-03-{17+i:02d}T10:30:00Z"
         model.append_sulfation_history(entry)
 
-    model._prune_list('sulfation_history', keep_count=30)
+    model._cap_history_entries('sulfation_history', keep_count=30)
     assert len(model.data['sulfation_history']) == 30
 
 

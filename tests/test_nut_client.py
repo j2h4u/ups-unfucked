@@ -306,3 +306,15 @@ class TestNUTProtocolValidation:
         client = NUTClient()
         with pytest.raises(ValueError, match="Invalid NUT"):
             client.send_instcmd('test.battery.start.quick', cmd_param=bad_param)
+
+    @pytest.mark.parametrize("bad_command", [
+        "USERNAME upsmon\r\nINSTCMD cyberpower test.battery.start.deep",  # CRLF injection
+        "PASSWORD\rINSTCMD cyberpower test.battery.start.deep",           # CR injection
+        "GET VAR cyberpower\rbattery.voltage",                            # CR mid-command
+    ])
+    def test_cr_injection_rejected(self, mock_nut_socket, bad_command):
+        """send_command rejects commands containing carriage return."""
+        client = NUTClient()
+        client.connect()
+        with pytest.raises(ValueError, match="control char"):
+            client.send_command(bad_command)

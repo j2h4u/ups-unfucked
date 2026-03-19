@@ -148,6 +148,24 @@ class BatteryModel:
             logger.warning(f"model.json soh={soh} out of range, clamping to [0, 1]")
             self.data['soh'] = max(0.0, min(1.0, soh))
 
+        # Validate critical numerics that would cause division-by-zero or math errors
+        capacity_ref = self.data.get('full_capacity_ah_ref')
+        if capacity_ref is not None and (not isinstance(capacity_ref, (int, float)) or capacity_ref <= 0):
+            logger.warning(f"model.json full_capacity_ah_ref={capacity_ref} invalid, resetting to 7.2")
+            self.data['full_capacity_ah_ref'] = 7.2
+
+        # Validate LUT entries — drop entries with missing or non-numeric v/soc
+        lut = self.data.get('lut', [])
+        valid_lut = []
+        for entry in lut:
+            v, soc = entry.get('v'), entry.get('soc')
+            if isinstance(v, (int, float)) and isinstance(soc, (int, float)):
+                valid_lut.append(entry)
+            else:
+                logger.warning(f"Dropping invalid LUT entry: {entry}")
+        if len(valid_lut) != len(lut):
+            self.data['lut'] = valid_lut
+
     def _default_vrla_lut(self) -> Dict[str, Any]:
         """
         Standard VRLA 12V discharge curve (7.2Ah reference capacity).
@@ -257,9 +275,10 @@ class BatteryModel:
     }
 
     def get_rls_state(self, name: str) -> dict:
-        """Get RLS estimator state by name. Returns defaults if missing (backward compat)."""
+        """Get RLS estimator state by name. Returns defaults if missing."""
         rls = self.data.get('physics', {}).get('rls_state', {})
-        return rls.get(name, dict(self._RLS_DEFAULTS.get(name, {'theta': 0.0, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97})))
+        fallback = self._RLS_DEFAULTS.get(name, {'theta': 0.0, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97})
+        return rls.get(name, dict(fallback))
 
     def set_rls_state(self, name: str, theta: float, P: float, sample_count: int) -> None:
         """Persist RLS estimator state to model.json."""
@@ -279,8 +298,8 @@ class BatteryModel:
             k: dict(v) for k, v in self._RLS_DEFAULTS.items()
         }
 
-    def _prune_list(self, key: str, keep_count: int = 30) -> None:
-        """Remove old entries from a list field; retain only most recent keep_count."""
+    def _cap_history_entries(self, key: str, keep_count: int = 30) -> None:
+        """Keep only the most recent keep_count entries from a list field."""
         items = self.data.get(key, [])
         if len(items) > keep_count:
             self.data[key] = items[-keep_count:]
@@ -358,12 +377,12 @@ class BatteryModel:
         sulfation_history, and discharge_events to prevent unbounded growth.
         Use only at discharge event completion, not on every sample.
         """
-        self._prune_list('soh_history')
-        self._prune_list('r_internal_history')
+        self._cap_history_entries('soh_history')
+        self._cap_history_entries('r_internal_history')
         self._prune_lut()
-        self._prune_list('capacity_estimates')
-        self._prune_list('sulfation_history')
-        self._prune_list('discharge_events')
+        self._cap_history_entries('capacity_estimates')
+        self._cap_history_entries('sulfation_history')
+        self._cap_history_entries('discharge_events')
         atomic_write_json(self.model_path, self.data)
 
     def get_lut(self):
@@ -449,7 +468,7 @@ class BatteryModel:
             'metadata': metadata
         }
         self.data['capacity_estimates'].append(entry)
-        self._prune_list('capacity_estimates')
+        self._cap_history_entries('capacity_estimates')
         self.save()
 
     def get_capacity_estimates(self) -> List[Dict]:
@@ -528,7 +547,7 @@ class BatteryModel:
         for entry in lut:
             if entry['soc'] == 0.0 and entry['source'] == 'anchor':
                 return entry['v']
-        return 10.5  # Default if not found
+        return 10.5
 
     def has_measured_data(self):
         """True if LUT contains any 'measured' source entries."""
@@ -559,8 +578,6 @@ class BatteryModel:
             'timestamp': timestamp
         }
 
-        # Insert into LUT maintaining descending voltage order using bisect
-        # Use a key function to find insertion point based on voltage (descending)
         bisect.insort(self.data['lut'], entry, key=lambda x: -x['v'])
 
         # Log point accumulation (no write yet)
@@ -586,15 +603,11 @@ class BatteryModel:
         """
         old_count = len(self.data['lut'])
         self.data['lut'] = new_lut
-        try:
-            self.save()
-            logger.info(
-                f"LUT updated from calibration: {len(new_lut)} entries, "
-                f"cliff region interpolated (was {old_count} entries)"
-            )
-        except Exception as e:
-            logger.error(f"Failed to update LUT from calibration: {e}", exc_info=True)
-            raise
+        self.save()
+        logger.info(
+            f"LUT updated from calibration: {len(new_lut)} entries, "
+            f"cliff region interpolated (was {old_count} entries)"
+        )
 
     # --- Scheduling State Management ---
 
@@ -628,7 +641,7 @@ class BatteryModel:
 
         Args:
             scheduled_timestamp: ISO8601 timestamp of next proposed/eligible test
-            reason: reason_code from SchedulerDecision (e.g., 'sulfation_0.65_roi_0.34')
+            reason: Stored as scheduled_test_reason (e.g., 'sulfation_0.65_roi_0.34')
             block_reason: If test is blocked, reason code (e.g., 'soh_floor_55%'), else None
         """
         self.data['scheduled_test_timestamp'] = scheduled_timestamp

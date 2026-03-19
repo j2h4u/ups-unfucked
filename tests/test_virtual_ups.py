@@ -208,35 +208,20 @@ class TestNUTFormatCompliance:
 class TestShutdownThresholds:
     """Tests for LB flag and shutdown threshold logic (SHUT-01, SHUT-02, SHUT-03)."""
 
-    def test_lb_flag_threshold(self):
-        """Test SHUT-01: LB flag set when time_rem < shutdown threshold.
-
-        Validates:
-        - BLACKOUT_REAL event with time_rem >= threshold → "OB DISCHRG" (no LB)
-        - BLACKOUT_REAL event with time_rem < threshold → "OB DISCHRG LB"
-        - LB flag triggers upsmon to initiate graceful shutdown
-        - Threshold is configurable (default from SHUT-02)
-        """
-        # Arrange: Default threshold = 5 minutes
-        default_threshold = 5
-        test_cases = [
-            (6, "OB DISCHRG"),    # time_rem > threshold: no LB
-            (5, "OB DISCHRG"),    # time_rem == threshold: no LB (uses <, not <=)
-            (4.9, "OB DISCHRG LB"),  # time_rem < threshold: LB flag set
-            (0, "OB DISCHRG LB"),    # time_rem = 0: LB flag set
-        ]
-
-        # Act: Call compute_ups_status_override for each case
-        for time_rem, expected_status in test_cases:
-            result = compute_ups_status_override(
-                EventType.BLACKOUT_REAL,
-                time_rem,
-                default_threshold
-            )
-            # Assert: Status matches expected
-            assert result == expected_status, \
-                f"time_rem={time_rem}, threshold={default_threshold}: " \
-                f"expected '{expected_status}', got '{result}'"
+    @pytest.mark.parametrize("time_rem,expected_status", [
+        (6, "OB DISCHRG"),          # time_rem > threshold: no LB
+        (5, "OB DISCHRG"),          # time_rem == threshold: no LB (uses <, not <=)
+        (4.9, "OB DISCHRG LB"),     # time_rem < threshold: LB flag set
+        (0, "OB DISCHRG LB"),       # time_rem = 0: LB flag set
+    ])
+    def test_lb_flag_threshold(self, time_rem, expected_status):
+        """Test SHUT-01: LB flag set when time_rem < shutdown threshold (5 min)."""
+        result = compute_ups_status_override(
+            EventType.BLACKOUT_REAL,
+            time_rem,
+            5  # default threshold
+        )
+        assert result == expected_status
 
     @pytest.mark.parametrize("threshold", [3, 5, 10])
     def test_configurable_threshold(self, threshold):

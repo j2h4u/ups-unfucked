@@ -128,9 +128,8 @@ class TestOrchestratorWiring:
             kwargs = call_args.kwargs if call_args.kwargs else {}
 
             actual_load = kwargs.get("avg_load_percent")
-            expected_avg = sum([20, 30, 25, 30, 20]) / 5  # = 25.0
-            assert actual_load == expected_avg, \
-                f"Expected avg_load_percent={expected_avg}, got {actual_load}"
+            assert actual_load == 25.0, \
+                f"Expected avg_load_percent=25.0 (mean of [20,30,25,30,20]), got {actual_load}"
 
     def test_soh_updated_before_peukert_uses_it(self, mock_daemon):
         """Verify SoH is set before Peukert calibration consumes it.

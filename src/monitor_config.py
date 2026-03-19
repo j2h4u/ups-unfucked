@@ -225,10 +225,11 @@ except (ImportError, OSError, ValueError) as e:
 def safe_save(model: BatteryModel) -> None:
     """Save model to disk, log errors gracefully if disk full.
 
-    PERSISTENCE MODEL: Memory is source of truth. model.json is written only on
+    PERSISTENCE MODEL: Memory is source of truth. model.json is written on
     real events (discharge complete, battery replacement, capacity convergence,
-    graceful shutdown) — NOT on every poll or sag measurement. Between events,
-    the file can be safely edited externally; daemon picks up changes on restart.
+    graceful shutdown) and on capacity estimate accumulation — NOT on every poll
+    or sag measurement. Between events, the file can be safely edited externally;
+    daemon picks up changes on restart.
 
     If you need to edit model.json while daemon is running:
         systemctl stop ups-battery-monitor
@@ -247,7 +248,7 @@ def safe_save(model: BatteryModel) -> None:
     """
     try:
         model.save()
-    except OSError as e:
+    except (OSError, TypeError, ValueError) as e:
         logger.warning(
             "Failed to persist model: %s", e,
             extra={'event_type': 'model_save_failed'}
@@ -279,7 +280,6 @@ class HealthSnapshot:
     scheduling_reason: str = 'observing'
     next_test_timestamp: Optional[str] = None
     last_discharge_timestamp: Optional[str] = None
-    natural_blackout_credit: Optional[float] = None
     consecutive_errors: int = 0
 
 
@@ -325,7 +325,6 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
         "scheduling_reason": snap.scheduling_reason,
         "next_test_timestamp": snap.next_test_timestamp,
         "last_discharge_timestamp": snap.last_discharge_timestamp,
-        "natural_blackout_credit": _opt_round(snap.natural_blackout_credit, 3),
         "consecutive_errors": snap.consecutive_errors,
     }
     health_path = HEALTH_ENDPOINT_PATH

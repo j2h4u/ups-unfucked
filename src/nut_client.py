@@ -86,7 +86,7 @@ class NUTClient:
             return (var_name, raw_value)
 
     def connect(self):
-        """Establish TCP connection to NUT upsd."""
+        """Establish TCP connection to NUT upsd (called by _socket_session context manager)."""
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
         self.sock.connect((self.host, self.port))
@@ -114,8 +114,8 @@ class NUTClient:
         Returns:
             Response string (stripped)
         """
-        if '\n' in command:
-            raise ValueError(f"NUT protocol injection: newline in command: {command!r}")
+        if '\n' in command or '\r' in command:
+            raise ValueError(f"NUT protocol injection: control char in command: {command!r}")
         self.sock.sendall((command + '\n').encode())
         response = self.sock.recv(4096).decode().strip()
         return response

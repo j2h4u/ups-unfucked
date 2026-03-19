@@ -528,7 +528,7 @@ class TestHistoryPruning:
         assert initial_count >= 50
 
         # Prune
-        model._prune_list('soh_history', keep_count=30)
+        model._cap_history_entries('soh_history', keep_count=30)
 
         # Verify only last 30 are kept
         history = model.get_soh_history()
@@ -548,7 +548,7 @@ class TestHistoryPruning:
         initial_history = model.get_soh_history().copy()
 
         # Prune (should have no effect)
-        model._prune_list('soh_history', keep_count=30)
+        model._cap_history_entries('soh_history', keep_count=30)
 
         # Verify no change
         assert model.get_soh_history() == initial_history
@@ -573,7 +573,7 @@ class TestHistoryPruning:
         assert initial_count >= 40
 
         # Prune
-        model._prune_list('r_internal_history', keep_count=30)
+        model._cap_history_entries('r_internal_history', keep_count=30)
 
         # Verify only last 30 are kept
         history = model.get_r_internal_history()
@@ -589,11 +589,11 @@ class TestHistoryPruning:
             model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
 
         # Prune once
-        model._prune_list('soh_history', keep_count=30)
+        model._cap_history_entries('soh_history', keep_count=30)
         history_after_first = model.get_soh_history().copy()
 
         # Prune again
-        model._prune_list('soh_history', keep_count=30)
+        model._cap_history_entries('soh_history', keep_count=30)
         history_after_second = model.get_soh_history().copy()
 
         # Should be identical
