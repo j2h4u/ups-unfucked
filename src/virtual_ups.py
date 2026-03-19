@@ -55,6 +55,11 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
 
 # Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type.
 # Prevents deep test from draining battery to hardware cutoff without graceful shutdown.
+# NUT status string constants — used in compute_ups_status_override and checked via substring in monitor.py
+NUT_STATUS_ONLINE = "OL"
+NUT_STATUS_DISCHARGING = "OB DISCHRG"
+NUT_STATUS_LOW_BATTERY = "OB DISCHRG LB"
+
 SAFETY_LB_FLOOR_MINUTES = 2
 
 
@@ -91,14 +96,14 @@ def compute_ups_status_override(
         Threshold uses < not <= (time_rem exactly at threshold does not trigger LB).
     """
     if event_type == EventType.ONLINE:
-        return "OL"
+        return NUT_STATUS_ONLINE
     # Safety floor — any discharge state with <2 min runtime gets LB
     if time_rem_minutes < SAFETY_LB_FLOOR_MINUTES:
-        return "OB DISCHRG LB"
+        return NUT_STATUS_LOW_BATTERY
     if event_type == EventType.BLACKOUT_TEST:
-        return "OB DISCHRG"
+        return NUT_STATUS_DISCHARGING
     if event_type == EventType.BLACKOUT_REAL:
         if time_rem_minutes < shutdown_threshold_minutes:
-            return "OB DISCHRG LB"
-        return "OB DISCHRG"
-    return "OL"
+            return NUT_STATUS_LOW_BATTERY
+        return NUT_STATUS_DISCHARGING
+    return NUT_STATUS_ONLINE

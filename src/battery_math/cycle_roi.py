@@ -54,10 +54,10 @@ def compute_cycle_roi(
     )
 
     # Normalize: ROI = (benefit - cost) / (benefit + cost)
-    roi_normalization = desulfation_benefit + wear_cost
-    if roi_normalization < 0.001:
+    benefit_plus_cost = desulfation_benefit + wear_cost
+    if benefit_plus_cost < 0.001:
         return 0.0
 
-    roi = (desulfation_benefit - wear_cost) / roi_normalization
+    roi = (desulfation_benefit - wear_cost) / benefit_plus_cost
 
     return max(-1.0, min(1.0, roi))

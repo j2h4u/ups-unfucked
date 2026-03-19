@@ -49,8 +49,8 @@ class MetricEMA:
         if current_ema is None or abs(current_ema) < 1e-6:
             return 1.0
         deviation = abs(new_value - current_ema) / abs(current_ema)
-        blend = min(deviation / self.sensitivity, 1.0)
-        return self.alpha + (1.0 - self.alpha) * blend
+        deviation_fraction = min(deviation / self.sensitivity, 1.0)
+        return self.alpha + (1.0 - self.alpha) * deviation_fraction
 
     def _update_ema(self, new_value: float, current_ema: Optional[float]) -> float:
         """Apply adaptive EMA update; returns new EMA value."""

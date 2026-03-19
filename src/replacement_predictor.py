@@ -1,9 +1,12 @@
 """Linear regression predictor for battery replacement date."""
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any, List, Dict, Optional, Tuple
 
 from src.battery_math.regression import linear_regression
+
+logger = logging.getLogger('ups-battery-monitor')
 
 
 def linear_regression_soh(
@@ -72,7 +75,9 @@ def linear_regression_soh(
     try:
         dates = [datetime.strptime(entry['date'], '%Y-%m-%d') for entry in soh_history]
         soh_values = [entry['soh'] for entry in soh_history]
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning("SoH history parse failed (corrupt data?): %s", e,
+                       extra={'event_type': 'soh_history_parse_error'})
         return None
 
     first_date = dates[0]
@@ -92,9 +97,9 @@ def linear_regression_soh(
         # Battery not degrading or improving; no replacement prediction
         return None
 
-    # Check if current SoH already below threshold
-    current_soh = soh_values[-1]  # Last entry
-    if current_soh < threshold_soh:
+    # Check if most recent recorded SoH already below threshold
+    latest_recorded_soh = soh_values[-1]
+    if latest_recorded_soh < threshold_soh:
         # Return today as overdue
         return (slope, intercept, r_squared, datetime.now().strftime('%Y-%m-%d'))
 

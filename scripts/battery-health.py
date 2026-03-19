@@ -25,14 +25,14 @@ def main():
         sys.exit(1)
 
     # UPS identity from NUT
-    ups_name = model_data.get('ups_name', 'cyberpower-virtual')
-    # Validate ups_name before passing to subprocess (same regex as nut_client._validate_nut_identifier)
-    if not re.match(r'^[a-zA-Z0-9._-]+$', ups_name):
-        print(f"  WARNING: Invalid ups_name in model.json: {ups_name!r}")
-        ups_name = 'cyberpower-virtual'
+    nut_ups_id = model_data.get('ups_name', 'cyberpower-virtual')
+    # Validate before passing to subprocess — reject leading hyphens to prevent argument injection
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', nut_ups_id):
+        print(f"  WARNING: Invalid ups_name in model.json: {nut_ups_id!r}")
+        nut_ups_id = 'cyberpower-virtual'
     try:
         result = subprocess.run(
-            ['upsc', f'{ups_name}@localhost'], capture_output=True, text=True, timeout=2
+            ['upsc', f'{nut_ups_id}@localhost'], capture_output=True, text=True, timeout=2
         )
         if result.returncode != 0:
             print(f"  UPS: (upsc failed: {result.stderr.strip() or 'exit ' + str(result.returncode)})")
