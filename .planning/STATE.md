@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T14:09:41.132Z"
+last_updated: "2026-03-20T14:13:21.377Z"
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State — UPS Battery Monitor
@@ -22,7 +22,7 @@ progress:
 ## Current Position
 
 Phase: 23 (test-quality-rewrite) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 
 ## Project Reference
 
@@ -53,6 +53,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 22-naming-docs-sweep P02 | 2 | 2 tasks | 3 files |
 | Phase 23-test-quality-rewrite P01 | 3min | 1 tasks | 3 files |
 | Phase 23-test-quality-rewrite P02 | 8 min | 2 tasks | 2 files |
+| Phase 23-test-quality-rewrite P03 | 7 | 2 tasks | 1 files |
 
 ### Execution History
 
@@ -81,6 +82,9 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 13. (Phase 21) MonitorDaemon LOC reduction: 5 methods + 4 state fields removed; monitor.py shrunk by ~120 LOC; 547 tests pass post-extraction
 14. (Phase 22) DOC-02 (_opt_round) was already complete — verified without change, requirement marked satisfied
 15. (Phase 22) Inline comments redundant with docstrings removed rather than updated — docstring is the canonical location for method behavior docs
+16. (Phase 23-03) Tracking wrappers use *args to absorb positional arguments — _write_virtual_ups(self, ups_data, battery_charge, time_rem) passes 3 positional args when called as bound method
+17. (Phase 23-03) F13 test: dropped poll_sequence equality check — tracking_transition fires before _classify_event sets new event_type, count assertion is sufficient
+18. (Phase 23-03) Lifecycle test kept (not deleted) — mocked subsystems provide deterministic SoH values not achievable with real collaborators in integration test
 
 ### Key Decisions (v3.0, carried forward)
 
@@ -100,4 +104,4 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ---
 
-*State updated: 2026-03-20 after Phase 22 completion*
+*State updated: 2026-03-20 after Phase 23 Plan 03 completion*
