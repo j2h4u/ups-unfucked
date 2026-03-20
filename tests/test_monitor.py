@@ -63,7 +63,12 @@ def test_per_poll_writes_during_blackout(make_daemon):
     daemon._update_ema = MagicMock(return_value=(12.0, 25.0))
     daemon._compute_metrics = MagicMock(return_value=(50.0, 10.0))
     daemon._handle_event_transition = MagicMock()
-    daemon._write_virtual_ups = MagicMock()
+    write_log = []
+
+    def tracking_write(*args):
+        write_log.append(daemon.current_metrics.event_type)
+
+    daemon._write_virtual_ups = tracking_write
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon.discharge_collector = MagicMock()
     daemon.discharge_collector.track.return_value = False
@@ -90,8 +95,11 @@ def test_per_poll_writes_during_blackout(make_daemon):
     # Polls 2-7: OB → write every poll (6 writes).
     # Polls 8-11: OL, only poll 12 would hit %6 → 0 writes.
     # Total: 1 + 6 = 7
-    assert daemon._write_virtual_ups.call_count == 7, \
-        f"Expected 7 writes (1 OL + 6 OB), got {daemon._write_virtual_ups.call_count}"
+    ob_writes = [e for e in write_log if e == EventType.BLACKOUT_REAL]
+    ol_writes = [e for e in write_log if e == EventType.ONLINE]
+    assert len(write_log) == 7, f"Expected 7 total writes, got {len(write_log)}"
+    assert len(ob_writes) == 6, "Expected 6 OB writes (every poll during blackout)"
+    assert len(ol_writes) == 1, "Expected 1 OL write (poll 0 on reporting boundary)"
 
 
 def test_handle_event_transition_per_poll_during_ob(make_daemon):
@@ -107,7 +115,12 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
     }
     daemon._update_ema = MagicMock(return_value=(11.0, 30.0))
     daemon._compute_metrics = MagicMock(return_value=(30.0, 3.0))
-    daemon._handle_event_transition = MagicMock()
+    transition_calls = []
+
+    def tracking_transition():
+        transition_calls.append(daemon.current_metrics.event_type)
+
+    daemon._handle_event_transition = tracking_transition
     daemon._write_virtual_ups = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon.discharge_collector = MagicMock()
@@ -125,8 +138,9 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
         _poll_once_mocked(daemon, EventType.BLACKOUT_REAL)
 
     # _handle_event_transition runs every poll (F13 fix), not gated
-    assert daemon._handle_event_transition.call_count == 4, \
-        f"Expected 4 calls during OB, got {daemon._handle_event_transition.call_count}"
+    assert len(transition_calls) == 4, f"Expected 4 transition calls during OB, got {len(transition_calls)}"
+    assert all(e == EventType.BLACKOUT_REAL for e in transition_calls), \
+        "All transition calls should be during OB state"
 
 
 def test_no_writes_during_online_state(make_daemon):
@@ -143,7 +157,12 @@ def test_no_writes_during_online_state(make_daemon):
     daemon._update_ema = MagicMock(return_value=(13.4, 15.0))
     daemon._compute_metrics = MagicMock(return_value=(85.0, 120.0))
     daemon._handle_event_transition = MagicMock()
-    daemon._write_virtual_ups = MagicMock()
+    write_log = []
+
+    def tracking_write(*args):
+        write_log.append(daemon.poll_count)
+
+    daemon._write_virtual_ups = tracking_write
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon.discharge_collector = MagicMock()
     daemon.discharge_collector.track.return_value = False
@@ -158,8 +177,8 @@ def test_no_writes_during_online_state(make_daemon):
         _poll_once_mocked(daemon, EventType.ONLINE)
 
     # Only poll 0 and poll 6 should trigger writes (poll_count % 6 == 0)
-    assert daemon._write_virtual_ups.call_count == 2, \
-        f"Expected 2 writes (poll 0, poll 6), got {daemon._write_virtual_ups.call_count}"
+    assert len(write_log) == 2, f"Expected 2 OL writes (poll 0, poll 6), got {len(write_log)}"
+    assert write_log == [0, 6], f"Writes should occur at reporting interval boundaries, got polls {write_log}"
 
 
 def test_lb_flag_signal_latency(make_daemon):
@@ -883,7 +902,13 @@ def test_run_ob_per_poll_compute_metrics(make_daemon):
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon.discharge_collector = MagicMock()
     daemon.discharge_collector.track.return_value = False
-    daemon._compute_metrics = MagicMock(return_value=(40.0, 8.0))
+    compute_calls = []
+
+    def tracking_compute():
+        compute_calls.append(daemon.poll_count)
+        return (40.0, 8.0)
+
+    daemon._compute_metrics = tracking_compute
     daemon._handle_event_transition = MagicMock()
     daemon._log_status = MagicMock()
     daemon._write_virtual_ups = MagicMock()
@@ -907,8 +932,8 @@ def test_run_ob_per_poll_compute_metrics(make_daemon):
         daemon.run()
 
     # All 5 polls should call _compute_metrics (OB = every poll)
-    assert daemon._compute_metrics.call_count == 5, \
-        f"Expected 5 compute_metrics calls during OB, got {daemon._compute_metrics.call_count}"
+    assert len(compute_calls) == 5, \
+        f"Expected 5 compute_metrics calls during OB, got {len(compute_calls)}"
 
 
 # === F13 TESTS (Event transition runs EVERY poll) ===
@@ -932,7 +957,12 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
     daemon.discharge_collector = MagicMock()
     daemon.discharge_collector.track.return_value = False
     daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
-    daemon._handle_event_transition = MagicMock()
+    transition_events = []
+
+    def tracking_transition():
+        transition_events.append(daemon.current_metrics.event_type)
+
+    daemon._handle_event_transition = tracking_transition
     daemon._log_status = MagicMock()
     daemon._write_virtual_ups = MagicMock()
     daemon.current_metrics = CurrentMetrics(
@@ -973,9 +1003,8 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
         daemon.run()
 
     # _handle_event_transition() should be called on every poll (6 total)
-    assert daemon._handle_event_transition.call_count == len(poll_sequence), \
-        f"F13: Expected {len(poll_sequence)} _handle_event_transition calls (every poll), " \
-        f"got {daemon._handle_event_transition.call_count}"
+    assert len(transition_events) == len(poll_sequence), \
+        f"F13: Expected {len(poll_sequence)} transition calls (every poll), got {len(transition_events)}"
 
     # Verify previous_event_type updated correctly on transitions
     # At end: previous should match the final event type
