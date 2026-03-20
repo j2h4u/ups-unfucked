@@ -464,7 +464,7 @@ class MonitorDaemon:
         event_type = self.current_metrics.event_type
         event_str = event_type.name if event_type else "N/A"
         latency_str = f"{poll_latency_ms:.0f}ms" if poll_latency_ms is not None else "N/A"
-        logger.info(
+        logger.debug(
             f"Poll {self.poll_count}: V_ema={v_ema:.2f}V, L_ema={l_ema:.1f}%, "
             f"V_norm={v_norm_str}, charge={charge_str}, time_rem={time_rem_str}, "
             f"event={event_str}, stabilized={self.ema_filter.stabilized}, "
