@@ -32,14 +32,15 @@ from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src.battery_math import calibrate_peukert, ScalarRLS
 
 from src.monitor_config import (
-    Config, CurrentMetrics, DischargeBuffer, HealthSnapshot, SagState,
+    Config, CurrentMetrics, DischargeBuffer, HealthSnapshot,
     CONFIG_DIR, REPO_ROOT, POLL_INTERVAL, NUT_HOST, NUT_PORT, NUT_TIMEOUT,
     RUNTIME_THRESHOLD_MINUTES, REFERENCE_LOAD_PERCENT, REPORTING_INTERVAL_POLLS,
-    HEALTH_ENDPOINT_PATH, SAG_SAMPLES_REQUIRED, DISCHARGE_BUFFER_MAX_SAMPLES,
+    HEALTH_ENDPOINT_PATH, DISCHARGE_BUFFER_MAX_SAMPLES,
     ERROR_LOG_BURST, load_config, safe_save, write_health_endpoint, logger,
     SchedulingConfig, get_scheduling_config,
 )
 from src.discharge_handler import DischargeHandler
+from src.sag_tracker import SagTracker
 from src.battery_math.scheduler import evaluate_test_scheduling, SchedulerDecision
 from src.battery_math.sulfation import compute_sulfation_score
 from src.battery_math.cycle_roi import compute_cycle_roi
@@ -216,9 +217,7 @@ class MonitorDaemon:
 
         self.scheduling_config = config.scheduling or SchedulingConfig()
 
-        self.sag_state = SagState.IDLE
-        self.v_before_sag = None
-        self.sag_buffer = []
+        # SagTracker constructed in _init_battery_model_and_estimators()
 
         self.calibration_last_written_index = 0
 
@@ -278,11 +277,15 @@ class MonitorDaemon:
                 metadata=estimate['metadata']
             )
 
-        self.ir_k = self.battery_model.get_ir_k()
         self.ir_reference_load_percent = self.battery_model.get_ir_reference_load()
 
-        self.rls_ir_k = ScalarRLS.from_dict(
-            self.battery_model.get_rls_state('ir_k'), forgetting_factor=0.97)
+        self.sag_tracker = SagTracker(
+            battery_model=self.battery_model,
+            rls_ir_k=ScalarRLS.from_dict(
+                self.battery_model.get_rls_state('ir_k'), forgetting_factor=0.97),
+            ir_k=self.battery_model.get_ir_k(),
+        )
+
         self.rls_peukert = ScalarRLS.from_dict(
             self.battery_model.get_rls_state('peukert'), forgetting_factor=0.97)
 
@@ -390,7 +393,7 @@ class MonitorDaemon:
         self.discharge_handler._log_discharge_prediction(
             self.discharge_buffer, self.current_metrics.soc)
 
-    # --- Battery baseline reset (stays here — touches rls_ir_k) ---
+    # --- Battery baseline reset ---
 
     def _reset_battery_baseline(self):
         """Reset capacity estimation and SoH history baseline on battery replacement."""
@@ -412,7 +415,7 @@ class MonitorDaemon:
         self.battery_model.data['cycle_count'] = 0
 
         self.battery_model.reset_rls_state()
-        self.rls_ir_k = ScalarRLS(theta=0.015, P=1.0)
+        self.sag_tracker.reset_rls(theta=0.015, P=1.0)
         self.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
         self.discharge_handler.rls_peukert = self.rls_peukert
 
@@ -570,57 +573,6 @@ class MonitorDaemon:
             logger.error(f"Scheduler evaluation failed: {e}", exc_info=True,
                          extra={'event_type': 'scheduler_error', 'error_class': type(e).__name__})
 
-    # --- Voltage sag tracking ---
-
-    def _record_voltage_sag(self, v_sag, event_type):
-        """Record voltage sag measurement and compute internal resistance."""
-        if self.v_before_sag is None or self.ema_filter.load is None:
-            return
-        load = self.ema_filter.load
-        nominal_voltage = self.battery_model.get_nominal_voltage()
-        nominal_power_watts = self.battery_model.get_nominal_power_watts()
-        I_actual = load / 100.0 * nominal_power_watts / nominal_voltage
-        if I_actual <= 0:
-            return
-        delta_v = self.v_before_sag - v_sag
-        r_ohm = delta_v / I_actual
-        today = datetime.now().strftime('%Y-%m-%d')
-        self.battery_model.add_r_internal_entry(today, r_ohm, self.v_before_sag, v_sag, load, event_type.name)
-
-        # RLS auto-calibration of ir_k from measured sag data
-        if nominal_voltage > 0:
-            ir_k_measured = r_ohm * nominal_power_watts / (nominal_voltage * 100.0)
-            new_ir_k, new_P = self.rls_ir_k.update(ir_k_measured)
-            new_ir_k = max(0.005, min(0.025, new_ir_k))
-            self.ir_k = new_ir_k
-            self.battery_model.set_ir_k(new_ir_k)
-            self.battery_model.set_rls_state(
-                'ir_k', new_ir_k, new_P, self.rls_ir_k.sample_count)
-            logger.info(
-                f"ir_k calibrated: {new_ir_k:.4f} (P={new_P:.4f}, "
-                f"confidence={self.rls_ir_k.confidence:.0%}, "
-                f"measured={ir_k_measured:.4f})",
-                extra={
-                    'event_type': 'ir_k_calibration',
-                    'ir_k': f'{new_ir_k:.4f}',
-                    'ir_k_measured': f'{ir_k_measured:.4f}',
-                    'rls_p': f'{new_P:.4f}',
-                    'rls_confidence': f'{self.rls_ir_k.confidence:.3f}',
-                    'sample_count': str(self.rls_ir_k.sample_count),
-                })
-
-        logger.info(
-            f"Voltage sag: {self.v_before_sag:.2f}V → {v_sag:.2f}V, "
-            f"R_internal={r_ohm*1000:.1f}mΩ at {load:.1f}% load",
-            extra={
-                'event_type': 'voltage_sag',
-                'v_before': f'{self.v_before_sag:.2f}',
-                'v_sag': f'{v_sag:.2f}',
-                'r_internal_mohm': f'{r_ohm*1000:.1f}',
-                'load_pct': f'{load:.1f}',
-            }
-        )
-
     def _signal_handler(self, signum, frame):
         """Handle SIGTERM/SIGINT: persist model, then stop polling loop."""
         logger.info(f"Received signal {signum}; shutting down",
@@ -671,32 +623,6 @@ class MonitorDaemon:
         self.current_metrics.event_type = event_type
         self.current_metrics.transition_occurred = self.event_classifier.transition_occurred
 
-    def _track_voltage_sag(self, voltage):
-        """Measure voltage sag on OL→OB transition to estimate internal resistance.
-
-        State machine: IDLE → MEASURING → COMPLETE → IDLE.
-        MEASURING enables fast polling (1s instead of 10s) for precise sag capture.
-        """
-        event_type = self.current_metrics.event_type
-
-        # OL→OB: start measuring
-        if self.event_classifier.transition_occurred and event_type not in (EventType.ONLINE,):
-            self.v_before_sag = self.ema_filter.voltage
-            self.sag_buffer = []
-            self.sag_state = SagState.MEASURING
-
-        # OB→OL: cancel if still measuring (power restored before enough samples)
-        if self.event_classifier.transition_occurred and event_type == EventType.ONLINE:
-            if self.sag_state == SagState.MEASURING:
-                self.sag_state = SagState.IDLE
-
-        # Collect samples during MEASURING
-        if self.sag_state == SagState.MEASURING:
-            self.sag_buffer.append(voltage)
-            if len(self.sag_buffer) >= SAG_SAMPLES_REQUIRED:  # 5 samples → median of last 3
-                v_sag = sorted(self.sag_buffer[-3:])[1]
-                self._record_voltage_sag(v_sag, event_type)
-                self.sag_state = SagState.COMPLETE
 
     def _start_discharge_collection(self, timestamp):
         """Initialize discharge buffer for a new OL→OB event.
@@ -843,7 +769,7 @@ class MonitorDaemon:
         if not self.ema_filter.stabilized:
             return None, None
 
-        v_norm = ir_compensate(v_ema, l_ema, self.ir_reference_load_percent, self.ir_k)
+        v_norm = ir_compensate(v_ema, l_ema, self.ir_reference_load_percent, self.sag_tracker.ir_k)
         if v_norm is None:
             return None, None
         self._last_v_norm = v_norm
@@ -1011,7 +937,10 @@ class MonitorDaemon:
         self._consecutive_errors = 0  # Reset after validated poll data
 
         self._classify_event(ups_data)
-        self._track_voltage_sag(voltage)
+        self.sag_tracker.track(
+            voltage, event_type=self.current_metrics.event_type,
+            transition_occurred=self.event_classifier.transition_occurred,
+            current_load=self.ema_filter.load)
         self._track_discharge(voltage, timestamp)
 
         event_type = self.current_metrics.event_type
@@ -1034,7 +963,7 @@ class MonitorDaemon:
 
         # Report healthy to systemd AFTER critical writes succeed
         sd_notify('WATCHDOG=1')
-        time.sleep(1 if self.sag_state == SagState.MEASURING else self.config.polling_interval)
+        time.sleep(1 if self.sag_tracker.is_measuring else self.config.polling_interval)
 
     def run(self):
         """
@@ -1060,7 +989,7 @@ class MonitorDaemon:
                 break
             except (socket.error, OSError, ConnectionError, TimeoutError) as e:
                 self._consecutive_errors += 1
-                self.sag_state = SagState.IDLE
+                self.sag_tracker.reset_idle()
                 error_type = type(e).__name__
                 error_type_changed = error_type != getattr(self, '_last_error_type', None)
                 self._last_error_type = error_type

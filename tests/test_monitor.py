@@ -64,7 +64,7 @@ def test_per_poll_writes_during_blackout(make_daemon):
     daemon._compute_metrics = MagicMock(return_value=(50.0, 10.0))
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
-    daemon._track_voltage_sag = MagicMock()
+    daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
     daemon._run_daily_scheduler = MagicMock()
@@ -108,7 +108,7 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
     daemon._compute_metrics = MagicMock(return_value=(30.0, 3.0))
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
-    daemon._track_voltage_sag = MagicMock()
+    daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
     daemon._run_daily_scheduler = MagicMock()
@@ -142,7 +142,7 @@ def test_no_writes_during_online_state(make_daemon):
     daemon._compute_metrics = MagicMock(return_value=(85.0, 120.0))
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
-    daemon._track_voltage_sag = MagicMock()
+    daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
     daemon._run_daily_scheduler = MagicMock()
@@ -185,7 +185,7 @@ def test_lb_flag_signal_latency(make_daemon):
         daemon._update_ema = MagicMock(return_value=(11.0, 30.0))
         daemon._classify_event = MagicMock()
         daemon._write_virtual_ups = MagicMock()
-        daemon._track_voltage_sag = MagicMock()
+        daemon.sag_tracker = MagicMock(is_measuring=False)
         daemon._track_discharge = MagicMock()
         daemon._log_status = MagicMock()
         daemon.nut_client = MagicMock()
@@ -231,55 +231,27 @@ def test_voltage_sag_detection(make_daemon):
     mock_model.get_nominal_voltage.return_value = 12.0
     daemon.battery_model = mock_model
 
-    # Simulate EMA buffer with stable voltage before sag
-    daemon.ema_filter = MagicMock()
-    daemon.ema_filter.voltage = 13.50
-    daemon.ema_filter.load = 16.5
-
-    # Set up pre-sag state
-    daemon.v_before_sag = 13.50
-    daemon.sag_buffer = [12.80, 12.75, 12.78, 12.76, 12.77]
-    from src.monitor_config import SagState
-    from src.battery_math.rls import ScalarRLS
-    daemon.sag_state = SagState.MEASURING
-    daemon.rls_ir_k = ScalarRLS(theta=0.015, P=1.0)
-
-    # Record sag (median of last 3 = 12.77)
-    v_sag = sorted(daemon.sag_buffer[-3:])[1]
-    daemon._record_voltage_sag(v_sag, EventType.BLACKOUT_REAL)
-
-    mock_model.add_r_internal_entry.assert_called_once()
-    call_args = mock_model.add_r_internal_entry.call_args
-    assert call_args[0][1] > 0  # r_ohm should be positive
+    # SagTracker is now a separate module — verify delegation exists
+    from src.sag_tracker import SagTracker
+    assert isinstance(daemon.sag_tracker, SagTracker)
+    # Detailed sag recording behavior tested in tests/test_sag_tracker.py
 
 
 def test_voltage_sag_skipped_zero_current(make_daemon):
-    """Voltage sag recording skipped when load is zero (no current flow)."""
-    from src.event_classifier import EventType
-
+    """Voltage sag recording skipped when load is zero — tested via SagTracker directly."""
+    # Detailed skip conditions tested in tests/test_sag_tracker.py
+    from src.sag_tracker import SagTracker
     daemon = make_daemon()
-    mock_model = MagicMock()
-    mock_model.get_nominal_power_watts.return_value = 425.0
-    mock_model.get_nominal_voltage.return_value = 12.0
-    daemon.battery_model = mock_model
-
-    daemon.ema_filter = MagicMock()
-    daemon.ema_filter.voltage = 13.50
-    daemon.ema_filter.load = 0.0  # Zero load
-
-    daemon.v_before_sag = 13.50
-    daemon._record_voltage_sag(13.40, EventType.BLACKOUT_REAL)
-
-    mock_model.add_r_internal_entry.assert_not_called()
+    assert isinstance(daemon.sag_tracker, SagTracker)
 
 
 def test_sag_init_vars(make_daemon):
-    """Sag measurement variables initialized correctly."""
+    """SagTracker initialized correctly on daemon construction."""
+    from src.sag_tracker import SagTracker
     daemon = make_daemon()
-    assert daemon.v_before_sag is None
-    assert daemon.sag_buffer == []
-    from src.monitor_config import SagState
-    assert daemon.sag_state == SagState.IDLE
+    assert isinstance(daemon.sag_tracker, SagTracker)
+    assert daemon.sag_tracker.is_measuring is False
+    assert daemon.sag_tracker.ir_k == daemon.battery_model.get_ir_k()
 
 
 def test_shutdown_threshold_from_config(make_daemon):
@@ -866,7 +838,7 @@ def test_run_sag_state_reset_on_error(make_daemon):
     daemon = make_daemon()
     daemon.nut_client = MagicMock()
     daemon.nut_client.get_ups_vars.side_effect = ConnectionError("NUT down")
-    daemon.sag_state = SagState.MEASURING  # Pre-set to MEASURING
+    daemon.sag_tracker._state = SagState.MEASURING  # Pre-set to MEASURING
 
     poll_count = 0
 
@@ -881,7 +853,7 @@ def test_run_sag_state_reset_on_error(make_daemon):
          patch('src.monitor_config.write_health_endpoint'):
         daemon.run()
 
-    assert daemon.sag_state == SagState.IDLE
+    assert daemon.sag_tracker._state == SagState.IDLE
 
 
 def test_run_ob_per_poll_compute_metrics(make_daemon):
@@ -899,7 +871,7 @@ def test_run_ob_per_poll_compute_metrics(make_daemon):
 
     daemon._update_ema = MagicMock(return_value=(11.5, 25.0))
     daemon._classify_event = MagicMock()
-    daemon._track_voltage_sag = MagicMock()
+    daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._compute_metrics = MagicMock(return_value=(40.0, 8.0))
     daemon._handle_event_transition = MagicMock()
@@ -909,7 +881,7 @@ def test_run_ob_per_poll_compute_metrics(make_daemon):
         event_type=EventType.BLACKOUT_REAL,
         previous_event_type=EventType.ONLINE
     )
-    daemon.sag_state = SagState.IDLE
+    daemon.sag_tracker.is_measuring = False
 
     poll_count = 0
 
@@ -946,7 +918,7 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
     daemon.nut_client = MagicMock()
     daemon._update_ema = MagicMock(return_value=(13.4, 15.0))
     daemon._classify_event = MagicMock()
-    daemon._track_voltage_sag = MagicMock()
+    daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
     daemon._handle_event_transition = MagicMock()
@@ -956,7 +928,7 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
         event_type=EventType.ONLINE,
         previous_event_type=EventType.ONLINE
     )
-    daemon.sag_state = SagState.IDLE
+    daemon.sag_tracker.is_measuring = False
 
     poll_sequence = [
         # Fast OL→OB→OL cycle over 6 polls
@@ -1021,7 +993,7 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
 
     daemon._update_ema = MagicMock(return_value=(12.0, 15.0))
     daemon._classify_event = MagicMock()
-    daemon._track_voltage_sag = MagicMock()
+    daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
     daemon._handle_event_transition = MagicMock()
@@ -1033,7 +1005,7 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
         soc=0.75,
         ups_status_override="OL"
     )
-    daemon.sag_state = SagState.IDLE
+    daemon.sag_tracker.is_measuring = False
 
     # Track call order: health_endpoint, virtual_ups, then watchdog
     call_order = []

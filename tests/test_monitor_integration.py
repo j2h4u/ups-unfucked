@@ -621,7 +621,7 @@ class TestPollOnceCallChain:
     Regression for previous_event_type AttributeError (commit 8f211fa).
     Real internal method chain; only external I/O and downstream subsystems mocked.
 
-    What runs for real: _update_ema, _classify_event, _track_voltage_sag,
+    What runs for real: _update_ema, _classify_event, sag_tracker.track,
     _track_discharge, _handle_event_transition, _compute_metrics, _log_status.
 
     What is mocked: NUTClient (external), sd_notify (systemd), time.sleep,
@@ -813,24 +813,23 @@ class TestRLSCalibrationIntegration:
     """Integration tests for RLS auto-calibration of ir_k and Peukert."""
 
     def test_ir_k_updated_after_sag(self, mock_daemon):
-        """Sag measurement → ir_k updated in model via RLS."""
-        # Setup: known voltage sag scenario
-        mock_daemon.v_before_sag = 13.0
-        mock_daemon.ema_filter = MagicMock()
-        mock_daemon.ema_filter.load = 25.0
+        """Sag measurement → ir_k updated in model via RLS (delegated to SagTracker)."""
+        # Setup: known voltage sag scenario via SagTracker
+        mock_daemon.sag_tracker._v_before_sag = 13.0
+        mock_daemon.sag_tracker._current_load = 25.0
 
-        old_ir_k = mock_daemon.ir_k
+        old_ir_k = mock_daemon.sag_tracker.ir_k
 
         with patch('src.monitor_config.safe_save'):
-            mock_daemon._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
+            mock_daemon.sag_tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
 
         # ir_k should have been updated
-        assert mock_daemon.ir_k != old_ir_k
-        assert mock_daemon.battery_model.get_ir_k() == mock_daemon.ir_k
+        assert mock_daemon.sag_tracker.ir_k != old_ir_k
+        assert mock_daemon.battery_model.get_ir_k() == mock_daemon.sag_tracker.ir_k
         # RLS sample count incremented
-        assert mock_daemon.rls_ir_k.sample_count == 1
+        assert mock_daemon.sag_tracker.rls_ir_k.sample_count == 1
         # ir_k within physical bounds
-        assert 0.005 <= mock_daemon.ir_k <= 0.025
+        assert 0.005 <= mock_daemon.sag_tracker.ir_k <= 0.025
 
     def test_peukert_smoothed_via_rls(self, mock_daemon):
         """Discharge → Peukert updated with RLS smoothing, not raw value."""
@@ -852,14 +851,14 @@ class TestRLSCalibrationIntegration:
 
     def test_rls_state_persists_across_save_load(self, mock_daemon):
         """Save model, reload, RLS state preserved."""
-        # Feed some data to RLS
-        mock_daemon.rls_ir_k.update(0.018)
-        mock_daemon.rls_ir_k.update(0.017)
+        # Feed some data to RLS via SagTracker
+        mock_daemon.sag_tracker.rls_ir_k.update(0.018)
+        mock_daemon.sag_tracker.rls_ir_k.update(0.017)
         mock_daemon.battery_model.set_rls_state(
             'ir_k',
-            mock_daemon.rls_ir_k.theta,
-            mock_daemon.rls_ir_k.P,
-            mock_daemon.rls_ir_k.sample_count)
+            mock_daemon.sag_tracker.rls_ir_k.theta,
+            mock_daemon.sag_tracker.rls_ir_k.P,
+            mock_daemon.sag_tracker.rls_ir_k.sample_count)
 
         # Save and reload
         mock_daemon.battery_model.save()
@@ -867,29 +866,29 @@ class TestRLSCalibrationIntegration:
 
         state = reloaded.get_rls_state('ir_k')
         assert state['sample_count'] == 2
-        assert abs(state['theta'] - mock_daemon.rls_ir_k.theta) < 1e-10
+        assert abs(state['theta'] - mock_daemon.sag_tracker.rls_ir_k.theta) < 1e-10
 
         # Restore RLS from saved state
         restored = ScalarRLS.from_dict(state)
         assert restored.sample_count == 2
-        assert abs(restored.theta - mock_daemon.rls_ir_k.theta) < 1e-10
+        assert abs(restored.theta - mock_daemon.sag_tracker.rls_ir_k.theta) < 1e-10
 
     def test_battery_replacement_resets_rls(self, mock_daemon):
         """_reset_battery_baseline → RLS P back to 1.0."""
         # Feed data to build confidence
         for _ in range(10):
-            mock_daemon.rls_ir_k.update(0.018)
+            mock_daemon.sag_tracker.rls_ir_k.update(0.018)
             mock_daemon.rls_peukert.update(1.22)
 
-        assert mock_daemon.rls_ir_k.P < 0.5  # Has some confidence
+        assert mock_daemon.sag_tracker.rls_ir_k.P < 0.5  # Has some confidence
         assert mock_daemon.rls_peukert.P < 0.5
 
         mock_daemon._reset_battery_baseline()
 
         # After reset: fresh RLS instances with P=1.0
-        assert mock_daemon.rls_ir_k.P == 1.0
-        assert mock_daemon.rls_ir_k.theta == 0.015
-        assert mock_daemon.rls_ir_k.sample_count == 0
+        assert mock_daemon.sag_tracker.rls_ir_k.P == 1.0
+        assert mock_daemon.sag_tracker.rls_ir_k.theta == 0.015
+        assert mock_daemon.sag_tracker.rls_ir_k.sample_count == 0
         assert mock_daemon.rls_peukert.P == 1.0
         assert mock_daemon.rls_peukert.theta == 1.2
         assert mock_daemon.rls_peukert.sample_count == 0
