@@ -1,5 +1,24 @@
 # Milestones
 
+## v3.0 Active Battery Care (Shipped: 2026-03-20)
+
+**Delivered:** Transforms daemon from passive observer to active battery manager — models sulfation physics, schedules desulfation intelligently with 7 safety gates, and quantifies each discharge's net impact on battery life.
+
+**Phases completed:** 3 phases, 13 plans, 32 tasks
+**Tests:** 476 passing | **LOC:** 5,239 Python | **Commits:** 150 (v2.0..HEAD)
+**Timeline:** 4 days (2026-03-17 → 2026-03-20)
+**Git range:** v2.0..7bf06c5
+
+**Key accomplishments:**
+- Sulfation model: physics-based scoring [0–1.0] with days-since-deep, IR trend, recovery delta signals as pure functions in `src/battery_math/`
+- Cycle ROI metric: desulfation benefit vs wear cost per discharge, exported to health.json for Grafana
+- Scheduler decision engine with 7 safety gates (SoH floor, rate limiting, blackout credit, grid stability, cycle budget, ROI threshold, sulfation threshold)
+- NUT INSTCMD integration: daemon dispatches upscmd with precondition validation (SoC, power state, glitch history)
+- Full observability pipeline: sulfation score + scheduling decisions in health.json, journald structured events, MOTD display
+- 53-fix kaizen pass from 8-agent code quality review (naming, error handling, observability, security, complexity)
+
+---
+
 ## v2.0 Actual Capacity Estimation (Shipped: 2026-03-16)
 
 **Delivered:** Measures real battery capacity from discharge events, replaces rated label value with measured estimate, and recalibrates SoH against actual capacity — enabling accurate health tracking from day one.
@@ -10,6 +29,7 @@
 **Git range:** v1.1..190b7b1
 
 **Key accomplishments:**
+
 - Extracted all battery math into pure-function kernel package (`src/battery_math/`) with year-long simulation harness proving formula stability
 - Deep discharge capacity estimation with coulomb counting + voltage anchor + Peukert correction (CAP-01–04)
 - Statistical confidence tracking with CoV-based convergence detection (3+ samples, CoV<10%)
@@ -28,6 +48,7 @@
 **Git range:** v1.0..61ce215
 
 **Key accomplishments:**
+
 - Per-poll virtual UPS writes during blackout — eliminates 60s LB flag lag (safety-critical)
 - Frozen Config dataclass (13 fields) + CurrentMetrics dataclass — replaces untyped dicts and module globals
 - Full OL→OB→OL integration test + Peukert/signal handler coverage (205 tests total)
@@ -47,6 +68,7 @@
 **Git range:** 60c7c2e..161ab11
 
 **Key accomplishments:**
+
 - NUT integration with EMA smoothing and IR compensation for honest battery estimation from physical voltage/load
 - Runtime prediction via Peukert's Law, tuned to real 47-min blackout data (2026-03-12)
 - Virtual UPS proxy (dummy-ups) — transparent override of battery.runtime, battery.charge, ups.status
@@ -55,4 +77,3 @@
 - Calibration mode for one-time cliff region acquisition with fsync persistence and auto-interpolation
 
 ---
-

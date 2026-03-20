@@ -34,16 +34,17 @@
 - ✓ MOTD capacity display + journald structured events + health endpoint metrics (RPT-01–03) — v2.0
 - ✓ Discharge quality filters: micro-discharge rejection + Peukert fixed at 1.2 (VAL-01–02) — v2.0
 - ✓ Math kernel extraction to src/battery_math/ with year-long simulation harness — v2.0
+- ✓ Sulfation model: physics-based scoring + data-driven detection (IR trend, recovery delta) — v3.0
+- ✓ Smart test scheduling: daemon calls upscmd with 7 safety gates, replaces static systemd timers — v3.0
+- ✓ Cycle ROI metric: desulfation benefit vs wear cost, exported to health.json — v3.0
+- ✓ Natural blackout credit: skip scheduled deep tests when recent blackouts already desulfated — v3.0
+- ✓ Safety constraints: SoH floor, rate limiting, grid stability, cycle budget gates — v3.0
+- ✓ Reporting: sulfation score + scheduling decisions in health.json, journald, MOTD — v3.0
+- ✓ 53-fix kaizen pass: naming, error handling, observability, security, complexity — v3.0
 
 ### Active
 
-- [ ] Sulfation model: physics-based (Shepherd/Bode) + data-driven detection (IR trend, curve shape, recovery delta)
-- [ ] Smart test scheduling: daemon calls upscmd directly, replaces static systemd timers with intelligent scheduling
-- [ ] Cycle ROI metric: single number balancing desulfation benefit vs wear cost, exported to health.json
-- [ ] Temperature: research NUT HID for battery.temperature, fallback to configurable constant (~35°C)
-- [ ] Natural blackout credit: skip scheduled deep tests when recent blackouts already desulfated
-- [ ] Safety constraints: minimum SoH floor for safe deep discharge, grid stability check before test
-- [ ] Reporting: sulfation score + scheduling decisions in health.json for Grafana, journald structured events
+(None yet — defining v3.1 scope)
 
 ### Out of Scope
 
@@ -55,29 +56,29 @@
 - Temperature compensation — indoor ±3°C, negligible variation
 - Offline mode / multi-UPS — single CyberPower UT850EG only
 
-## Current Milestone: v3.0 Active Battery Care
+## Current Milestone: v3.1 Code Quality Hardening (planning)
 
-**Goal:** Transform daemon from passive observer to active battery manager — model sulfation, schedule desulfation intelligently, and quantify each discharge's net impact on battery life.
+**Goal:** Structural improvements identified by 8-agent code quality review — decompose MonitorDaemon, unify coulomb counting, rewrite coupled tests, resolve temperature placeholder.
 
 **Target features:**
-- Sulfation model (physics + data-driven hybrid)
-- Smart deep discharge scheduling (daemon controls upscmd, replaces static systemd timers)
-- Cycle ROI metric (desulfation benefit vs wear cost, health.json export)
+- MonitorDaemon decomposition (SagTracker, SchedulerManager, DischargeCollector extraction)
+- Unified coulomb counting implementation (accuracy-first: per-step integration)
+- Test quality rewrite (outcome-based assertions, dependency injection, no mock sequence replay)
+- Temperature + security hardening
 
 ## Context
 
-Shipped v2.0 with 11,602 LOC Python, 291 tests, 311 commits over 4 days. Post-v2.0 module audit fixed all 58 findings (337 tests now).
+Shipped v3.0 with 5,239 LOC Python, 476 tests, 150 commits (v2.0→v3.0) over 4 days.
 Tech stack: Python 3.13, NUT (upsc + dummy-ups), systemd, journald.
 Hardware: CyberPower UT850EG (425W), USB, NUT usbhid-ups, Debian 13 (senbonzakura).
 
 Real blackout 2026-03-12 validated the model: 47 min actual vs ~22 min firmware prediction.
-Firmware showed 0% at minute 35 — UPS ran 12 more minutes.
 
-v2.0 added capacity estimation from deep discharge events (coulomb counting + voltage anchor), SoH recalibration against measured capacity, and full reporting pipeline (MOTD, journald, Grafana). Math kernel extracted to `src/battery_math/` package with year-long simulation harness proving formula stability.
+v3.0 added sulfation model (physics + data-driven hybrid), intelligent test scheduling with 7 safety gates (SoH floor, rate limiting, blackout credit, grid stability, cycle budget, ROI threshold, sulfation threshold), cycle ROI metric, and full observability pipeline. Post-v3.0 kaizen pass fixed 53 findings from 8-agent code quality review.
 
-Operating environment: frequent blackouts (several/week), battery at ~35°C due to inverter heat. Existing deep test infrastructure: ups-test-quick.timer (daily) and ups-test-deep.timer (monthly) — to be replaced by daemon-controlled scheduling.
+Operating environment: frequent blackouts (several/week), battery at ~35°C due to inverter heat. Daemon now controls test scheduling directly via upscmd (replaced static systemd timers).
 
-Known v2.1+ candidates deferred: Peukert exponent auto-calibration (CAL2-02), cliff-edge degradation detector, seasonal thermal correction.
+Known v3.1+ candidates: temperature sensor integration, Peukert auto-calibration, cliff-edge degradation detector, discharge curve shape analysis.
 
 ## Constraints
 
@@ -109,4 +110,4 @@ Known v2.1+ candidates deferred: Peukert exponent auto-calibration (CAL2-02), cl
 | 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
 
 ---
-*Last updated: 2026-03-17 after v3.0 milestone start*
+*Last updated: 2026-03-20 after v3.0 milestone completion*
