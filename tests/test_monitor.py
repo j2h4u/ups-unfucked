@@ -65,7 +65,8 @@ def test_per_poll_writes_during_blackout(make_daemon):
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
-    daemon._track_discharge = MagicMock()
+    daemon.discharge_collector = MagicMock()
+    daemon.discharge_collector.track.return_value = False
     daemon._log_status = MagicMock()
     daemon.scheduler_manager = MagicMock(last_scheduling_reason='observing', last_next_test_timestamp=None)
     daemon.poll_count = 0
@@ -109,7 +110,8 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
-    daemon._track_discharge = MagicMock()
+    daemon.discharge_collector = MagicMock()
+    daemon.discharge_collector.track.return_value = False
     daemon._log_status = MagicMock()
     daemon.scheduler_manager = MagicMock(last_scheduling_reason='observing', last_next_test_timestamp=None)
     daemon.poll_count = 0
@@ -143,7 +145,8 @@ def test_no_writes_during_online_state(make_daemon):
     daemon._handle_event_transition = MagicMock()
     daemon._write_virtual_ups = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
-    daemon._track_discharge = MagicMock()
+    daemon.discharge_collector = MagicMock()
+    daemon.discharge_collector.track.return_value = False
     daemon._log_status = MagicMock()
     daemon.scheduler_manager = MagicMock(last_scheduling_reason='observing', last_next_test_timestamp=None)
     daemon.poll_count = 0
@@ -186,7 +189,8 @@ def test_lb_flag_signal_latency(make_daemon):
         daemon._classify_event = MagicMock()
         daemon._write_virtual_ups = MagicMock()
         daemon.sag_tracker = MagicMock(is_measuring=False)
-        daemon._track_discharge = MagicMock()
+        daemon.discharge_collector = MagicMock()
+        daemon.discharge_collector.track.return_value = False
         daemon._log_status = MagicMock()
         daemon.nut_client = MagicMock()
         daemon.nut_client.get_ups_vars.return_value = {
@@ -261,10 +265,11 @@ def test_shutdown_threshold_from_config(make_daemon):
 
 
 def test_discharge_buffer_init(make_daemon):
-    """Discharge buffer initialized correctly."""
+    """Discharge collector initialized correctly."""
+    from src.discharge_collector import DischargeCollector
     daemon = make_daemon()
-    assert daemon.calibration_last_written_index == 0
-    assert daemon.discharge_buffer.collecting is False
+    assert isinstance(daemon.discharge_collector, DischargeCollector)
+    assert daemon.discharge_collector.is_collecting is False
 
 
 def test_discharge_buffer_cleared_after_health_update(make_daemon):
@@ -291,10 +296,9 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     daemon.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
     daemon.discharge_handler.battery_model = mock_model
     daemon.discharge_handler.rls_peukert = daemon.rls_peukert
-    daemon._discharge_predicted_runtime = None
 
     from src.monitor_config import DischargeBuffer
-    daemon.discharge_buffer = DischargeBuffer(
+    daemon.discharge_collector.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0, 11.0, 10.5],
         times=[0, 100, 200, 300],
         collecting=True
@@ -302,9 +306,9 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
 
     daemon._update_battery_health()
 
-    assert daemon.discharge_buffer.voltages == []
-    assert daemon.discharge_buffer.times == []
-    assert daemon.discharge_buffer.collecting is False
+    assert daemon.discharge_collector.buffer.voltages == []
+    assert daemon.discharge_collector.buffer.times == []
+    assert daemon.discharge_collector.buffer.collecting is False
 
 
 def test_config_immutability(daemon_config):
@@ -353,7 +357,7 @@ def test_peukert_normal_case_updates_rls(make_daemon):
     from src.monitor_config import DischargeBuffer
 
     daemon = _setup_peukert_daemon(make_daemon)
-    daemon.discharge_buffer = DischargeBuffer(
+    daemon.discharge_collector.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0, 11.0, 10.5],
         times=[0, 100, 200, 300],
     )
@@ -369,7 +373,7 @@ def test_peukert_empty_buffer_skips(make_daemon):
     from src.monitor_config import DischargeBuffer
 
     daemon = _setup_peukert_daemon(make_daemon)
-    daemon.discharge_buffer = DischargeBuffer()
+    daemon.discharge_collector.discharge_buffer = DischargeBuffer()
     daemon._auto_calibrate_peukert(current_soh=0.95)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
@@ -379,7 +383,7 @@ def test_peukert_single_sample_skips(make_daemon):
     from src.monitor_config import DischargeBuffer
 
     daemon = _setup_peukert_daemon(make_daemon)
-    daemon.discharge_buffer = DischargeBuffer(voltages=[12.0], times=[0])
+    daemon.discharge_collector.discharge_buffer = DischargeBuffer(voltages=[12.0], times=[0])
     daemon._auto_calibrate_peukert(current_soh=0.95)
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
@@ -389,7 +393,7 @@ def test_peukert_identical_timestamps_no_crash(make_daemon):
     from src.monitor_config import DischargeBuffer
 
     daemon = _setup_peukert_daemon(make_daemon)
-    daemon.discharge_buffer = DischargeBuffer(
+    daemon.discharge_collector.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0],
         times=[100, 100],
     )
@@ -402,7 +406,7 @@ def test_peukert_short_duration_skips(make_daemon):
     from src.monitor_config import DischargeBuffer
 
     daemon = _setup_peukert_daemon(make_daemon)
-    daemon.discharge_buffer = DischargeBuffer(
+    daemon.discharge_collector.discharge_buffer = DischargeBuffer(
         voltages=[13.4, 12.0],
         times=[0, 50],
     )
@@ -453,7 +457,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
     Verifies:
     - _handle_event_transition() executes on OB→OL
     - _update_battery_health() called and SoH calculated
-    - _track_discharge() accumulates voltage/time series
+    - discharge_collector.track() accumulates voltage/time series
     - Model persisted to disk
     - Discharge buffer cleared after completion
     - Multiple cycles work correctly without state carryover
@@ -465,7 +469,6 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
 
     daemon = make_daemon()
     daemon.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
-    daemon._discharge_predicted_runtime = None
 
     # Pre-setup: Mock soh_calculator and other dependencies to avoid complex physics
     with patch('src.discharge_handler.soh_calculator.calculate_soh_from_discharge') as mock_soh_calc, \
@@ -507,18 +510,24 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
             'input.voltage': '230',
         })
 
-        # Setup EMA buffer
+        # Setup EMA buffer (also update discharge_collector.ema_filter to keep references in sync)
         daemon.ema_filter = Mock()
         daemon.ema_filter.stabilized = True
         daemon.ema_filter.voltage = 12.0
         daemon.ema_filter.load = 25.0
-
-        from src.monitor_config import DischargeBuffer
-        daemon.discharge_buffer = DischargeBuffer()
+        daemon.discharge_collector.ema_filter = daemon.ema_filter
 
         # CYCLE 1: OL → OL → OB → OB → OB → OL → OL
         current_time = time.time()
         base_timestamp = current_time
+
+        def _track(voltage, timestamp):
+            """Drive discharge_collector.track() with current daemon state."""
+            daemon.discharge_collector.track(
+                voltage, timestamp,
+                daemon.current_metrics.event_type,
+                daemon.current_metrics,
+            )
 
         # Poll 0: OL at 13.4V, 100% charge
         daemon.poll_count = 0
@@ -546,10 +555,10 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 50
         daemon.ema_filter.voltage = 12.0
         daemon.ema_filter.load = 25
-        daemon._track_discharge(12.0, base_timestamp + 100)
+        _track(12.0, base_timestamp + 100)
         daemon._handle_event_transition()
         # After transition, discharge buffer should be collecting
-        assert daemon.discharge_buffer.collecting is True, "Buffer should start collecting on OB transition"
+        assert daemon.discharge_collector.buffer.collecting is True, "Buffer should start collecting on OB transition"
 
         # Poll 3: OB at 11.5V, 30% charge (continue discharge)
         daemon.poll_count = 3
@@ -558,7 +567,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 30
         daemon.ema_filter.voltage = 11.5
         daemon.ema_filter.load = 25
-        daemon._track_discharge(11.5, base_timestamp + 250)
+        _track(11.5, base_timestamp + 250)
 
         # Poll 4: OB at 11.0V, 20% charge (continue discharge)
         daemon.poll_count = 4
@@ -567,7 +576,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 20
         daemon.ema_filter.voltage = 11.0
         daemon.ema_filter.load = 25
-        daemon._track_discharge(11.0, base_timestamp + 500)
+        _track(11.0, base_timestamp + 500)
 
         # Poll 5: OL at 13.0V, 100% charge (TRANSITION - OB→OL)
         daemon.poll_count = 5
@@ -580,14 +589,14 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.ema_filter.load = 2
 
         # Verify discharge buffer BEFORE calling _handle_event_transition (which clears it)
-        assert len(daemon.discharge_buffer.voltages) == 3, f"Expected 3 voltage samples before transition, got {len(daemon.discharge_buffer.voltages)}"
-        assert daemon.discharge_buffer.voltages == [12.0, 11.5, 11.0], f"Unexpected voltage samples before transition: {daemon.discharge_buffer.voltages}"
+        assert len(daemon.discharge_collector.buffer.voltages) == 3, f"Expected 3 voltage samples before transition, got {len(daemon.discharge_collector.buffer.voltages)}"
+        assert daemon.discharge_collector.buffer.voltages == [12.0, 11.5, 11.0], f"Unexpected voltage samples before transition: {daemon.discharge_collector.buffer.voltages}"
 
         daemon._handle_event_transition()  # Should call _update_battery_health() and clear buffer
 
         # Verify discharge buffer state after OB→OL (should be cleared now)
-        assert daemon.discharge_buffer.collecting is False, "Buffer should stop collecting after OB→OL transition"
-        assert len(daemon.discharge_buffer.voltages) == 0, "Buffer should be cleared after _update_battery_health()"
+        assert daemon.discharge_collector.buffer.collecting is False, "Buffer should stop collecting after OB→OL transition"
+        assert len(daemon.discharge_collector.buffer.voltages) == 0, "Buffer should be cleared after _update_battery_health()"
 
         # Verify _update_battery_health() was called
         daemon.battery_model.add_soh_history_entry.assert_called_once()
@@ -611,9 +620,9 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 60
         daemon.ema_filter.voltage = 12.5
         daemon.ema_filter.load = 25
-        daemon._track_discharge(12.5, base_timestamp + 600)
+        _track(12.5, base_timestamp + 600)
         daemon._handle_event_transition()
-        assert daemon.discharge_buffer.collecting is True, "Buffer should restart collecting in second OB"
+        assert daemon.discharge_collector.buffer.collecting is True, "Buffer should restart collecting in second OB"
 
         # Poll 8: OB at 11.2V, 15% charge
         daemon.poll_count = 8
@@ -622,7 +631,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.current_metrics.battery_charge = 15
         daemon.ema_filter.voltage = 11.2
         daemon.ema_filter.load = 25
-        daemon._track_discharge(11.2, base_timestamp + 1000)
+        _track(11.2, base_timestamp + 1000)
 
         # Poll 9: OL at 13.1V (TRANSITION - OB→OL)
         daemon.poll_count = 9
@@ -635,14 +644,14 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.ema_filter.load = 2
 
         # Verify second cycle buffer BEFORE transition (has 2 samples)
-        assert len(daemon.discharge_buffer.voltages) == 2, f"Expected 2 samples in second cycle, got {len(daemon.discharge_buffer.voltages)}"
-        assert daemon.discharge_buffer.voltages == [12.5, 11.2], f"Second cycle unexpected: {daemon.discharge_buffer.voltages}"
+        assert len(daemon.discharge_collector.buffer.voltages) == 2, f"Expected 2 samples in second cycle, got {len(daemon.discharge_collector.buffer.voltages)}"
+        assert daemon.discharge_collector.buffer.voltages == [12.5, 11.2], f"Second cycle unexpected: {daemon.discharge_collector.buffer.voltages}"
 
         daemon._handle_event_transition()
 
         # After transition, buffer should be cleared
-        assert daemon.discharge_buffer.collecting is False, "Buffer should stop collecting after second OB→OL"
-        assert len(daemon.discharge_buffer.voltages) == 0, "Buffer should be cleared after second transition"
+        assert daemon.discharge_collector.buffer.collecting is False, "Buffer should stop collecting after second OB→OL"
+        assert len(daemon.discharge_collector.buffer.voltages) == 0, "Buffer should be cleared after second transition"
 
         # Verify model updated twice (once per OB→OL)
         assert daemon.battery_model.add_soh_history_entry.call_count == 2, f"Expected 2 SoH updates, got {daemon.battery_model.add_soh_history_entry.call_count}"
@@ -872,7 +881,8 @@ def test_run_ob_per_poll_compute_metrics(make_daemon):
     daemon._update_ema = MagicMock(return_value=(11.5, 25.0))
     daemon._classify_event = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
-    daemon._track_discharge = MagicMock()
+    daemon.discharge_collector = MagicMock()
+    daemon.discharge_collector.track.return_value = False
     daemon._compute_metrics = MagicMock(return_value=(40.0, 8.0))
     daemon._handle_event_transition = MagicMock()
     daemon._log_status = MagicMock()
@@ -919,7 +929,8 @@ def test_f13_event_transition_fast_ol_ob_ol_cycle(make_daemon):
     daemon._update_ema = MagicMock(return_value=(13.4, 15.0))
     daemon._classify_event = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
-    daemon._track_discharge = MagicMock()
+    daemon.discharge_collector = MagicMock()
+    daemon.discharge_collector.track.return_value = False
     daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
     daemon._handle_event_transition = MagicMock()
     daemon._log_status = MagicMock()
@@ -994,7 +1005,8 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
     daemon._update_ema = MagicMock(return_value=(12.0, 15.0))
     daemon._classify_event = MagicMock()
     daemon.sag_tracker = MagicMock(is_measuring=False)
-    daemon._track_discharge = MagicMock()
+    daemon.discharge_collector = MagicMock()
+    daemon.discharge_collector.track.return_value = False
     daemon._compute_metrics = MagicMock(return_value=(75.0, 30.0))
     daemon._handle_event_transition = MagicMock()
     daemon._log_status = MagicMock()
@@ -1036,7 +1048,7 @@ def test_f11_watchdog_after_critical_writes(make_daemon):
     # Verify watchdog comes AFTER health_endpoint and virtual_ups in call sequence
     # Each poll should have: health_endpoint → virtual_ups → watchdog (during OL, only poll 0 and 6)
     # But F13 means _handle_event_transition runs every poll, so full sequence per poll is:
-    # _classify → _track_sag → _track_discharge → _handle_event_transition →
+    # _classify → _track_sag → discharge_collector.track → _handle_event_transition →
     # (if gated) _compute_metrics → _log_status → _write_virtual_ups →
     # _write_health_endpoint → sd_notify
 

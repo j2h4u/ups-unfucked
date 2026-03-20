@@ -9,7 +9,7 @@ Verifies:
 2. Correct argument selection (average load, not current EMA)
 3. Call ordering (SoH before Peukert)
 4. Systemd watchdog integration survival
-5. _poll_once full call chain: _classify_event → _track_discharge → _handle_event_transition
+5. _poll_once full call chain: _classify_event → discharge_collector.track → _handle_event_transition
 """
 
 import time
@@ -75,14 +75,14 @@ class TestOrchestratorWiring:
         config.capacity_ah (rated), the kernel is called with the rated value.
         """
         # Set up: model has different measured capacity
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
-        mock_daemon.discharge_buffer.times = [0.0, 10.0, 20.0, 30.0, 40.0]
-        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 10.0, 20.0, 30.0, 40.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         # Add calibration samples so guard clause passes
-        mock_daemon.discharge_buffer.voltages.extend([10.0, 9.5])
-        mock_daemon.discharge_buffer.times.extend([50.0, 60.0])
-        mock_daemon.discharge_buffer.loads.extend([20, 20])
+        mock_daemon.discharge_collector.discharge_buffer.voltages.extend([10.0, 9.5])
+        mock_daemon.discharge_collector.discharge_buffer.times.extend([50.0, 60.0])
+        mock_daemon.discharge_collector.discharge_buffer.loads.extend([20, 20])
 
         # Config capacity (rated)
         assert mock_daemon.config.capacity_ah == 7.2
@@ -111,9 +111,9 @@ class TestOrchestratorWiring:
         not from ema_filter.load (which is real-time value).
         """
         # Set up discharge buffer with specific load samples
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
-        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
-        mock_daemon.discharge_buffer.loads = [20, 30, 25, 30, 20]  # avg = 25
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 30, 25, 30, 20]  # avg = 25
 
         # Note: We don't set ema_filter.load (read-only property) because
         # the orchestrator explicitly uses discharge_buffer.loads instead
@@ -137,9 +137,9 @@ class TestOrchestratorWiring:
         After _update_battery_health(), both SoH and Peukert should be updated
         in the model, and Peukert calibration should receive the fresh SoH value.
         """
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 11.0]
-        mock_daemon.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
-        mock_daemon.discharge_buffer.loads = [20, 25, 22, 24, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 11.0]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 25, 22, 24, 20]
 
         soh_seen_by_peukert = []
 
@@ -168,9 +168,9 @@ class TestOrchestratorWiring:
     def test_guard_clause_sample_count(self, mock_daemon):
         """Guard clause 1: rejects if <2 discharge samples."""
         # Empty discharge buffer
-        mock_daemon.discharge_buffer.times = []
-        mock_daemon.discharge_buffer.loads = []
-        mock_daemon.discharge_buffer.voltages = []
+        mock_daemon.discharge_collector.discharge_buffer.times = []
+        mock_daemon.discharge_collector.discharge_buffer.loads = []
+        mock_daemon.discharge_collector.discharge_buffer.voltages = []
 
         with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -182,9 +182,9 @@ class TestOrchestratorWiring:
     def test_guard_clause_discharge_duration(self, mock_daemon):
         """Guard clause 2: rejects if discharge < 60 seconds."""
         # Short discharge (only 30 seconds)
-        mock_daemon.discharge_buffer.times = [0.0, 30.0]
-        mock_daemon.discharge_buffer.loads = [20, 20]
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 30.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5]
 
         with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -196,9 +196,9 @@ class TestOrchestratorWiring:
     def test_guard_clause_invalid_load(self, mock_daemon):
         """Guard clause 3: rejects if average load is invalid."""
         # Valid duration but empty loads
-        mock_daemon.discharge_buffer.times = [0.0, 100.0]
-        mock_daemon.discharge_buffer.loads = []  # Empty
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = []  # Empty
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5]
         mock_daemon.reference_load_percent = 0.0  # Fallback is invalid
         mock_daemon.discharge_handler.reference_load_percent = 0.0
 
@@ -215,9 +215,9 @@ class TestPeukertClampSkip:
 
     def test_peukert_rls_skipped_on_clamp_upper(self, mock_daemon):
         """Short discharge → calibrate_peukert returns 1.4 (clamped) → RLS not updated."""
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
-        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
-        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         initial_sample_count = mock_daemon.rls_peukert.sample_count
 
@@ -231,9 +231,9 @@ class TestPeukertClampSkip:
 
     def test_peukert_rls_skipped_on_clamp_lower(self, mock_daemon):
         """calibrate_peukert returns 1.0 (lower clamp) → RLS not updated."""
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
-        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
-        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         initial_sample_count = mock_daemon.rls_peukert.sample_count
 
@@ -246,9 +246,9 @@ class TestPeukertClampSkip:
 
     def test_peukert_rls_updated_on_valid_exponent(self, mock_daemon):
         """Valid exponent (1.15) → RLS updated, sample_count increments."""
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
-        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
-        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         initial_sample_count = mock_daemon.rls_peukert.sample_count
 
@@ -291,9 +291,9 @@ class TestSoHRecalibrationFlow:
         mock_daemon.battery_model.data['capacity_ah_measured'] = 6.8
 
         # Simulate discharge event
-        mock_daemon.discharge_buffer.voltages = [12.0, 11.8, 11.5, 10.8, 10.5]
-        mock_daemon.discharge_buffer.times = [0, 100, 200, 300, 400]
-        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [12.0, 11.8, 11.5, 10.8, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0, 100, 200, 300, 400]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         # Call _update_battery_health() (which calls soh_calculator)
         with patch.object(soh_calculator, 'calculate_soh_from_discharge') as mock_kernel:
@@ -616,18 +616,18 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
 
 
 class TestPollOnceCallChain:
-    """Integration: _poll_once → _classify_event → _track_discharge → _handle_event_transition.
+    """Integration: _poll_once → _classify_event → discharge_collector.track → _handle_event_transition.
 
     Regression for previous_event_type AttributeError (commit 8f211fa).
     Real internal method chain; only external I/O and downstream subsystems mocked.
 
     What runs for real: _update_ema, _classify_event, sag_tracker.track,
-    _track_discharge, _handle_event_transition, _compute_metrics, _log_status.
+    discharge_collector.track, _handle_event_transition, _compute_metrics, _log_status.
 
     What is mocked: NUTClient (external), sd_notify (systemd), time.sleep,
     _write_health_endpoint (file I/O), write_virtual_ups_dev (file I/O),
     _safe_save (disk), _update_battery_health (complex subsystem with own tests),
-    _write_calibration_points (disk I/O through battery_model).
+    discharge_collector._write_calibration_points (disk I/O through battery_model).
     """
 
     @pytest.fixture
@@ -670,12 +670,12 @@ class TestPollOnceCallChain:
         # Mock downstream subsystems (own test coverage, complex I/O).
         # Side effect mimics real _update_battery_health buffer cleanup.
         def _fake_health_update():
-            d.discharge_buffer = DischargeBuffer()
-            d.discharge_buffer_clear_countdown = None
-            d.calibration_last_written_index = 0
+            d.discharge_collector.discharge_buffer = DischargeBuffer()
+            d.discharge_collector._discharge_buffer_clear_countdown = None
+            d.discharge_collector._calibration_last_written_index = 0
 
         d._update_battery_health = MagicMock(side_effect=_fake_health_update)
-        d._write_calibration_points = MagicMock()
+        d.discharge_collector._write_calibration_points = MagicMock()
 
         return d
 
@@ -731,8 +731,8 @@ class TestPollOnceCallChain:
 
         assert daemon.current_metrics.event_type == EventType.ONLINE
         assert daemon.current_metrics.previous_event_type == EventType.ONLINE
-        assert not daemon.discharge_buffer.collecting
-        assert len(daemon.discharge_buffer.voltages) == 0
+        assert not daemon.discharge_collector.discharge_buffer.collecting
+        assert len(daemon.discharge_collector.discharge_buffer.voltages) == 0
 
     def test_ol_to_ob_starts_discharge(self, daemon):
         """OL→OB: discharge collection starts, cycle count increments."""
@@ -742,8 +742,8 @@ class TestPollOnceCallChain:
         self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
 
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
-        assert daemon.discharge_buffer.collecting
-        assert len(daemon.discharge_buffer.voltages) == 1
+        assert daemon.discharge_collector.discharge_buffer.collecting
+        assert len(daemon.discharge_collector.discharge_buffer.voltages) == 1
         assert daemon.battery_model.get_cycle_count() == initial_cycles + 1
 
     def test_ob_accumulates_samples(self, daemon):
@@ -754,11 +754,11 @@ class TestPollOnceCallChain:
         for v in ob_voltages:
             self._poll(daemon, status='OB DISCHRG', voltage=v, input_voltage=0.0)
 
-        assert len(daemon.discharge_buffer.voltages) == len(ob_voltages)
-        assert len(daemon.discharge_buffer.times) == len(ob_voltages)
-        assert len(daemon.discharge_buffer.loads) == len(ob_voltages)
-        assert daemon.discharge_buffer.collecting
-        assert daemon._write_calibration_points.call_count == len(ob_voltages)
+        assert len(daemon.discharge_collector.discharge_buffer.voltages) == len(ob_voltages)
+        assert len(daemon.discharge_collector.discharge_buffer.times) == len(ob_voltages)
+        assert len(daemon.discharge_collector.discharge_buffer.loads) == len(ob_voltages)
+        assert daemon.discharge_collector.discharge_buffer.collecting
+        assert daemon.discharge_collector._write_calibration_points.call_count == len(ob_voltages)
 
     def test_full_blackout_cycle(self, daemon):
         """OL→OB→OL: transitions correct, EVT-05 fires _update_battery_health."""
@@ -771,7 +771,7 @@ class TestPollOnceCallChain:
             self._poll(daemon, status='OB DISCHRG', voltage=v, input_voltage=0.0)
 
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
-        assert daemon.discharge_buffer.collecting
+        assert daemon.discharge_collector.discharge_buffer.collecting
 
         # Power restored (OB→OL)
         daemon._update_battery_health.reset_mock()
@@ -794,9 +794,9 @@ class TestPollOnceCallChain:
         # OL→OB again
         self._poll(daemon, status='OB DISCHRG', voltage=11.5, input_voltage=0.0)
 
-        assert daemon.discharge_buffer_clear_countdown is None
+        assert daemon.discharge_collector._discharge_buffer_clear_countdown is None
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
-        assert daemon.discharge_buffer.collecting
+        assert daemon.discharge_collector.discharge_buffer.collecting
 
     def test_battery_test_classified_correctly(self, daemon):
         """Battery test (OB with mains voltage) → BLACKOUT_TEST, no shutdown."""
@@ -834,9 +834,9 @@ class TestRLSCalibrationIntegration:
     def test_peukert_smoothed_via_rls(self, mock_daemon):
         """Discharge → Peukert updated with RLS smoothing, not raw value."""
         # Setup: valid discharge buffer
-        mock_daemon.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
-        mock_daemon.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
-        mock_daemon.discharge_buffer.loads = [20, 21, 19, 22, 20]
+        mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5, 12.0, 11.5, 10.5]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
             mock_calibrate.return_value = 1.25  # Raw kernel result
@@ -902,8 +902,8 @@ class TestRLSCalibrationIntegration:
         """OL→OB→OL cycle with sufficient duration → discharge_prediction event logged."""
         # Setup: simulate a discharge that already happened
         mock_daemon.discharge_handler.discharge_predicted_runtime = 15.0  # Predicted 15 min at OB start
-        mock_daemon.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
-        mock_daemon.discharge_buffer.loads = [20, 22, 21, 20, 19]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 22, 21, 20, 19]
         mock_daemon.current_metrics.soc = 0.80
 
         with patch('src.discharge_handler.logger') as mock_logger:
@@ -924,8 +924,8 @@ class TestRLSCalibrationIntegration:
     def test_prediction_error_gated_by_duration(self, mock_daemon):
         """Short discharge (<300s) → no prediction logged."""
         mock_daemon.discharge_handler.discharge_predicted_runtime = 15.0
-        mock_daemon.discharge_buffer.times = [0.0, 100.0]  # Only 100s
-        mock_daemon.discharge_buffer.loads = [20, 20]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0]  # Only 100s
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 20]
 
         with patch('src.monitor.logger') as mock_logger:
             mock_daemon._log_discharge_prediction()
@@ -937,8 +937,8 @@ class TestRLSCalibrationIntegration:
     def test_prediction_error_gated_by_snapshot(self, mock_daemon):
         """No prediction snapshot → no prediction logged even with long discharge."""
         mock_daemon.discharge_handler.discharge_predicted_runtime = None  # No snapshot (EMA not stabilized)
-        mock_daemon.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
-        mock_daemon.discharge_buffer.loads = [20, 20, 20, 20, 20]
+        mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
+        mock_daemon.discharge_collector.discharge_buffer.loads = [20, 20, 20, 20, 20]
 
         with patch('src.monitor.logger') as mock_logger:
             mock_daemon._log_discharge_prediction()
