@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T13:33:57.776Z"
+last_updated: "2026-03-20T14:08:09.382Z"
 progress:
   total_phases: 7
   completed_phases: 5
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 11
+  completed_plans: 8
 ---
 
 # Project State — UPS Battery Monitor
@@ -21,15 +21,15 @@ progress:
 
 ## Current Position
 
-Phase: 23
-Plan: Not started
+Phase: 23 (test-quality-rewrite) — EXECUTING
+Plan: 2 of 4
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Phase 22 — naming-docs-sweep
+**Current focus:** Phase 23 — test-quality-rewrite
 
 **Milestones shipped:**
 
@@ -51,6 +51,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 21-extract-dischargecollector P02 | 15 | 2 tasks | 5 files |
 | Phase 21-extract-dischargecollector P01 | 8 | 1 tasks | 1 files |
 | Phase 22-naming-docs-sweep P02 | 2 | 2 tasks | 3 files |
+| Phase 23-test-quality-rewrite P01 | 3min | 1 tasks | 3 files |
 
 ### Execution History
 

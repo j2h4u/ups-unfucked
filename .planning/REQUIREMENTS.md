@@ -38,8 +38,8 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 - [ ] **TEST-03**: Fragile Path patching replaced with dependency injection (test_virtual_ups.py)
 - [ ] **TEST-04**: Private helper assertions replaced with outcome assertions (test_monitor.py)
 - [ ] **TEST-05**: Integration tests use real collaborators instead of internal mocks (test_monitor_integration.py)
-- [ ] **TEST-06**: Monte Carlo test marked slow with seed dependency documented
-- [ ] **TEST-07**: test_motd.py marked as integration test (environment-dependent)
+- [x] **TEST-06**: Monte Carlo test marked slow with seed dependency documented
+- [x] **TEST-07**: test_motd.py marked as integration test (environment-dependent)
 - [ ] **TEST-08**: Tautological assertion replaced with content assertion
 - [ ] **TEST-09**: Assertion roulette fixed with descriptive messages
 
@@ -92,8 +92,8 @@ Deferred to future release.
 | TEST-03 | 23 | Pending |
 | TEST-04 | 23 | Pending |
 | TEST-05 | 23 | Pending |
-| TEST-06 | 23 | Pending |
-| TEST-07 | 23 | Pending |
+| TEST-06 | 23 | Complete |
+| TEST-07 | 23 | Complete |
 | TEST-08 | 23 | Pending |
 | TEST-09 | 23 | Pending |
 | SEC-01 | 24 | Pending |
