@@ -2,45 +2,34 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
-status: active
-last_updated: "2026-03-20"
+status: unknown
+last_updated: "2026-03-20T10:39:45.090Z"
 progress:
   total_phases: 7
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-20 after v3.1 roadmap creation
+**Last Updated:** 2026-03-20 after Phase 18 Plan 01 completion
 **Milestone:** v3.1 Code Quality Hardening
-**Current Position:** Phase 18 — Unify Coulomb Counting (not started)
+**Current Position:** Phase 18 — Unify Coulomb Counting (COMPLETE)
 
 ---
 
 ## Current Position
 
-```
-Phase 18 [          ] Not started
-Phase 19 [          ] Waiting on 18
-Phase 20 [          ] Waiting on 18
-Phase 21 [          ] Waiting on 18
-Phase 22 [          ] Waiting on 21
-Phase 23 [          ] Waiting on 21
-Phase 24 [          ] Independent — can run anytime
-```
-
-**Next action:** `/gsd:plan-phase 18`
-
----
+Phase: 18 (Unify Coulomb Counting) — COMPLETE (1/1 plans done)
+Stopped At: Completed 18-unify-coulomb-counting/18-01-PLAN.md
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** v3.1 Code Quality Hardening — decompose MonitorDaemon god class, unify coulomb counting, rewrite implementation-coupled tests, resolve temperature placeholder and security gaps.
+**Current focus:** Phase 18 — Unify Coulomb Counting
 
 **Milestones shipped:**
 
@@ -60,6 +49,12 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | MonitorDaemon responsibilities | many | reduced by 3 extracted modules |
 | Duplicate coulomb counting implementations | 2 | 1 |
 
+### Execution History
+
+| Phase | Duration | Tasks | Files |
+|-------|----------|-------|-------|
+| 18-unify-coulomb-counting P01 | 3 min | 3 | 5 |
+
 ---
 
 ## Accumulated Context
@@ -74,6 +69,9 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 6. Phase 24 independent: temperature + security changes touch no MonitorDaemon structure
 7. Design principle: when choosing between implementations, pick the one with greater accuracy
 8. No backward compatibility obligation: single server, single user — no compat shims
+9. (Phase 18) integrate_current() is a pure function in battery_math — no class state, importable by phases 19-21 without carrying CapacityEstimator as a dependency
+10. (Phase 18) avg_load computed once in update_battery_health() and passed to _check_alerts() — narrowest change that avoids _compute_soh return signature modification
+11. (Phase 18) _log_discharge_prediction() fallback changed from 0.0 to reference_load_percent via self._avg_load() for consistency with all other avg_load call sites
 
 ### Key Decisions (v3.0, carried forward)
 

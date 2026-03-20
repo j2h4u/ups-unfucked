@@ -127,7 +127,7 @@
 
 ### v3.1 Code Quality Hardening (Phases 18-24)
 
-- [ ] **Phase 18: Unify Coulomb Counting** — Extract integrate_current(), fix double avg_load computation
+- [x] **Phase 18: Unify Coulomb Counting** — Extract integrate_current(), fix double avg_load computation (completed 2026-03-20)
 - [ ] **Phase 19: Extract SagTracker** — Extract SagTracker module from MonitorDaemon
 - [ ] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon
 - [ ] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation
@@ -151,10 +151,10 @@
 3. `integrate_current()` accepts per-step load values and produces a more accurate result than the previous scalar approximation — confirmed by a unit test comparing both approaches on a variable-load sequence
 4. All existing tests pass with no regressions after the consolidation
 
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 18-01-PLAN.md — Extract integrate_current() to battery_math, fix _check_alerts avg_load propagation, accuracy test
+- [x] 18-01-PLAN.md — Extract integrate_current() to battery_math, fix _check_alerts avg_load propagation, accuracy test
 
 ---
 
@@ -293,7 +293,7 @@ Plans:
 | 15. Foundation | v3.0 | 5/5 | Complete | 2026-03-17 |
 | 16. Persistence & Observability | v3.0 | 6/6 | Complete | 2026-03-17 |
 | 17. Scheduling Intelligence | v3.0 | 2/2 | Complete | 2026-03-17 |
-| 18. Unify Coulomb Counting | v3.1 | 0/1 | Planned | - |
+| 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete   | 2026-03-20 |
 | 19. Extract SagTracker | v3.1 | 0/? | Not started | - |
 | 20. Extract SchedulerManager | v3.1 | 0/? | Not started | - |
 | 21. Extract DischargeCollector | v3.1 | 0/? | Not started | - |

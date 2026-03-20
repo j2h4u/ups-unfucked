@@ -11,8 +11,8 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 
 ### Architecture
 
-- [ ] **ARCH-01**: Coulomb counting unified into single `integrate_current()` in battery_math with per-step load support
-- [ ] **ARCH-02**: `_check_alerts` receives avg_load as parameter instead of recomputing
+- [x] **ARCH-01**: Coulomb counting unified into single `integrate_current()` in battery_math with per-step load support
+- [x] **ARCH-02**: `_check_alerts` receives avg_load as parameter instead of recomputing
 - [ ] **ARCH-03**: SagTracker extracted from MonitorDaemon into own module
 - [ ] **ARCH-04**: SchedulerManager extracted from MonitorDaemon into own module
 - [ ] **ARCH-05**: DischargeCollector extracted from MonitorDaemon (sample accumulation, calibration writes)
@@ -74,8 +74,8 @@ Deferred to future release.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ARCH-01 | 18 | Pending |
-| ARCH-02 | 18 | Pending |
+| ARCH-01 | 18 | Complete |
+| ARCH-02 | 18 | Complete |
 | ARCH-03 | 19 | Pending |
 | ARCH-04 | 20 | Pending |
 | ARCH-05 | 21 | Pending |
