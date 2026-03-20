@@ -122,7 +122,7 @@ class TestDispatchFunction:
         )
 
         # Call dispatch
-        with patch('src.monitor.logger'):
+        with patch('src.scheduler_manager.logger'):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -154,7 +154,7 @@ class TestDispatchFunction:
         )
 
         # Call dispatch
-        with patch('src.monitor.logger'):
+        with patch('src.scheduler_manager.logger'):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -184,7 +184,7 @@ class TestDispatchFunction:
         )
 
         # Call dispatch
-        with patch('src.monitor.logger'):
+        with patch('src.scheduler_manager.logger'):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -212,7 +212,7 @@ class TestDispatchFunction:
             reason_code='test_reason',
         )
 
-        with patch('src.monitor.logger'):
+        with patch('src.scheduler_manager.logger'):
             dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -245,7 +245,7 @@ class TestDispatchIntegration:
             reason_code='test_reason',
         )
 
-        with patch('src.monitor.logger'):
+        with patch('src.scheduler_manager.logger'):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
