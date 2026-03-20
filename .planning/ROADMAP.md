@@ -128,7 +128,7 @@
 ### v3.1 Code Quality Hardening (Phases 18-24)
 
 - [x] **Phase 18: Unify Coulomb Counting** — Extract integrate_current(), fix double avg_load computation (completed 2026-03-20)
-- [ ] **Phase 19: Extract SagTracker** — Extract SagTracker module from MonitorDaemon
+- [x] **Phase 19: Extract SagTracker** — Extract SagTracker module from MonitorDaemon (completed 2026-03-20)
 - [ ] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon
 - [ ] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation
 - [ ] **Phase 22: Naming + Docs Sweep** — Rename BatteryModel.data, category, rls/d; add docstrings
@@ -172,10 +172,10 @@ Plans:
 3. `SagTracker` has direct unit tests that exercise its behavior without constructing a MonitorDaemon
 4. All existing tests pass with no regressions
 
-**Plans:** 1 plans
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 19-01-PLAN.md — Extract SagTracker class, rewire MonitorDaemon delegation, unit tests
+- [x] 19-01-PLAN.md — Extract SagTracker class, rewire MonitorDaemon delegation, unit tests
 
 ---
 
@@ -297,7 +297,7 @@ Plans:
 | 16. Persistence & Observability | v3.0 | 6/6 | Complete | 2026-03-17 |
 | 17. Scheduling Intelligence | v3.0 | 2/2 | Complete | 2026-03-17 |
 | 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete    | 2026-03-20 |
-| 19. Extract SagTracker | v3.1 | 0/1 | Not started | - |
+| 19. Extract SagTracker | v3.1 | 1/1 | Complete   | 2026-03-20 |
 | 20. Extract SchedulerManager | v3.1 | 0/? | Not started | - |
 | 21. Extract DischargeCollector | v3.1 | 0/? | Not started | - |
 | 22. Naming + Docs Sweep | v3.1 | 0/? | Not started | - |
