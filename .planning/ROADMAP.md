@@ -6,6 +6,7 @@
 - ✅ **v1.1 Expert Panel Review Fixes** — Phases 7-11 (shipped 2026-03-14)
 - ✅ **v2.0 Actual Capacity Estimation** — Phases 12-14 (shipped 2026-03-16)
 - ✅ **v3.0 Active Battery Care** — Phases 15-17 (shipped 2026-03-20)
+- 🔄 **v3.1 Code Quality Hardening** — Phases 18-24 (active)
 
 ## Phases
 
@@ -124,6 +125,149 @@
 
 </details>
 
+### v3.1 Code Quality Hardening (Phases 18-24)
+
+- [ ] **Phase 18: Unify Coulomb Counting** — Extract integrate_current(), fix double avg_load computation
+- [ ] **Phase 19: Extract SagTracker** — Extract SagTracker module from MonitorDaemon
+- [ ] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon
+- [ ] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation
+- [ ] **Phase 22: Naming + Docs Sweep** — Rename BatteryModel.data, category, rls/d; add docstrings
+- [ ] **Phase 23: Test Quality Rewrite** — Outcome assertions, dependency injection, integration test accuracy
+- [ ] **Phase 24: Temperature + Security Hardening** — NUT sensor check, model.json validation, auth docs
+
+## Phase Details
+
+### Phase 18: Unify Coulomb Counting
+
+**Goal:** All coulomb counting in the codebase uses a single accurate implementation with per-step load support.
+
+**Depends on:** Phase 17 (v3.0 complete)
+
+**Requirements:** ARCH-01, ARCH-02
+
+**Success Criteria** (what must be TRUE):
+1. A single `integrate_current()` function exists in `src/battery_math/` and all call sites in the codebase use it — no duplicate coulomb integration logic remains
+2. `_check_alerts` receives `avg_load` as a parameter — it does not recompute it internally, and no double-averaging occurs across the call chain
+3. `integrate_current()` accepts per-step load values and produces a more accurate result than the previous scalar approximation — confirmed by a unit test comparing both approaches on a variable-load sequence
+4. All existing tests pass with no regressions after the consolidation
+
+**Plans:** TBD
+
+---
+
+### Phase 19: Extract SagTracker
+
+**Goal:** SagTracker logic lives in its own module, fully decoupled from MonitorDaemon internals.
+
+**Depends on:** Phase 18
+
+**Requirements:** ARCH-03
+
+**Success Criteria** (what must be TRUE):
+1. A `SagTracker` class exists in its own module under `src/` with a clear public interface — MonitorDaemon instantiates it and delegates sag-related calls to it
+2. MonitorDaemon no longer contains sag tracking state or logic inline — the extracted code is the sole owner
+3. `SagTracker` has direct unit tests that exercise its behavior without constructing a MonitorDaemon
+4. All existing tests pass with no regressions
+
+**Plans:** TBD
+
+---
+
+### Phase 20: Extract SchedulerManager
+
+**Goal:** SchedulerManager logic lives in its own module, MonitorDaemon delegates scheduling decisions to it.
+
+**Depends on:** Phase 18
+
+**Requirements:** ARCH-04
+
+**Success Criteria** (what must be TRUE):
+1. A `SchedulerManager` class exists in its own module under `src/` — MonitorDaemon constructs it and calls its methods for all scheduling decisions
+2. MonitorDaemon no longer contains scheduler state or decision logic inline — the extracted module is the sole owner
+3. `SchedulerManager` has direct unit tests that exercise scheduling decisions (safety gates, rate limiting, blackout credit) without constructing a MonitorDaemon
+4. All existing tests pass with no regressions
+
+**Plans:** TBD
+
+---
+
+### Phase 21: Extract DischargeCollector
+
+**Goal:** DischargeCollector owns sample accumulation and calibration writes; sulfation scoring split into compute, persist, and log methods.
+
+**Depends on:** Phase 18
+
+**Requirements:** ARCH-05, ARCH-06
+
+**Success Criteria** (what must be TRUE):
+1. A `DischargeCollector` class exists in its own module — it owns discharge sample accumulation and calibration write logic; MonitorDaemon delegates to it
+2. MonitorDaemon no longer contains discharge collection state or calibration write logic inline
+3. `_score_and_persist_sulfation` is split into at least three methods: one that computes the score, one that persists it, and one that logs it — each independently testable
+4. `DischargeCollector` has direct unit tests covering sample accumulation and calibration write behavior without constructing a MonitorDaemon
+5. All existing tests pass with no regressions
+
+**Plans:** TBD
+
+---
+
+### Phase 22: Naming + Docs Sweep
+
+**Goal:** All renamed symbols and added docstrings are consistent across the entire codebase; no stale references remain.
+
+**Depends on:** Phase 21 (cleaner to rename after decomposition settles the final module structure)
+
+**Requirements:** NAME-01, NAME-02, NAME-03, DOC-01, DOC-02, DOC-03, DOC-04
+
+**Success Criteria** (what must be TRUE):
+1. `BatteryModel.data` is renamed to `state` everywhere — no remaining references to `.data` on BatteryModel instances in source or tests
+2. `category` is renamed to `power_source` in `EventClassifier.classify()` and all call sites updated
+3. `rls` and `d` variable names in `_sync_physics_from_data` are replaced with descriptive names
+4. `_handle_capacity_convergence`, `_opt_round`, `_prune_lut`, and `_classify_discharge_trigger` each have docstrings that capture their non-obvious behaviors (write-once guard, rounding intent, dedup logic, buffer start semantics)
+5. All tests pass after the rename sweep — no broken attribute references
+
+**Plans:** TBD
+
+---
+
+### Phase 23: Test Quality Rewrite
+
+**Goal:** Test suite asserts observable outcomes and uses dependency injection; no mock call sequence replay, no private method assertions, no tautological checks.
+
+**Depends on:** Phase 21 (decomposition changes which internals exist; rewriting tests before extraction would require rewriting twice)
+
+**Requirements:** TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-08, TEST-09
+
+**Success Criteria** (what must be TRUE):
+1. No test in `test_monitor.py` asserts on mock call sequences or internal method call order — assertions target observable state or return values
+2. Each test function in the affected files exercises a single behavior — no test that previously verified multiple unrelated assertions remains as-is
+3. `test_virtual_ups.py` uses dependency injection for path configuration rather than `Path` patching
+4. `test_monitor_integration.py` integration tests use real collaborators (real `SagTracker`, `SchedulerManager`, `DischargeCollector`) instead of internal mocks
+5. The Monte Carlo test is marked `@pytest.mark.slow` with a comment documenting its seed and expected runtime
+6. `test_motd.py` is marked as an integration test with a comment explaining its environment dependency
+7. All 476+ tests pass after the rewrite
+
+**Plans:** TBD
+
+---
+
+### Phase 24: Temperature + Security Hardening
+
+**Goal:** Temperature sensor is resolved (real check or documented absence), model.json has field-level validation, security gaps are documented.
+
+**Depends on:** Nothing (independent — can run at any time after Phase 17)
+
+**Requirements:** SEC-01, SEC-02, SEC-03, SEC-04
+
+**Success Criteria** (what must be TRUE):
+1. Daemon checks for a NUT temperature variable at startup and logs a structured message — either "temperature sensor found: X°C" or "temperature sensor unavailable, skipping thermal compensation" — no silent placeholder behavior remains
+2. `model.json` loading validates required fields at field level and raises a descriptive error on schema violation — an invalid or missing field produces a clear log message, not a raw KeyError or AttributeError
+3. NUT empty PASSWORD security implication is documented in a code comment at the connection site and in the relevant config or README section
+4. `atomic_write` logs a warning when the temp file cleanup fails during exception handling — the failed unlink is not silently swallowed
+
+**Plans:** TBD
+
+---
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -143,10 +287,17 @@
 | 12.1 Math Kernel & Stability Tests | v2.0 | 6/6 | Complete | 2026-03-16 |
 | 13. SoH Recalibration & New Battery | v2.0 | 2/2 | Complete | 2026-03-16 |
 | 14. Capacity Reporting & Metrics | v2.0 | 3/3 | Complete | 2026-03-16 |
-| 15. Foundation | v3.0 | 5/5 | Complete    | 2026-03-17 |
-| 16. Persistence & Observability | v3.0 | 6/6 | Complete    | 2026-03-17 |
-| 17. Scheduling Intelligence | v3.0 | 2/2 | Complete    | 2026-03-17 |
+| 15. Foundation | v3.0 | 5/5 | Complete | 2026-03-17 |
+| 16. Persistence & Observability | v3.0 | 6/6 | Complete | 2026-03-17 |
+| 17. Scheduling Intelligence | v3.0 | 2/2 | Complete | 2026-03-17 |
+| 18. Unify Coulomb Counting | v3.1 | 0/? | Not started | - |
+| 19. Extract SagTracker | v3.1 | 0/? | Not started | - |
+| 20. Extract SchedulerManager | v3.1 | 0/? | Not started | - |
+| 21. Extract DischargeCollector | v3.1 | 0/? | Not started | - |
+| 22. Naming + Docs Sweep | v3.1 | 0/? | Not started | - |
+| 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
+| 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
 
 ---
 
-*Roadmap updated: 2026-03-20 after v3.0 milestone completion*
+*Roadmap updated: 2026-03-20 after v3.1 roadmap creation*
