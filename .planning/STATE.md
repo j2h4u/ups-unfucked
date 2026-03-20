@@ -3,26 +3,26 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T19:25:10.110Z"
+last_updated: "2026-03-20T19:30:47.434Z"
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 13
-  completed_plans: 12
+  completed_plans: 13
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-20 after Phase 24 Plan 01 completion
+**Last Updated:** 2026-03-21 after Phase 24 Plan 02 completion
 **Milestone:** v3.1 Code Quality Hardening
-**Current Position:** Phase 24 — Temperature/Security Hardening (in progress)
+**Current Position:** Phase 24 — Temperature/Security Hardening (COMPLETE)
 
 ---
 
 ## Current Position
 
-Phase: 24 (temperature-security-hardening) — EXECUTING
-Plan: 2 of 2
+Phase: 24 (temperature-security-hardening) — COMPLETE
+Plan: 2 of 2 (all plans complete)
 
 ## Project Reference
 
@@ -56,6 +56,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 23-test-quality-rewrite P03 | 7 | 2 tasks | 1 files |
 | Phase 23 P04 | 5 | 1 tasks | 2 files |
 | Phase 24-temperature-security-hardening P01 | 2 min | 2 tasks | 2 files |
+| Phase 24-temperature-security-hardening P02 | 410 | 2 tasks | 4 files |
 
 ### Execution History
 
@@ -92,6 +93,8 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 21. (Phase 23-04) capacity_estimator MagicMock retained in test_journald_event_filtering with documented rationale — needs deterministic output; real estimator has dedicated test coverage in test_capacity_estimator.py
 22. (Phase 24-01) Expanded string-check loop from 2→6 fields rather than adding separate loop — minimal diff, consistent pattern
 23. (Phase 24-01) atomic_write cleanup failure logged as warning (not error) — cleanup is secondary to the original write error that already propagates
+24. (Phase 24-02) TestTemperatureProbe uses dedicated helper bypassing make_daemon fixture — fixture patches _probe_temperature_sensor on the class which suppresses the method under test
+25. (Phase 24-02) Assert on mock_logger.info call_args extra.event_type, not caplog.text — monitor logger clears handlers and adds stderr handler in fixture, bypassing root logger that caplog intercepts
 
 ### Key Decisions (v3.0, carried forward)
 
@@ -107,7 +110,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 ### Todos
 
 - [x] After Phase 21: MonitorDaemon shrunk ~120 LOC; 5 methods + 4 state fields moved to DischargeCollector; 547 tests pass
-- [ ] Phase 24: check `upsc cyberpower` output for any temperature variable before implementing SEC-01
+- [x] Phase 24: check `upsc cyberpower` output for any temperature variable before implementing SEC-01 — probe implemented; NUT exposes ups.temperature/battery.temperature/ambient.temperature if hardware supports it
 
 ---
 

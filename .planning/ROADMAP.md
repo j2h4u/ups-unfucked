@@ -133,7 +133,7 @@
 - [x] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation (completed 2026-03-20)
 - [x] **Phase 22: Naming + Docs Sweep** — Rename BatteryModel.data, category, rls/d; add docstrings (completed 2026-03-20)
 - [x] **Phase 23: Test Quality Rewrite** — Outcome assertions, dependency injection, integration test accuracy (completed 2026-03-20)
-- [ ] **Phase 24: Temperature + Security Hardening** — NUT sensor check, model.json validation, auth docs
+- [x] **Phase 24: Temperature + Security Hardening** — NUT sensor check, model.json validation, auth docs (completed 2026-03-20)
 
 ## Phase Details
 
@@ -287,11 +287,11 @@ Plans:
 3. NUT empty PASSWORD security implication is documented in a code comment at the connection site and in the relevant config or README section
 4. `atomic_write` logs a warning when the temp file cleanup fails during exception handling — the failed unlink is not silently swallowed
 
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 24-01-PLAN.md — Extend model.json field-level validation (SEC-03) + atomic_write cleanup logging (SEC-04)
-- [ ] 24-02-PLAN.md — Temperature sensor probe at startup (SEC-01) + NUT security documentation (SEC-02)
+- [x] 24-02-PLAN.md — Temperature sensor probe at startup (SEC-01) + NUT security documentation (SEC-02)
 
 ---
 
@@ -323,7 +323,7 @@ Plans:
 | 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 23. Test Quality Rewrite | v3.1 | 4/4 | Complete    | 2026-03-20 |
-| 24. Temperature + Security Hardening | v3.1 | 1/2 | In Progress|  |
+| 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete   | 2026-03-20 |
 
 ---
 
