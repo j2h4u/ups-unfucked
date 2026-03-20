@@ -47,8 +47,8 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 
 - [ ] **SEC-01**: Temperature resolved — check NUT variable, fix logging approach
 - [ ] **SEC-02**: NUT empty PASSWORD documented as security dependency
-- [ ] **SEC-03**: model.json scheduling state field-level validation
-- [ ] **SEC-04**: atomic_write cleanup error logged (failed unlink during exception)
+- [x] **SEC-03**: model.json scheduling state field-level validation
+- [x] **SEC-04**: atomic_write cleanup error logged (failed unlink during exception)
 
 ## v3.2+ Requirements
 
@@ -98,8 +98,8 @@ Deferred to future release.
 | TEST-09 | 23 | Complete |
 | SEC-01 | 24 | Pending |
 | SEC-02 | 24 | Pending |
-| SEC-03 | 24 | Pending |
-| SEC-04 | 24 | Pending |
+| SEC-03 | 24 | Complete |
+| SEC-04 | 24 | Complete |
 
 **Coverage:**
 - v3.1 requirements: 26 total

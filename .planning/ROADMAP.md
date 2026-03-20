@@ -287,10 +287,10 @@ Plans:
 3. NUT empty PASSWORD security implication is documented in a code comment at the connection site and in the relevant config or README section
 4. `atomic_write` logs a warning when the temp file cleanup fails during exception handling — the failed unlink is not silently swallowed
 
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
-- [ ] 24-01-PLAN.md — Extend model.json field-level validation (SEC-03) + atomic_write cleanup logging (SEC-04)
+- [x] 24-01-PLAN.md — Extend model.json field-level validation (SEC-03) + atomic_write cleanup logging (SEC-04)
 - [ ] 24-02-PLAN.md — Temperature sensor probe at startup (SEC-01) + NUT security documentation (SEC-02)
 
 ---
@@ -323,7 +323,7 @@ Plans:
 | 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 23. Test Quality Rewrite | v3.1 | 4/4 | Complete    | 2026-03-20 |
-| 24. Temperature + Security Hardening | v3.1 | 0/2 | Not started | - |
+| 24. Temperature + Security Hardening | v3.1 | 1/2 | In Progress|  |
 
 ---
 
