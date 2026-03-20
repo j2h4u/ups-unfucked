@@ -5,6 +5,7 @@ from .rls import ScalarRLS
 from .sulfation import compute_sulfation_score, estimate_recovery_delta, SulfationState
 from .cycle_roi import compute_cycle_roi
 from .regression import linear_regression, linear_regression_slope, LinearFit
+from .integration import integrate_current
 
 __all__ = [
     'BatteryState',
@@ -14,4 +15,5 @@ __all__ = [
     'compute_sulfation_score', 'estimate_recovery_delta', 'SulfationState',
     'compute_cycle_roi',
     'linear_regression', 'linear_regression_slope', 'LinearFit',
+    'integrate_current',
 ]
