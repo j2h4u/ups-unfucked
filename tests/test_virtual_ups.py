@@ -10,7 +10,6 @@ import tempfile
 import os
 import re
 from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
 from src.event_classifier import EventType
 from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 
@@ -36,11 +35,7 @@ class TestVirtualUPSWriting:
 
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
-
-            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
-                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
-            )):
-                write_virtual_ups_dev(metrics)
+            write_virtual_ups_dev(metrics, output_path=test_file)
 
             # Assert: File exists at patched location
             assert test_file.exists(), "File not created at expected location"
@@ -80,11 +75,7 @@ class TestVirtualUPSWriting:
 
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
-
-            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
-                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
-            )):
-                write_virtual_ups_dev(metrics)
+            write_virtual_ups_dev(metrics, output_path=test_file)
 
             assert test_file.exists(), "File not created"
             file_content = test_file.read_text()
@@ -134,11 +125,7 @@ class TestFieldOverrides:
 
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
-
-            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
-                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
-            )):
-                write_virtual_ups_dev(metrics)
+            write_virtual_ups_dev(metrics, output_path=test_file)
 
             assert test_file.exists(), "Virtual UPS file not created"
             file_content = test_file.read_text()
@@ -181,11 +168,7 @@ class TestNUTFormatCompliance:
 
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
-
-            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
-                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
-            )):
-                write_virtual_ups_dev(metrics)
+            write_virtual_ups_dev(metrics, output_path=test_file)
 
             assert test_file.exists(), "Virtual UPS file not created"
 
@@ -340,11 +323,7 @@ class TestMonitorIntegration:
         # Act: Write via production function and verify output
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="ups_test_") as tmpdir:
             test_file = Path(tmpdir) / "ups-virtual.dev"
-
-            with patch("src.virtual_ups.Path", side_effect=lambda *a, **kw: (
-                test_file if a == ("/run/ups-battery-monitor/ups-virtual.dev",) else Path(*a, **kw)
-            )):
-                write_virtual_ups_dev(virtual_metrics)
+            write_virtual_ups_dev(virtual_metrics, output_path=test_file)
 
             assert test_file.exists()
             file_content = test_file.read_text()
