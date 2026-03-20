@@ -306,7 +306,7 @@ Plans:
 | 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 19. Extract SagTracker | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 20. Extract SchedulerManager | v3.1 | 1/1 | Complete    | 2026-03-20 |
-| 21. Extract DischargeCollector | v3.1 | 2/2 | Complete   | 2026-03-20 |
+| 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 0/? | Not started | - |
 | 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
 | 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
