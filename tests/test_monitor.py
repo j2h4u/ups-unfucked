@@ -67,7 +67,7 @@ def test_per_poll_writes_during_blackout(make_daemon):
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
-    daemon._run_daily_scheduler = MagicMock()
+    daemon.scheduler_manager = MagicMock(last_scheduling_reason='observing', last_next_test_timestamp=None)
     daemon.poll_count = 0
     daemon._startup_logged = True
     daemon._consecutive_errors = 0
@@ -111,7 +111,7 @@ def test_handle_event_transition_per_poll_during_ob(make_daemon):
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
-    daemon._run_daily_scheduler = MagicMock()
+    daemon.scheduler_manager = MagicMock(last_scheduling_reason='observing', last_next_test_timestamp=None)
     daemon.poll_count = 0
     daemon._startup_logged = True
     daemon._consecutive_errors = 0
@@ -145,7 +145,7 @@ def test_no_writes_during_online_state(make_daemon):
     daemon.sag_tracker = MagicMock(is_measuring=False)
     daemon._track_discharge = MagicMock()
     daemon._log_status = MagicMock()
-    daemon._run_daily_scheduler = MagicMock()
+    daemon.scheduler_manager = MagicMock(last_scheduling_reason='observing', last_next_test_timestamp=None)
     daemon.poll_count = 0
     daemon._startup_logged = True
     daemon._consecutive_errors = 0

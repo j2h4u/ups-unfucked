@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import Mock, MagicMock, patch
-from src.monitor import validate_preconditions_before_upscmd, dispatch_test_with_audit
+from src.scheduler_manager import validate_preconditions_before_upscmd, dispatch_test_with_audit
 from src.battery_math.scheduler import SchedulerDecision
 from src.model import BatteryModel
 
