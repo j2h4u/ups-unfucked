@@ -62,6 +62,23 @@ class TestAtomicWriteJson:
         # Verify model.json was not created
         assert not model_file.exists()
 
+    def test_atomic_write_logs_cleanup_failure(self, tmp_path, caplog):
+        """Verify cleanup failure during exception is logged, not silently swallowed."""
+        import logging
+        model_file = tmp_path / "model.json"
+        data = {'test': 'value'}
+
+        with patch('os.fdatasync', side_effect=OSError("Disk error")):
+            with patch.object(Path, 'unlink', side_effect=OSError("Permission denied")):
+                with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+                    with pytest.raises(IOError):
+                        atomic_write_json(model_file, data)
+
+        assert any('atomic_write_cleanup_failed' in r.message or
+                   getattr(r, 'event_type', '') == 'atomic_write_cleanup_failed'
+                   for r in caplog.records), \
+            f"Expected 'atomic_write_cleanup_failed' log entry, got: {[r.message for r in caplog.records]}"
+
 
 class TestBatteryModelLoad:
     """Test BatteryModel initialization and loading."""

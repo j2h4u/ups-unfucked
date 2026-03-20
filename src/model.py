@@ -101,8 +101,12 @@ def atomic_write(filepath, content: str) -> None:
         if tmp_path is not None:
             try:
                 tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass  # Don't mask the original exception
+            except OSError as cleanup_err:
+                logger.warning(
+                    "Failed to clean up temp file %s: %s",
+                    tmp_path, cleanup_err,
+                    extra={'event_type': 'atomic_write_cleanup_failed'}
+                )
         logger.error(f"Atomic write failed: {e}", exc_info=True,
                      extra={'event_type': 'atomic_write_failed'})
         raise
