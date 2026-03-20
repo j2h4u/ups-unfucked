@@ -123,19 +123,27 @@ log_info "Installing systemd service file..."
 SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
 SERVICE_DST="/etc/systemd/system/ups-battery-monitor.service"
 
-DRIVER_SRC="$REPO_ROOT/systemd/ups-virtual-driver.service"
-DRIVER_DST="/etc/systemd/system/ups-virtual-driver.service"
+DROPIN_SRC="$REPO_ROOT/systemd/nut-driver-virtual.conf"
+DROPIN_DIR="/etc/systemd/system/nut-driver@cyberpower-virtual.service.d"
 
 if [[ "$DRY_RUN" == "yes" ]]; then
     echo "[DRY-RUN] Would install: $SERVICE_SRC -> $SERVICE_DST"
-    echo "[DRY-RUN] Would install: $DRIVER_SRC -> $DRIVER_DST"
+    echo "[DRY-RUN] Would install: $DROPIN_SRC -> $DROPIN_DIR/"
 else
     cp "$SERVICE_SRC" "$SERVICE_DST"
     chmod 644 "$SERVICE_DST"
     log_ok "Service file installed to $SERVICE_DST"
-    cp "$DRIVER_SRC" "$DRIVER_DST"
-    chmod 644 "$DRIVER_DST"
-    log_ok "Driver oneshot installed to $DRIVER_DST"
+    mkdir -p "$DROPIN_DIR"
+    cp "$DROPIN_SRC" "$DROPIN_DIR/"
+    chmod 644 "$DROPIN_DIR/$(basename "$DROPIN_SRC")"
+    log_ok "NUT driver drop-in installed to $DROPIN_DIR/"
+
+    # Remove legacy oneshot service if present
+    if [[ -f /etc/systemd/system/ups-virtual-driver.service ]]; then
+        systemctl disable --now ups-virtual-driver 2>/dev/null || true
+        rm -f /etc/systemd/system/ups-virtual-driver.service
+        log_ok "Removed legacy ups-virtual-driver.service"
+    fi
 fi
 
 log_info "Reloading systemd daemon..."
@@ -149,31 +157,30 @@ log_info "Configuring NUT dummy-ups..."
 NUT_CONFIG="/etc/nut/ups.conf"
 DUMMY_UPS_CONFIG="$REPO_ROOT/config/dummy-ups.conf"
 
-NUT_NEW_PORT="port = /run/ups-battery-monitor/ups-virtual.dev"
-if grep -q "$NUT_NEW_PORT" "$NUT_CONFIG" 2>/dev/null; then
+EXPECTED_PORT="port = /run/ups-battery-monitor/ups-virtual.dev"
+if grep -qF "$EXPECTED_PORT" "$NUT_CONFIG" 2>/dev/null && ! grep -q "dummy-once" "$NUT_CONFIG" 2>/dev/null; then
     log_ok "Dummy-ups already configured correctly in $NUT_CONFIG (skipped)"
-elif grep -q "cyberpower-virtual" "$NUT_CONFIG" 2>/dev/null; then
-    log_info "Updating dummy-ups port path in $NUT_CONFIG (migrating from /dev/shm)..."
-    if [[ "$DRY_RUN" == "yes" ]]; then
-        echo "[DRY-RUN] Would update [cyberpower-virtual] port in $NUT_CONFIG"
-    else
-        python3 -c '
-import re, sys
-nut_config, dummy_config = sys.argv[1], sys.argv[2]
-content = open(nut_config).read()
-content = re.sub(r"\n\[cyberpower-virtual\].*?(?=\n\[|\Z)", "", content, flags=re.DOTALL)
-content = content.rstrip("\n") + "\n"
-content += open(dummy_config).read()
-open(nut_config, "w").write(content)
-' "$NUT_CONFIG" "$DUMMY_UPS_CONFIG"
-        log_ok "Updated [cyberpower-virtual] port path in $NUT_CONFIG"
-    fi
 else
+    # Remove any stale [cyberpower-virtual] block before appending fresh config
+    if grep -q "cyberpower-virtual" "$NUT_CONFIG" 2>/dev/null; then
+        log_info "Removing stale [cyberpower-virtual] block from $NUT_CONFIG..."
+        if [[ "$DRY_RUN" != "yes" ]]; then
+            python3 -c '
+import re, sys
+path = sys.argv[1]
+content = open(path).read()
+content = re.sub(r"\n*# [^\n]*[Vv]irtual UPS[^\n]*\n", "\n", content)
+content = re.sub(r"\n\[cyberpower-virtual\].*?(?=\n\[|\Z)", "", content, flags=re.DOTALL)
+open(path, "w").write(content.rstrip("\n") + "\n")
+' "$NUT_CONFIG"
+        fi
+    fi
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would append config from $DUMMY_UPS_CONFIG to $NUT_CONFIG"
     else
+        printf '\n' >> "$NUT_CONFIG"
         cat "$DUMMY_UPS_CONFIG" >> "$NUT_CONFIG"
-        log_ok "Dummy-ups config appended to $NUT_CONFIG"
+        log_ok "Dummy-ups config written to $NUT_CONFIG"
     fi
 fi
 
@@ -262,15 +269,14 @@ fi
 log_info "Enabling and starting ups-battery-monitor service..."
 
 run_cmd systemctl enable ups-battery-monitor
-run_cmd systemctl enable ups-virtual-driver
-log_ok "Services enabled (will auto-start on boot)"
+log_ok "Service enabled (will auto-start on boot)"
 
 run_cmd systemctl restart ups-battery-monitor
 log_ok "Monitor service (re)started"
 
-# Driver oneshot will wait for device file, then start dummy-ups
-run_cmd systemctl restart ups-virtual-driver
-log_ok "Virtual UPS driver (re)started"
+# NUT driver drop-in handles dependency — restart dummy-ups after daemon is ready
+run_cmd systemctl restart nut-driver@cyberpower-virtual
+log_ok "NUT dummy-ups driver (re)started"
 
 # === POST-INSTALL VERIFICATION ===
 

@@ -29,7 +29,7 @@
 ### Patterns Established
 - EMA → IR compensation → LUT → Peukert as standard battery estimation pipeline
 - model.json as single source of truth (LUT + SoH history + metadata)
-- tmpfs (/dev/shm) for runtime metrics, disk only for persistent model
+- tmpfs (/run) for runtime metrics, disk only for persistent model
 - Source field tracking (standard/measured/interpolated/anchor) for LUT provenance
 - Discharge buffer pattern for event-driven sample collection
 
