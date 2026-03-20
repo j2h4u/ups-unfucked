@@ -449,7 +449,8 @@ def test_signal_handler_saves_model_and_stops(make_daemon):
 
     daemon._signal_handler(signal.SIGTERM, None)
 
-    daemon.battery_model.save.assert_called_once()
+    assert daemon.battery_model.save.call_count == 1, \
+        "SIGTERM handler should save model exactly once"
     assert daemon.running is False, "SIGTERM handler should clear running flag to trigger shutdown"
 
 
@@ -1175,7 +1176,8 @@ class TestCapacityEstimatorIntegration:
         daemon._handle_discharge_complete(discharge_data)
 
         # Verify CapacityEstimator.estimate() was called
-        daemon.capacity_estimator.estimate.assert_called_once()
+        assert daemon.capacity_estimator.estimate.call_count == 1, \
+            "estimate() should be called exactly once per discharge completion"
 
     def test_estimate_none_rejected_no_model_update(self, make_daemon):
         """Test 5: estimate() returns None → no model update, rejection logged."""
@@ -1233,7 +1235,8 @@ class TestCapacityEstimatorIntegration:
         daemon._handle_discharge_complete(discharge_data)
 
         # Verify model.add_capacity_estimate was called with correct args (keyword args)
-        daemon.battery_model.add_capacity_estimate.assert_called_once()
+        assert daemon.battery_model.add_capacity_estimate.call_count == 1, \
+            "Capacity estimate should be persisted to model exactly once"
         call_kwargs = daemon.battery_model.add_capacity_estimate.call_args.kwargs
         assert call_kwargs['ah_estimate'] == 7.45
         assert call_kwargs['confidence'] == 0.85
@@ -1347,7 +1350,8 @@ class TestCapacityEstimatorIntegration:
         daemon._handle_discharge_complete(discharge_data)
 
         # Verify model was updated with keyword arguments
-        daemon.battery_model.add_capacity_estimate.assert_called_once()
+        assert daemon.battery_model.add_capacity_estimate.call_count == 1, \
+            "Capacity estimate should be persisted to model exactly once"
         call_kwargs = daemon.battery_model.add_capacity_estimate.call_args.kwargs
         assert call_kwargs['ah_estimate'] == 7.45
         assert call_kwargs['confidence'] == 0.82
