@@ -35,7 +35,7 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 
 - [ ] **TEST-01**: Mock call sequence replay replaced with outcome assertions (test_monitor.py)
 - [ ] **TEST-02**: Eager test split into focused single-behavior tests (test_monitor.py)
-- [ ] **TEST-03**: Fragile Path patching replaced with dependency injection (test_virtual_ups.py)
+- [x] **TEST-03**: Fragile Path patching replaced with dependency injection (test_virtual_ups.py)
 - [ ] **TEST-04**: Private helper assertions replaced with outcome assertions (test_monitor.py)
 - [ ] **TEST-05**: Integration tests use real collaborators instead of internal mocks (test_monitor_integration.py)
 - [x] **TEST-06**: Monte Carlo test marked slow with seed dependency documented
@@ -89,7 +89,7 @@ Deferred to future release.
 | DOC-04 | 22 | Complete |
 | TEST-01 | 23 | Pending |
 | TEST-02 | 23 | Pending |
-| TEST-03 | 23 | Pending |
+| TEST-03 | 23 | Complete |
 | TEST-04 | 23 | Pending |
 | TEST-05 | 23 | Pending |
 | TEST-06 | 23 | Complete |
