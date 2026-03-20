@@ -21,6 +21,7 @@ def make_daemon(daemon_config):
          patch('src.monitor.BatteryModel'), \
          patch('src.monitor.EventClassifier'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+         patch.object(MonitorDaemon, '_probe_temperature_sensor'), \
          patch.object(MonitorDaemon, '_validate_and_repair_model'), \
          patch.object(MonitorDaemon, '_reset_battery_baseline'):
         # Replace mocked JournalHandler with a real stderr handler so logging works in tests
@@ -1817,46 +1818,84 @@ def test_consecutive_errors_increment_on_error(make_daemon):
 
 
 class TestTemperatureProbe:
-    """Tests for MonitorDaemon._probe_temperature_sensor() startup probe."""
+    """Tests for MonitorDaemon._probe_temperature_sensor() startup probe.
 
-    def test_temperature_probe_sensor_found(self, make_daemon, caplog):
+    NOTE: Does NOT use the make_daemon fixture — that fixture patches
+    _probe_temperature_sensor on the class, which would suppress the method
+    under test. Instead, a local helper constructs the daemon without that patch.
+    """
+
+    @staticmethod
+    def _make_daemon_for_probe(daemon_config):
+        """Create MonitorDaemon with all dependencies mocked except _probe_temperature_sensor."""
+        from src.monitor import MonitorDaemon
+        from src.monitor_config import logger as monitor_logger
+        import logging
+
+        monitor_logger.handlers.clear()
+        monitor_logger.addHandler(logging.StreamHandler())
+
+        # Use a MagicMock for NUTClient so get_ups_vars can be configured per test.
+        # _probe_temperature_sensor is NOT patched so the real method runs.
+        nut_mock = MagicMock()
+        with patch('src.monitor.NUTClient', return_value=nut_mock), \
+             patch('src.monitor.EMAFilter'), \
+             patch('src.monitor.BatteryModel'), \
+             patch('src.monitor.EventClassifier'), \
+             patch.object(MonitorDaemon, '_check_nut_connectivity'), \
+             patch.object(MonitorDaemon, '_validate_and_repair_model'), \
+             patch.object(MonitorDaemon, '_reset_battery_baseline'):
+            daemon = MonitorDaemon(daemon_config)
+        # Restore the real nut_client mock (NUTClient() was called once during __init__)
+        daemon.nut_client = nut_mock
+        return daemon
+
+    def _get_event_types(self, mock_logger):
+        """Extract event_type values from all logger.info calls."""
+        return [
+            call.kwargs.get('extra', {}).get('event_type')
+            for call in mock_logger.info.call_args_list
+        ]
+
+    def test_temperature_probe_sensor_found(self, daemon_config):
         """Sensor found: 'ups.temperature' in get_ups_vars → logs temperature_sensor_found."""
-        daemon = make_daemon()
+        daemon = self._make_daemon_for_probe(daemon_config)
         daemon.nut_client.get_ups_vars.return_value = {
             'ups.temperature': 35.0,
             'battery.voltage': 13.2,
         }
 
-        with caplog.at_level(logging.INFO):
+        with patch('src.monitor.logger') as mock_logger:
             daemon._probe_temperature_sensor()
 
-        assert 'temperature_sensor_found' in caplog.text
+        assert 'temperature_sensor_found' in self._get_event_types(mock_logger)
 
-    def test_temperature_probe_sensor_unavailable(self, make_daemon, caplog):
+    def test_temperature_probe_sensor_unavailable(self, daemon_config):
         """No temperature keys in get_ups_vars → logs temperature_sensor_unavailable."""
-        daemon = make_daemon()
+        daemon = self._make_daemon_for_probe(daemon_config)
         daemon.nut_client.get_ups_vars.return_value = {
             'battery.voltage': 13.2,
             'ups.load': 15.0,
         }
 
-        with caplog.at_level(logging.INFO):
+        with patch('src.monitor.logger') as mock_logger:
             daemon._probe_temperature_sensor()
 
-        assert 'temperature_sensor_unavailable' in caplog.text
+        assert 'temperature_sensor_unavailable' in self._get_event_types(mock_logger)
 
-    def test_temperature_probe_nut_unreachable(self, make_daemon, caplog):
+    def test_temperature_probe_nut_unreachable(self, daemon_config):
         """get_ups_vars raises socket.error → probe silently returns, no temperature log."""
         import socket as socket_mod
 
-        daemon = make_daemon()
+        daemon = self._make_daemon_for_probe(daemon_config)
         daemon.nut_client.get_ups_vars.side_effect = socket_mod.error('connection refused')
 
-        with caplog.at_level(logging.INFO):
+        with patch('src.monitor.logger') as mock_logger:
             daemon._probe_temperature_sensor()
 
-        assert 'temperature_sensor_found' not in caplog.text
-        assert 'temperature_sensor_unavailable' not in caplog.text
+        event_types = self._get_event_types(mock_logger)
+        assert 'temperature_sensor_found' not in event_types
+        assert 'temperature_sensor_unavailable' not in event_types
 
 
 def test_consecutive_errors_reset_on_success(make_daemon):

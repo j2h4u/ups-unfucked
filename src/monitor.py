@@ -116,6 +116,7 @@ class MonitorDaemon:
 
         # Fail fast on misconfigured NUT rather than silently looping
         self._check_nut_connectivity()
+        self._probe_temperature_sensor()
 
     def _init_battery_model_and_estimators(self, config: Config):
         """Initialize battery model, capacity estimator, RLS filters, and discharge handler."""
@@ -213,6 +214,40 @@ class MonitorDaemon:
                 exc_info=True,
                 extra={'event_type': 'nut_unreachable'}
             )
+
+    def _probe_temperature_sensor(self):
+        """Check NUT for temperature variable at startup (one-time probe).
+
+        Checks for standard NUT temperature variable names. If found, logs
+        the sensor value. If absent, logs that thermal compensation is skipped
+        (35°C assumed constant per v3.0 design).
+
+        Does not raise — temperature is informational, not safety-critical.
+        """
+        _TEMPERATURE_VARS = ('ups.temperature', 'battery.temperature', 'ambient.temperature')
+        try:
+            ups_vars = self.nut_client.get_ups_vars()
+        except (socket.error, OSError, ConnectionError, TimeoutError, ValueError):
+            # NUT unreachable — _check_nut_connectivity already logged this
+            return
+
+        for var_name in _TEMPERATURE_VARS:
+            if var_name in ups_vars:
+                logger.info(
+                    "Temperature sensor found: %s=%s°C",
+                    var_name, ups_vars[var_name],
+                    extra={
+                        'event_type': 'temperature_sensor_found',
+                        'temperature_var': var_name,
+                        'temperature_celsius': ups_vars[var_name],
+                    }
+                )
+                return
+
+        logger.info(
+            "Temperature sensor unavailable, skipping thermal compensation",
+            extra={'event_type': 'temperature_sensor_unavailable'}
+        )
 
     def _handle_event_transition(self):
         """Execute actions based on event transitions.
