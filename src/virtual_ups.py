@@ -11,14 +11,18 @@ Key responsibilities:
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from src.event_classifier import EventType
 from src.model import atomic_write
 
 logger = logging.getLogger('ups-battery-monitor')
 
 
-def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower") -> None:
+def write_virtual_ups_dev(
+    metrics: Dict[str, Any],
+    ups_name: str = "cyberpower",
+    output_path: Optional[Path] = None,
+) -> None:
     """
     Atomically write virtual UPS metrics to tmpfs in NUT format.
 
@@ -31,6 +35,9 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
                  Expected keys: battery.voltage, battery.charge, battery.runtime,
                                ups.load, ups.status, input.voltage, etc.
         ups_name: UPS device name for NUT format (default: "cyberpower")
+        output_path: Optional override for output file path. Defaults to
+                     /run/ups-battery-monitor/ups-virtual.dev. Used by tests
+                     to write to tmp_path instead of production tmpfs.
 
     Raises:
         IOError: If write, fsync, or atomic rename fails
@@ -40,7 +47,7 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
         - Success: "Virtual UPS metrics written at {timestamp}"
         - Error: "Failed to write virtual UPS metrics: {e}"
     """
-    virtual_ups_path = Path("/run/ups-battery-monitor/ups-virtual.dev")
+    virtual_ups_path = output_path or Path("/run/ups-battery-monitor/ups-virtual.dev")
 
     # Guard against symlink attack: refuse to write through symlinks
     if virtual_ups_path.is_symlink():
