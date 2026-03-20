@@ -44,7 +44,7 @@
 
 ### Active
 
-(None yet — defining v3.1 scope)
+- ✓ Unified coulomb counting: single `integrate_current()` in battery_math, eliminated double avg_load — v3.1 Phase 18
 
 ### Out of Scope
 
