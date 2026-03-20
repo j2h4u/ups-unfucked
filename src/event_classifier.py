@@ -25,7 +25,7 @@ class EventClassifier:
 
     NUT status is a space-separated set of flags (e.g. "OB LB DISCHRG").
     Flag-based matching (F36): check for individual flags instead of exact string match.
-    Battery category is further split by input voltage:
+    Battery power source is further split by input voltage:
     - 0V → BLACKOUT_REAL (mains lost)
     - ≥100V → BLACKOUT_TEST (mains present, intentional test)
     - 1–99V → BLACKOUT_REAL (undefined range, safe default)
@@ -57,19 +57,19 @@ class EventClassifier:
         flags = ups_status.split()
 
         # F38: Unhandled NUT statuses (FSD, BYPASS, OFF, TRIM, BOOST) fall through
-        # to category=None → "unknown → keep state". YAGNI for CyberPower UT850EG
+        # to power_source=None → "unknown → keep state". YAGNI for CyberPower UT850EG
         # which only produces OL, OL CHRG, OB DISCHRG, OB LB DISCHRG, CAL DISCHRG.
         # Future UPS models with AVR (TRIM/BOOST) or bypass mode may need expansion.
         if "OB" in flags or "CAL" in flags:
-            category = "battery"
+            power_source = "battery"
         elif "OL" in flags:
-            category = "online"
+            power_source = "online"
         else:
-            category = None
+            power_source = None
 
-        if category == "online":
+        if power_source == "online":
             new_state = EventType.ONLINE
-        elif category == "battery":
+        elif power_source == "battery":
             if input_voltage >= TEST_INPUT_VOLTAGE_THRESHOLD:
                 new_state = EventType.BLACKOUT_TEST
             else:
