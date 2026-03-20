@@ -293,7 +293,7 @@ Plans:
 | 15. Foundation | v3.0 | 5/5 | Complete | 2026-03-17 |
 | 16. Persistence & Observability | v3.0 | 6/6 | Complete | 2026-03-17 |
 | 17. Scheduling Intelligence | v3.0 | 2/2 | Complete | 2026-03-17 |
-| 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete   | 2026-03-20 |
+| 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 19. Extract SagTracker | v3.1 | 0/? | Not started | - |
 | 20. Extract SchedulerManager | v3.1 | 0/? | Not started | - |
 | 21. Extract DischargeCollector | v3.1 | 0/? | Not started | - |
