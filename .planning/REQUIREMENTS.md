@@ -20,9 +20,9 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 
 ### Naming
 
-- [ ] **NAME-01**: `BatteryModel.data` renamed to `state` across entire codebase
+- [x] **NAME-01**: `BatteryModel.data` renamed to `state` across entire codebase
 - [x] **NAME-02**: `category` renamed to `power_source` in EventClassifier.classify()
-- [ ] **NAME-03**: `rls` / `d` variables cleaned up in `_sync_physics_from_data`
+- [x] **NAME-03**: `rls` / `d` variables cleaned up in `_sync_physics_from_state`
 
 ### Documentation
 
@@ -80,9 +80,9 @@ Deferred to future release.
 | ARCH-04 | 20 | Complete |
 | ARCH-05 | 21 | Complete |
 | ARCH-06 | 21 | Complete |
-| NAME-01 | 22 | Pending |
+| NAME-01 | 22 | Complete |
 | NAME-02 | 22 | Complete |
-| NAME-03 | 22 | Pending |
+| NAME-03 | 22 | Complete |
 | DOC-01 | 22 | Complete |
 | DOC-02 | 22 | Complete |
 | DOC-03 | 22 | Complete |
