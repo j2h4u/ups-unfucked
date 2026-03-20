@@ -46,6 +46,7 @@
 
 - ✓ Unified coulomb counting: single `integrate_current()` in battery_math, eliminated double avg_load — v3.1 Phase 18
 - ✓ SagTracker extracted: voltage sag state machine + RLS ir_k calibration in own module, MonitorDaemon delegates — v3.1 Phase 19
+- ✓ SchedulerManager extracted: daily test scheduling, safety gates, precondition checks, dispatch in own module — v3.1 Phase 20
 
 ### Out of Scope
 
