@@ -56,15 +56,18 @@
 - Temperature compensation — indoor ±3°C, negligible variation
 - Offline mode / multi-UPS — single CyberPower UT850EG only
 
-## Current Milestone: v3.1 Code Quality Hardening (planning)
+## Current Milestone: v3.1 Code Quality Hardening
 
-**Goal:** Structural improvements identified by 8-agent code quality review — decompose MonitorDaemon, unify coulomb counting, rewrite coupled tests, resolve temperature placeholder.
+**Goal:** Structural improvements from 8-agent code quality review — decompose MonitorDaemon god class, unify divergent coulomb counting (accuracy-first), rewrite implementation-coupled tests, resolve temperature placeholder and security gaps.
+
+**Design principle:** When choosing between implementations, pick the one with greater accuracy.
 
 **Target features:**
 - MonitorDaemon decomposition (SagTracker, SchedulerManager, DischargeCollector extraction)
-- Unified coulomb counting implementation (accuracy-first: per-step integration)
+- Unified coulomb counting implementation (per-step integration replaces scalar approximation)
+- Naming + docs sweep (BatteryModel.data rename, missing docstrings, comment cleanup)
 - Test quality rewrite (outcome-based assertions, dependency injection, no mock sequence replay)
-- Temperature + security hardening
+- Temperature + security hardening (NUT sensor check, model.json validation, auth documentation)
 
 ## Context
 
@@ -110,4 +113,4 @@ Known v3.1+ candidates: temperature sensor integration, Peukert auto-calibration
 | 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
 
 ---
-*Last updated: 2026-03-20 after v3.0 milestone completion*
+*Last updated: 2026-03-20 after v3.1 milestone start*

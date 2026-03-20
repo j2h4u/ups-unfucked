@@ -1,8 +1,8 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.0
-milestone_name: Active Battery Care
-status: completed
+milestone: v3.1
+milestone_name: Code Quality Hardening
+status: active
 last_updated: "2026-03-20"
 progress:
   total_phases: 3
@@ -13,9 +13,9 @@ progress:
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-20 after v3.0 milestone completion
-**Milestone:** v3.0 Active Battery Care — SHIPPED
-**Current Position:** Milestone complete, planning v3.1
+**Last Updated:** 2026-03-20 after v3.1 milestone start
+**Milestone:** v3.1 Code Quality Hardening
+**Current Position:** Defining requirements
 
 ---
 
@@ -24,7 +24,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Planning v3.1 Code Quality Hardening
+**Current focus:** v3.1 Code Quality Hardening — defining requirements
 
 **Milestones shipped:**
 
@@ -56,4 +56,4 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ---
 
-*State updated: 2026-03-20 after v3.0 milestone completion*
+*State updated: 2026-03-20 after v3.1 milestone start*
