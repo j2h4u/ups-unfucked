@@ -47,6 +47,7 @@
 - ✓ Unified coulomb counting: single `integrate_current()` in battery_math, eliminated double avg_load — v3.1 Phase 18
 - ✓ SagTracker extracted: voltage sag state machine + RLS ir_k calibration in own module, MonitorDaemon delegates — v3.1 Phase 19
 - ✓ SchedulerManager extracted: daily test scheduling, safety gates, precondition checks, dispatch in own module — v3.1 Phase 20
+- ✓ DischargeCollector extracted: sample accumulation, cooldown, calibration writes in own module; sulfation scoring split into compute/persist/log — v3.1 Phase 21
 
 ### Out of Scope
 
@@ -115,4 +116,4 @@ Known v3.1+ candidates: temperature sensor integration, Peukert auto-calibration
 | 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
 
 ---
-*Last updated: 2026-03-20 after Phase 19 completion*
+*Last updated: 2026-03-20 after Phase 21 completion*
