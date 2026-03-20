@@ -3,26 +3,26 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T14:13:21.377Z"
+last_updated: "2026-03-20T14:21:57.963Z"
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 11
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-20 after Phase 22 Plan 02 completion
+**Last Updated:** 2026-03-20 after Phase 23 Plan 04 completion
 **Milestone:** v3.1 Code Quality Hardening
-**Current Position:** Phase 22 — Naming + Docs Sweep (COMPLETE)
+**Current Position:** Phase 23 — Test Quality Rewrite (COMPLETE)
 
 ---
 
 ## Current Position
 
-Phase: 23 (test-quality-rewrite) — EXECUTING
-Plan: 4 of 4
+Phase: 23 (test-quality-rewrite) — COMPLETE
+Plan: 4 of 4 (all plans complete)
 
 ## Project Reference
 
@@ -54,6 +54,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 23-test-quality-rewrite P01 | 3min | 1 tasks | 3 files |
 | Phase 23-test-quality-rewrite P02 | 8 min | 2 tasks | 2 files |
 | Phase 23-test-quality-rewrite P03 | 7 | 2 tasks | 1 files |
+| Phase 23 P04 | 5 | 1 tasks | 2 files |
 
 ### Execution History
 
@@ -85,6 +86,9 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 16. (Phase 23-03) Tracking wrappers use *args to absorb positional arguments — _write_virtual_ups(self, ups_data, battery_charge, time_rem) passes 3 positional args when called as bound method
 17. (Phase 23-03) F13 test: dropped poll_sequence equality check — tracking_transition fires before _classify_event sets new event_type, count assertion is sufficient
 18. (Phase 23-03) Lifecycle test kept (not deleted) — mocked subsystems provide deterministic SoH values not achievable with real collaborators in integration test
+19. (Phase 23-04) _write_calibration_points.call_count removed — discharge buffer length is the observable outcome; call_count on disk I/O mock is an implementation detail
+20. (Phase 23-04) _update_battery_health.assert_called() removed — buffer cleared is the observable effect of the side_effect fixture; asserting the effect is more meaningful than asserting the call
+21. (Phase 23-04) capacity_estimator MagicMock retained in test_journald_event_filtering with documented rationale — needs deterministic output; real estimator has dedicated test coverage in test_capacity_estimator.py
 
 ### Key Decisions (v3.0, carried forward)
 
@@ -104,4 +108,4 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ---
 
-*State updated: 2026-03-20 after Phase 23 Plan 03 completion*
+*State updated: 2026-03-20 after Phase 23 Plan 04 completion*

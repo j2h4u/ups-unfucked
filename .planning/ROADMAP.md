@@ -132,7 +132,7 @@
 - [x] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon (completed 2026-03-20)
 - [x] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation (completed 2026-03-20)
 - [x] **Phase 22: Naming + Docs Sweep** — Rename BatteryModel.data, category, rls/d; add docstrings (completed 2026-03-20)
-- [ ] **Phase 23: Test Quality Rewrite** — Outcome assertions, dependency injection, integration test accuracy
+- [x] **Phase 23: Test Quality Rewrite** — Outcome assertions, dependency injection, integration test accuracy (completed 2026-03-20)
 - [ ] **Phase 24: Temperature + Security Hardening** — NUT sensor check, model.json validation, auth docs
 
 ## Phase Details
@@ -263,13 +263,13 @@ Plans:
 6. `test_motd.py` is marked as an integration test with a comment explaining its environment dependency
 7. All 555+ tests pass after the rewrite
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 - [x] 23-01-PLAN.md — Register @pytest.mark.slow, apply TEST-06 + TEST-07 markers (Wave 1)
 - [x] 23-02-PLAN.md — Add output_path DI to write_virtual_ups_dev(), rewrite test_virtual_ups.py (Wave 1)
 - [x] 23-03-PLAN.md — Replace mock call_count with outcome assertions, fix tautological asserts, split tests (Wave 1)
-- [ ] 23-04-PLAN.md — Remove domain-object MagicMock replacements in integration tests (Wave 2)
+- [x] 23-04-PLAN.md — Remove domain-object MagicMock replacements in integration tests (Wave 2)
 
 ---
 
@@ -318,7 +318,7 @@ Plans:
 | 20. Extract SchedulerManager | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete    | 2026-03-20 |
-| 23. Test Quality Rewrite | v3.1 | 3/4 | In Progress|  |
+| 23. Test Quality Rewrite | v3.1 | 4/4 | Complete   | 2026-03-20 |
 | 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
 
 ---
