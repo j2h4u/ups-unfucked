@@ -452,7 +452,6 @@ class BatteryModel:
         non_measured = [e for e in lut if e.get('source') != 'measured']
         measured = [e for e in lut if e.get('source') == 'measured']
 
-        # Dedup — when multiple entries share voltage within ±0.1V, keep most recent
         if measured:
             measured.sort(key=lambda x: x.get('timestamp', 0))
             buckets: dict[int, dict] = {}
