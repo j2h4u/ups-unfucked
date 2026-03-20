@@ -393,6 +393,7 @@ class TestValidationGates:
         assert metadata['duration_sec'] > 2700, "Real discharge should be long (>45 min)"
         assert metadata['discharge_slope_mohm'] > 0, "IR should be computed"
 
+    @pytest.mark.slow
     def test_monte_carlo_convergence(self, synthetic_discharge):
         """
         Validation Gate 2: Monte Carlo convergence verification.
@@ -405,6 +406,9 @@ class TestValidationGates:
 
         Expected: In 95+ out of 100 scenarios, sample 3 has convergence_score >= 0.90
         (convergence_score = 1 - CoV, converged when CoV < 0.10)
+
+        Seed: random.seed(42) — deterministic, ~2-3s for 100 trials.
+        Mark: @pytest.mark.slow — exclude from fast CI with '-m "not slow"'.
         """
         import random
         random.seed(42)

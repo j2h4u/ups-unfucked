@@ -31,6 +31,8 @@ def model_json_with_capacity(tmp_path):
     return tmp_path, model_file
 
 
+@pytest.mark.integration
+# Environment-dependent: requires bash, scripts/motd/51-ups.sh, subprocess execution
 def test_motd_capacity_displays(model_json_with_capacity):
     """MOTD integration: displays measured capacity, rated capacity, sample count, and confidence."""
 
@@ -98,6 +100,8 @@ def test_motd_capacity_displays(model_json_with_capacity):
     assert "%" in result.stdout, f"Confidence percentage not found in output: {result.stdout}"
 
 
+@pytest.mark.integration
+# Environment-dependent: requires bash, scripts/motd/51-ups.sh, subprocess execution
 def test_motd_handles_empty_estimates(model_json_with_capacity):
     """MOTD integration: gracefully handles missing or empty capacity_estimates array."""
 
@@ -159,6 +163,8 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
     assert "Capacity:" not in result.stdout, f"No capacity line should appear when model.json missing"
 
 
+@pytest.mark.integration
+# Environment-dependent: requires bash, scripts/motd/51-ups.sh, subprocess execution
 def test_motd_convergence_status_badge(model_json_with_capacity):
     """MOTD integration: convergence status badge changes from MEASURING to LOCKED as samples increase."""
 
@@ -252,6 +258,8 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
            f"LOCKED badge not found with 3 samples and low CoV in output: {result.stdout}"
 
 
+@pytest.mark.integration
+# Environment-dependent: requires bash, scripts/motd/51-ups.sh, subprocess execution
 def test_motd_shows_new_battery_alert(temp_model_json):
     """MOTD integration: new_battery_detected flag triggers alert display."""
 
