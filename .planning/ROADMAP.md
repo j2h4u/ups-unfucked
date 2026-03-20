@@ -129,7 +129,7 @@
 
 - [x] **Phase 18: Unify Coulomb Counting** — Extract integrate_current(), fix double avg_load computation (completed 2026-03-20)
 - [x] **Phase 19: Extract SagTracker** — Extract SagTracker module from MonitorDaemon (completed 2026-03-20)
-- [ ] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon
+- [x] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon (completed 2026-03-20)
 - [ ] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation
 - [ ] **Phase 22: Naming + Docs Sweep** — Rename BatteryModel.data, category, rls/d; add docstrings
 - [ ] **Phase 23: Test Quality Rewrite** — Outcome assertions, dependency injection, integration test accuracy
@@ -193,10 +193,10 @@ Plans:
 3. `SchedulerManager` has direct unit tests that exercise scheduling decisions (safety gates, rate limiting, blackout credit) without constructing a MonitorDaemon
 4. All existing tests pass with no regressions
 
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 20-01-PLAN.md — Extract SchedulerManager class, rewire MonitorDaemon delegation, update test imports, unit tests
+- [x] 20-01-PLAN.md — Extract SchedulerManager class, rewire MonitorDaemon delegation, update test imports, unit tests
 
 ---
 
@@ -301,7 +301,7 @@ Plans:
 | 17. Scheduling Intelligence | v3.0 | 2/2 | Complete | 2026-03-17 |
 | 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 19. Extract SagTracker | v3.1 | 1/1 | Complete    | 2026-03-20 |
-| 20. Extract SchedulerManager | v3.1 | 0/1 | Not started | - |
+| 20. Extract SchedulerManager | v3.1 | 1/1 | Complete   | 2026-03-20 |
 | 21. Extract DischargeCollector | v3.1 | 0/? | Not started | - |
 | 22. Naming + Docs Sweep | v3.1 | 0/? | Not started | - |
 | 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
