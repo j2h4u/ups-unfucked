@@ -49,6 +49,7 @@
 - ✓ SchedulerManager extracted: daily test scheduling, safety gates, precondition checks, dispatch in own module — v3.1 Phase 20
 - ✓ DischargeCollector extracted: sample accumulation, cooldown, calibration writes in own module; sulfation scoring split into compute/persist/log — v3.1 Phase 21
 - ✓ Naming + docs sweep: BatteryModel.data→state, category→power_source, rls/d→descriptive names, docstrings for non-obvious behaviors — v3.1 Phase 22
+- ✓ Test quality rewrite: outcome assertions, DI for virtual UPS path, real collaborators in integration tests, pytest markers, no mock sequence replay — v3.1 Phase 23
 
 ### Out of Scope
 
@@ -117,4 +118,4 @@ Known v3.1+ candidates: temperature sensor integration, Peukert auto-calibration
 | 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
 
 ---
-*Last updated: 2026-03-20 after Phase 22 completion*
+*Last updated: 2026-03-20 after Phase 23 completion*
