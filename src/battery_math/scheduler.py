@@ -86,7 +86,7 @@ def evaluate_test_scheduling(
     """
     now = datetime.now(timezone.utc)
 
-    #
+    # Gate 1: SoH floor (SCHED-05)
     if soh_fraction < SOH_FLOOR:
         floor_percent = int(soh_fraction * 100)
         next_eligible = (now + timedelta(days=30)).isoformat()
@@ -97,7 +97,7 @@ def evaluate_test_scheduling(
             next_eligible_timestamp=next_eligible,
         )
 
-    #
+    # Gate 2: Rate limiting (SCHED-01)
     if days_since_last_test < MIN_DAYS_BETWEEN_TESTS:
         days_remaining = MIN_DAYS_BETWEEN_TESTS - days_since_last_test
         next_eligible = (now + timedelta(days=days_remaining)).isoformat()
@@ -108,7 +108,7 @@ def evaluate_test_scheduling(
             next_eligible_timestamp=next_eligible,
         )
 
-    #
+    # Gate 3: Blackout credit (SCHED-03)
     if active_blackout_credit and active_blackout_credit.get('active'):
         try:
             credit_expires_str = active_blackout_credit.get('credit_expires')
@@ -124,9 +124,11 @@ def evaluate_test_scheduling(
                     )
         except (ValueError, TypeError):
             logger.warning("Corrupted credit_expires timestamp %r — blackout credit gate skipped",
-                           credit_expires_str)
+                           credit_expires_str,
+                           extra={'event_type': 'corrupted_scheduling_timestamp',
+                                  'field': 'credit_expires'})
 
-    #
+    # Gate 4: Grid stability (SCHED-06)
     if grid_stability_cooldown_hours > 0 and last_blackout_timestamp:
         try:
             last_blackout_dt = datetime.fromisoformat(last_blackout_timestamp)
@@ -143,9 +145,11 @@ def evaluate_test_scheduling(
                 )
         except (ValueError, TypeError):
             logger.warning("Corrupted last_blackout_timestamp %r — grid stability gate skipped",
-                           last_blackout_timestamp)
+                           last_blackout_timestamp,
+                           extra={'event_type': 'corrupted_scheduling_timestamp',
+                                  'field': 'last_blackout_timestamp'})
 
-    #
+    # Gate 5: Cycle budget
     if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:
         next_eligible = (now + timedelta(days=60)).isoformat()  # Very long deferral
         return SchedulerDecision(
@@ -155,7 +159,7 @@ def evaluate_test_scheduling(
             next_eligible_timestamp=next_eligible,
         )
 
-    #
+    # Gate 6: ROI threshold
     # Only defer if ROI is low AND we have plenty of cycles (conservative approach)
     if cycle_roi < ROI_THRESHOLD and cycle_budget_remaining > 20:
         next_eligible = (now + timedelta(days=2)).isoformat()
@@ -166,7 +170,7 @@ def evaluate_test_scheduling(
             next_eligible_timestamp=next_eligible,
         )
 
-    #
+    # Gate 7: Sulfation threshold — all gates passed, decide test type
     # All gates passed; now decide test type based on sulfation
     if sulfation_score > DEEP_SULFATION_THRESHOLD:
         # High sulfation: recommend deep test

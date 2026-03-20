@@ -81,6 +81,10 @@ class CapacityEstimator:
             Callers must separately call add_measurement() to populate this accumulator;
             estimate() does not do so automatically. BatteryModel.add_capacity_estimate()
             is the separate persistence path to model.json.
+
+            The returned confidence is structurally stale by one call: on the Nth call,
+            confidence reflects N-1 measurements (the current estimate hasn't been added
+            to the accumulator yet). Callers storing confidence should be aware of this lag.
         """
         # VAL-01: Quality filter
         if not self._passes_quality_filter(voltage_series, time_series, load_series, lut):

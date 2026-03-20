@@ -9,6 +9,11 @@ import sys
 import tomllib
 import importlib.metadata
 from dataclasses import dataclass, field, fields
+
+try:
+    DAEMON_VERSION = importlib.metadata.version('ups-unfucked')
+except importlib.metadata.PackageNotFoundError:
+    DAEMON_VERSION = "unknown"
 from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
@@ -115,7 +120,7 @@ def load_config() -> Config:
                 logger.error(f"Malformed config {path}: {e}")
                 raise SystemExit(f"Config parse error: {path}: {e}") from e
 
-    resolved_config = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
+    config_values = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
 
     # Validate scheduling configuration
     sched_config = get_scheduling_config(cfg_dict)
@@ -131,17 +136,17 @@ def load_config() -> Config:
         )
 
     return Config(
-        ups_name=resolved_config['ups_name'],
+        ups_name=config_values['ups_name'],
         polling_interval=POLL_INTERVAL,
         reporting_interval=REPORTING_INTERVAL_POLLS * POLL_INTERVAL,
         nut_host=NUT_HOST,
         nut_port=NUT_PORT,
         nut_timeout=NUT_TIMEOUT,
-        shutdown_minutes=resolved_config['shutdown_minutes'],
-        soh_alert_threshold=resolved_config['soh_alert'],
+        shutdown_minutes=config_values['shutdown_minutes'],
+        soh_alert_threshold=config_values['soh_alert'],
         model_dir=CONFIG_DIR,
         runtime_threshold_minutes=RUNTIME_THRESHOLD_MINUTES,
-        capacity_ah=resolved_config['capacity_ah'],
+        capacity_ah=config_values['capacity_ah'],
         reference_load_percent=REFERENCE_LOAD_PERCENT,
         ema_window_sec=EMA_WINDOW,
         scheduling=sched_config,
@@ -210,7 +215,8 @@ class SagState(Enum):
 # SyslogIdentifier in service file provides the prefix — no need to repeat in formatter.
 logger = logging.getLogger('ups-battery-monitor')
 logger.setLevel(logging.INFO)
-logger.handlers.clear()
+if logger.handlers:
+    logger.handlers.clear()
 
 try:
     from systemd.journal import JournalHandler
@@ -277,17 +283,12 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
 
     Monitored by: Grafana Alloy, custom scripts (liveness: last_poll < 30s).
     """
-    try:
-        daemon_version = importlib.metadata.version('ups-unfucked')  # pyproject.toml package name
-    except importlib.metadata.PackageNotFoundError:
-        daemon_version = "unknown"
-
     health_data = {
         "last_poll": datetime.now(timezone.utc).isoformat(),
         "last_poll_unix": int(time.time()),
         "current_soc_percent": round(snapshot.soc_percent, 1),
         "online": snapshot.is_online,
-        "daemon_version": daemon_version,
+        "daemon_version": DAEMON_VERSION,
         "poll_latency_ms": _opt_round(snapshot.poll_latency_ms, 1),
         "capacity_ah_measured": _opt_round(snapshot.capacity_ah_measured, 2),
         "capacity_ah_rated": round(snapshot.capacity_ah_rated, 2),

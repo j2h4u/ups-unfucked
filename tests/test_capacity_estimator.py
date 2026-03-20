@@ -5,15 +5,15 @@ import math
 import json
 from datetime import datetime
 from src.capacity_estimator import CapacityEstimator
-from tests.conftest import synthetic_discharge_fixture, synthetic_discharge_47min_fixture
+from tests.conftest import synthetic_discharge, synthetic_discharge_full
 
 
 class TestCoulombIntegration:
     """Test coulomb counting integration (CAP-01)."""
 
-    def test_coulomb_integration_synthetic(self, synthetic_discharge_fixture):
+    def test_coulomb_integration_synthetic(self, synthetic_discharge):
         """Test coulomb integration returns expected Ah within ±1% for synthetic data."""
-        voltage_series, time_series, load_series, lut = synthetic_discharge_fixture
+        voltage_series, time_series, load_series, lut = synthetic_discharge
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -363,7 +363,7 @@ class TestWeightedAveraging:
 class TestValidationGates:
     """Expert panel validation gates."""
 
-    def test_real_discharge_validation(self, synthetic_discharge_47min_fixture):
+    def test_real_discharge_validation(self, synthetic_discharge_full):
         """
         Validation Gate 1: Real 2026-03-12 blackout discharge replay.
 
@@ -375,7 +375,7 @@ class TestValidationGates:
         """
         estimator = CapacityEstimator(peukert_exponent=1.2)
 
-        voltage_series, time_series, load_series, lut = synthetic_discharge_47min_fixture
+        voltage_series, time_series, load_series, lut = synthetic_discharge_full
 
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
         assert result is not None, "2026-03-12 discharge should pass quality filter"
@@ -393,7 +393,7 @@ class TestValidationGates:
         assert metadata['duration_sec'] > 2700, "Real discharge should be long (>45 min)"
         assert metadata['discharge_slope_mohm'] > 0, "IR should be computed"
 
-    def test_monte_carlo_convergence(self, synthetic_discharge_fixture):
+    def test_monte_carlo_convergence(self, synthetic_discharge):
         """
         Validation Gate 2: Monte Carlo convergence verification.
 
@@ -415,7 +415,7 @@ class TestValidationGates:
             estimator = CapacityEstimator(peukert_exponent=1.2)
 
             # Simulate 3 deep discharges with noise
-            voltage_base, time_base, load_base, lut = synthetic_discharge_fixture
+            voltage_base, time_base, load_base, lut = synthetic_discharge
 
             for discharge_num in range(3):
                 voltage_noisy = [v + random.gauss(0, 0.1) for v in voltage_base]
@@ -436,7 +436,7 @@ class TestValidationGates:
         assert converged_count >= 95, \
             f"Only {converged_count}/100 trials converged; need 95+"
 
-    def test_load_sensitivity(self, synthetic_discharge_fixture):
+    def test_load_sensitivity(self, synthetic_discharge):
         """
         Validation Gate 3: Load sensitivity testing.
 

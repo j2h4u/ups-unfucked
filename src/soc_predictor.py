@@ -62,11 +62,14 @@ def soc_from_voltage(voltage: float, lut: List[Dict]) -> float:
         logger.debug(f"Voltage {voltage} < min {v_min}, clamping SoC to 0.0")
         return 0.0
 
-    # Binary search for bracketing points (LUT sorted descending by voltage)
-    # Build reversed voltage list for bisect (which expects ascending order)
+    # Binary search for bracketing points (LUT sorted descending by voltage).
+    # bisect requires ascending order, so we reverse the LUT voltages, find the
+    # insertion point in the ascending list, then convert back to the descending
+    # index: if pos=2 in ascending means "3rd from left", the equivalent in
+    # descending is "3rd from right" = len-1-pos.
     voltages_asc = [e["v"] for e in reversed(lut)]
     pos = bisect.bisect_left(voltages_asc, voltage)
-    i = len(lut) - 1 - pos  # Convert ascending-bisect index back to descending-LUT index
+    i = len(lut) - 1 - pos
     v1_entry = None
     v2_entry = None
     if 0 <= i < len(lut) - 1:

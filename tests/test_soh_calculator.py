@@ -84,7 +84,7 @@ class TestCapacityBasedSoH:
         soh_new, capacity_ah_ref = result
         # measured_capacity = Ah/ΔSoC; if < rated → SoH < 1.0
         # 600s discharge, 13.4→11.0V at 30% load with 7.2Ah rated: expect SoH ~0.30–0.45
-        assert 0.25 < soh_new < 0.45, f"Degraded battery SoH={soh_new:.3f} expected ~0.30-0.45 for this scenario"
+        assert 0.30 < soh_new < 0.42, f"Degraded battery SoH={soh_new:.3f} expected ~0.30-0.42 for this scenario"
         assert capacity_ah_ref == 7.2
 
     def test_shallow_discharge_rejected(self):

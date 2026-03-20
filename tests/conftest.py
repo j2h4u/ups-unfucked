@@ -39,6 +39,11 @@ def mock_socket_list_var():
     END LIST VAR cyberpower
 
     This fixture ensures get_ups_vars() parsing works correctly.
+
+    NOTE: The entire response is returned in a single recv() call. This does NOT
+    exercise the multi-chunk TCP reassembly path — a real NUT connection may
+    split the response across multiple recv() calls. See test_nut_client.py for
+    coverage limitations.
     """
     response = b"""VAR cyberpower battery.voltage "13.4"
 VAR cyberpower battery.charge "85"
@@ -132,7 +137,7 @@ def sample_model_data(mock_lut_standard):
 
 
 @pytest.fixture
-def current_metrics_fixture():
+def current_metrics():
     """
     Fixture returning a CurrentMetrics dataclass instance with default test values.
 
@@ -160,7 +165,7 @@ def current_metrics_fixture():
 
 
 @pytest.fixture
-def config_fixture(tmp_path):
+def daemon_config(tmp_path):
     """
     Fixture returning a Config dataclass instance with typical test values.
 
@@ -194,7 +199,7 @@ def config_fixture(tmp_path):
 
 
 @pytest.fixture
-def synthetic_discharge_fixture(mock_lut_standard):
+def synthetic_discharge(mock_lut_standard):
     """
     Synthetic discharge data for capacity estimator testing.
 
@@ -219,7 +224,7 @@ def synthetic_discharge_fixture(mock_lut_standard):
 
 
 @pytest.fixture
-def synthetic_discharge_47min_fixture():
+def synthetic_discharge_full():
     """
     Synthetic discharge data modeled after a 47-minute blackout scenario.
 

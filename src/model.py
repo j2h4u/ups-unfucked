@@ -12,10 +12,19 @@ from typing import Dict, Any, List, Optional
 from src.capacity_estimator import compute_cov
 
 
+class ModelLoadError(Exception):
+    """Raised when model.json cannot be loaded or backed up."""
+
+# RLS estimator defaults — single source of truth for _sync_physics_from_data,
+# _default_vrla_lut, and PhysicsParams dataclass defaults.
+DEFAULT_IR_K_THETA = 0.015
+DEFAULT_PEUKERT_EXPONENT = 1.2
+
+
 @dataclass
 class IRCompensation:
     """IR voltage compensation parameters."""
-    k_volts_per_percent: float = 0.015
+    k_volts_per_percent: float = DEFAULT_IR_K_THETA
     reference_load_percent: float = 20.0
 
 
@@ -35,13 +44,13 @@ class RLSParams:
 @dataclass
 class PhysicsParams:
     """Typed view of the physics sub-dict in model.json."""
-    peukert_exponent: float = 1.2
+    peukert_exponent: float = DEFAULT_PEUKERT_EXPONENT
     nominal_voltage: float = 12.0
     nominal_power_watts: float = 425.0
     ir_compensation: IRCompensation = field(default_factory=IRCompensation)
     rls_state: Dict[str, RLSParams] = field(default_factory=lambda: {
-        'ir_k': RLSParams(theta=0.015),
-        'peukert': RLSParams(theta=1.2),
+        'ir_k': RLSParams(theta=DEFAULT_IR_K_THETA),
+        'peukert': RLSParams(theta=DEFAULT_PEUKERT_EXPONENT),
     })
 
 
@@ -139,11 +148,11 @@ class BatteryModel:
         If file exists: parse JSON, apply defaults, validate
         If missing: create default VRLA curve
         If malformed JSON: backup corrupt file to .corrupt, start fresh
-        If unreadable (permission/IO error): raise SystemExit to prevent
+        If unreadable (permission/IO error): raise ModelLoadError to prevent
             silent fallback that would overwrite good data on next save()
 
         Raises:
-            SystemExit: If model.json exists but cannot be read (OSError).
+            ModelLoadError: If model.json exists but cannot be read (OSError).
         """
         if self.model_path.exists():
             try:
@@ -158,7 +167,7 @@ class BatteryModel:
                 self._backup_corrupt_model(e)
                 self.data = self._default_vrla_lut()
             except OSError as e:
-                raise SystemExit(f"Cannot read {self.model_path}: {e}") from e
+                raise ModelLoadError(f"Cannot read {self.model_path}: {e}") from e
         else:
             logger.info("Model file not found; initializing with standard VRLA curve",
                         extra={'event_type': 'model_init_default', 'model_path': str(self.model_path)})
@@ -170,7 +179,7 @@ class BatteryModel:
         self._validate_lut()
 
     def _backup_corrupt_model(self, parse_error: Exception) -> None:
-        """Back up corrupt model.json, raising SystemExit if backup fails."""
+        """Back up corrupt model.json, raising ModelLoadError if backup fails."""
         backup = self.model_path.with_suffix('.json.corrupt')
         logger.error("Malformed model.json: %s; backing up to %s, starting fresh",
                      parse_error, backup.name,
@@ -189,18 +198,18 @@ class BatteryModel:
             except OSError as rename_err:
                 logger.error("Cannot back up corrupt model.json: %s — refusing to overwrite",
                              rename_err, extra={'event_type': 'model_backup_failed'})
-                raise SystemExit(
+                raise ModelLoadError(
                     f"Cannot back up corrupt {self.model_path}: {rename_err}"
-                ) from parse_error
+                ) from rename_err
 
     def _sync_physics_from_data(self):
         """Populate self.physics from self.data['physics'] dict."""
-        p = self.data.get('physics', {})
-        ir = p.get('ir_compensation', {})
-        rls_data = p.get('rls_state', {})
+        physics = self.data.get('physics', {})
+        ir = physics.get('ir_compensation', {})
+        rls_data = physics.get('rls_state', {})
 
         rls = {}
-        for name, default_theta in [('ir_k', 0.015), ('peukert', 1.2)]:
+        for name, default_theta in [('ir_k', DEFAULT_IR_K_THETA), ('peukert', DEFAULT_PEUKERT_EXPONENT)]:
             d = rls_data.get(name, {})
             rls[name] = RLSParams(
                 theta=d.get('theta', default_theta),
@@ -210,11 +219,11 @@ class BatteryModel:
             )
 
         self.physics = PhysicsParams(
-            peukert_exponent=p.get('peukert_exponent', 1.2),
-            nominal_voltage=p.get('nominal_voltage', 12.0),
-            nominal_power_watts=p.get('nominal_power_watts', 425.0),
+            peukert_exponent=physics.get('peukert_exponent', DEFAULT_PEUKERT_EXPONENT),
+            nominal_voltage=physics.get('nominal_voltage', 12.0),
+            nominal_power_watts=physics.get('nominal_power_watts', 425.0),
             ir_compensation=IRCompensation(
-                k_volts_per_percent=ir.get('k_volts_per_percent', 0.015),
+                k_volts_per_percent=ir.get('k_volts_per_percent', DEFAULT_IR_K_THETA),
                 reference_load_percent=ir.get('reference_load_percent', 20.0),
             ),
             rls_state=rls,
@@ -315,16 +324,16 @@ class BatteryModel:
             'full_capacity_ah_ref': 7.2,
             'soh': 1.0,
             'physics': {
-                'peukert_exponent': 1.2,
+                'peukert_exponent': DEFAULT_PEUKERT_EXPONENT,
                 'nominal_voltage': 12.0,
                 'nominal_power_watts': 425.0,
                 'ir_compensation': {
-                    'k_volts_per_percent': 0.015,
+                    'k_volts_per_percent': DEFAULT_IR_K_THETA,
                     'reference_load_percent': 20.0
                 },
                 'rls_state': {
-                    'ir_k': {'theta': 0.015, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
-                    'peukert': {'theta': 1.2, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+                    'ir_k': {'theta': DEFAULT_IR_K_THETA, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+                    'peukert': {'theta': DEFAULT_PEUKERT_EXPONENT, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
                 }
             },
             'lut': [
@@ -659,14 +668,15 @@ class BatteryModel:
                 'latest_ah': None,
                 'rated_ah': 7.2,
                 'converged': False,
-                'capacity_ah_measured': None
+                'capacity_ah_measured': None,
+                'cov': 0.0,
+                'mean_ah': 0.0,
             }
 
         ah_values = [e['ah_estimate'] for e in estimates]
         cov = compute_cov(ah_values)
 
-        # Confidence: 0.0 for < 3 measurements, else 1 - CoV clamped to [0, 1]
-        # (convergence_score = 1 - CoV; 0.0 for n<3 per design)
+        # 0.0 for n<3 per design (insufficient data to judge convergence)
         confidence = 0.0 if len(ah_values) < 3 else max(0.0, min(1.0, 1.0 - cov))
 
         return {
@@ -675,14 +685,15 @@ class BatteryModel:
             'latest_ah': ah_values[-1],
             'rated_ah': 7.2,
             'converged': len(estimates) >= 3 and cov < 0.10,
-            'capacity_ah_measured': self.data.get('capacity_ah_measured', None)
+            'capacity_ah_measured': self.data.get('capacity_ah_measured', None),
+            'cov': cov,
+            'mean_ah': sum(ah_values) / len(ah_values),
         }
 
 
     def get_anchor_voltage(self):
         """Return anchor point voltage (physical cutoff, should always be 10.5V)."""
         lut = self.get_lut()
-        # Find entry with soc==0.0 and source=='anchor'
         for entry in lut:
             if entry['soc'] == 0.0 and entry['source'] == 'anchor':
                 return entry['v']

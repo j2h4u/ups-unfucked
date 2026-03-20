@@ -8,6 +8,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.replacement_predictor import linear_regression_soh
+
 MODEL_PATH = Path.home() / '.config' / 'ups-battery-monitor' / 'model.json'
 
 
@@ -94,8 +97,6 @@ def main():
 
     # Replacement prediction — needs 3+ events for linear regression
     if len(soh_history) >= 3:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from src.replacement_predictor import linear_regression_soh
         replacement_prediction = linear_regression_soh(soh_history, threshold_soh=0.80)
         if replacement_prediction:
             slope, intercept, r2, date = replacement_prediction

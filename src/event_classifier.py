@@ -89,6 +89,7 @@ class EventClassifier:
             logger.warning(
                 f"Unknown UPS status: {ups_status}, keeping current state {self.state.name}",
                 extra={
+                    'event_type': 'unknown_ups_status',
                     'ups_status': ups_status,
                     'current_state': self.state.name,
                 }

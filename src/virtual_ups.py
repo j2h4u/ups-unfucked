@@ -46,20 +46,25 @@ def write_virtual_ups_dev(metrics: Dict[str, Any], ups_name: str = "cyberpower")
     if virtual_ups_path.is_symlink():
         raise OSError(f"{virtual_ups_path} is a symlink, refusing to write")
 
-    # Sanitize values: strip newlines to prevent NUT field injection via model.json data
-    sanitized = {k: str(v).replace('\n', '').replace('\r', '') for k, v in metrics.items()}
+    # Sanitize keys and values: strip newlines/colons from keys to prevent NUT field injection
+    def _safe_key(k: str) -> str:
+        return str(k).replace('\n', '').replace('\r', '').replace(':', '.')
+
+    sanitized = {_safe_key(k): str(v).replace('\n', '').replace('\r', '') for k, v in metrics.items()}
     content = "".join(f"{key}: {value}\n" for key, value in sanitized.items())
 
     atomic_write(virtual_ups_path, content)
 
 
-# Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type.
-# Prevents deep test from draining battery to hardware cutoff without graceful shutdown.
-# NUT status string constants — used in compute_ups_status_override and checked via substring in monitor.py
+# NUT protocol wire-format status strings.
+# External consumers: dummy-ups driver, upsmon, nut_exporter, Grafana Alloy.
+# Changing these values will silently break the monitoring pipeline.
 NUT_STATUS_ONLINE = "OL"
 NUT_STATUS_DISCHARGING = "OB DISCHRG"
 NUT_STATUS_LOW_BATTERY = "OB DISCHRG LB"
 
+# Hard safety floor: if runtime < 2 min, ALWAYS set LB regardless of event type.
+# Prevents deep test from draining battery to hardware cutoff without graceful shutdown.
 SAFETY_LB_FLOOR_MINUTES = 2  # Triggers upsmon FSD (forced shutdown) via LB flag
 
 

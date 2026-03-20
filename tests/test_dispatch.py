@@ -228,7 +228,7 @@ class TestDispatchFunction:
 class TestDispatchIntegration:
     """Integration-like tests for dispatch with real CurrentMetrics."""
 
-    def test_dispatch_with_real_metrics(self, temporary_model_path, current_metrics_fixture):
+    def test_dispatch_with_real_metrics(self, temporary_model_path, current_metrics):
         """Dispatch with real CurrentMetrics fixture."""
         model = BatteryModel(temporary_model_path)
 
@@ -236,8 +236,8 @@ class TestDispatchIntegration:
         nut_client_mock.send_instcmd = Mock(return_value=(True, None))
 
         # Modify fixture to have good SoC
-        current_metrics_fixture.soc = 0.98
-        current_metrics_fixture.ups_status_override = "OL"
+        current_metrics.soc = 0.98
+        current_metrics.ups_status_override = "OL"
 
         decision = SchedulerDecision(
             action='propose_test',
@@ -250,7 +250,7 @@ class TestDispatchIntegration:
                 nut_client=nut_client_mock,
                 battery_model=model,
                 decision=decision,
-                current_metrics=current_metrics_fixture,
+                current_metrics=current_metrics,
             )
 
         assert success is True

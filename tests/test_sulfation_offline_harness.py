@@ -221,15 +221,6 @@ def test_sulfation_with_year_simulation_healthy_battery(healthy_battery_state):
         temperature_celsius=35.0,
     )
 
-    # Assertions
-    print(
-        f"\nHealthy battery integration test:\n"
-        f"  After active period (week 4): score={score_active:.3f}\n"
-        f"  After 25-day idle: score={score_idle:.3f}\n"
-        f"  Recovery deltas: {[f'{d:.3f}' for d in recovery_deltas[:3]]}...\n"
-        f"  Final SoH: {state.soh:.4f}, Cycles: {state.cycle_count}"
-    )
-
     # Score increases with idle time (idle period shows higher sulfation risk)
     assert score_idle > score_active, (
         f"Idle score ({score_idle:.3f}) should exceed active score ({score_active:.3f})"
@@ -328,15 +319,7 @@ def test_sulfation_with_year_simulation_degraded_battery(degraded_battery_state)
         temperature_celsius=35.0,
     )
 
-    # Assertions
-    print(
-        f"\nDegraded battery integration test:\n"
-        f"  Degraded score (IR drift 0.08, 30-day idle): {score_degraded:.3f}\n"
-        f"  Healthy score (low IR, good recovery, same idle): {score_healthy_idle:.3f}\n"
-        f"  Recovery deltas observed: {[f'{d:.3f}' for d in recovery_deltas]}\n"
-        f"  IR trend rate: {ir_trend_rate:.3f} Ω/day\n"
-        f"  Final SoH: {state.soh:.4f}, Cycles: {state.cycle_count}"
-    )
+    # Degraded score should exceed healthy score for same idle period
 
     # Degraded battery has higher sulfation score from IR signal + idle time
     # (even if recovery_delta is high due to measurement noise)

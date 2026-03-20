@@ -333,7 +333,7 @@ def test_journald_event_filtering():
          patch('src.monitor.EMAFilter'), \
          patch('src.monitor.EventClassifier'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'), \
+         patch.object(MonitorDaemon, '_validate_and_repair_model'), \
          patch.object(MonitorDaemon, '_reset_battery_baseline'):
 
         # Create test config and daemon
@@ -516,7 +516,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
          patch('src.monitor.EMAFilter'), \
          patch('src.monitor.EventClassifier'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'), \
+         patch.object(MonitorDaemon, '_validate_and_repair_model'), \
          patch.object(MonitorDaemon, '_reset_battery_baseline'):
 
         # Setup logger to avoid MagicMock issues

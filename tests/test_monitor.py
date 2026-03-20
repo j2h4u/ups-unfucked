@@ -12,7 +12,7 @@ sys.modules['systemd.journal'] = MagicMock()
 
 
 @pytest.fixture
-def make_daemon(config_fixture):
+def make_daemon(daemon_config):
     """Create MonitorDaemon with all external dependencies mocked."""
     from src.monitor import MonitorDaemon
 
@@ -21,7 +21,7 @@ def make_daemon(config_fixture):
          patch('src.monitor.BatteryModel'), \
          patch('src.monitor.EventClassifier'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'), \
+         patch.object(MonitorDaemon, '_validate_and_repair_model'), \
          patch.object(MonitorDaemon, '_reset_battery_baseline'):
         # Replace mocked JournalHandler with a real stderr handler so logging works in tests
         from src.monitor_config import logger as monitor_logger
@@ -29,7 +29,7 @@ def make_daemon(config_fixture):
         monitor_logger.addHandler(logging.StreamHandler())
 
         def _make():
-            return MonitorDaemon(config_fixture)
+            return MonitorDaemon(daemon_config)
         yield _make
 
 
@@ -335,20 +335,20 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     assert daemon.discharge_buffer.collecting is False
 
 
-def test_config_immutability(config_fixture):
+def test_config_immutability(daemon_config):
     """Verify Config frozen=True semantics prevent field mutation."""
     from dataclasses import FrozenInstanceError
 
     # Attempt to mutate frozen Config field
     with pytest.raises(FrozenInstanceError):
-        config_fixture.ups_name = 'modified'
+        daemon_config.ups_name = 'modified'
 
     with pytest.raises(FrozenInstanceError):
-        config_fixture.polling_interval = 20
+        daemon_config.polling_interval = 20
 
     # Config should be unchanged
-    assert config_fixture.ups_name == 'test-cyberpower'
-    assert config_fixture.polling_interval == 10
+    assert daemon_config.ups_name == 'test-cyberpower'
+    assert daemon_config.polling_interval == 10
 
 
 def _setup_peukert_daemon(make_daemon):
@@ -785,23 +785,21 @@ def test_health_endpoint_online_status(tmp_path, monkeypatch):
 
 
 def test_health_endpoint_version(tmp_path, monkeypatch):
-    """Verify daemon_version is dynamically loaded from package metadata."""
+    """Verify daemon_version appears in health endpoint output."""
     from src.monitor_config import write_health_endpoint, HealthSnapshot
-    from unittest.mock import patch
     import json
     import src.monitor_config
 
     health_path = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_path)
+    monkeypatch.setattr(src.monitor_config, 'DAEMON_VERSION', '1.1')
 
-    # Mock importlib.metadata.version to return "1.1"
-    with patch('importlib.metadata.version', return_value='1.1'):
-        write_health_endpoint(HealthSnapshot(soc_percent=50.0, is_online=True))
+    write_health_endpoint(HealthSnapshot(soc_percent=50.0, is_online=True))
 
-        with open(health_path) as f:
-            data = json.load(f)
+    with open(health_path) as f:
+        data = json.load(f)
 
-        assert data["daemon_version"] == "1.1"
+    assert data["daemon_version"] == "1.1"
 
 
 def test_health_endpoint_updates_on_successive_calls(tmp_path, monkeypatch):
@@ -1257,7 +1255,7 @@ class TestCapacityEstimatorIntegration:
         # Verify convergence check was performed
         daemon.capacity_estimator.has_converged.assert_called()
 
-    def test_battery_replaced_resets_baseline(self, config_fixture, tmp_path):
+    def test_battery_replaced_resets_baseline(self, daemon_config, tmp_path):
         """--new-battery resets SoH to 1.0 and clears capacity estimates."""
         from src.model import BatteryModel
         from src.monitor import MonitorDaemon
@@ -1270,8 +1268,8 @@ class TestCapacityEstimatorIntegration:
              patch('src.monitor.CapacityEstimator'), \
              patch('src.monitor.DischargeHandler'), \
              patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-             patch.object(MonitorDaemon, '_validate_model'):
-            daemon = MonitorDaemon(config_fixture)
+             patch.object(MonitorDaemon, '_validate_and_repair_model'):
+            daemon = MonitorDaemon(daemon_config)
 
         model = BatteryModel(tmp_path / 'reset_model.json')
         model.data['capacity_estimates'] = [{'ah_estimate': 6.5}]
@@ -1361,7 +1359,7 @@ def test_battery_replaced_false_default(tmp_path):
          patch('src.monitor.EventClassifier'), \
          patch('src.monitor.logger'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
+         patch.object(MonitorDaemon, '_validate_and_repair_model'):
 
         config = Config(
             ups_name="test-cyberpower",
@@ -1407,7 +1405,7 @@ def test_battery_replaced_true(tmp_path):
          patch('src.monitor.EventClassifier'), \
          patch('src.monitor.logger'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
+         patch.object(MonitorDaemon, '_validate_and_repair_model'):
 
         config = Config(
             ups_name="test-cyberpower",
@@ -1455,7 +1453,7 @@ def test_battery_replaced_persistence(tmp_path):
          patch('src.monitor.EventClassifier'), \
          patch('src.monitor.logger'), \
          patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_model'):
+         patch.object(MonitorDaemon, '_validate_and_repair_model'):
 
         config = Config(
             ups_name="test-cyberpower",
