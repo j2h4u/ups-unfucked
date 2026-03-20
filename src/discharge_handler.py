@@ -102,8 +102,9 @@ class DischargeHandler:
 
         soh_after, capacity_ah_ref = soh_result
 
+        avg_load = self._avg_load(discharge_buffer)
         replacement_prediction = self._predict_replacement(soh_after, capacity_ah_ref)
-        self._check_alerts(soh_after, replacement_prediction, discharge_buffer)
+        self._check_alerts(soh_after, replacement_prediction, discharge_buffer, avg_load)
         self._auto_calibrate_peukert(soh_after, discharge_buffer)
 
         discharge_trigger = self._classify_discharge_trigger(discharge_buffer)
@@ -187,7 +188,7 @@ class DischargeHandler:
 
         return replacement_prediction
 
-    def _check_alerts(self, soh_new: float, replacement_prediction, discharge_buffer: DischargeBuffer) -> None:
+    def _check_alerts(self, soh_new: float, replacement_prediction, discharge_buffer: DischargeBuffer, avg_load: float) -> None:
         """SoH threshold check + runtime threshold check."""
         if soh_new < self.soh_threshold:
             days_to_replacement = None
@@ -205,8 +206,6 @@ class DischargeHandler:
                 self.soh_threshold,
                 days_to_replacement
             )
-
-        avg_load = self._avg_load(discharge_buffer)
 
         runtime_at_full_charge_min = runtime_minutes(
             soc=1.0, load_percent=avg_load,
@@ -432,8 +431,7 @@ class DischargeHandler:
             return
 
         actual_minutes = discharge_duration_sec / 60.0
-        avg_load = (sum(discharge_buffer.loads) / len(discharge_buffer.loads)
-                    if discharge_buffer.loads else 0.0)
+        avg_load = self._avg_load(discharge_buffer)
 
         logger.info(
             f"Discharge prediction: predicted={self.discharge_predicted_runtime:.1f}min, "
