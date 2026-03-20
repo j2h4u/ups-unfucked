@@ -1816,6 +1816,49 @@ def test_consecutive_errors_increment_on_error(make_daemon):
         f"Expected 3 consecutive errors, got {daemon._consecutive_errors}"
 
 
+class TestTemperatureProbe:
+    """Tests for MonitorDaemon._probe_temperature_sensor() startup probe."""
+
+    def test_temperature_probe_sensor_found(self, make_daemon, caplog):
+        """Sensor found: 'ups.temperature' in get_ups_vars → logs temperature_sensor_found."""
+        daemon = make_daemon()
+        daemon.nut_client.get_ups_vars.return_value = {
+            'ups.temperature': 35.0,
+            'battery.voltage': 13.2,
+        }
+
+        with caplog.at_level(logging.INFO):
+            daemon._probe_temperature_sensor()
+
+        assert 'temperature_sensor_found' in caplog.text
+
+    def test_temperature_probe_sensor_unavailable(self, make_daemon, caplog):
+        """No temperature keys in get_ups_vars → logs temperature_sensor_unavailable."""
+        daemon = make_daemon()
+        daemon.nut_client.get_ups_vars.return_value = {
+            'battery.voltage': 13.2,
+            'ups.load': 15.0,
+        }
+
+        with caplog.at_level(logging.INFO):
+            daemon._probe_temperature_sensor()
+
+        assert 'temperature_sensor_unavailable' in caplog.text
+
+    def test_temperature_probe_nut_unreachable(self, make_daemon, caplog):
+        """get_ups_vars raises socket.error → probe silently returns, no temperature log."""
+        import socket as socket_mod
+
+        daemon = make_daemon()
+        daemon.nut_client.get_ups_vars.side_effect = socket_mod.error('connection refused')
+
+        with caplog.at_level(logging.INFO):
+            daemon._probe_temperature_sensor()
+
+        assert 'temperature_sensor_found' not in caplog.text
+        assert 'temperature_sensor_unavailable' not in caplog.text
+
+
 def test_consecutive_errors_reset_on_success(make_daemon):
     """_consecutive_errors resets to 0 after a successful poll."""
     from src.event_classifier import EventType
