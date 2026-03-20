@@ -261,9 +261,15 @@ Plans:
 4. `test_monitor_integration.py` integration tests use real collaborators (real `SagTracker`, `SchedulerManager`, `DischargeCollector`) instead of internal mocks
 5. The Monte Carlo test is marked `@pytest.mark.slow` with a comment documenting its seed and expected runtime
 6. `test_motd.py` is marked as an integration test with a comment explaining its environment dependency
-7. All 476+ tests pass after the rewrite
+7. All 555+ tests pass after the rewrite
 
-**Plans:** TBD
+**Plans:** 4 plans across 2 execution waves
+
+Plans:
+- [ ] 23-01-PLAN.md — Register @pytest.mark.slow, apply TEST-06 + TEST-07 markers (Wave 1)
+- [ ] 23-02-PLAN.md — Add output_path DI to write_virtual_ups_dev(), rewrite test_virtual_ups.py (Wave 1)
+- [ ] 23-03-PLAN.md — Replace mock call_count with outcome assertions, fix tautological asserts, split tests (Wave 1)
+- [ ] 23-04-PLAN.md — Remove domain-object MagicMock replacements in integration tests (Wave 2)
 
 ---
 
@@ -312,9 +318,9 @@ Plans:
 | 20. Extract SchedulerManager | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete    | 2026-03-20 |
-| 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
+| 23. Test Quality Rewrite | v3.1 | 0/4 | Planned | - |
 | 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
 
 ---
 
-*Roadmap updated: 2026-03-20 after Phase 22 planning*
+*Roadmap updated: 2026-03-20 after Phase 23 planning*
