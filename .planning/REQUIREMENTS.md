@@ -21,15 +21,15 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 ### Naming
 
 - [ ] **NAME-01**: `BatteryModel.data` renamed to `state` across entire codebase
-- [ ] **NAME-02**: `category` renamed to `power_source` in EventClassifier.classify()
+- [x] **NAME-02**: `category` renamed to `power_source` in EventClassifier.classify()
 - [ ] **NAME-03**: `rls` / `d` variables cleaned up in `_sync_physics_from_data`
 
 ### Documentation
 
-- [ ] **DOC-01**: `_handle_capacity_convergence` write-once behavior documented
-- [ ] **DOC-02**: `_opt_round` docstring added (monitor_config.py)
-- [ ] **DOC-03**: Dedup inline comment moved to `_prune_lut` docstring
-- [ ] **DOC-04**: Buffer start time comment moved to `_classify_discharge_trigger` docstring
+- [x] **DOC-01**: `_handle_capacity_convergence` write-once behavior documented
+- [x] **DOC-02**: `_opt_round` docstring added (monitor_config.py)
+- [x] **DOC-03**: Dedup inline comment moved to `_prune_lut` docstring
+- [x] **DOC-04**: Buffer start time comment moved to `_classify_discharge_trigger` docstring
 
 ### Tests
 
@@ -81,12 +81,12 @@ Deferred to future release.
 | ARCH-05 | 21 | Complete |
 | ARCH-06 | 21 | Complete |
 | NAME-01 | 22 | Pending |
-| NAME-02 | 22 | Pending |
+| NAME-02 | 22 | Complete |
 | NAME-03 | 22 | Pending |
-| DOC-01 | 22 | Pending |
-| DOC-02 | 22 | Pending |
-| DOC-03 | 22 | Pending |
-| DOC-04 | 22 | Pending |
+| DOC-01 | 22 | Complete |
+| DOC-02 | 22 | Complete |
+| DOC-03 | 22 | Complete |
+| DOC-04 | 22 | Complete |
 | TEST-01 | 23 | Pending |
 | TEST-02 | 23 | Pending |
 | TEST-03 | 23 | Pending |
