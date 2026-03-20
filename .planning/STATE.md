@@ -3,33 +3,33 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T12:01:27.662Z"
+last_updated: "2026-03-20T12:42:24.594Z"
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 5
+  completed_plans: 4
 ---
 
 # Project State — UPS Battery Monitor
 
-**Last Updated:** 2026-03-20 after Phase 18 Plan 01 completion
+**Last Updated:** 2026-03-20 after Phase 21 Plan 02 completion
 **Milestone:** v3.1 Code Quality Hardening
-**Current Position:** Phase 18 — Unify Coulomb Counting (COMPLETE)
+**Current Position:** Phase 21 — Extract DischargeCollector (COMPLETE)
 
 ---
 
 ## Current Position
 
-Phase: 21
-Plan: Not started
+Phase: 21 (extract-dischargecollector) — COMPLETE
+Plan: 2 of 2 (DONE)
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Phase 20 — extract-schedulermanager
+**Current focus:** Phase 21 — extract-dischargecollector
 
 **Milestones shipped:**
 
@@ -48,6 +48,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | LOC Python | 5,239 | ~same (structural only) |
 | MonitorDaemon responsibilities | many | reduced by 3 extracted modules |
 | Duplicate coulomb counting implementations | 2 | 1 |
+| Phase 21-extract-dischargecollector P02 | 15 | 2 tasks | 5 files |
 
 ### Execution History
 
@@ -72,6 +73,8 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 9. (Phase 18) integrate_current() is a pure function in battery_math — no class state, importable by phases 19-21 without carrying CapacityEstimator as a dependency
 10. (Phase 18) avg_load computed once in update_battery_health() and passed to _check_alerts() — narrowest change that avoids _compute_soh return signature modification
 11. (Phase 18) _log_discharge_prediction() fallback changed from 0.0 to reference_load_percent via self._avg_load() for consistency with all other avg_load call sites
+12. (Phase 21) DischargeCollector.track() receives current_metrics and reads previous_event_type from it — cleaner than tracking previous event internally
+13. (Phase 21) MonitorDaemon LOC reduction: 5 methods + 4 state fields removed; monitor.py shrunk by ~120 LOC; 547 tests pass post-extraction
 
 ### Key Decisions (v3.0, carried forward)
 
@@ -86,7 +89,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ### Todos
 
-- [ ] After Phase 21: measure MonitorDaemon LOC reduction, note in STATE.md
+- [x] After Phase 21: MonitorDaemon shrunk ~120 LOC; 5 methods + 4 state fields moved to DischargeCollector; 547 tests pass
 - [ ] Phase 24: check `upsc cyberpower` output for any temperature variable before implementing SEC-01
 
 ---

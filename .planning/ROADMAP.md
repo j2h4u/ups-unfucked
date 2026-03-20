@@ -215,11 +215,11 @@ Plans:
 4. `DischargeCollector` has direct unit tests covering sample accumulation and calibration write behavior without constructing a MonitorDaemon
 5. All existing tests pass with no regressions
 
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 21-01-PLAN.md — Split _score_and_persist_sulfation into compute/persist/log methods (ARCH-06)
-- [ ] 21-02-PLAN.md — Extract DischargeCollector class, rewire MonitorDaemon, update tests (ARCH-05)
+- [x] 21-02-PLAN.md — Extract DischargeCollector class, rewire MonitorDaemon, update tests (ARCH-05)
 
 ---
 
@@ -306,7 +306,7 @@ Plans:
 | 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 19. Extract SagTracker | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 20. Extract SchedulerManager | v3.1 | 1/1 | Complete    | 2026-03-20 |
-| 21. Extract DischargeCollector | v3.1 | 0/2 | Not started | - |
+| 21. Extract DischargeCollector | v3.1 | 1/2 | In Progress|  |
 | 22. Naming + Docs Sweep | v3.1 | 0/? | Not started | - |
 | 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
 | 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
