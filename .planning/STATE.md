@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T12:50:58.074Z"
+last_updated: "2026-03-20T13:20:10.316Z"
 progress:
   total_phases: 7
   completed_phases: 4
-  total_plans: 5
+  total_plans: 7
   completed_plans: 5
 ---
 
@@ -21,15 +21,15 @@ progress:
 
 ## Current Position
 
-Phase: 22
-Plan: Not started
+Phase: 22 (naming-docs-sweep) — EXECUTING
+Plan: 1 of 2
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Phase 21 — extract-dischargecollector
+**Current focus:** Phase 22 — naming-docs-sweep
 
 **Milestones shipped:**
 

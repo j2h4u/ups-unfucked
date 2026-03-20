@@ -238,10 +238,10 @@ Plans:
 4. `_handle_capacity_convergence`, `_opt_round`, `_prune_lut`, and `_classify_discharge_trigger` each have docstrings that capture their non-obvious behaviors (write-once guard, rounding intent, dedup logic, buffer start semantics)
 5. All tests pass after the rename sweep — no broken attribute references
 
-**Plans:** 2 plans across 2 execution waves
+**Plans:** 1/2 plans executed
 
 Plans:
-- [ ] 22-01-PLAN.md — Rename BatteryModel.data to state, rename _sync_physics methods, clean up rls/d variables (Wave 1)
+- [x] 22-01-PLAN.md — Rename BatteryModel.data to state, rename _sync_physics methods, clean up rls/d variables (Wave 1)
 - [ ] 22-02-PLAN.md — Rename category to power_source, add/verify docstrings DOC-01 through DOC-04 (Wave 2)
 
 ---
@@ -311,7 +311,7 @@ Plans:
 | 19. Extract SagTracker | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 20. Extract SchedulerManager | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
-| 22. Naming + Docs Sweep | v3.1 | 0/2 | Not started | - |
+| 22. Naming + Docs Sweep | v3.1 | 1/2 | In Progress|  |
 | 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
 | 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
 
