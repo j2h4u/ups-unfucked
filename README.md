@@ -137,6 +137,17 @@ Everything else is either hardcoded or stored in `model.json` and auto-calibrate
 
 - [x] **v3.0 — Active battery care.** The daemon no longer just watches your battery degrade — it fights back. Lead-acid batteries suffer from sulfation: crystal buildup on the plates that slowly kills capacity. Periodic deep discharges break up these crystals, but too many cycles wear the battery out. The daemon models sulfation rate (idle time × temperature × IR drift), tracks desulfation evidence from natural blackouts (SoH rebound = crystal breakup), and schedules deep discharge tests only when the math says the benefit outweighs the wear. Natural blackouts grant "desulfation credit" that skips the next scheduled test — free maintenance. One metric — cycle ROI — answers: "will this discharge extend or shorten battery life?" Seven safety gates (SoH floor, rate limiting, grid stability, cycle budget, ROI threshold, sulfation level, blackout credit) keep the scheduler conservative — it won't test a weak battery, a recently-tested battery, or during unstable grid conditions. 453 tests.
 
+## Security
+
+**NUT authentication:** The daemon connects to NUT upsd on localhost using empty-password authentication (`USERNAME upsmon` / `PASSWORD` with no value). This is the standard NUT setup for single-server deployments where upsd listens on loopback only (`LISTEN 127.0.0.1` in `/etc/nut/upsd.conf`).
+
+Security implications:
+- Any local process can query UPS variables (read-only, no auth required)
+- Any local process that knows the upsmon username can send INSTCMD commands (battery tests, beeper control)
+- This is acceptable when NUT is not exposed on the network
+
+If you expose NUT on a network interface, configure a password in `/etc/nut/upsd.users` and set the `PASSWORD` value in `src/nut_client.py` accordingly.
+
 ## License
 
 [MIT](LICENSE)

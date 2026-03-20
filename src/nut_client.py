@@ -242,6 +242,12 @@ class NUTClient:
                 if not response.startswith('OK'):
                     return (False, f"USERNAME failed: {response}")
 
+                # Security note: empty PASSWORD is intentional. NUT upsd.users
+                # allows passwordless auth for the upsmon role. This means any
+                # local process can send INSTCMD to the UPS. Acceptable for
+                # single-server deployment where NUT listens on loopback only
+                # (LISTEN 127.0.0.1 in upsd.conf). If NUT is exposed on the
+                # network, configure a password in upsd.users and update this call.
                 response = self.send_command('PASSWORD')
                 if not response.startswith('OK'):
                     return (False, f"PASSWORD failed: {response}")
