@@ -237,7 +237,7 @@ class TestBatteryModelMethods:
         model = BatteryModel(model_path=model_file)
 
         # Add a measured entry
-        model.data['lut'].append({'v': 12.5, 'soc': 0.70, 'source': 'measured'})
+        model.state['lut'].append({'v': 12.5, 'soc': 0.70, 'source': 'measured'})
 
         assert model.has_measured_data() is True
 
@@ -702,7 +702,7 @@ class TestCapacityEstimates:
     def test_add_capacity_estimate_creates_array_if_missing(self, tmp_path):
         """Test 1: model.add_capacity_estimate() creates array if not present."""
         model = BatteryModel(model_path=tmp_path / "model.json")
-        assert 'capacity_estimates' not in model.data or len(model.data.get('capacity_estimates', [])) == 0
+        assert 'capacity_estimates' not in model.state or len(model.state.get('capacity_estimates', [])) == 0
 
         model.add_capacity_estimate(
             ah_estimate=7.5,
@@ -711,8 +711,8 @@ class TestCapacityEstimates:
             timestamp='2026-03-15T12:34:56Z'
         )
 
-        assert 'capacity_estimates' in model.data
-        assert len(model.data['capacity_estimates']) == 1
+        assert 'capacity_estimates' in model.state
+        assert len(model.state['capacity_estimates']) == 1
 
     def test_get_capacity_estimates_returns_list_latest_first(self, tmp_path):
         """Test 2: model.get_capacity_estimates() returns list with latest first."""
@@ -756,7 +756,7 @@ class TestCapacityEstimates:
             )
 
         # After adding the 35th, should be pruned to 30
-        estimates = model.data['capacity_estimates']
+        estimates = model.state['capacity_estimates']
         assert len(estimates) <= 30, f"Expected <= 30 estimates, got {len(estimates)}"
 
     def test_save_persists_capacity_estimates_atomically(self, tmp_path):
@@ -807,7 +807,7 @@ class TestCapacityEstimates:
             timestamp='2026-03-15T12:34:56Z'
         )
 
-        estimate = model.data['capacity_estimates'][0]
+        estimate = model.state['capacity_estimates'][0]
         assert 'timestamp' in estimate
         assert 'ah_estimate' in estimate
         assert 'confidence' in estimate
@@ -901,7 +901,7 @@ class TestSoHHistoryVersioning:
         )
 
         # Verify entry contains baseline tag
-        entry = model.data['soh_history'][-1]
+        entry = model.state['soh_history'][-1]
         assert entry['date'] == '2026-03-16'
         assert entry['soh'] == 0.92
         assert entry['capacity_ah_ref'] == 6.8  # Tagged
@@ -918,7 +918,7 @@ class TestSoHHistoryVersioning:
         )
 
         # Verify entry exists but has no capacity_ah_ref field
-        entry = model.data['soh_history'][-1]
+        entry = model.state['soh_history'][-1]
         assert entry['date'] == '2026-03-15'
         assert entry['soh'] == 0.95
         assert 'capacity_ah_ref' not in entry  # Not tagged (backward compat)
@@ -928,7 +928,7 @@ class TestSoHHistoryVersioning:
         model_path = tmp_path / "model.json"
         model = BatteryModel(model_path)
         # Clear default entry
-        model.data['soh_history'] = []
+        model.state['soh_history'] = []
 
         # Add old-style entry (no baseline tag)
         model.add_soh_history_entry('2026-03-14', 0.97)
@@ -940,7 +940,7 @@ class TestSoHHistoryVersioning:
         model.add_soh_history_entry('2026-03-16', 0.92, capacity_ah_ref=6.9)
 
         # Verify history contains mixed entries
-        history = model.data['soh_history']
+        history = model.state['soh_history']
         assert len(history) == 3
         assert 'capacity_ah_ref' not in history[0]  # Old entry
         assert history[1]['capacity_ah_ref'] == 6.8
@@ -953,29 +953,29 @@ class TestSchedulingSchema:
     def test_scheduling_schema_fields_initialized(self, temporary_model_path):
         """Scheduling fields initialized to None on new model creation."""
         model = BatteryModel(temporary_model_path)
-        assert model.data.get('last_upscmd_timestamp') is None
-        assert model.data.get('last_upscmd_type') is None
-        assert model.data.get('last_upscmd_status') is None
-        assert model.data.get('scheduled_test_timestamp') is None
-        assert model.data.get('scheduled_test_reason') is None
-        assert model.data.get('test_block_reason') is None
-        assert model.data.get('blackout_credit') is None
+        assert model.state.get('last_upscmd_timestamp') is None
+        assert model.state.get('last_upscmd_type') is None
+        assert model.state.get('last_upscmd_status') is None
+        assert model.state.get('scheduled_test_timestamp') is None
+        assert model.state.get('scheduled_test_reason') is None
+        assert model.state.get('test_block_reason') is None
+        assert model.state.get('blackout_credit') is None
 
     def test_scheduling_fields_persist_after_save(self, temporary_model_path):
         """Scheduling fields persist correctly through save/reload cycle."""
         model = BatteryModel(temporary_model_path)
 
         # Set scheduling fields
-        model.data['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
-        model.data['last_upscmd_type'] = 'test.battery.start.deep'
-        model.data['last_upscmd_status'] = 'OK'
+        model.state['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
+        model.state['last_upscmd_type'] = 'test.battery.start.deep'
+        model.state['last_upscmd_status'] = 'OK'
         model.save()
 
         # Reload and verify
         model2 = BatteryModel(temporary_model_path)
-        assert model2.data.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
-        assert model2.data.get('last_upscmd_type') == 'test.battery.start.deep'
-        assert model2.data.get('last_upscmd_status') == 'OK'
+        assert model2.state.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
+        assert model2.state.get('last_upscmd_type') == 'test.battery.start.deep'
+        assert model2.state.get('last_upscmd_status') == 'OK'
 
     def test_set_blackout_credit_method(self, temporary_model_path):
         """set_blackout_credit() sets credit dict correctly."""
@@ -987,7 +987,7 @@ class TestSchedulingSchema:
             'desulfation_credit': 0.18,
         }
         model.set_blackout_credit(credit)
-        assert model.data['blackout_credit'] == credit
+        assert model.state['blackout_credit'] == credit
         assert model.get_blackout_credit() == credit
 
     def test_clear_blackout_credit_method(self, temporary_model_path):
@@ -1000,7 +1000,7 @@ class TestSchedulingSchema:
         }
         model.set_blackout_credit(credit)
         model.clear_blackout_credit()
-        assert model.data['blackout_credit']['active'] is False
+        assert model.state['blackout_credit']['active'] is False
 
     def test_update_scheduling_state_method(self, temporary_model_path):
         """update_scheduling_state() updates scheduled test info."""
@@ -1010,9 +1010,9 @@ class TestSchedulingSchema:
             reason='sulfation_0.65_roi_0.34',
             block_reason=None,
         )
-        assert model.data['scheduled_test_timestamp'] == '2026-03-24T08:00:00Z'
-        assert model.data['scheduled_test_reason'] == 'sulfation_0.65_roi_0.34'
-        assert model.data['test_block_reason'] is None
+        assert model.state['scheduled_test_timestamp'] == '2026-03-24T08:00:00Z'
+        assert model.state['scheduled_test_reason'] == 'sulfation_0.65_roi_0.34'
+        assert model.state['test_block_reason'] is None
 
     def test_update_upscmd_result_method(self, temporary_model_path):
         """update_upscmd_result() updates last command info."""
@@ -1022,9 +1022,9 @@ class TestSchedulingSchema:
             upscmd_type='test.battery.start.deep',
             upscmd_status='OK',
         )
-        assert model.data['last_upscmd_timestamp'] == '2026-03-17T10:30:00Z'
-        assert model.data['last_upscmd_type'] == 'test.battery.start.deep'
-        assert model.data['last_upscmd_status'] == 'OK'
+        assert model.state['last_upscmd_timestamp'] == '2026-03-17T10:30:00Z'
+        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
+        assert model.state['last_upscmd_status'] == 'OK'
 
     def test_legacy_model_loads_with_scheduling_code(self, temporary_model_path):
         """Legacy model.json (no scheduling fields) loads correctly with scheduling code."""
@@ -1049,8 +1049,8 @@ class TestSchedulingSchema:
         model = BatteryModel(temporary_model_path)
 
         # Verify scheduling fields are initialized
-        assert model.data.get('last_upscmd_timestamp') is None
-        assert model.data.get('blackout_credit') is None
+        assert model.state.get('last_upscmd_timestamp') is None
+        assert model.state.get('blackout_credit') is None
         assert model.get_soh() == 0.95  # Legacy data still intact
 
     def test_scheduling_fields_not_stripped_on_save(self, temporary_model_path):
@@ -1058,8 +1058,8 @@ class TestSchedulingSchema:
         model = BatteryModel(temporary_model_path)
 
         # Set scheduling fields
-        model.data['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
-        model.data['blackout_credit'] = {
+        model.state['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
+        model.state['blackout_credit'] = {
             'active': True,
             'credit_expires': '2026-03-24T00:00:00Z',
         }
@@ -1069,8 +1069,8 @@ class TestSchedulingSchema:
         model2 = BatteryModel(temporary_model_path)
 
         # Verify fields persist
-        assert model2.data.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
-        assert model2.data.get('blackout_credit')['active'] is True
+        assert model2.state.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
+        assert model2.state.get('blackout_credit')['active'] is True
 
     def test_get_last_upscmd_timestamp_method(self, temporary_model_path):
         """get_last_upscmd_timestamp() returns correct value or None."""

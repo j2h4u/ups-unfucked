@@ -78,7 +78,7 @@ def dispatch_test_with_audit(
         logger.debug("ups_status_override is None (before first poll); defaulting to OL")
     soc = current_metrics.soc if current_metrics.soc is not None else 1.0
     recent_power_glitches = 0
-    test_already_running = battery_model.data.get('test_running', False)
+    test_already_running = battery_model.state.get('test_running', False)
 
     preconditions_ok, block_reason = validate_preconditions_before_upscmd(
         ups_status=ups_status,
@@ -111,7 +111,7 @@ def dispatch_test_with_audit(
 
     if success:
         upscmd_status = 'OK'
-        battery_model.data['test_running'] = True
+        battery_model.state['test_running'] = True
     else:
         upscmd_status = result_msg or 'ERR_UNKNOWN'
 
@@ -280,7 +280,7 @@ class SchedulerManager:
 
     def _get_last_natural_blackout(self) -> Optional[dict]:
         """Return most recent natural blackout event (DoD, timestamp)."""
-        events = self.battery_model.data.get('discharge_events', [])
+        events = self.battery_model.state.get('discharge_events', [])
         for event in reversed(events):  # Most recent first
             if event.get('event_reason') == 'natural':
                 return {

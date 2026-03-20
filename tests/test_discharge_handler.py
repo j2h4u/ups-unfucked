@@ -37,7 +37,7 @@ class TestDischargeClassification:
 
         # Set upscmd timestamp
         upscmd_time = datetime.now(timezone.utc)
-        model.data['last_upscmd_timestamp'] = upscmd_time.isoformat()
+        model.state['last_upscmd_timestamp'] = upscmd_time.isoformat()
 
         # Buffer with times starting 30s after upscmd
         buffer = DischargeBuffer()
@@ -67,7 +67,7 @@ class TestDischargeClassification:
 
         # Set upscmd timestamp
         upscmd_time = datetime.now(timezone.utc) - timedelta(minutes=5)
-        model.data['last_upscmd_timestamp'] = upscmd_time.isoformat()
+        model.state['last_upscmd_timestamp'] = upscmd_time.isoformat()
 
         buffer = Mock(spec=DischargeBuffer)
 
@@ -89,7 +89,7 @@ class TestDischargeClassification:
     def test_classify_natural_no_buffer(self, temporary_model_path):
         """No discharge buffer: classify as natural."""
         model = BatteryModel(temporary_model_path)
-        model.data['last_upscmd_timestamp'] = datetime.now(timezone.utc).isoformat()
+        model.state['last_upscmd_timestamp'] = datetime.now(timezone.utc).isoformat()
 
         config = Mock()
         config.capacity_ah = 7.2
@@ -228,7 +228,7 @@ class TestBlackoutCreditLogic:
         model.clear_blackout_credit()
 
         # Verify cleared
-        assert model.data['blackout_credit']['active'] is False
+        assert model.state['blackout_credit']['active'] is False
 
 
 class TestBlackoutCreditEventLogging:
@@ -266,3 +266,285 @@ class TestBlackoutCreditEventLogging:
                      if c.kwargs.get('extra', {}).get('event_type') == 'blackout_credit_granted']
         assert len(log_calls) == 1
         assert model.get_blackout_credit()['active'] is True
+
+
+class TestSulfationMethodSplit:
+    """Tests for the three-way split of _score_and_persist_sulfation.
+
+    Verifies that _compute_sulfation_metrics, _persist_sulfation_and_discharge,
+    and _log_discharge_complete are independently callable and correct.
+    """
+
+    _REQUIRED_DATA_KEYS = {
+        'now_iso', 'sulfation_state', 'roi',
+        'sulfation_score_r', 'days_since_deep_r', 'ir_trend_r',
+        'recovery_delta_r', 'discharge_duration', 'dod_r', 'roi_r',
+        'soh_new', 'soh_delta', 'discharge_trigger', 'capacity_ah_ref',
+        'confidence_level', 'depth_of_discharge',
+    }
+
+    def _make_handler(self, model):
+        config = Mock()
+        config.capacity_ah = 7.2
+        return DischargeHandler(
+            battery_model=model,
+            config=config,
+            capacity_estimator=Mock(),
+            rls_peukert=Mock(),
+            reference_load_percent=20.0,
+            soh_threshold=0.80,
+        )
+
+    def _standard_buffer(self):
+        buf = DischargeBuffer()
+        buf.voltages = [13.0, 12.5, 12.0, 11.5]
+        buf.times = [0.0, 300.0, 600.0, 900.0]
+        buf.loads = [25.0, 25.0, 25.0, 25.0]
+        return buf
+
+    # ------------------------------------------------------------------ #
+    # _compute_sulfation_metrics                                           #
+    # ------------------------------------------------------------------ #
+
+    def test_compute_returns_all_required_keys(self, temporary_model_path):
+        """_compute_sulfation_metrics returns dict with all 16 required keys."""
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+
+        data = handler._compute_sulfation_metrics(
+            soh_new=0.95, soh_delta=-0.02,
+            discharge_buffer=self._standard_buffer(),
+            discharge_trigger='natural',
+        )
+
+        assert self._REQUIRED_DATA_KEYS.issubset(data.keys()), (
+            f"Missing keys: {self._REQUIRED_DATA_KEYS - data.keys()}"
+        )
+
+    def test_compute_sets_last_state_fields(self, temporary_model_path):
+        """_compute_sulfation_metrics updates self.last_* fields."""
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+
+        with patch('src.discharge_handler.compute_sulfation_score') as mock_score, \
+             patch('src.discharge_handler.compute_cycle_roi') as mock_roi:
+            from src.battery_math.sulfation import SulfationState
+            mock_score.return_value = SulfationState(
+                score=0.42, days_since_deep=3.0,
+                ir_trend_rate=0.001, recovery_delta=-0.02,
+                temperature_celsius=35.0,
+            )
+            mock_roi.return_value = 0.25
+
+            handler._compute_sulfation_metrics(
+                soh_new=0.95, soh_delta=-0.02,
+                discharge_buffer=self._standard_buffer(),
+                discharge_trigger='natural',
+            )
+
+        assert handler.last_sulfation_score == 0.42
+        assert handler.last_cycle_roi == 0.25
+        assert handler.last_discharge_timestamp is not None
+
+    def test_compute_returns_none_scored_dict_on_value_error(self, temporary_model_path):
+        """_compute_sulfation_metrics returns dict with sulfation_state=None, roi=None on ValueError."""
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+
+        with patch('src.discharge_handler.compute_sulfation_score',
+                   side_effect=ValueError("bad input")):
+            data = handler._compute_sulfation_metrics(
+                soh_new=0.95, soh_delta=-0.02,
+                discharge_buffer=self._standard_buffer(),
+                discharge_trigger='natural',
+            )
+
+        assert data['sulfation_state'] is None
+        assert data['roi'] is None
+        assert self._REQUIRED_DATA_KEYS.issubset(data.keys())
+
+    # ------------------------------------------------------------------ #
+    # _persist_sulfation_and_discharge                                     #
+    # ------------------------------------------------------------------ #
+
+    def test_persist_calls_append_sulfation_history_once(self, temporary_model_path):
+        """_persist_sulfation_and_discharge calls battery_model.append_sulfation_history once."""
+        mock_model = Mock()
+        mock_model.state = {}
+        config = Mock()
+        config.capacity_ah = 7.2
+        handler = DischargeHandler(
+            battery_model=mock_model,
+            config=config,
+            capacity_estimator=Mock(),
+            rls_peukert=Mock(),
+            reference_load_percent=20.0,
+            soh_threshold=0.80,
+        )
+        handler.last_sulfation_confidence = 'medium'
+
+        data = {
+            'now_iso': '2026-01-01T00:00:00+00:00',
+            'discharge_trigger': 'natural',
+            'sulfation_score_r': 0.3,
+            'days_since_deep_r': 2.0,
+            'ir_trend_r': 0.001,
+            'recovery_delta_r': -0.02,
+            'confidence_level': 'medium',
+            'sulfation_state': object(),  # truthy
+            'roi': 0.1,
+            'roi_r': 0.1,
+            'discharge_duration': 900.0,
+            'dod_r': 0.85,
+            'depth_of_discharge': 0.85,
+            'capacity_ah_ref': None,
+            'soh_new': 0.95,
+            'soh_delta': -0.02,
+        }
+
+        handler._persist_sulfation_and_discharge(data)
+
+        mock_model.append_sulfation_history.assert_called_once()
+
+    def test_persist_calls_append_discharge_event_once(self, temporary_model_path):
+        """_persist_sulfation_and_discharge calls battery_model.append_discharge_event once."""
+        mock_model = Mock()
+        mock_model.state = {}
+        config = Mock()
+        config.capacity_ah = 7.2
+        handler = DischargeHandler(
+            battery_model=mock_model,
+            config=config,
+            capacity_estimator=Mock(),
+            rls_peukert=Mock(),
+            reference_load_percent=20.0,
+            soh_threshold=0.80,
+        )
+        handler.last_sulfation_confidence = 'medium'
+
+        data = {
+            'now_iso': '2026-01-01T00:00:00+00:00',
+            'discharge_trigger': 'natural',
+            'sulfation_score_r': 0.3,
+            'days_since_deep_r': 2.0,
+            'ir_trend_r': 0.001,
+            'recovery_delta_r': -0.02,
+            'confidence_level': 'medium',
+            'sulfation_state': object(),
+            'roi': 0.1,
+            'roi_r': 0.1,
+            'discharge_duration': 900.0,
+            'dod_r': 0.85,
+            'depth_of_discharge': 0.85,
+            'capacity_ah_ref': None,
+            'soh_new': 0.95,
+            'soh_delta': -0.02,
+        }
+
+        handler._persist_sulfation_and_discharge(data)
+
+        mock_model.append_discharge_event.assert_called_once()
+
+    def test_persist_calls_grant_blackout_credit_with_correct_args(self, temporary_model_path):
+        """_persist_sulfation_and_discharge calls _grant_blackout_credit(trigger, depth_of_discharge)."""
+        mock_model = Mock()
+        mock_model.state = {}
+        config = Mock()
+        config.capacity_ah = 7.2
+        handler = DischargeHandler(
+            battery_model=mock_model,
+            config=config,
+            capacity_estimator=Mock(),
+            rls_peukert=Mock(),
+            reference_load_percent=20.0,
+            soh_threshold=0.80,
+        )
+        handler.last_sulfation_confidence = 'high'
+
+        data = {
+            'now_iso': '2026-01-01T00:00:00+00:00',
+            'discharge_trigger': 'natural',
+            'sulfation_score_r': 0.3,
+            'days_since_deep_r': 2.0,
+            'ir_trend_r': 0.001,
+            'recovery_delta_r': -0.02,
+            'confidence_level': 'high',
+            'sulfation_state': object(),
+            'roi': 0.1,
+            'roi_r': 0.1,
+            'discharge_duration': 900.0,
+            'dod_r': 0.92,
+            'depth_of_discharge': 0.921,
+            'capacity_ah_ref': None,
+            'soh_new': 0.95,
+            'soh_delta': -0.02,
+        }
+
+        with patch.object(handler, '_grant_blackout_credit') as mock_credit:
+            handler._persist_sulfation_and_discharge(data)
+
+        mock_credit.assert_called_once_with('natural', 0.921)
+
+    # ------------------------------------------------------------------ #
+    # _log_discharge_complete                                              #
+    # ------------------------------------------------------------------ #
+
+    def test_log_discharge_emits_discharge_complete_event(self, temporary_model_path):
+        """_log_discharge_complete calls logger.info with event_type='discharge_complete'."""
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+        handler.last_sulfation_confidence = 'medium'
+
+        data = {
+            'now_iso': '2026-01-01T00:00:00+00:00',
+            'discharge_trigger': 'natural',
+            'discharge_duration': 900.0,
+            'dod_r': 0.85,
+            'sulfation_score_r': 0.3,
+            'recovery_delta_r': -0.02,
+            'roi_r': 0.1,
+            'capacity_ah_ref': None,
+            'soh_new': 0.95,
+            'soh_delta': -0.02,
+        }
+
+        with patch('src.discharge_handler.logger') as mock_logger:
+            handler._log_discharge_complete(data)
+
+        logged_extras = [
+            c.kwargs.get('extra', {})
+            for c in mock_logger.info.call_args_list
+        ]
+        discharge_events = [e for e in logged_extras if e.get('event_type') == 'discharge_complete']
+        assert len(discharge_events) == 1
+
+    def test_log_discharge_handles_none_sulfation_values(self, temporary_model_path):
+        """_log_discharge_complete logs None sulfation_score and roi without raising."""
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+        handler.last_sulfation_confidence = None
+
+        data = {
+            'now_iso': '2026-01-01T00:00:00+00:00',
+            'discharge_trigger': 'natural',
+            'discharge_duration': 900.0,
+            'dod_r': 0.85,
+            'sulfation_score_r': None,
+            'recovery_delta_r': -0.02,
+            'roi_r': None,
+            'capacity_ah_ref': None,
+            'soh_new': 0.95,
+            'soh_delta': -0.02,
+        }
+
+        with patch('src.discharge_handler.logger') as mock_logger:
+            handler._log_discharge_complete(data)  # must not raise
+
+        logged_extras = [
+            c.kwargs.get('extra', {})
+            for c in mock_logger.info.call_args_list
+        ]
+        discharge_events = [e for e in logged_extras if e.get('event_type') == 'discharge_complete']
+        assert len(discharge_events) == 1
+        assert discharge_events[0]['sulfation_score'] is None
+        assert discharge_events[0]['cycle_roi'] is None

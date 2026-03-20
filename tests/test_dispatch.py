@@ -131,10 +131,10 @@ class TestDispatchFunction:
             )
 
         assert success is True
-        assert model.data['last_upscmd_timestamp'] is not None
-        assert model.data['last_upscmd_type'] == 'test.battery.start.deep'
-        assert model.data['last_upscmd_status'] == 'OK'
-        assert model.data.get('test_running') is True
+        assert model.state['last_upscmd_timestamp'] is not None
+        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
+        assert model.state['last_upscmd_status'] == 'OK'
+        assert model.state.get('test_running') is True
 
     def test_dispatch_precondition_blocked(self, temporary_model_path):
         """Dispatch blocked by precondition (low SoC): returns False."""
@@ -193,7 +193,7 @@ class TestDispatchFunction:
             )
 
         assert success is False
-        assert model.data['last_upscmd_status'] == 'ERR_CMD_NOT_SUPPORTED'
+        assert model.state['last_upscmd_status'] == 'ERR_CMD_NOT_SUPPORTED'
 
     def test_dispatch_upscmd_result_persisted(self, temporary_model_path):
         """Upscmd result persisted to model.json via update_upscmd_result()."""
@@ -222,7 +222,7 @@ class TestDispatchFunction:
 
         # Verify model methods were called
         assert model.get_last_upscmd_timestamp() is not None
-        assert model.data['last_upscmd_type'] == 'test.battery.start.deep'
+        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
 
 
 class TestDispatchIntegration:

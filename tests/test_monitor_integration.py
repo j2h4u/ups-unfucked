@@ -275,20 +275,20 @@ class TestSoHRecalibrationFlow:
         from src import soh_calculator
 
         # Setup: Old SoH history with rated baseline (7.2Ah)
-        mock_daemon.battery_model.data['soh_history'] = [
+        mock_daemon.battery_model.state['soh_history'] = [
             {'date': '2026-01-01', 'soh': 1.0, 'capacity_ah_ref': 7.2},
             {'date': '2026-02-01', 'soh': 0.98, 'capacity_ah_ref': 7.2},
             {'date': '2026-03-01', 'soh': 0.96, 'capacity_ah_ref': 7.2},
         ]
 
         # Setup: capacity has converged to 6.8Ah (3 samples, CoV < 10%)
-        mock_daemon.battery_model.data['capacity_estimates'] = [
+        mock_daemon.battery_model.state['capacity_estimates'] = [
             {'timestamp': '2026-02-15', 'ah_estimate': 6.7, 'confidence': 0.65, 'metadata': {}},
             {'timestamp': '2026-03-01', 'ah_estimate': 6.8, 'confidence': 0.78, 'metadata': {}},
             {'timestamp': '2026-03-16', 'ah_estimate': 6.8, 'confidence': 0.82, 'metadata': {}},
         ]
-        mock_daemon.battery_model.data['capacity_converged'] = True
-        mock_daemon.battery_model.data['capacity_ah_measured'] = 6.8
+        mock_daemon.battery_model.state['capacity_converged'] = True
+        mock_daemon.battery_model.state['capacity_ah_measured'] = 6.8
 
         # Simulate discharge event
         mock_daemon.discharge_collector.discharge_buffer.voltages = [12.0, 11.8, 11.5, 10.8, 10.5]
@@ -303,7 +303,7 @@ class TestSoHRecalibrationFlow:
                 mock_daemon._update_battery_health()
 
         # Verify: New SoH entry tagged with measured baseline (6.8Ah)
-        new_entry = mock_daemon.battery_model.data['soh_history'][-1]
+        new_entry = mock_daemon.battery_model.state['soh_history'][-1]
         assert new_entry['soh'] == 0.92
         assert new_entry['capacity_ah_ref'] == 6.8  # Tagged with measured, not rated
 
@@ -377,7 +377,7 @@ def test_journald_event_filtering():
                 }
 
                 # Setup mocks for capacity estimation
-                daemon.battery_model.data = {}
+                daemon.battery_model.state = {}
 
                 ah_estimate = 6.95
                 confidence = 0.88
@@ -392,7 +392,7 @@ def test_journald_event_filtering():
                 daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
                 daemon.capacity_estimator.has_converged.return_value = False
 
-                daemon.battery_model.data['capacity_estimates'] = [
+                daemon.battery_model.state['capacity_estimates'] = [
                     {'ah_estimate': ah_estimate}
                 ]
 
@@ -435,7 +435,7 @@ def test_journald_event_filtering():
                     'converged': True,
                     'capacity_ah_ref': None
                 }
-                daemon.battery_model.data['capacity_estimates'] = [
+                daemon.battery_model.state['capacity_estimates'] = [
                     {'ah_estimate': 6.88},
                     {'ah_estimate': 6.92},
                     {'ah_estimate': 6.95}
@@ -488,8 +488,8 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
 
     # Create real battery model instance
     battery_model = BatteryModel(model_path)
-    battery_model.data['full_capacity_ah_ref'] = 7.2
-    battery_model.data['capacity_estimates'] = []
+    battery_model.state['full_capacity_ah_ref'] = 7.2
+    battery_model.state['capacity_estimates'] = []
     battery_model.save()
 
     # Test config
@@ -529,7 +529,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         daemon.battery_model = battery_model
 
     # Cycle 1: First discharge (0 samples, no convergence)
-    battery_model.data['capacity_estimates'] = []
+    battery_model.state['capacity_estimates'] = []
     battery_model.save()
 
     write_health_endpoint(HealthSnapshot(
@@ -550,7 +550,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     assert 'capacity_ah_rated' in data_cycle1, "Cycle 1: capacity_ah_rated missing"
 
     # Cycle 2: Second discharge (1 sample collected)
-    battery_model.data['capacity_estimates'] = [
+    battery_model.state['capacity_estimates'] = [
         {'ah_estimate': 6.90, 'timestamp': '2026-03-16T12:00:00', 'metadata': {}}
     ]
     battery_model.save()
@@ -572,7 +572,7 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     assert data_cycle2['capacity_ah_measured'] == 6.90, "Cycle 2: expected measured 6.90"
 
     # Cycle 3: Third discharge (3 samples collected, convergence reached)
-    battery_model.data['capacity_estimates'] = [
+    battery_model.state['capacity_estimates'] = [
         {'ah_estimate': 6.88, 'timestamp': '2026-03-16T12:00:00', 'metadata': {}},
         {'ah_estimate': 6.92, 'timestamp': '2026-03-16T14:00:00', 'metadata': {}},
         {'ah_estimate': 6.95, 'timestamp': '2026-03-16T16:00:00', 'metadata': {}}

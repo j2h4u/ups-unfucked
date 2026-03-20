@@ -279,7 +279,7 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     daemon = make_daemon()
 
     mock_model = MagicMock()
-    mock_model.data = {'lut': []}
+    mock_model.state = {'lut': []}
     mock_model.get_soh.return_value = 1.0
     mock_model.get_lut.return_value = []
     mock_model.get_capacity_ah.return_value = 7.2
@@ -494,7 +494,7 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         daemon.battery_model.get_nominal_power_watts = Mock(return_value=425.0)
         daemon.battery_model.get_nominal_voltage = Mock(return_value=12.0)
         daemon.battery_model.get_peukert_exponent = Mock(return_value=1.2)
-        daemon.battery_model.data = {'lut': [
+        daemon.battery_model.state = {'lut': [
             {"v": 13.4, "soc": 1.0, "source": "standard"},
             {"v": 12.4, "soc": 0.64, "source": "standard"},
             {"v": 10.5, "soc": 0.0, "source": "anchor"},
@@ -1114,7 +1114,7 @@ class TestCapacityEstimatorIntegration:
         daemon.battery_model = MagicMock()
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
-        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.state = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 1,
             'confidence_percent': 85.0,
@@ -1148,7 +1148,7 @@ class TestCapacityEstimatorIntegration:
 
         daemon.capacity_estimator = MagicMock()
         daemon.battery_model = MagicMock()
-        daemon.battery_model.data = {'lut': []}
+        daemon.battery_model.state = {'lut': []}
 
         discharge_data = {
             'voltage_series': [12.0, 11.9],  # Too shallow
@@ -1174,7 +1174,7 @@ class TestCapacityEstimatorIntegration:
         daemon.battery_model = MagicMock()
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
-        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.state = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 1,
             'confidence_percent': 85.0,
@@ -1214,7 +1214,7 @@ class TestCapacityEstimatorIntegration:
         daemon.battery_model = MagicMock()
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
-        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.state = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 3,
             'confidence_percent': 95.0,
@@ -1256,17 +1256,17 @@ class TestCapacityEstimatorIntegration:
             daemon = MonitorDaemon(daemon_config)
 
         model = BatteryModel(tmp_path / 'reset_model.json')
-        model.data['capacity_estimates'] = [{'ah_estimate': 6.5}]
-        model.data['soh'] = 0.85
-        model.data['full_capacity_ah_ref'] = 7.2
+        model.state['capacity_estimates'] = [{'ah_estimate': 6.5}]
+        model.state['soh'] = 0.85
+        model.state['full_capacity_ah_ref'] = 7.2
         daemon.battery_model = model
         daemon.discharge_handler = MagicMock()
 
         daemon._reset_battery_baseline()
 
-        assert model.data['soh'] == 1.0
-        assert model.data['capacity_estimates'] == []
-        assert model.data['cycle_count'] == 0
+        assert model.state['soh'] == 1.0
+        assert model.state['capacity_estimates'] == []
+        assert model.state['cycle_count'] == 0
 
 
     def test_integration_discharge_event_to_estimate_to_model(self, make_daemon):
@@ -1279,7 +1279,7 @@ class TestCapacityEstimatorIntegration:
         daemon.battery_model = MagicMock()
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
-        daemon.battery_model.data = {'lut': [], 'capacity_estimates': []}
+        daemon.battery_model.state = {'lut': [], 'capacity_estimates': []}
         daemon.battery_model.get_convergence_status.return_value = {
             'sample_count': 1,
             'confidence_percent': 82.0,
@@ -1365,7 +1365,7 @@ def test_battery_replaced_false_default(tmp_path):
         daemon = MonitorDaemon(config)
 
         # new_battery_detected cleared on startup
-        assert daemon.battery_model.data['new_battery_detected'] == False
+        assert daemon.battery_model.state['new_battery_detected'] == False
 
 
 def test_battery_replaced_true(tmp_path):
@@ -1412,8 +1412,8 @@ def test_battery_replaced_true(tmp_path):
         daemon._reset_battery_baseline()
 
         # Baseline reset sets SoH to 1.0 and clears capacity estimates
-        assert daemon.battery_model.data.get('soh') == 1.0
-        assert daemon.battery_model.data.get('capacity_estimates') == []
+        assert daemon.battery_model.state.get('soh') == 1.0
+        assert daemon.battery_model.state.get('capacity_estimates') == []
 
 
 def test_battery_replaced_persistence(tmp_path):
@@ -1467,9 +1467,9 @@ def test_battery_replaced_persistence(tmp_path):
         reloaded_model = BatteryModel(tmp_path / 'test_model' / 'model.json')
 
         # Baseline reset state should persist
-        assert reloaded_model.data.get('soh') == 1.0
-        assert reloaded_model.data.get('capacity_estimates') == []
-        assert reloaded_model.data.get('cycle_count') == 0
+        assert reloaded_model.state.get('soh') == 1.0
+        assert reloaded_model.state.get('capacity_estimates') == []
+        assert reloaded_model.state.get('cycle_count') == 0
 
 
 def test_cli_battery_replaced():
@@ -1501,7 +1501,7 @@ def test_journald_capacity_event_logged(make_daemon):
     daemon = make_daemon()
 
     # Setup battery_model with real dict for data
-    daemon.battery_model.data = {}
+    daemon.battery_model.state = {}
     daemon.battery_model.get_capacity_ah.return_value = 7.2
     daemon.battery_model.get_convergence_status.return_value = {
         'sample_count': 1,
@@ -1527,7 +1527,7 @@ def test_journald_capacity_event_logged(make_daemon):
     daemon.capacity_estimator.has_converged.return_value = False
 
     # Setup real model data
-    daemon.battery_model.data['capacity_estimates'] = [
+    daemon.battery_model.state['capacity_estimates'] = [
         {'ah_estimate': ah_estimate}
     ]
 
@@ -1575,7 +1575,7 @@ def test_journald_baseline_lock_event(make_daemon):
     daemon = make_daemon()
 
     # Setup battery_model with real dict for data
-    daemon.battery_model.data = {}
+    daemon.battery_model.state = {}
     daemon.battery_model.get_capacity_ah.return_value = 7.2
     daemon.battery_model.get_convergence_status.return_value = {
         'sample_count': 3,
@@ -1601,7 +1601,7 @@ def test_journald_baseline_lock_event(make_daemon):
     daemon.capacity_estimator.has_converged.return_value = True
 
     # Setup model data with 3 converged estimates
-    daemon.battery_model.data['capacity_estimates'] = [
+    daemon.battery_model.state['capacity_estimates'] = [
         {'ah_estimate': 6.88},
         {'ah_estimate': 6.92},
         {'ah_estimate': 6.95}

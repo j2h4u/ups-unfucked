@@ -537,7 +537,7 @@ class DischargeHandler:
             voltage_series=voltage_series,
             time_series=time_series,
             load_series=load_series,
-            lut=self.battery_model.data.get('lut', [])
+            lut=self.battery_model.state.get('lut', [])
         )
 
         if capacity_estimate is None:
@@ -585,7 +585,7 @@ class DischargeHandler:
 
     def _handle_capacity_convergence(self, convergence_status: dict) -> None:
         """Check convergence state: lock baseline, detect new battery, persist."""
-        self.battery_model.data['capacity_converged'] = True
+        self.battery_model.state['capacity_converged'] = True
 
         if not self.has_logged_baseline_lock:
             logger.info(
@@ -599,7 +599,7 @@ class DischargeHandler:
             self.has_logged_baseline_lock = True
 
         current_measured = convergence_status.get('latest_ah')
-        stored_baseline = self.battery_model.data.get('capacity_ah_measured', None)
+        stored_baseline = self.battery_model.state.get('capacity_ah_measured', None)
 
         if stored_baseline is not None:
             delta_ah = abs(current_measured - stored_baseline)
@@ -617,15 +617,15 @@ class DischargeHandler:
                     }
                 )
 
-                self.battery_model.data['new_battery_detected'] = True
-                self.battery_model.data['new_battery_detected_timestamp'] = datetime.now().isoformat()
+                self.battery_model.state['new_battery_detected'] = True
+                self.battery_model.state['new_battery_detected_timestamp'] = datetime.now().isoformat()
 
                 logger.info(
                     "New battery flag set; MOTD will show alert next shell session. "
                     "User can confirm with: ups-battery-monitor --new-battery"
                 )
         else:
-            self.battery_model.data['capacity_ah_measured'] = current_measured
+            self.battery_model.state['capacity_ah_measured'] = current_measured
             logger.info(f"Capacity baseline stored: {current_measured:.2f}Ah (first convergence)")
 
         safe_save(self.battery_model)
@@ -635,7 +635,7 @@ class DischargeHandler:
 
         Returns None if no deep discharge in history.
         """
-        discharge_events = self.battery_model.data.get('discharge_events', [])
+        discharge_events = self.battery_model.state.get('discharge_events', [])
         now = datetime.now(timezone.utc)
 
         for event in reversed(discharge_events):
@@ -679,7 +679,7 @@ class DischargeHandler:
 
         Returns 0.0 if insufficient data (<2 recent entries).
         """
-        r_history = self.battery_model.data.get('r_internal_history', [])
+        r_history = self.battery_model.state.get('r_internal_history', [])
         if len(r_history) < 2:
             return 0.0
 
@@ -761,7 +761,7 @@ class DischargeHandler:
 
     def _estimate_cycle_budget(self) -> int:
         """Estimate remaining cycle budget: RATED_CYCLE_LIFE * current SoH."""
-        soh = self.battery_model.data.get('soh', 1.0)
+        soh = self.battery_model.state.get('soh', 1.0)
         return int(RATED_CYCLE_LIFE * soh)
 
     def _assess_sulfation_confidence(self, days_since_deep: Optional[float], ir_trend_rate: float) -> str:
@@ -769,7 +769,7 @@ class DischargeHandler:
 
         Returns: 'high', 'medium', or 'low'
         """
-        r_history = self.battery_model.data.get('r_internal_history', [])
+        r_history = self.battery_model.state.get('r_internal_history', [])
         if days_since_deep is not None and len(r_history) >= 3:
             return 'high'
         elif days_since_deep is not None or len(r_history) >= 2:

@@ -15,7 +15,7 @@ from src.capacity_estimator import compute_cov
 class ModelLoadError(Exception):
     """Raised when model.json cannot be loaded or backed up."""
 
-# RLS estimator defaults — single source of truth for _sync_physics_from_data,
+# RLS estimator defaults — single source of truth for _sync_physics_from_state,
 # _default_vrla_lut, and PhysicsParams dataclass defaults.
 DEFAULT_IR_K_THETA = 0.015
 DEFAULT_PEUKERT_EXPONENT = 1.2
@@ -137,7 +137,7 @@ class BatteryModel:
             model_path = Path(model_path)
 
         self.model_path = model_path
-        self.data = {}
+        self.state = {}
         self._seen_timestamps: set = set()
         self.load()
 
@@ -157,24 +157,24 @@ class BatteryModel:
         if self.model_path.exists():
             try:
                 with open(self.model_path, 'r') as f:
-                    self.data = json.load(f)
+                    self.state = json.load(f)
                 self._seen_timestamps = {
-                    e['timestamp'] for e in self.data.get('lut', []) if 'timestamp' in e
+                    e['timestamp'] for e in self.state.get('lut', []) if 'timestamp' in e
                 }
                 logger.info("Loaded model from %s", self.model_path,
                             extra={'event_type': 'model_loaded', 'model_path': str(self.model_path)})
             except json.JSONDecodeError as e:
                 self._backup_corrupt_model(e)
-                self.data = self._default_vrla_lut()
+                self.state = self._default_vrla_lut()
             except OSError as e:
                 raise ModelLoadError(f"Cannot read {self.model_path}: {e}") from e
         else:
             logger.info("Model file not found; initializing with standard VRLA curve",
                         extra={'event_type': 'model_init_default', 'model_path': str(self.model_path)})
-            self.data = self._default_vrla_lut()
+            self.state = self._default_vrla_lut()
 
         self._apply_defaults()
-        self._sync_physics_from_data()
+        self._sync_physics_from_state()
         self._validate_and_clamp_fields()
         self._validate_lut()
 
@@ -202,20 +202,20 @@ class BatteryModel:
                     f"Cannot back up corrupt {self.model_path}: {rename_err}"
                 ) from rename_err
 
-    def _sync_physics_from_data(self):
-        """Populate self.physics from self.data['physics'] dict."""
-        physics = self.data.get('physics', {})
+    def _sync_physics_from_state(self):
+        """Populate self.physics from self.state['physics'] dict."""
+        physics = self.state.get('physics', {})
         ir = physics.get('ir_compensation', {})
         rls_data = physics.get('rls_state', {})
 
-        rls = {}
+        rls_state = {}
         for name, default_theta in [('ir_k', DEFAULT_IR_K_THETA), ('peukert', DEFAULT_PEUKERT_EXPONENT)]:
-            d = rls_data.get(name, {})
-            rls[name] = RLSParams(
-                theta=d.get('theta', default_theta),
-                P=d.get('P', 1.0),
-                sample_count=d.get('sample_count', 0),
-                forgetting_factor=d.get('forgetting_factor', 0.97),
+            stored_params = rls_data.get(name, {})
+            rls_state[name] = RLSParams(
+                theta=stored_params.get('theta', default_theta),
+                P=stored_params.get('P', 1.0),
+                sample_count=stored_params.get('sample_count', 0),
+                forgetting_factor=stored_params.get('forgetting_factor', 0.97),
             )
 
         self.physics = PhysicsParams(
@@ -226,12 +226,12 @@ class BatteryModel:
                 k_volts_per_percent=ir.get('k_volts_per_percent', DEFAULT_IR_K_THETA),
                 reference_load_percent=ir.get('reference_load_percent', 20.0),
             ),
-            rls_state=rls,
+            rls_state=rls_state,
         )
 
-    def _sync_physics_to_data(self):
-        """Write self.physics back to self.data['physics'] for JSON serialization."""
-        self.data['physics'] = {
+    def _sync_physics_to_state(self):
+        """Write self.physics back to self.state['physics'] for JSON serialization."""
+        self.state['physics'] = {
             'peukert_exponent': self.physics.peukert_exponent,
             'nominal_voltage': self.physics.nominal_voltage,
             'nominal_power_watts': self.physics.nominal_power_watts,
@@ -247,54 +247,54 @@ class BatteryModel:
     def _apply_defaults(self):
         """Set default values for optional fields not present in loaded data."""
         required_keys = {'lut', 'soh', 'physics'}
-        missing_keys = required_keys - set(self.data.keys())
+        missing_keys = required_keys - set(self.state.keys())
         if missing_keys:
             logger.warning("Model missing required keys: %s; using default values", missing_keys,
                           extra={'event_type': 'model_missing_keys'})
 
-        self.data.setdefault('sulfation_history', [])
-        self.data.setdefault('discharge_events', [])
-        self.data.setdefault('roi_history', [])
-        self.data.setdefault('natural_blackout_events', [])
-        self.data.setdefault('last_upscmd_timestamp', None)
-        self.data.setdefault('last_upscmd_type', None)
-        self.data.setdefault('last_upscmd_status', None)
-        self.data.setdefault('scheduled_test_timestamp', None)
-        self.data.setdefault('scheduled_test_reason', None)
-        self.data.setdefault('test_block_reason', None)
-        self.data.setdefault('blackout_credit', None)
+        self.state.setdefault('sulfation_history', [])
+        self.state.setdefault('discharge_events', [])
+        self.state.setdefault('roi_history', [])
+        self.state.setdefault('natural_blackout_events', [])
+        self.state.setdefault('last_upscmd_timestamp', None)
+        self.state.setdefault('last_upscmd_type', None)
+        self.state.setdefault('last_upscmd_status', None)
+        self.state.setdefault('scheduled_test_timestamp', None)
+        self.state.setdefault('scheduled_test_reason', None)
+        self.state.setdefault('test_block_reason', None)
+        self.state.setdefault('blackout_credit', None)
 
     def _validate_and_clamp_fields(self):
         """Clamp physics values and validate scheduling field types."""
         self.physics.peukert_exponent = max(1.0, min(1.5, self.physics.peukert_exponent))
-        soh = self.data.get('soh')
+        soh = self.state.get('soh')
         if soh is not None and (soh < 0 or soh > 1.0):
             logger.warning("model.json soh=%s out of range, clamping to [0, 1]", soh,
                           extra={'event_type': 'model_field_clamped'})
-            self.data['soh'] = max(0.0, min(1.0, soh))
+            self.state['soh'] = max(0.0, min(1.0, soh))
 
-        capacity_ref = self.data.get('full_capacity_ah_ref')
+        capacity_ref = self.state.get('full_capacity_ah_ref')
         if capacity_ref is not None and (not isinstance(capacity_ref, (int, float)) or capacity_ref <= 0):
             logger.warning("model.json full_capacity_ah_ref=%s invalid, resetting to 7.2", capacity_ref,
                           extra={'event_type': 'model_field_clamped'})
-            self.data['full_capacity_ah_ref'] = 7.2
+            self.state['full_capacity_ah_ref'] = 7.2
 
         for field in ('last_upscmd_timestamp', 'scheduled_test_timestamp'):
-            val = self.data.get(field)
+            val = self.state.get(field)
             if val is not None and not isinstance(val, str):
                 logger.warning("model.json %s=%r is not a string, clearing", field, val,
                               extra={'event_type': 'model_field_clamped'})
-                self.data[field] = None
+                self.state[field] = None
 
-        credit = self.data.get('blackout_credit')
+        credit = self.state.get('blackout_credit')
         if credit is not None and not isinstance(credit, dict):
             logger.warning("model.json blackout_credit is not a dict, clearing",
                           extra={'event_type': 'model_field_clamped'})
-            self.data['blackout_credit'] = None
+            self.state['blackout_credit'] = None
 
     def _validate_lut(self):
         """Drop LUT entries with missing or non-numeric v/soc values."""
-        lut = self.data.get('lut', [])
+        lut = self.state.get('lut', [])
         valid_lut = []
         for entry in lut:
             v, soc = entry.get('v'), entry.get('soc')
@@ -304,7 +304,7 @@ class BatteryModel:
                 logger.warning("Dropping invalid LUT entry: %s", entry,
                               extra={'event_type': 'model_lut_invalid_entry'})
         if len(valid_lut) != len(lut):
-            self.data['lut'] = valid_lut
+            self.state['lut'] = valid_lut
 
     def _default_vrla_lut(self) -> Dict[str, Any]:
         """
@@ -372,32 +372,32 @@ class BatteryModel:
     # --- Enterprise-equivalent counters ---
 
     def get_battery_install_date(self) -> str:
-        return self.data.get('battery_install_date')
+        return self.state.get('battery_install_date')
 
     def set_battery_install_date(self, date_str: str):
-        self.data['battery_install_date'] = date_str
+        self.state['battery_install_date'] = date_str
 
     def get_cycle_count(self) -> int:
-        return self.data.get('cycle_count', 0)
+        return self.state.get('cycle_count', 0)
 
     def increment_cycle_count(self):
         """Increment OL→OB transition counter (includes flicker events, not just full discharges)."""
-        self.data['cycle_count'] = self.data.get('cycle_count', 0) + 1
+        self.state['cycle_count'] = self.state.get('cycle_count', 0) + 1
 
     def get_cumulative_on_battery_sec(self) -> float:
-        return self.data.get('cumulative_on_battery_sec', 0.0)
+        return self.state.get('cumulative_on_battery_sec', 0.0)
 
     def get_replacement_due(self) -> str:
         """Return predicted replacement due date (ISO8601 or None)."""
-        return self.data.get('replacement_due')
+        return self.state.get('replacement_due')
 
     def set_replacement_due(self, date_str: str):
         """Set predicted replacement due date (ISO8601 string or None)."""
-        self.data['replacement_due'] = date_str
+        self.state['replacement_due'] = date_str
 
     def add_on_battery_time(self, seconds: float):
         """Accumulate on-battery time (additive, unit: seconds, no upper bound)."""
-        self.data['cumulative_on_battery_sec'] = self.data.get('cumulative_on_battery_sec', 0.0) + seconds
+        self.state['cumulative_on_battery_sec'] = self.state.get('cumulative_on_battery_sec', 0.0) + seconds
 
     def set_peukert_exponent(self, value: float):
         self.physics.peukert_exponent = value
@@ -431,9 +431,9 @@ class BatteryModel:
 
     def _cap_history_entries(self, key: str, keep_count: int = 30) -> None:
         """Keep only the most recent keep_count entries from a list field."""
-        items = self.data.get(key, [])
+        items = self.state.get(key, [])
         if len(items) > keep_count:
-            self.data[key] = items[-keep_count:]
+            self.state[key] = items[-keep_count:]
 
     def _prune_lut(self, keep_count: int = 200) -> None:
         """Remove oldest measured LUT entries; retain non-measured and most recent measured.
@@ -448,7 +448,7 @@ class BatteryModel:
         Args:
             keep_count: Maximum number of measured entries to retain (default 200)
         """
-        lut = self.data.get('lut', [])
+        lut = self.state.get('lut', [])
         non_measured = [e for e in lut if e.get('source') != 'measured']
         measured = [e for e in lut if e.get('source') == 'measured']
 
@@ -464,7 +464,7 @@ class BatteryModel:
         if len(measured) > keep_count:
             measured.sort(key=lambda x: x.get('timestamp', 0))
             measured = measured[-keep_count:]
-        self.data['lut'] = sorted(non_measured + measured, key=lambda x: x['v'], reverse=True)
+        self.state['lut'] = sorted(non_measured + measured, key=lambda x: x['v'], reverse=True)
 
 
     def append_sulfation_history(self, entry: dict) -> None:
@@ -482,7 +482,7 @@ class BatteryModel:
                 'confidence_level': 'high' | 'medium' | 'low'
             }
         """
-        self.data.setdefault('sulfation_history', []).append(entry)
+        self.state.setdefault('sulfation_history', []).append(entry)
 
     def append_discharge_event(self, event: dict) -> None:
         """Append discharge completion to history.
@@ -497,7 +497,7 @@ class BatteryModel:
                 'cycle_roi': float
             }
         """
-        self.data.setdefault('discharge_events', []).append(event)
+        self.state.setdefault('discharge_events', []).append(event)
 
 
     def save(self):
@@ -509,30 +509,30 @@ class BatteryModel:
         and LUT (deduplicates measured entries within ±0.1V, keeps most
         recent 200) to prevent unbounded growth.
         """
-        self._sync_physics_to_data()
+        self._sync_physics_to_state()
         self._cap_history_entries('soh_history')
         self._cap_history_entries('r_internal_history')
         self._prune_lut()
         self._cap_history_entries('capacity_estimates')
         self._cap_history_entries('sulfation_history')
         self._cap_history_entries('discharge_events')
-        atomic_write_json(self.model_path, self.data)
+        atomic_write_json(self.model_path, self.state)
 
     def get_lut(self):
         """Return the voltage→SoC lookup table entries."""
-        return self.data.get('lut', [])
+        return self.state.get('lut', [])
 
     def get_soh(self):
         """SoH estimate [0.0, 1.0]."""
-        return self.data.get('soh', 1.0)
+        return self.state.get('soh', 1.0)
 
     def set_soh(self, value: float):
         """Update SoH estimate (stored as-is; clamping applied at load() time by _validate_and_clamp_fields)."""
-        self.data['soh'] = value
+        self.state['soh'] = value
 
     def get_capacity_ah(self):
         """Rated reference capacity in Ah (default 7.2 for UT850). Not measured — see get_latest_capacity()."""
-        return self.data.get('full_capacity_ah_ref', 7.2)
+        return self.state.get('full_capacity_ah_ref', 7.2)
 
     def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
         """Add a SoH history entry with optional capacity baseline tag.
@@ -543,20 +543,20 @@ class BatteryModel:
             capacity_ah_ref: Capacity baseline used in SoH calculation (Ah).
                             If None, entry has no capacity_ah_ref field (backward compat).
         """
-        if 'soh_history' not in self.data:
-            self.data['soh_history'] = []
+        if 'soh_history' not in self.state:
+            self.state['soh_history'] = []
 
         entry = {'date': date, 'soh': soh}
 
         if capacity_ah_ref is not None:
             entry['capacity_ah_ref'] = round(capacity_ah_ref, 2)
 
-        self.data['soh_history'].append(entry)
-        self.data['soh'] = soh  # Update current SoH
+        self.state['soh_history'].append(entry)
+        self.state['soh'] = soh  # Update current SoH
 
     def get_soh_history(self):
         """Return list of {date, soh} entries."""
-        return self.data.get('soh_history', [])
+        return self.state.get('soh_history', [])
 
     def add_r_internal_entry(self, date, r_ohm, v_before, v_sag, load_percent, event_type):
         """Add internal resistance measurement from voltage sag observation.
@@ -569,9 +569,9 @@ class BatteryModel:
             load_percent: UPS load at time of measurement (0-100)
             event_type: EventType enum value; stored as event_type.name string
         """
-        if 'r_internal_history' not in self.data:
-            self.data['r_internal_history'] = []
-        self.data['r_internal_history'].append({
+        if 'r_internal_history' not in self.state:
+            self.state['r_internal_history'] = []
+        self.state['r_internal_history'].append({
             'date': date, 'r_ohm': round(r_ohm, 4),
             'v_before': round(v_before, 2), 'v_sag': round(v_sag, 2),
             'load_percent': round(load_percent, 1), 'event': event_type
@@ -579,7 +579,7 @@ class BatteryModel:
 
     def get_r_internal_history(self):
         """Return list of internal resistance measurements."""
-        return self.data.get('r_internal_history', [])
+        return self.state.get('r_internal_history', [])
 
     def add_capacity_estimate(self, ah_estimate: float, confidence: float, metadata: Dict, timestamp: str) -> None:
         """
@@ -596,12 +596,12 @@ class BatteryModel:
             timestamp: ISO8601 timestamp string
 
         Side effects:
-            - Appends entry to model.data['capacity_estimates']
+            - Appends entry to model.state['capacity_estimates']
             - Calls _cap_history_entries('capacity_estimates') to limit array to 30 entries
             - Calls self.save() for atomic persistence (may silently fail on OSError)
         """
-        if 'capacity_estimates' not in self.data:
-            self.data['capacity_estimates'] = []
+        if 'capacity_estimates' not in self.state:
+            self.state['capacity_estimates'] = []
 
         entry = {
             'timestamp': timestamp,
@@ -609,7 +609,7 @@ class BatteryModel:
             'confidence': confidence,
             'metadata': metadata
         }
-        self.data['capacity_estimates'].append(entry)
+        self.state['capacity_estimates'].append(entry)
         self._cap_history_entries('capacity_estimates')
         try:
             self.save()
@@ -625,7 +625,7 @@ class BatteryModel:
             List of {timestamp, ah_estimate, confidence, metadata} dicts,
             ordered newest to oldest
         """
-        estimates = self.data.get('capacity_estimates', [])
+        estimates = self.state.get('capacity_estimates', [])
         return sorted(estimates, key=lambda x: x.get('timestamp', ''), reverse=True)
 
     def get_latest_capacity(self) -> Optional[float]:
@@ -659,7 +659,7 @@ class BatteryModel:
                     # locked baseline used for new-battery detection, not the most recent measurement.
             }
         """
-        estimates = self.data.get('capacity_estimates', [])
+        estimates = self.state.get('capacity_estimates', [])
 
         if not estimates:
             return {
@@ -685,7 +685,7 @@ class BatteryModel:
             'latest_ah': ah_values[-1],
             'rated_ah': 7.2,
             'converged': len(estimates) >= 3 and cov < 0.10,
-            'capacity_ah_measured': self.data.get('capacity_ah_measured', None),
+            'capacity_ah_measured': self.state.get('capacity_ah_measured', None),
             'cov': cov,
             'mean_ah': sum(ah_values) / len(ah_values),
         }
@@ -728,7 +728,7 @@ class BatteryModel:
             'timestamp': timestamp
         }
 
-        bisect.insort(self.data['lut'], entry, key=lambda x: -x['v'])
+        bisect.insort(self.state['lut'], entry, key=lambda x: -x['v'])
 
         logger.debug(f"Calibration point accumulated: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}")
 
@@ -750,8 +750,8 @@ class BatteryModel:
         Args:
             new_lut: Updated LUT entries
         """
-        old_count = len(self.data['lut'])
-        self.data['lut'] = new_lut
+        old_count = len(self.state['lut'])
+        self.state['lut'] = new_lut
         self.save()
         logger.info(
             "LUT updated from calibration: %d entries, cliff region interpolated (was %d entries)",
@@ -772,13 +772,13 @@ class BatteryModel:
                 'desulfation_credit': float (0.0–1.0)
             }
         """
-        self.data['blackout_credit'] = credit_dict
+        self.state['blackout_credit'] = credit_dict
         logger.debug(f"Blackout credit set: expires {credit_dict.get('credit_expires')}")
 
     def clear_blackout_credit(self) -> None:
         """Expire or clear blackout credit."""
-        if self.data.get('blackout_credit'):
-            self.data['blackout_credit']['active'] = False
+        if self.state.get('blackout_credit'):
+            self.state['blackout_credit']['active'] = False
             logger.debug("Blackout credit cleared")
 
     def update_scheduling_state(
@@ -794,9 +794,9 @@ class BatteryModel:
             reason: Stored as scheduled_test_reason (e.g., 'sulfation_0.65_roi_0.34')
             block_reason: If test is blocked, reason code (e.g., 'soh_floor_55%'), else None
         """
-        self.data['scheduled_test_timestamp'] = scheduled_timestamp
-        self.data['scheduled_test_reason'] = reason
-        self.data['test_block_reason'] = block_reason
+        self.state['scheduled_test_timestamp'] = scheduled_timestamp
+        self.state['scheduled_test_reason'] = reason
+        self.state['test_block_reason'] = block_reason
         logger.debug(f"Scheduling state updated: reason={reason}, blocked={block_reason}")
 
     def update_upscmd_result(
@@ -812,16 +812,16 @@ class BatteryModel:
             upscmd_type: Command sent, e.g., 'test.battery.start.deep' or 'test.battery.start.quick'
             upscmd_status: 'OK' or error message
         """
-        self.data['last_upscmd_timestamp'] = upscmd_timestamp
-        self.data['last_upscmd_type'] = upscmd_type
-        self.data['last_upscmd_status'] = upscmd_status
+        self.state['last_upscmd_timestamp'] = upscmd_timestamp
+        self.state['last_upscmd_type'] = upscmd_type
+        self.state['last_upscmd_status'] = upscmd_status
         logger.debug(f"Upscmd result updated: type={upscmd_type}, status={upscmd_status}")
 
     def get_last_upscmd_timestamp(self) -> Optional[str]:
         """Get ISO8601 timestamp of last upscmd attempt, or None."""
-        return self.data.get('last_upscmd_timestamp')
+        return self.state.get('last_upscmd_timestamp')
 
     def get_blackout_credit(self) -> Optional[dict]:
         """Get current blackout credit dict, or None if inactive/expired."""
-        return self.data.get('blackout_credit')
+        return self.state.get('blackout_credit')
 

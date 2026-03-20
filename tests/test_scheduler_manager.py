@@ -174,14 +174,14 @@ class TestSchedulerManager:
     def test_get_last_natural_blackout_no_events_returns_none(self):
         """Returns None when discharge_events list is empty."""
         bm = Mock()
-        bm.data = {'discharge_events': []}
+        bm.state = {'discharge_events': []}
         sm = _make_scheduler(battery_model=bm)
         assert sm._get_last_natural_blackout() is None
 
     def test_get_last_natural_blackout_returns_most_recent(self):
         """Returns the most recent natural event."""
         bm = Mock()
-        bm.data = {
+        bm.state = {
             'discharge_events': [
                 {'event_reason': 'natural', 'timestamp': '2026-03-10T10:00:00Z', 'depth_of_discharge': 0.3},
                 {'event_reason': 'natural', 'timestamp': '2026-03-18T10:00:00Z', 'depth_of_discharge': 0.5},
@@ -196,7 +196,7 @@ class TestSchedulerManager:
     def test_get_last_natural_blackout_skips_non_natural(self):
         """Skips test events; only returns natural blackout events."""
         bm = Mock()
-        bm.data = {
+        bm.state = {
             'discharge_events': [
                 {'event_reason': 'natural', 'timestamp': '2026-03-10T10:00:00Z', 'depth_of_discharge': 0.3},
                 {'event_reason': 'test', 'timestamp': '2026-03-18T10:00:00Z', 'depth_of_discharge': 0.7},
@@ -210,7 +210,7 @@ class TestSchedulerManager:
     def test_get_last_natural_blackout_no_natural_events_returns_none(self):
         """Returns None when all events are tests (no natural blackouts)."""
         bm = Mock()
-        bm.data = {
+        bm.state = {
             'discharge_events': [
                 {'event_reason': 'test', 'timestamp': '2026-03-18T10:00:00Z', 'depth_of_discharge': 0.7},
             ]
@@ -223,7 +223,7 @@ class TestSchedulerManager:
     def test_gather_scheduler_inputs_returns_all_7_keys(self):
         """_gather_scheduler_inputs returns dict with all 7 required keys."""
         bm = Mock()
-        bm.data = {'discharge_events': []}
+        bm.state = {'discharge_events': []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = None
@@ -243,7 +243,7 @@ class TestSchedulerManager:
     def test_gather_scheduler_inputs_values(self):
         """_gather_scheduler_inputs returns correct values from dependencies."""
         bm = Mock()
-        bm.data = {'discharge_events': []}
+        bm.state = {'discharge_events': []}
         bm.get_soh.return_value = 0.9
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = {'active': True}
@@ -297,7 +297,7 @@ class TestSchedulerManager:
     def test_run_daily_sets_evaluated_today_flag(self):
         """run_daily sets scheduler_evaluated_today=True after running."""
         bm = Mock()
-        bm.data = {'discharge_events': []}
+        bm.state = {'discharge_events': []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = None
@@ -315,7 +315,7 @@ class TestSchedulerManager:
     def test_run_daily_updates_last_scheduling_reason(self):
         """run_daily updates last_scheduling_reason from decision."""
         bm = Mock()
-        bm.data = {'discharge_events': []}
+        bm.state = {'discharge_events': []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = None
@@ -391,5 +391,5 @@ class TestDispatchWithAuditImport:
             )
 
         assert success is True
-        assert model.data.get('test_running') is True
-        assert model.data['last_upscmd_status'] == 'OK'
+        assert model.state.get('test_running') is True
+        assert model.state['last_upscmd_status'] == 'OK'

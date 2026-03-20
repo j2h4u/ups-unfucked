@@ -121,7 +121,7 @@ class MonitorDaemon:
         """Initialize battery model, capacity estimator, RLS filters, and discharge handler."""
         model_path = config.model_dir / 'model.json'
         self.battery_model = BatteryModel(model_path)
-        self.battery_model.data['full_capacity_ah_ref'] = config.capacity_ah
+        self.battery_model.state['full_capacity_ah_ref'] = config.capacity_ah
         self._validate_and_repair_model()
 
         if self.battery_model.get_battery_install_date() is None:
@@ -179,7 +179,7 @@ class MonitorDaemon:
             discharge_handler=self.discharge_handler,
         )
 
-        self.battery_model.data['new_battery_detected'] = False
+        self.battery_model.state['new_battery_detected'] = False
         self.battery_model.save()
 
     def _validate_and_repair_model(self):
@@ -188,7 +188,7 @@ class MonitorDaemon:
         if len(lut) < 2:
             logger.warning(f"Model LUT has only {len(lut)} point(s); predictions will be inaccurate until calibration")
 
-        anchor = self.battery_model.data.get('anchor_voltage')
+        anchor = self.battery_model.state.get('anchor_voltage')
         if anchor is None:
             logger.warning("Model missing anchor_voltage; SoH calculation may fail")
 
@@ -278,21 +278,21 @@ class MonitorDaemon:
     def _reset_battery_baseline(self):
         """Reset capacity estimation and SoH history baseline on battery replacement."""
 
-        old_capacity = self.battery_model.data.get('capacity_ah_measured')
+        old_capacity = self.battery_model.state.get('capacity_ah_measured')
         new_capacity = self.battery_model.get_capacity_ah()
 
-        self.battery_model.data['capacity_estimates'] = []
-        self.battery_model.data['capacity_ah_measured'] = None
+        self.battery_model.state['capacity_estimates'] = []
+        self.battery_model.state['capacity_ah_measured'] = None
 
         today = datetime.now().strftime('%Y-%m-%d')
-        self.battery_model.data['soh'] = 1.0
+        self.battery_model.state['soh'] = 1.0
         self.battery_model.add_soh_history_entry(
             date=today,
             soh=1.0,
             capacity_ah_ref=new_capacity  # 7.2Ah (rated, fresh baseline)
         )
 
-        self.battery_model.data['cycle_count'] = 0
+        self.battery_model.state['cycle_count'] = 0
 
         self.battery_model.reset_rls_state()
         self.sag_tracker.reset_rls(theta=0.015, P=1.0)
