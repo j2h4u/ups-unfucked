@@ -384,7 +384,11 @@ def test_peukert_normal_case_updates_rls(make_daemon):
     with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
         mock_calibrate.return_value = 1.18
         daemon._auto_calibrate_peukert(current_soh=0.95)
-        daemon.battery_model.set_peukert_exponent.assert_called()
+        call_args = daemon.battery_model.set_peukert_exponent.call_args
+        assert call_args is not None, "set_peukert_exponent was not called"
+        exponent_set = call_args.args[0]
+        assert 1.0 <= exponent_set <= 1.4, \
+            f"Peukert exponent {exponent_set} outside physical bounds [1.0, 1.4]"
 
 
 def test_peukert_empty_buffer_skips(make_daemon):
@@ -433,14 +437,8 @@ def test_peukert_short_duration_skips(make_daemon):
     daemon.battery_model.set_peukert_exponent.assert_not_called()
 
 
-def test_signal_handler_saves_model(make_daemon):
-    """TEST-03: Verify signal handler (SIGTERM/SIGINT) persists model before shutdown.
-
-    Verifies:
-    - SIGTERM received → _signal_handler() called
-    - _signal_handler() calls model.save()
-    - running flag set to False
-    """
+def test_signal_handler_saves_model_and_stops(make_daemon):
+    """SIGTERM handler persists model and clears running flag."""
     import signal
     from unittest.mock import Mock
 
@@ -449,29 +447,36 @@ def test_signal_handler_saves_model(make_daemon):
     daemon.battery_model.save = Mock()
     daemon.running = True
 
-    # Call signal handler directly (simulating SIGTERM)
-    # Note: Can't actually send signal in test, so we call handler directly
-    # Handler signature: _signal_handler(signum, frame)
     daemon._signal_handler(signal.SIGTERM, None)
 
-    # Verify model was saved
     daemon.battery_model.save.assert_called_once()
+    assert daemon.running is False, "SIGTERM handler should clear running flag to trigger shutdown"
 
-    # Verify running flag cleared (triggers shutdown)
-    assert daemon.running is False
 
-    # Test Case 2: Multiple SIGTERM signals - should be idempotent
-    daemon.battery_model.reset_mock()
-    daemon.running = True  # Reset state
+def test_signal_handler_idempotent(make_daemon):
+    """Multiple SIGTERM signals handled gracefully without double-save crash."""
+    import signal
+    from unittest.mock import Mock
+
+    daemon = make_daemon()
+    daemon.battery_model = Mock()
+    daemon.battery_model.save = Mock()
+    daemon.running = True
+
     daemon._signal_handler(signal.SIGTERM, None)
-    daemon._signal_handler(signal.SIGTERM, None)  # Second signal
-    # Should handle gracefully without double-save exception
-    assert daemon.battery_model.save.call_count >= 1
-    assert daemon.running is False
+    daemon._signal_handler(signal.SIGTERM, None)
+
+    assert daemon.battery_model.save.call_count >= 1, \
+        "Model should be saved at least once across multiple signals"
+    assert daemon.running is False, "Multiple SIGTERM signals should leave running=False (idempotent)"
 
 
 def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
-    """TEST-01: Integration test for full OL→OB→OL discharge lifecycle.
+    """Full OL->OB->OL discharge lifecycle with mocked subsystems.
+
+    NOTE: TestPollOnceCallChain in test_monitor_integration.py covers equivalent
+    behaviors with real collaborators. This test exercises the lifecycle with
+    explicit mock control for deterministic SoH/capacity values.
 
     Verifies:
     - _handle_event_transition() executes on OB→OL
@@ -618,8 +623,10 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
         assert len(daemon.discharge_collector.buffer.voltages) == 0, "Buffer should be cleared after _update_battery_health()"
 
         # Verify _update_battery_health() was called
-        daemon.battery_model.add_soh_history_entry.assert_called_once()
-        daemon.battery_model.save.assert_called()  # May be called multiple times
+        assert daemon.battery_model.add_soh_history_entry.call_count == 1, \
+            "SoH history should have one entry after first OB->OL cycle"
+        assert daemon.battery_model.save.call_count >= 1, \
+            "Model should be saved after discharge cycle completion"
 
         # Poll 6: OL at 13.2V, 100% charge (stable OL)
         daemon.poll_count = 6
@@ -1130,8 +1137,8 @@ class TestCapacityEstimatorIntegration:
             daemon_config = daemon.config
             daemon.__init__(daemon_config)
 
-            # CapacityEstimator should have been instantiated
-            mock_ce.assert_called_once()
+            # CapacityEstimator should have been instantiated exactly once
+            assert mock_ce.call_count == 1, "CapacityEstimator should be instantiated exactly once during __init__"
 
     def test_handle_discharge_complete_calls_estimator(self, make_daemon):
         """Test 2: _handle_discharge_complete() calls CapacityEstimator.estimate()."""
@@ -1266,7 +1273,8 @@ class TestCapacityEstimatorIntegration:
         daemon._handle_discharge_complete(discharge_data)
 
         # Verify convergence check was performed
-        daemon.capacity_estimator.has_converged.assert_called()
+        assert daemon.capacity_estimator.has_converged.call_count >= 1, \
+            "has_converged() should be called during discharge completion to check convergence"
 
     def test_battery_replaced_resets_baseline(self, daemon_config, tmp_path):
         """--new-battery resets SoH to 1.0 and clears capacity estimates."""
