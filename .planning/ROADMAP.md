@@ -106,11 +106,11 @@
 
 **Success Criteria** (what must be TRUE):
 1. User can review journald logs and confirm scheduler evaluated test candidates with decision reason codes (daily entry shows: propose_test [reason], defer_test [reason], or block_test [reason])
-2. User can verify daemon enforces SoH floor (≥60%) — no test when SoH below floor, reason logged (rejection logged with "SoH below floor (X%)" message, no upscmd attempt)
-3. User can verify daemon enforces rate limiting (≤1 test/week, minimum 7-day interval) — skips scheduled test if recent test within grace period, logs reason (deferral logged with "last test 3 days ago" or similar)
-4. User can verify daemon credits natural blackouts (≥90% depth, <7 days old) as desulfation equivalent — skips scheduled test when active blackout credit exists, logs credit usage (blackout_credit field shows "active until YYYY-MM-DD")
+2. User can verify daemon enforces SoH floor (>=60%) — no test when SoH below floor, reason logged (rejection logged with "SoH below floor (X%)" message, no upscmd attempt)
+3. User can verify daemon enforces rate limiting (<=1 test/week, minimum 7-day interval) — skips scheduled test if recent test within grace period, logs reason (deferral logged with "last test 3 days ago" or similar)
+4. User can verify daemon credits natural blackouts (>=90% depth, <7 days old) as desulfation equivalent — skips scheduled test when active blackout credit exists, logs credit usage (blackout_credit field shows "active until YYYY-MM-DD")
 5. User can verify systemd timers disabled post-deployment — `ups-test-deep.timer` and `ups-test-quick.timer` masked or disabled (systemctl status shows "masked" or "disabled", not "active")
-6. User can review precondition checks logged before any upscmd dispatch (SoC ≥95%, no power glitches in last 4h, no test already running — each check logged with pass/fail status)
+6. User can review precondition checks logged before any upscmd dispatch (SoC >=95%, no power glitches in last 4h, no test already running — each check logged with pass/fail status)
 
 **Plans:** 2 plans across 2 execution waves
 
@@ -151,7 +151,10 @@
 3. `integrate_current()` accepts per-step load values and produces a more accurate result than the previous scalar approximation — confirmed by a unit test comparing both approaches on a variable-load sequence
 4. All existing tests pass with no regressions after the consolidation
 
-**Plans:** TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 18-01-PLAN.md — Extract integrate_current() to battery_math, fix _check_alerts avg_load propagation, accuracy test
 
 ---
 
@@ -290,7 +293,7 @@
 | 15. Foundation | v3.0 | 5/5 | Complete | 2026-03-17 |
 | 16. Persistence & Observability | v3.0 | 6/6 | Complete | 2026-03-17 |
 | 17. Scheduling Intelligence | v3.0 | 2/2 | Complete | 2026-03-17 |
-| 18. Unify Coulomb Counting | v3.1 | 0/? | Not started | - |
+| 18. Unify Coulomb Counting | v3.1 | 0/1 | Planned | - |
 | 19. Extract SagTracker | v3.1 | 0/? | Not started | - |
 | 20. Extract SchedulerManager | v3.1 | 0/? | Not started | - |
 | 21. Extract DischargeCollector | v3.1 | 0/? | Not started | - |
@@ -300,4 +303,4 @@
 
 ---
 
-*Roadmap updated: 2026-03-20 after v3.1 roadmap creation*
+*Roadmap updated: 2026-03-20 after Phase 18 planning*
