@@ -323,7 +323,7 @@ Plans:
 | 21. Extract DischargeCollector | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete    | 2026-03-20 |
 | 23. Test Quality Rewrite | v3.1 | 4/4 | Complete    | 2026-03-20 |
-| 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete   | 2026-03-20 |
+| 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete    | 2026-03-20 |
 
 ---
 
