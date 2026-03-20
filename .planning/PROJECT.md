@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Измеряет реальную ёмкость батареи из глубоких разрядов (coulomb counting + voltage anchor), заменяет номинальное значение измеренным, и рекалибрует SoH на основе фактической ёмкости. Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Один systemd-сервис, zero manual intervention после установки.
+Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Измеряет реальную ёмкость батареи из глубоких разрядов (coulomb counting + voltage anchor), заменяет номинальное значение измеренным, и рекалибрует SoH на основе фактической ёмкости. Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Автоматически планирует десульфатационные тесты с 7 уровнями безопасности. Один systemd-сервис, zero manual intervention после установки.
 
 ## Core Value
 
@@ -41,16 +41,15 @@
 - ✓ Safety constraints: SoH floor, rate limiting, grid stability, cycle budget gates — v3.0
 - ✓ Reporting: sulfation score + scheduling decisions in health.json, journald, MOTD — v3.0
 - ✓ 53-fix kaizen pass: naming, error handling, observability, security, complexity — v3.0
+- ✓ Unified coulomb counting: single integrate_current() with IEEE-1106 trapezoidal rule — v3.1
+- ✓ MonitorDaemon decomposition: SagTracker, SchedulerManager, DischargeCollector extracted — v3.1
+- ✓ Naming + docs sweep: BatteryModel.data→state, category→power_source, docstrings — v3.1
+- ✓ Test quality rewrite: outcome assertions, DI, real collaborators, pytest markers — v3.1
+- ✓ Temperature + security hardening: NUT probe, model.json validation, PASSWORD docs — v3.1
 
 ### Active
 
-- ✓ Unified coulomb counting: single `integrate_current()` in battery_math, eliminated double avg_load — v3.1 Phase 18
-- ✓ SagTracker extracted: voltage sag state machine + RLS ir_k calibration in own module, MonitorDaemon delegates — v3.1 Phase 19
-- ✓ SchedulerManager extracted: daily test scheduling, safety gates, precondition checks, dispatch in own module — v3.1 Phase 20
-- ✓ DischargeCollector extracted: sample accumulation, cooldown, calibration writes in own module; sulfation scoring split into compute/persist/log — v3.1 Phase 21
-- ✓ Naming + docs sweep: BatteryModel.data→state, category→power_source, rls/d→descriptive names, docstrings for non-obvious behaviors — v3.1 Phase 22
-- ✓ Test quality rewrite: outcome assertions, DI for virtual UPS path, real collaborators in integration tests, pytest markers, no mock sequence replay — v3.1 Phase 23
-- ✓ Temperature + security hardening: NUT temp probe at startup (absent → documented), model.json field-level validation for all scheduling/history fields, NUT empty PASSWORD documented, atomic_write cleanup logged — v3.1 Phase 24
+(No active requirements — planning next milestone)
 
 ### Out of Scope
 
@@ -59,35 +58,22 @@
 - Web UI / REST API — не нужны, минимализм
 - Docker-контейнер — systemd-демон, не docker
 - Изменение конфигурации NUT — встаём поверх, не трогаем
-- Temperature compensation — indoor ±3°C, negligible variation
+- Temperature compensation — indoor ±3°C, negligible variation; NUT confirms no sensor available
 - Offline mode / multi-UPS — single CyberPower UT850EG only
-
-## Current Milestone: v3.1 Code Quality Hardening
-
-**Goal:** Structural improvements from 8-agent code quality review — decompose MonitorDaemon god class, unify divergent coulomb counting (accuracy-first), rewrite implementation-coupled tests, resolve temperature placeholder and security gaps.
-
-**Design principle:** When choosing between implementations, pick the one with greater accuracy.
-
-**Target features:**
-- MonitorDaemon decomposition (SagTracker, SchedulerManager, DischargeCollector extraction)
-- Unified coulomb counting implementation (per-step integration replaces scalar approximation)
-- Naming + docs sweep (BatteryModel.data rename, missing docstrings, comment cleanup)
-- Test quality rewrite (outcome-based assertions, dependency injection, no mock sequence replay)
-- Temperature + security hardening (NUT sensor check, model.json validation, auth documentation)
 
 ## Context
 
-Shipped v3.0 with 5,239 LOC Python, 476 tests, 150 commits (v2.0→v3.0) over 4 days.
+Shipped v3.1 with 5,768 LOC Python, 568 tests, 24 phases across 5 milestones over 9 days.
 Tech stack: Python 3.13, NUT (upsc + dummy-ups), systemd, journald.
 Hardware: CyberPower UT850EG (425W), USB, NUT usbhid-ups, Debian 13 (senbonzakura).
 
 Real blackout 2026-03-12 validated the model: 47 min actual vs ~22 min firmware prediction.
 
-v3.0 added sulfation model (physics + data-driven hybrid), intelligent test scheduling with 7 safety gates (SoH floor, rate limiting, blackout credit, grid stability, cycle budget, ROI threshold, sulfation threshold), cycle ROI metric, and full observability pipeline. Post-v3.0 kaizen pass fixed 53 findings from 8-agent code quality review.
+v3.1 completed 8-agent code quality review findings: MonitorDaemon decomposed into SagTracker + SchedulerManager + DischargeCollector, unified coulomb counting, outcome-based test suite, temperature placeholder resolved, model.json hardened.
 
-Operating environment: frequent blackouts (several/week), battery at ~35°C due to inverter heat. Daemon now controls test scheduling directly via upscmd (replaced static systemd timers).
+Operating environment: frequent blackouts (several/week), battery at ~35°C due to inverter heat. Daemon controls test scheduling directly via upscmd.
 
-Known v3.1+ candidates: temperature sensor integration, Peukert auto-calibration, cliff-edge degradation detector, discharge curve shape analysis.
+Known future candidates: Peukert auto-calibration, cliff-edge degradation detector, discharge curve shape analysis, seasonal thermal correction.
 
 ## Constraints
 
@@ -117,6 +103,10 @@ Known v3.1+ candidates: temperature sensor integration, Peukert auto-calibration
 | New battery detection post-discharge, not startup | Fresh measurement vs stored estimate avoids false positives from stale data | ✓ Good — v2.0 |
 | Discharge cooldown 60s | Power flicker is physically one discharge; processing as two wastes signal | ✓ Good — v2.0 |
 | 30s minimum for SoH update | Short flickers produce junk SoH entries that degrade replacement prediction | ✓ Good — v2.0 |
+| MonitorDaemon decomposition into 3 modules | God class → focused modules; each testable without constructing MonitorDaemon | ✓ Good — v3.1 |
+| Outcome-based test assertions | Mock sequence replay is brittle; observable state is the contract | ✓ Good — v3.1 |
+| Temperature: probe at startup, keep 35°C hardcode | UT850EG has no sensor; document absence rather than pretend | ✓ Good — v3.1 |
+| model.json warn+reset, never raise | Daemon must survive corrupt persistence; warn-and-heal is safer than crash | ✓ Good — v3.1 |
 
 ---
-*Last updated: 2026-03-21 after Phase 24 completion*
+*Last updated: 2026-03-21 after v3.1 milestone completion*

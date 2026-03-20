@@ -1,5 +1,25 @@
 # Milestones
 
+## v3.1 Code Quality Hardening (Shipped: 2026-03-20)
+
+**Phases completed:** 7 phases, 13 plans, 16 tasks
+
+**Key accomplishments:**
+
+- Standalone integrate_current() extracted to battery_math.integration with IEEE-1106 trapezoidal rule, CapacityEstimator._integrate_current() deleted, avg_load double-computation eliminated from _check_alerts(), 480 tests pass
+- Status:
+- Status:
+- `_score_and_persist_sulfation` decomposed into compute/persist/log via 16-key data dict; 8 new unit tests added; 555 tests pass
+- One-liner:
+- category local variable renamed to power_source in EventClassifier.classify(); write-once guard docstring added to _handle_capacity_convergence; two redundant inline comments removed from _prune_lut and _classify_discharge_trigger
+- pytest.ini slow marker registered, Monte Carlo test marked @pytest.mark.slow, all 4 MOTD tests marked @pytest.mark.integration — enabling -m "not slow" (554/555) and -m "not integration" (529/555) filtering
+- One-liner:
+- Task 1: Private method call_count → tracking-list outcome assertions
+- Replaced private-method call_count and assert_called() assertions in integration tests with observable state checks; documented rationale for non-I/O domain mock.
+- 1. [Rule 1 - Bug] make_daemon fixture patched out the method under test
+
+---
+
 ## v3.0 Active Battery Care (Shipped: 2026-03-20)
 
 **Delivered:** Transforms daemon from passive observer to active battery manager — models sulfation physics, schedules desulfation intelligently with 7 safety gates, and quantifies each discharge's net impact on battery life.
@@ -10,6 +30,7 @@
 **Git range:** v2.0..7bf06c5
 
 **Key accomplishments:**
+
 - Sulfation model: physics-based scoring [0–1.0] with days-since-deep, IR trend, recovery delta signals as pure functions in `src/battery_math/`
 - Cycle ROI metric: desulfation benefit vs wear cost per discharge, exported to health.json for Grafana
 - Scheduler decision engine with 7 safety gates (SoH floor, rate limiting, blackout credit, grid stability, cycle budget, ROI threshold, sulfation threshold)

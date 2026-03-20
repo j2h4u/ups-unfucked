@@ -136,6 +136,80 @@
 
 ---
 
+## Milestone: v3.0 — Active Battery Care
+
+**Shipped:** 2026-03-20
+**Phases:** 3 | **Plans:** 13 | **Tests:** 476
+
+### What Was Built
+- Sulfation model: physics-based scoring + data-driven detection (IR trend, recovery delta)
+- Smart test scheduling: daemon calls upscmd with 7 safety gates, replaces static systemd timers
+- Cycle ROI metric: desulfation benefit vs wear cost
+- Natural blackout credit: skip scheduled tests when recent blackouts already desulfated
+- Full observability: sulfation score in health.json, journald events, MOTD display
+- Post-v3.0 kaizen: 53 fixes from 8-agent code quality review
+
+### What Worked
+- 3-phase progression (foundation → observability → control) de-risked each step
+- Read-only daemon phase (16) before active control phase (17) — validated signals before acting on them
+- Configurable grid stability cooldown (0=disabled) for frequent-blackout environments
+- 8-agent code quality review identified real issues (not just style nits)
+
+### What Was Inefficient
+- Kaizen pass (53 fixes) should have been a separate milestone — mixing it into v3.0 blurred scope
+- Some v3.0 CONTEXT.md files from phases 18-24 lacked structured one-liners in SUMMARY.md
+
+### Key Lessons
+1. Read-only observability before active control is a safe escalation pattern
+2. Natural blackouts as free desulfation credits saves unnecessary battery wear
+3. Code quality review findings are best addressed as a dedicated milestone, not inline fixes
+
+---
+
+## Milestone: v3.1 — Code Quality Hardening
+
+**Shipped:** 2026-03-21
+**Phases:** 7 | **Plans:** 13 | **Tests:** 568
+
+### What Was Built
+- Unified coulomb counting: single integrate_current() with IEEE-1106 trapezoidal rule
+- MonitorDaemon decomposed: SagTracker, SchedulerManager, DischargeCollector extracted
+- Naming sweep: BatteryModel.data→state, category→power_source, descriptive variable names
+- Test quality rewrite: outcome assertions, dependency injection, real collaborators, pytest markers
+- Temperature probe at startup (confirmed UT850EG has no sensor), model.json field-level validation
+- NUT empty PASSWORD security documented, atomic_write cleanup logging
+
+### What Worked
+- Phase ordering (unify math → extract modules → rename → rewrite tests → harden) minimized rework
+- Phases 19/20/21 independent of each other after 18 — parallel planning possible
+- Extraction-then-rename order avoided churn (settled module structure before renaming)
+- Extraction-then-test-rewrite order avoided double work (internals change during extraction)
+- Auto-advance pipeline (discuss→plan→execute) worked cleanly for Phase 24
+
+### What Was Inefficient
+- SUMMARY.md one-liner extraction still unreliable — many summaries returned "Status:" or "None" for one_liner field
+- Researcher agent didn't write RESEARCH.md for Phase 24 (timed out mid-work) — phase was simple enough to plan without it
+- Some phases (19, 20) were very small (1 plan, 1 task) — could have been merged
+
+### Patterns Established
+- Module extraction pattern: create module → move state+logic → rewire delegation → unit test module directly
+- Outcome-based test assertions: assert observable state/return values, not mock call sequences
+- Warn+reset pattern for model.json validation: daemon survives any corruption
+- Temperature probe: check once at startup, document absence, keep hardcoded assumption
+
+### Key Lessons
+1. Structural refactoring milestones benefit from strict phase ordering to minimize rework
+2. Small extraction phases (1 plan each) keep changes atomic but increase overhead — consider grouping 2-3 related extractions
+3. Test rewrite must follow module extraction — testing internal methods that are about to move is wasted work
+4. `--auto` pipeline is efficient for well-defined structural phases with clear requirements
+
+### Cost Observations
+- Model mix: ~65% sonnet (execution), ~30% opus (planning/orchestration), ~5% haiku
+- Sessions: ~5 sessions across 2 days
+- Notable: Phase 24 ran full discuss→plan→execute in a single auto-advance chain
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -145,6 +219,8 @@
 | v1.0 | 6 | 21 | First milestone — established test-first wave pattern |
 | v1.1 | 5 | 14 | Expert panel review as requirements source; dataclass-first refactoring |
 | v2.0 | 4 | 15 | Inserted phase (12.1) from expert panels; math kernel extraction; year-long simulation as acceptance test |
+| v3.0 | 3 | 13 | Read-only→active escalation; 8-agent code quality review; kaizen pass |
+| v3.1 | 7 | 13 | Strict phase ordering for structural refactoring; auto-advance pipeline; outcome-based testing |
 
 ### Cumulative Quality
 
@@ -153,6 +229,8 @@
 | v1.0 | 160 | 5,003 | All (stdlib only + NUT) |
 | v1.1 | 205 | 6,596 | All (stdlib only + NUT) |
 | v2.0 | 291 | 11,602 | All (stdlib only + NUT) |
+| v3.0 | 476 | 5,239 | All (stdlib only + NUT) |
+| v3.1 | 568 | 5,768 | All (stdlib only + NUT) |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -162,3 +240,5 @@
 4. Dataclass refactors pay for themselves immediately in testability
 5. Pure-function kernel packages enable simulation-based acceptance testing that catches bugs unit tests miss
 6. Circular dependency avoidance (fix one variable, solve the other) is a valid architectural pattern
+7. Structural refactoring benefits from strict phase ordering: unify shared code → extract modules → rename → rewrite tests
+8. Outcome-based test assertions survive refactoring; mock sequence replay does not
