@@ -1096,3 +1096,159 @@ class TestSchedulingSchema:
         model.set_blackout_credit(credit)
         assert model.get_blackout_credit() == credit
 
+
+class TestFieldLevelValidation:
+    """Field-level validation in _validate_and_clamp_fields(): scheduling strings and history lists."""
+
+    def _base_model_data(self):
+        """Return a valid base model dict that passes all validation."""
+        return {
+            'full_capacity_ah_ref': 7.2,
+            'soh': 0.95,
+            'physics': {
+                'peukert_exponent': 1.2,
+                'nominal_voltage': 12.0,
+                'nominal_power_watts': 425.0,
+                'ir_compensation': {'k_volts_per_percent': 0.015, 'reference_load_percent': 20.0},
+                'rls_state': {
+                    'ir_k': {'theta': 0.015, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+                    'peukert': {'theta': 1.2, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+                },
+            },
+            'lut': [
+                {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
+                {'v': 10.5, 'soc': 0.00, 'source': 'anchor'},
+            ],
+            'soh_history': [{'date': '2026-03-01', 'soh': 0.95}],
+        }
+
+    def test_validate_string_field_last_upscmd_type_non_string(self, temporary_model_path, caplog):
+        """last_upscmd_type=123 (int) → reset to None, warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['last_upscmd_type'] = 123
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['last_upscmd_type'] is None
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1, f"Expected model_field_clamped warning, got: {[r.message for r in caplog.records]}"
+
+    def test_validate_string_field_last_upscmd_status_non_string(self, temporary_model_path, caplog):
+        """last_upscmd_status=True (bool) → reset to None, warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['last_upscmd_status'] = True
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['last_upscmd_status'] is None
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1
+
+    def test_validate_string_field_scheduled_test_reason_non_string(self, temporary_model_path, caplog):
+        """scheduled_test_reason=['wrong'] (list) → reset to None, warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['scheduled_test_reason'] = ['wrong']
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['scheduled_test_reason'] is None
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1
+
+    def test_validate_string_field_test_block_reason_non_string(self, temporary_model_path, caplog):
+        """test_block_reason=42 (int) → reset to None, warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['test_block_reason'] = 42
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['test_block_reason'] is None
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1
+
+    def test_validate_list_field_sulfation_history_non_list(self, temporary_model_path, caplog):
+        """sulfation_history='not_a_list' (str) → reset to [], warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['sulfation_history'] = 'not_a_list'
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['sulfation_history'] == []
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1
+
+    def test_validate_list_field_discharge_events_non_list(self, temporary_model_path, caplog):
+        """discharge_events=123 (int) → reset to [], warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['discharge_events'] = 123
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['discharge_events'] == []
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1
+
+    def test_validate_list_field_natural_blackout_events_non_list(self, temporary_model_path, caplog):
+        """natural_blackout_events={'bad': True} (dict) → reset to [], warning logged."""
+        import logging
+        data = self._base_model_data()
+        data['natural_blackout_events'] = {'bad': True}
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        assert model.state['natural_blackout_events'] == []
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) >= 1
+
+    def test_validate_valid_fields_no_warnings(self, temporary_model_path, caplog):
+        """Valid string and list fields → no model_field_clamped warnings, fields unchanged."""
+        import logging
+        data = self._base_model_data()
+        data['last_upscmd_type'] = 'test.battery.start.deep'
+        data['last_upscmd_status'] = 'OK'
+        data['scheduled_test_reason'] = 'sulfation_0.65'
+        data['test_block_reason'] = 'soh_floor_55%'
+        data['sulfation_history'] = [{'timestamp': '2026-03-01T00:00:00Z', 'sulfation_score': 0.3}]
+        data['discharge_events'] = [{'timestamp': '2026-03-02T00:00:00Z', 'depth_of_discharge': 0.8}]
+        data['natural_blackout_events'] = []
+        with open(temporary_model_path, 'w') as f:
+            json.dump(data, f)
+
+        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+            model = BatteryModel(temporary_model_path)
+
+        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert len(clamped_records) == 0, f"Expected no model_field_clamped warnings for valid data, got: {[r.message for r in clamped_records]}"
+        # Fields remain unchanged
+        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
+        assert model.state['last_upscmd_status'] == 'OK'
+        assert model.state['sulfation_history'] == [{'timestamp': '2026-03-01T00:00:00Z', 'sulfation_score': 0.3}]
+        assert model.state['discharge_events'] == [{'timestamp': '2026-03-02T00:00:00Z', 'depth_of_discharge': 0.8}]
+
