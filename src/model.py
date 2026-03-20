@@ -279,12 +279,21 @@ class BatteryModel:
                           extra={'event_type': 'model_field_clamped'})
             self.state['full_capacity_ah_ref'] = 7.2
 
-        for field in ('last_upscmd_timestamp', 'scheduled_test_timestamp'):
+        for field in ('last_upscmd_timestamp', 'scheduled_test_timestamp',
+                      'last_upscmd_type', 'last_upscmd_status',
+                      'scheduled_test_reason', 'test_block_reason'):
             val = self.state.get(field)
             if val is not None and not isinstance(val, str):
                 logger.warning("model.json %s=%r is not a string, clearing", field, val,
                               extra={'event_type': 'model_field_clamped'})
                 self.state[field] = None
+
+        for field in ('sulfation_history', 'discharge_events', 'roi_history', 'natural_blackout_events'):
+            val = self.state.get(field)
+            if val is not None and not isinstance(val, list):
+                logger.warning("model.json %s=%r is not a list, resetting to []", field, val,
+                              extra={'event_type': 'model_field_clamped'})
+                self.state[field] = []
 
         credit = self.state.get('blackout_credit')
         if credit is not None and not isinstance(credit, dict):
