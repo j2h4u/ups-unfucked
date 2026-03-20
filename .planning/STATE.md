@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Code Quality Hardening
 status: unknown
-last_updated: "2026-03-20T12:42:24.594Z"
+last_updated: "2026-03-20T12:47:32.201Z"
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 5
-  completed_plans: 4
+  completed_plans: 5
 ---
 
 # Project State — UPS Battery Monitor
@@ -49,6 +49,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | MonitorDaemon responsibilities | many | reduced by 3 extracted modules |
 | Duplicate coulomb counting implementations | 2 | 1 |
 | Phase 21-extract-dischargecollector P02 | 15 | 2 tasks | 5 files |
+| Phase 21-extract-dischargecollector P01 | 8 | 1 tasks | 1 files |
 
 ### Execution History
 

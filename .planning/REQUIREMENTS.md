@@ -16,7 +16,7 @@ Requirements for v3.1 Code Quality Hardening. Structural improvements from 8-age
 - [x] **ARCH-03**: SagTracker extracted from MonitorDaemon into own module
 - [x] **ARCH-04**: SchedulerManager extracted from MonitorDaemon into own module
 - [x] **ARCH-05**: DischargeCollector extracted from MonitorDaemon (sample accumulation, calibration writes)
-- [ ] **ARCH-06**: `_score_and_persist_sulfation` split into compute / persist / log methods
+- [x] **ARCH-06**: `_score_and_persist_sulfation` split into compute / persist / log methods
 
 ### Naming
 
@@ -79,7 +79,7 @@ Deferred to future release.
 | ARCH-03 | 19 | Complete |
 | ARCH-04 | 20 | Complete |
 | ARCH-05 | 21 | Complete |
-| ARCH-06 | 21 | Pending |
+| ARCH-06 | 21 | Complete |
 | NAME-01 | 22 | Pending |
 | NAME-02 | 22 | Pending |
 | NAME-03 | 22 | Pending |

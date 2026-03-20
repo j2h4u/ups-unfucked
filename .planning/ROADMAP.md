@@ -130,7 +130,7 @@
 - [x] **Phase 18: Unify Coulomb Counting** — Extract integrate_current(), fix double avg_load computation (completed 2026-03-20)
 - [x] **Phase 19: Extract SagTracker** — Extract SagTracker module from MonitorDaemon (completed 2026-03-20)
 - [x] **Phase 20: Extract SchedulerManager** — Extract SchedulerManager module from MonitorDaemon (completed 2026-03-20)
-- [ ] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation
+- [x] **Phase 21: Extract DischargeCollector** — Extract DischargeCollector + split _score_and_persist_sulfation (completed 2026-03-20)
 - [ ] **Phase 22: Naming + Docs Sweep** — Rename BatteryModel.data, category, rls/d; add docstrings
 - [ ] **Phase 23: Test Quality Rewrite** — Outcome assertions, dependency injection, integration test accuracy
 - [ ] **Phase 24: Temperature + Security Hardening** — NUT sensor check, model.json validation, auth docs
@@ -215,10 +215,10 @@ Plans:
 4. `DischargeCollector` has direct unit tests covering sample accumulation and calibration write behavior without constructing a MonitorDaemon
 5. All existing tests pass with no regressions
 
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 21-01-PLAN.md — Split _score_and_persist_sulfation into compute/persist/log methods (ARCH-06)
+- [x] 21-01-PLAN.md — Split _score_and_persist_sulfation into compute/persist/log methods (ARCH-06)
 - [x] 21-02-PLAN.md — Extract DischargeCollector class, rewire MonitorDaemon, update tests (ARCH-05)
 
 ---
@@ -306,7 +306,7 @@ Plans:
 | 18. Unify Coulomb Counting | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 19. Extract SagTracker | v3.1 | 1/1 | Complete    | 2026-03-20 |
 | 20. Extract SchedulerManager | v3.1 | 1/1 | Complete    | 2026-03-20 |
-| 21. Extract DischargeCollector | v3.1 | 1/2 | In Progress|  |
+| 21. Extract DischargeCollector | v3.1 | 2/2 | Complete   | 2026-03-20 |
 | 22. Naming + Docs Sweep | v3.1 | 0/? | Not started | - |
 | 23. Test Quality Rewrite | v3.1 | 0/? | Not started | - |
 | 24. Temperature + Security Hardening | v3.1 | 0/? | Not started | - |
