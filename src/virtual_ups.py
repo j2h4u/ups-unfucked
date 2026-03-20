@@ -60,7 +60,7 @@ def write_virtual_ups_dev(
     sanitized = {_safe_key(k): str(v).replace('\n', '').replace('\r', '') for k, v in metrics.items()}
     content = "".join(f"{key}: {value}\n" for key, value in sanitized.items())
 
-    atomic_write(virtual_ups_path, content)
+    atomic_write(virtual_ups_path, content, mode=0o644)
 
 
 # NUT protocol wire-format status strings.

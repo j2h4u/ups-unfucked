@@ -57,7 +57,7 @@ class PhysicsParams:
 logger = logging.getLogger('ups-battery-monitor')
 
 
-def atomic_write(filepath, content: str) -> None:
+def atomic_write(filepath, content: str, mode: int = 0o600) -> None:
     """
     Safely write string content to filepath with atomic guarantees.
 
@@ -71,6 +71,8 @@ def atomic_write(filepath, content: str) -> None:
     Args:
         filepath: Target file path (str or Path)
         content: String content to write
+        mode: File permission bits (default 0o600). Callers writing
+              files read by other users/services should pass 0o644.
 
     Raises:
         IOError: If write or fdatasync fails
@@ -91,7 +93,7 @@ def atomic_write(filepath, content: str) -> None:
             tmp.write(content)
             tmp.flush()
             os.fdatasync(tmp.fileno())
-            os.fchmod(tmp.fileno(), 0o600)
+            os.fchmod(tmp.fileno(), mode)
 
         tmp_path.replace(filepath)  # atomic on POSIX (unlink + link)
         logger.debug(f"Atomically wrote {filepath}")
@@ -112,9 +114,9 @@ def atomic_write(filepath, content: str) -> None:
         raise
 
 
-def atomic_write_json(filepath, data) -> None:
+def atomic_write_json(filepath, data, mode: int = 0o600) -> None:
     """Atomically write dict as JSON. Thin wrapper around atomic_write."""
-    atomic_write(filepath, json.dumps(data, indent=2))
+    atomic_write(filepath, json.dumps(data, indent=2), mode=mode)
 
 
 class BatteryModel:

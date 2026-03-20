@@ -5,15 +5,25 @@ Separates configuration/infrastructure from daemon orchestration logic.
 
 import time
 import logging
+import subprocess
 import sys
 import tomllib
-import importlib.metadata
 from dataclasses import dataclass, field, fields
 
-try:
-    DAEMON_VERSION = importlib.metadata.version('ups-unfucked')
-except importlib.metadata.PackageNotFoundError:
-    DAEMON_VERSION = "unknown"
+
+def _get_version() -> str:
+    """Derive version from git tag (e.g. 'v3.1-2-gabcdef1'). Falls back to 'unknown'."""
+    try:
+        return subprocess.check_output(
+            ['git', 'describe', '--tags', '--always'],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return "unknown"
+
+
+DAEMON_VERSION = _get_version()
 from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
@@ -312,7 +322,7 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
     try:
         if health_path.is_symlink():
             raise OSError(f"{health_path} is a symlink, refusing to write")
-        atomic_write_json(health_path, health_data)
+        atomic_write_json(health_path, health_data, mode=0o644)
     except OSError as e:
         logger.error(
             "Failed to write health endpoint: %s", e,
