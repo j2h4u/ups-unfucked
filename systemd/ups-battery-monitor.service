@@ -4,6 +4,8 @@ Documentation=https://github.com/j2h4u/ups-battery-monitor
 After=sysinit.target network-online.target nut-server.service
 Wants=network-online.target
 ConditionPathExists=/run/nut/
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=notify
@@ -17,8 +19,6 @@ Environment="PYTHONPATH=/home/j2h4u/repos/j2h4u/ups-battery-monitor"
 ExecStart=/usr/bin/python3 -m src.monitor
 Restart=on-failure
 RestartSec=10
-StartLimitBurst=3
-StartLimitIntervalSec=60
 TimeoutStartSec=30
 StandardOutput=null
 StandardError=journal
