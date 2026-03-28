@@ -120,7 +120,7 @@ def test_service_file_unit_section_required_fields():
 
 def test_service_file_service_section_restart_config():
     """
-    Test: [Service] section has proper restart and throttling directives.
+    Test: [Service] restart directives and [Unit] rate-limiting.
 
     OPS-01: Restart=on-failure, RestartSec=10, StartLimitBurst=3,
             StartLimitIntervalSec=60
@@ -140,15 +140,19 @@ def test_service_file_service_section_restart_config():
     assert service["RestartSec"] == "10", \
         f"RestartSec should be 10, got '{service['RestartSec']}'"
 
+    # StartLimitBurst/IntervalSec belong in [Unit], not [Service]
+    assert "Unit" in config, "[Unit] section missing"
+    unit = config["Unit"]
+
     # StartLimitBurst = 3 (max 3 restarts before giving up)
-    assert "StartLimitBurst" in service, "StartLimitBurst missing"
-    assert service["StartLimitBurst"] == "3", \
-        f"StartLimitBurst should be 3, got '{service['StartLimitBurst']}'"
+    assert "StartLimitBurst" in unit, "StartLimitBurst missing from [Unit]"
+    assert unit["StartLimitBurst"] == "3", \
+        f"StartLimitBurst should be 3, got '{unit['StartLimitBurst']}'"
 
     # StartLimitIntervalSec = 60 (within 60-second window)
-    assert "StartLimitIntervalSec" in service, "StartLimitIntervalSec missing"
-    assert service["StartLimitIntervalSec"] == "60", \
-        f"StartLimitIntervalSec should be 60, got '{service['StartLimitIntervalSec']}'"
+    assert "StartLimitIntervalSec" in unit, "StartLimitIntervalSec missing from [Unit]"
+    assert unit["StartLimitIntervalSec"] == "60", \
+        f"StartLimitIntervalSec should be 60, got '{unit['StartLimitIntervalSec']}'"
 
 
 # ============================================================================
