@@ -32,7 +32,7 @@ from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
 from src.battery_math import calibrate_peukert, ScalarRLS
 
 from src.monitor_config import (
-    Config, CurrentMetrics, HealthSnapshot,
+    DAEMON_VERSION, Config, CurrentMetrics, HealthSnapshot,
     CONFIG_DIR, REPO_ROOT, POLL_INTERVAL, NUT_HOST, NUT_PORT, NUT_TIMEOUT,
     RUNTIME_THRESHOLD_MINUTES, REFERENCE_LOAD_PERCENT, REPORTING_INTERVAL_POLLS,
     HEALTH_ENDPOINT_PATH,
@@ -629,7 +629,7 @@ class MonitorDaemon:
         metrics → virtual UPS output. Runs until SIGTERM/SIGINT.
         """
         sd_notify('READY=1')
-        logger.info("Starting main polling loop")
+        logger.info("ups-battery-monitor %s starting", DAEMON_VERSION)
         self.poll_count = 0
         self._stabilization_logged = False
         self._startup_logged = False
