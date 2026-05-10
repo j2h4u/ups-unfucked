@@ -1,9 +1,10 @@
 """Tests for blackout credit and discharge classification logic."""
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
-from src.discharge_handler import DischargeHandler
+from src.discharge_handler import DischargeHandler, DischargeMetrics
 from src.model import BatteryModel
 from src.monitor_config import DischargeBuffer
 
@@ -330,7 +331,7 @@ class TestSulfationMethodSplit:
     # ------------------------------------------------------------------ #
 
     def test_compute_returns_all_required_keys(self, temporary_model_path):
-        """_compute_sulfation_metrics returns dict with all 16 required keys."""
+        """_compute_sulfation_metrics returns DischargeMetrics with all 16 required fields."""
         model = BatteryModel(temporary_model_path)
         handler = self._make_handler(model)
 
@@ -341,8 +342,9 @@ class TestSulfationMethodSplit:
             discharge_trigger="natural",
         )
 
-        assert self._REQUIRED_DATA_KEYS.issubset(data.keys()), (
-            f"Missing keys: {self._REQUIRED_DATA_KEYS - data.keys()}"
+        assert isinstance(data, DischargeMetrics)
+        assert set(f.name for f in dataclasses.fields(data)) >= self._REQUIRED_DATA_KEYS, (
+            f"Missing fields: {self._REQUIRED_DATA_KEYS - set(f.name for f in dataclasses.fields(data))}"
         )
 
     def test_compute_sets_last_state_fields(self, temporary_model_path):
@@ -391,9 +393,10 @@ class TestSulfationMethodSplit:
                 discharge_trigger="natural",
             )
 
-        assert data["sulfation_state"] is None
-        assert data["roi"] is None
-        assert self._REQUIRED_DATA_KEYS.issubset(data.keys())
+        assert data.sulfation_state is None
+        assert data.roi is None
+        assert isinstance(data, DischargeMetrics)
+        assert set(f.name for f in dataclasses.fields(data)) >= self._REQUIRED_DATA_KEYS
 
     # ------------------------------------------------------------------ #
     # _persist_sulfation_and_discharge                                     #
@@ -415,24 +418,24 @@ class TestSulfationMethodSplit:
         )
         handler.last_sulfation_confidence = "medium"
 
-        data = {
-            "now_iso": "2026-01-01T00:00:00+00:00",
-            "discharge_trigger": "natural",
-            "sulfation_score_r": 0.3,
-            "days_since_deep_r": 2.0,
-            "ir_trend_r": 0.001,
-            "recovery_delta_r": -0.02,
-            "confidence_level": "medium",
-            "sulfation_state": object(),  # truthy
-            "roi": 0.1,
-            "roi_r": 0.1,
-            "discharge_duration": 900.0,
-            "dod_r": 0.85,
-            "depth_of_discharge": 0.85,
-            "capacity_ah_ref": None,
-            "soh_new": 0.95,
-            "soh_delta": -0.02,
-        }
+        data = DischargeMetrics(
+            now_iso="2026-01-01T00:00:00+00:00",
+            discharge_trigger="natural",
+            sulfation_score_r=0.3,
+            days_since_deep_r=2.0,
+            ir_trend_r=0.001,
+            recovery_delta_r=-0.02,
+            confidence_level="medium",
+            sulfation_state=None,
+            roi=0.1,
+            roi_r=0.1,
+            discharge_duration=900.0,
+            dod_r=0.85,
+            depth_of_discharge=0.85,
+            capacity_ah_ref=None,
+            soh_new=0.95,
+            soh_delta=-0.02,
+        )
 
         handler._persist_sulfation_and_discharge(data)
 
@@ -454,24 +457,24 @@ class TestSulfationMethodSplit:
         )
         handler.last_sulfation_confidence = "medium"
 
-        data = {
-            "now_iso": "2026-01-01T00:00:00+00:00",
-            "discharge_trigger": "natural",
-            "sulfation_score_r": 0.3,
-            "days_since_deep_r": 2.0,
-            "ir_trend_r": 0.001,
-            "recovery_delta_r": -0.02,
-            "confidence_level": "medium",
-            "sulfation_state": object(),
-            "roi": 0.1,
-            "roi_r": 0.1,
-            "discharge_duration": 900.0,
-            "dod_r": 0.85,
-            "depth_of_discharge": 0.85,
-            "capacity_ah_ref": None,
-            "soh_new": 0.95,
-            "soh_delta": -0.02,
-        }
+        data = DischargeMetrics(
+            now_iso="2026-01-01T00:00:00+00:00",
+            discharge_trigger="natural",
+            sulfation_score_r=0.3,
+            days_since_deep_r=2.0,
+            ir_trend_r=0.001,
+            recovery_delta_r=-0.02,
+            confidence_level="medium",
+            sulfation_state=None,
+            roi=0.1,
+            roi_r=0.1,
+            discharge_duration=900.0,
+            dod_r=0.85,
+            depth_of_discharge=0.85,
+            capacity_ah_ref=None,
+            soh_new=0.95,
+            soh_delta=-0.02,
+        )
 
         handler._persist_sulfation_and_discharge(data)
 
@@ -493,24 +496,24 @@ class TestSulfationMethodSplit:
         )
         handler.last_sulfation_confidence = "high"
 
-        data = {
-            "now_iso": "2026-01-01T00:00:00+00:00",
-            "discharge_trigger": "natural",
-            "sulfation_score_r": 0.3,
-            "days_since_deep_r": 2.0,
-            "ir_trend_r": 0.001,
-            "recovery_delta_r": -0.02,
-            "confidence_level": "high",
-            "sulfation_state": object(),
-            "roi": 0.1,
-            "roi_r": 0.1,
-            "discharge_duration": 900.0,
-            "dod_r": 0.92,
-            "depth_of_discharge": 0.921,
-            "capacity_ah_ref": None,
-            "soh_new": 0.95,
-            "soh_delta": -0.02,
-        }
+        data = DischargeMetrics(
+            now_iso="2026-01-01T00:00:00+00:00",
+            discharge_trigger="natural",
+            sulfation_score_r=0.3,
+            days_since_deep_r=2.0,
+            ir_trend_r=0.001,
+            recovery_delta_r=-0.02,
+            confidence_level="high",
+            sulfation_state=None,
+            roi=0.1,
+            roi_r=0.1,
+            discharge_duration=900.0,
+            dod_r=0.92,
+            depth_of_discharge=0.921,
+            capacity_ah_ref=None,
+            soh_new=0.95,
+            soh_delta=-0.02,
+        )
 
         with patch.object(handler, "_grant_blackout_credit") as mock_credit:
             handler._persist_sulfation_and_discharge(data)
@@ -527,18 +530,24 @@ class TestSulfationMethodSplit:
         handler = self._make_handler(model)
         handler.last_sulfation_confidence = "medium"
 
-        data = {
-            "now_iso": "2026-01-01T00:00:00+00:00",
-            "discharge_trigger": "natural",
-            "discharge_duration": 900.0,
-            "dod_r": 0.85,
-            "sulfation_score_r": 0.3,
-            "recovery_delta_r": -0.02,
-            "roi_r": 0.1,
-            "capacity_ah_ref": None,
-            "soh_new": 0.95,
-            "soh_delta": -0.02,
-        }
+        data = DischargeMetrics(
+            now_iso="2026-01-01T00:00:00+00:00",
+            discharge_trigger="natural",
+            discharge_duration=900.0,
+            dod_r=0.85,
+            depth_of_discharge=0.85,
+            sulfation_score_r=0.3,
+            recovery_delta_r=-0.02,
+            roi_r=0.1,
+            capacity_ah_ref=None,
+            soh_new=0.95,
+            soh_delta=-0.02,
+            sulfation_state=None,
+            roi=0.1,
+            days_since_deep_r=2.0,
+            ir_trend_r=0.001,
+            confidence_level="medium",
+        )
 
         with patch("src.discharge_handler.logger") as mock_logger:
             handler._log_discharge_complete(data)
@@ -553,18 +562,24 @@ class TestSulfationMethodSplit:
         handler = self._make_handler(model)
         handler.last_sulfation_confidence = None
 
-        data = {
-            "now_iso": "2026-01-01T00:00:00+00:00",
-            "discharge_trigger": "natural",
-            "discharge_duration": 900.0,
-            "dod_r": 0.85,
-            "sulfation_score_r": None,
-            "recovery_delta_r": -0.02,
-            "roi_r": None,
-            "capacity_ah_ref": None,
-            "soh_new": 0.95,
-            "soh_delta": -0.02,
-        }
+        data = DischargeMetrics(
+            now_iso="2026-01-01T00:00:00+00:00",
+            discharge_trigger="natural",
+            discharge_duration=900.0,
+            dod_r=0.85,
+            depth_of_discharge=0.85,
+            sulfation_score_r=None,
+            recovery_delta_r=-0.02,
+            roi_r=None,
+            capacity_ah_ref=None,
+            soh_new=0.95,
+            soh_delta=-0.02,
+            sulfation_state=None,
+            roi=None,
+            days_since_deep_r=2.0,
+            ir_trend_r=0.001,
+            confidence_level="low",
+        )
 
         with patch("src.discharge_handler.logger") as mock_logger:
             handler._log_discharge_complete(data)  # must not raise

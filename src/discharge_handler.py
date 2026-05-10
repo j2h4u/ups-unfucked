@@ -9,6 +9,7 @@ rest of the discharge pipeline to complete.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -16,7 +17,7 @@ from src import alerter, replacement_predictor, soh_calculator
 from src.battery_math import ScalarRLS, calibrate_peukert
 from src.battery_math.cycle_roi import compute_cycle_roi
 from src.battery_math.regression import linear_regression_slope
-from src.battery_math.sulfation import compute_sulfation_score
+from src.battery_math.sulfation import SulfationState, compute_sulfation_score
 from src.capacity_estimator import CapacityEstimator
 from src.model import BatteryModel
 from src.monitor_config import MIN_DISCHARGE_DURATION_SEC, DischargeBuffer, safe_save
@@ -33,6 +34,33 @@ def _parse_iso_utc(s: str) -> datetime:
 
 
 RATED_CYCLE_LIFE = 300  # CyberPower UT850EG datasheet: 300 cycles @ 100% DoD, 25°C
+
+
+@dataclass(frozen=True)
+class DischargeMetrics:
+    """Per-discharge metrics computed once, consumed by persist + log steps.
+
+    Produced by DischargeHandler._compute_sulfation_metrics(); consumed by
+    _persist_sulfation_and_discharge() and _log_discharge_complete().
+    Frozen to enforce single-write semantics across the discharge pipeline.
+    """
+
+    now_iso: str
+    sulfation_state: Optional[SulfationState]
+    roi: Optional[float]
+    sulfation_score_r: Optional[float]
+    days_since_deep_r: Optional[float]
+    ir_trend_r: float
+    recovery_delta_r: float
+    discharge_duration: float
+    dod_r: float
+    depth_of_discharge: float
+    roi_r: Optional[float]
+    soh_new: float
+    soh_delta: float
+    discharge_trigger: str
+    capacity_ah_ref: Optional[float]
+    confidence_level: str
 
 
 class DischargeHandler:
@@ -265,20 +293,20 @@ class DischargeHandler:
         discharge_buffer: DischargeBuffer,
         discharge_trigger: str,
         capacity_ah_ref: Optional[float] = None,
-    ) -> dict:
+    ) -> "DischargeMetrics":
         """Compute sulfation score and pre-compute all shared values.
 
         Calls compute_sulfation_score() and compute_cycle_roi(), updates
-        in-memory last_* state fields, and returns a dict with all 16 keys
+        in-memory last_* state fields, and returns a DischargeMetrics instance
         needed by persist and log steps. On scoring failure (ValueError/TypeError),
-        returns a dict with sulfation_state=None and roi=None but all other
-        keys populated.
+        returns a DischargeMetrics with sulfation_state=None and roi=None but all
+        other fields populated.
 
         Returns:
-            dict with keys: now_iso, sulfation_state, roi, sulfation_score_r,
-            days_since_deep_r, ir_trend_r, recovery_delta_r, discharge_duration,
-            dod_r, roi_r, soh_new, soh_delta, discharge_trigger, capacity_ah_ref,
-            confidence_level, depth_of_discharge.
+            DischargeMetrics with fields: now_iso, sulfation_state, roi,
+            sulfation_score_r, days_since_deep_r, ir_trend_r, recovery_delta_r,
+            discharge_duration, dod_r, roi_r, soh_new, soh_delta, discharge_trigger,
+            capacity_ah_ref, confidence_level, depth_of_discharge.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
         days_since_deep = self._calculate_days_since_deep()
@@ -332,86 +360,86 @@ class DischargeHandler:
         roi_r = round(roi, 3) if roi is not None else None
         confidence_level = self.last_sulfation_confidence or "low"
 
-        return {
-            "now_iso": now_iso,
-            "sulfation_state": sulfation_state,
-            "roi": roi,
-            "sulfation_score_r": sulfation_score_r,
-            "days_since_deep_r": days_since_deep_r,
-            "ir_trend_r": ir_trend_r,
-            "recovery_delta_r": recovery_delta_r,
-            "discharge_duration": discharge_duration,
-            "dod_r": dod_r,
-            "depth_of_discharge": depth_of_discharge,
-            "roi_r": roi_r,
-            "soh_new": soh_new,
-            "soh_delta": soh_delta,
-            "discharge_trigger": discharge_trigger,
-            "capacity_ah_ref": capacity_ah_ref,
-            "confidence_level": confidence_level,
-        }
+        return DischargeMetrics(
+            now_iso=now_iso,
+            sulfation_state=sulfation_state,
+            roi=roi,
+            sulfation_score_r=sulfation_score_r,
+            days_since_deep_r=days_since_deep_r,
+            ir_trend_r=ir_trend_r,
+            recovery_delta_r=recovery_delta_r,
+            discharge_duration=discharge_duration,
+            dod_r=dod_r,
+            depth_of_discharge=depth_of_discharge,
+            roi_r=roi_r,
+            soh_new=soh_new,
+            soh_delta=soh_delta,
+            discharge_trigger=discharge_trigger,
+            capacity_ah_ref=capacity_ah_ref,
+            confidence_level=confidence_level,
+        )
 
-    def _persist_sulfation_and_discharge(self, data: dict) -> None:
+    def _persist_sulfation_and_discharge(self, data: "DischargeMetrics") -> None:
         """Write sulfation_history and discharge_event entries, grant blackout credit.
 
         Appends one entry to each model list and calls _grant_blackout_credit
         using the unrounded depth_of_discharge for the >=0.90 threshold check.
 
         Args:
-            data: dict returned by _compute_sulfation_metrics.
+            data: DischargeMetrics returned by _compute_sulfation_metrics.
         """
         self.battery_model.append_sulfation_history(
             {
-                "timestamp": data["now_iso"],
-                "event_type": data["discharge_trigger"],
-                "sulfation_score": data["sulfation_score_r"],
-                "days_since_deep": data["days_since_deep_r"],
-                "ir_trend_rate": data["ir_trend_r"],
-                "recovery_delta": data["recovery_delta_r"],
+                "timestamp": data.now_iso,
+                "event_type": data.discharge_trigger,
+                "sulfation_score": data.sulfation_score_r,
+                "days_since_deep": data.days_since_deep_r,
+                "ir_trend_rate": data.ir_trend_r,
+                "recovery_delta": data.recovery_delta_r,
                 "temperature_celsius": 35.0,
                 "temperature_source": "assumed_constant",
-                "confidence_level": data["confidence_level"],
+                "confidence_level": data.confidence_level,
             }
         )
 
         self.battery_model.append_discharge_event(
             {
-                "timestamp": data["now_iso"],
-                "event_reason": data["discharge_trigger"],
-                "duration_seconds": data["discharge_duration"],
-                "depth_of_discharge": data["dod_r"],
-                "measured_capacity_ah": data["capacity_ah_ref"],
-                "cycle_roi": data["roi_r"],
+                "timestamp": data.now_iso,
+                "event_reason": data.discharge_trigger,
+                "duration_seconds": data.discharge_duration,
+                "depth_of_discharge": data.dod_r,
+                "measured_capacity_ah": data.capacity_ah_ref,
+                "cycle_roi": data.roi_r,
             }
         )
 
-        self._grant_blackout_credit(data["discharge_trigger"], data["depth_of_discharge"])
+        self._grant_blackout_credit(data.discharge_trigger, data.depth_of_discharge)
 
-    def _log_discharge_complete(self, data: dict) -> None:
+    def _log_discharge_complete(self, data: "DischargeMetrics") -> None:
         """Emit the structured journald discharge_complete event.
 
         Logs None sulfation_score and roi values without raising.
 
         Args:
-            data: dict returned by _compute_sulfation_metrics.
+            data: DischargeMetrics returned by _compute_sulfation_metrics.
         """
         logger.info(
             "Discharge complete",
             extra={
                 "event_type": "discharge_complete",
-                "discharge_trigger": data["discharge_trigger"],
-                "duration_seconds": int(data["discharge_duration"]),
-                "depth_of_discharge": data["dod_r"],
-                "sulfation_score": data["sulfation_score_r"],
+                "discharge_trigger": data.discharge_trigger,
+                "duration_seconds": int(data.discharge_duration),
+                "depth_of_discharge": data.dod_r,
+                "sulfation_score": data.sulfation_score_r,
                 "sulfation_confidence": self.last_sulfation_confidence,
-                "recovery_delta": data["recovery_delta_r"],
-                "cycle_roi": data["roi_r"],
-                "measured_capacity_ah": round(data["capacity_ah_ref"], 2)
-                if data["capacity_ah_ref"] is not None
+                "recovery_delta": data.recovery_delta_r,
+                "cycle_roi": data.roi_r,
+                "measured_capacity_ah": round(data.capacity_ah_ref, 2)
+                if data.capacity_ah_ref is not None
                 else None,
                 "temperature_celsius": 35.0,
                 "temperature_source": "assumed_constant",
-                "timestamp": data["now_iso"],
+                "timestamp": data.now_iso,
             },
         )
 
