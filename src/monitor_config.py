@@ -261,7 +261,7 @@ if logger.handlers:
 try:
     from systemd.journal import JournalHandler
 
-    log_handler = JournalHandler(identifier="ups-battery-monitor")
+    log_handler = JournalHandler(SYSLOG_IDENTIFIER="ups-battery-monitor")
     log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
     logger.addHandler(log_handler)
 except (ImportError, OSError, ValueError) as e:
