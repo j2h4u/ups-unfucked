@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 try:
-    from systemd.daemon import notify as sd_notify
+    from systemd.daemon import notify as sd_notify  # pyright: ignore[reportMissingImports]
 except ImportError:
     # python-systemd not installed (dev/test environment).
     # Only affects watchdog heartbeats and READY=1 signal — daemon logic is unaffected.
@@ -300,9 +300,12 @@ class MonitorDaemon:
             )
             self.current_metrics.shutdown_imminent = False
 
-        self.current_metrics.ups_status_override = compute_ups_status_override(
-            event_type, self.current_metrics.time_rem_minutes or 0, self.shutdown_threshold_minutes
-        )
+        if event_type is not None:
+            self.current_metrics.ups_status_override = compute_ups_status_override(
+                event_type,
+                self.current_metrics.time_rem_minutes or 0,
+                self.shutdown_threshold_minutes,
+            )
 
         if (
             self.current_metrics.transition_occurred
@@ -472,6 +475,7 @@ class MonitorDaemon:
         l_ema = self.ema_filter.load
         if not self.ema_filter.stabilized:
             return None, None
+        assert l_ema is not None
 
         v_norm = ir_compensate(v_ema, l_ema, self.ir_reference_load_percent, self.sag_tracker.ir_k)
         if v_norm is None:
@@ -547,6 +551,7 @@ class MonitorDaemon:
         poll_latency_ms = (time.time() - timestamp) * 1000
 
         if not self._startup_logged:
+            assert self._startup_time is not None
             startup_delta_ms = (time.monotonic() - self._startup_time) * 1000
             logger.info(
                 f"First successful poll completed: startup took {startup_delta_ms:.0f}ms",

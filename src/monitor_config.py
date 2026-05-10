@@ -259,7 +259,7 @@ if logger.handlers:
     logger.handlers.clear()
 
 try:
-    from systemd.journal import JournalHandler
+    from systemd.journal import JournalHandler  # pyright: ignore[reportMissingImports]
 
     log_handler = JournalHandler(SYSLOG_IDENTIFIER="ups-battery-monitor")
     log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))

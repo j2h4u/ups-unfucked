@@ -53,7 +53,7 @@ class NUTClient:
         self.timeout = timeout
         self.ups_name = ups_name
         _validate_nut_identifier(ups_name, "ups_name")
-        self.sock = None
+        self.sock: socket.socket | None = None
 
     def _close_socket(self):
         """Close socket, swallowing I/O errors."""
@@ -116,6 +116,7 @@ class NUTClient:
         """
         if "\n" in command or "\r" in command:
             raise ValueError(f"NUT protocol injection: control char in command: {command!r}")
+        assert self.sock is not None
         self.sock.sendall((command + "\n").encode())
         response = self.sock.recv(4096).decode().strip()
         return response
@@ -166,6 +167,7 @@ class NUTClient:
         Raises:
             socket.timeout: If wall-clock deadline exceeded or individual recv times out
         """
+        assert self.sock is not None
         buf = b""
         delim_bytes = delimiter.encode()
         deadline = time.monotonic() + self.timeout
@@ -197,6 +199,7 @@ class NUTClient:
             socket.error: If socket communication fails (caller should retry)
         """
         with self._socket_session():
+            assert self.sock is not None
             self.sock.sendall(f"LIST VAR {self.ups_name}\n".encode())
             raw = self._recv_until(f"END LIST VAR {self.ups_name}")
 

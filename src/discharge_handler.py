@@ -108,7 +108,7 @@ class DischargeHandler:
         self.last_days_since_deep: Optional[float] = None
         self.last_ir_trend_rate: float = 0.0
         self.last_recovery_delta: float = 0.0
-        self.last_cycle_roi: float = 0.0
+        self.last_cycle_roi: float | None = None
         self.last_cycle_budget_remaining: int = 0
         self.last_discharge_timestamp: Optional[str] = None
 
@@ -540,7 +540,7 @@ class DischargeHandler:
             )
 
     def _log_discharge_prediction(
-        self, discharge_buffer: DischargeBuffer, current_soc: float = 0.0
+        self, discharge_buffer: DischargeBuffer, current_soc: float | None = None
     ) -> None:
         """Log prediction vs actual runtime for model accuracy tracking.
 

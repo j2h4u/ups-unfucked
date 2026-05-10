@@ -464,7 +464,7 @@ class BatteryModel:
 
     # --- Enterprise-equivalent counters ---
 
-    def get_battery_install_date(self) -> str:
+    def get_battery_install_date(self) -> str | None:
         return self.state.get("battery_install_date")
 
     def set_battery_install_date(self, date_str: str):
@@ -480,11 +480,11 @@ class BatteryModel:
     def get_cumulative_on_battery_sec(self) -> float:
         return self.state.get("cumulative_on_battery_sec", 0.0)
 
-    def get_replacement_due(self) -> str:
+    def get_replacement_due(self) -> str | None:
         """Return predicted replacement due date (ISO8601 or None)."""
         return self.state.get("replacement_due")
 
-    def set_replacement_due(self, date_str: str):
+    def set_replacement_due(self, date_str: str | None):
         """Set predicted replacement due date (ISO8601 string or None)."""
         self.state["replacement_due"] = date_str
 

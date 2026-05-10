@@ -185,8 +185,8 @@ class SchedulerManager:
         self.scheduling_config = scheduling_config
         self.discharge_handler = discharge_handler
         self.scheduler_evaluated_today = False
-        self.last_scheduling_reason: str = "observing"
-        self.last_next_test_timestamp: Optional[str] = None
+        self._last_scheduling_reason: str = "observing"
+        self._last_next_test_timestamp: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Public interface
