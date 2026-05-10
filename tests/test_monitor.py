@@ -11,6 +11,8 @@ import pytest
 sys.modules["systemd"] = MagicMock()
 sys.modules["systemd.journal"] = MagicMock()
 
+from src.model import ConvergenceStatus
+
 
 @pytest.fixture
 def make_daemon(daemon_config):
@@ -351,7 +353,16 @@ def test_discharge_buffer_cleared_after_health_update(make_daemon):
     mock_model.get_nominal_voltage.return_value = 12.0
     mock_model.get_nominal_power_watts.return_value = 425.0
     # Mock convergence status (measured capacity not converged by default)
-    mock_model.get_convergence_status.return_value = {"converged": False, "sample_count": 1}
+    mock_model.get_convergence_status.return_value = ConvergenceStatus(
+        sample_count=1,
+        confidence_percent=0.0,
+        latest_ah=None,
+        rated_ah=7.2,
+        converged=False,
+        capacity_ah_measured=None,
+        cov=0.0,
+        mean_ah=0.0,
+    )
     daemon.battery_model = mock_model
 
     daemon.ema_filter = MagicMock()
@@ -1270,14 +1281,16 @@ class TestCapacityEstimatorIntegration:
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.state = {"lut": [], "capacity_estimates": []}
-        daemon.battery_model.get_convergence_status.return_value = {
-            "sample_count": 1,
-            "confidence_percent": 85.0,
-            "latest_ah": 7.45,
-            "rated_ah": 7.2,
-            "converged": False,
-            "capacity_ah_ref": None,
-        }
+        daemon.battery_model.get_convergence_status.return_value = ConvergenceStatus(
+            sample_count=1,
+            confidence_percent=85.0,
+            latest_ah=7.45,
+            rated_ah=7.2,
+            converged=False,
+            capacity_ah_measured=None,
+            cov=0.0,
+            mean_ah=0.0,
+        )
 
         # Setup discharge data
         discharge_data = {
@@ -1338,14 +1351,16 @@ class TestCapacityEstimatorIntegration:
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.state = {"lut": [], "capacity_estimates": []}
-        daemon.battery_model.get_convergence_status.return_value = {
-            "sample_count": 1,
-            "confidence_percent": 85.0,
-            "latest_ah": 7.45,
-            "rated_ah": 7.2,
-            "converged": False,
-            "capacity_ah_ref": None,
-        }
+        daemon.battery_model.get_convergence_status.return_value = ConvergenceStatus(
+            sample_count=1,
+            confidence_percent=85.0,
+            latest_ah=7.45,
+            rated_ah=7.2,
+            converged=False,
+            capacity_ah_measured=None,
+            cov=0.0,
+            mean_ah=0.0,
+        )
 
         discharge_data = {
             "voltage_series": [12.5, 12.0, 11.5, 11.0],
@@ -1385,14 +1400,16 @@ class TestCapacityEstimatorIntegration:
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.state = {"lut": [], "capacity_estimates": []}
-        daemon.battery_model.get_convergence_status.return_value = {
-            "sample_count": 3,
-            "confidence_percent": 95.0,
-            "latest_ah": 7.45,
-            "rated_ah": 7.2,
-            "converged": True,
-            "capacity_ah_ref": None,
-        }
+        daemon.battery_model.get_convergence_status.return_value = ConvergenceStatus(
+            sample_count=3,
+            confidence_percent=95.0,
+            latest_ah=7.45,
+            rated_ah=7.2,
+            converged=True,
+            capacity_ah_measured=None,
+            cov=0.0,
+            mean_ah=0.0,
+        )
 
         discharge_data = {
             "voltage_series": [12.5, 11.0],
@@ -1459,14 +1476,16 @@ class TestCapacityEstimatorIntegration:
         daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
         daemon.discharge_handler.battery_model = daemon.battery_model
         daemon.battery_model.state = {"lut": [], "capacity_estimates": []}
-        daemon.battery_model.get_convergence_status.return_value = {
-            "sample_count": 1,
-            "confidence_percent": 82.0,
-            "latest_ah": 7.45,
-            "rated_ah": 7.2,
-            "converged": False,
-            "capacity_ah_ref": None,
-        }
+        daemon.battery_model.get_convergence_status.return_value = ConvergenceStatus(
+            sample_count=1,
+            confidence_percent=82.0,
+            latest_ah=7.45,
+            rated_ah=7.2,
+            converged=False,
+            capacity_ah_measured=None,
+            cov=0.0,
+            mean_ah=0.0,
+        )
 
         discharge_data = {
             "voltage_series": [12.5, 12.3, 12.1, 11.9, 11.7, 11.5, 11.3, 11.1, 10.9],
@@ -1683,14 +1702,16 @@ def test_journald_capacity_event_logged(make_daemon):
     # Setup battery_model with real dict for data
     daemon.battery_model.state = {}
     daemon.battery_model.get_capacity_ah.return_value = 7.2
-    daemon.battery_model.get_convergence_status.return_value = {
-        "sample_count": 1,
-        "confidence_percent": 88.0,
-        "latest_ah": 6.95,
-        "rated_ah": 7.2,
-        "converged": False,
-        "capacity_ah_ref": None,
-    }
+    daemon.battery_model.get_convergence_status.return_value = ConvergenceStatus(
+        sample_count=1,
+        confidence_percent=88.0,
+        latest_ah=6.95,
+        rated_ah=7.2,
+        converged=False,
+        capacity_ah_measured=None,
+        cov=0.0,
+        mean_ah=0.0,
+    )
 
     # Mock the capacity_estimator to return a valid estimate
     ah_estimate = 6.95
@@ -1756,14 +1777,16 @@ def test_journald_baseline_lock_event(make_daemon):
     # Setup battery_model with real dict for data
     daemon.battery_model.state = {}
     daemon.battery_model.get_capacity_ah.return_value = 7.2
-    daemon.battery_model.get_convergence_status.return_value = {
-        "sample_count": 3,
-        "confidence_percent": 92.0,
-        "latest_ah": 6.95,
-        "rated_ah": 7.2,
-        "converged": True,
-        "capacity_ah_ref": None,
-    }
+    daemon.battery_model.get_convergence_status.return_value = ConvergenceStatus(
+        sample_count=3,
+        confidence_percent=92.0,
+        latest_ah=6.95,
+        rated_ah=7.2,
+        converged=True,
+        capacity_ah_measured=None,
+        cov=0.0,
+        mean_ah=0.0,
+    )
 
     # Setup: CapacityEstimator in converged state
     ah_estimate = 6.95

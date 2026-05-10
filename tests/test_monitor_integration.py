@@ -21,7 +21,7 @@ import pytest
 
 from src.battery_math.rls import ScalarRLS
 from src.event_classifier import EventType
-from src.model import BatteryModel
+from src.model import BatteryModel, ConvergenceStatus
 from src.monitor import MonitorDaemon
 from src.monitor_config import Config, DischargeBuffer
 
@@ -371,14 +371,16 @@ def test_journald_event_filtering():
                 patch.object(daemon.battery_model, "save"),
             ):
                 # Setup convergence status mock
-                mock_convergence.return_value = {
-                    "sample_count": 1,
-                    "confidence_percent": 88.0,
-                    "latest_ah": 6.95,
-                    "rated_ah": 7.2,
-                    "converged": False,
-                    "capacity_ah_ref": None,
-                }
+                mock_convergence.return_value = ConvergenceStatus(
+                    sample_count=1,
+                    confidence_percent=88.0,
+                    latest_ah=6.95,
+                    rated_ah=7.2,
+                    converged=False,
+                    capacity_ah_measured=None,
+                    cov=0.0,
+                    mean_ah=0.0,
+                )
 
                 # Setup mocks for capacity estimation
                 daemon.battery_model.state = {}
@@ -444,14 +446,16 @@ def test_journald_event_filtering():
                     )
 
                 # Now simulate convergence and verify baseline_lock
-                mock_convergence.return_value = {
-                    "sample_count": 3,
-                    "confidence_percent": 92.0,
-                    "latest_ah": 6.95,
-                    "rated_ah": 7.2,
-                    "converged": True,
-                    "capacity_ah_ref": None,
-                }
+                mock_convergence.return_value = ConvergenceStatus(
+                    sample_count=3,
+                    confidence_percent=92.0,
+                    latest_ah=6.95,
+                    rated_ah=7.2,
+                    converged=True,
+                    capacity_ah_measured=None,
+                    cov=0.0,
+                    mean_ah=0.0,
+                )
                 daemon.battery_model.state["capacity_estimates"] = [
                     {"ah_estimate": 6.88},
                     {"ah_estimate": 6.92},
