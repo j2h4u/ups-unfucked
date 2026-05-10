@@ -790,13 +790,13 @@ class BatteryModel:
             mean_ah=sum(ah_values) / len(ah_values),
         )
 
-    def get_anchor_voltage(self):
-        """Return anchor point voltage (physical cutoff, should always be 10.5V)."""
+    def get_anchor_voltage(self) -> Optional[float]:
+        """Return anchor point voltage (physical cutoff), or None if LUT has no anchor entry."""
         lut = self.get_lut()
         for entry in lut:
             if entry["soc"] == 0.0 and entry["source"] == "anchor":
                 return entry["v"]
-        return 10.5
+        return None
 
     def has_measured_data(self):
         """True if LUT contains any 'measured' source entries."""

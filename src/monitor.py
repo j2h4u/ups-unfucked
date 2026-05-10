@@ -204,9 +204,8 @@ class MonitorDaemon:
                 f"Model LUT has only {len(lut)} point(s); predictions will be inaccurate until calibration"
             )
 
-        anchor = self.battery_model.state.get("anchor_voltage")
-        if anchor is None:
-            logger.warning("Model missing anchor_voltage; SoH calculation may fail")
+        if self.battery_model.get_anchor_voltage() is None:
+            logger.warning("Model LUT missing anchor entry (soc=0.0, source='anchor'); SoH calculation may fail")
 
         soh = self.battery_model.get_soh()
         if not (0.0 < soh <= 1.0):
