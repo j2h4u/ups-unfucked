@@ -56,6 +56,7 @@ class RLSParams:
     sample_count: int = 0
     forgetting_factor: float = 0.97
 
+
 @dataclass
 class PhysicsParams:
     """Typed view of the physics sub-dict in model.json."""
@@ -279,7 +280,9 @@ class BatteryModel:
                 "k_volts_per_percent": self.physics.ir_compensation.k_volts_per_percent,
                 "reference_load_percent": self.physics.ir_compensation.reference_load_percent,
             },
-            "rls_state": {name: dataclasses.asdict(rls) for name, rls in self.physics.rls_state.items()},
+            "rls_state": {
+                name: dataclasses.asdict(rls) for name, rls in self.physics.rls_state.items()
+            },
         }
 
     def _apply_defaults(self):

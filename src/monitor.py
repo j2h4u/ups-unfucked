@@ -205,7 +205,9 @@ class MonitorDaemon:
             )
 
         if self.battery_model.get_anchor_voltage() is None:
-            logger.warning("Model LUT missing anchor entry (soc=0.0, source='anchor'); SoH calculation may fail")
+            logger.warning(
+                "Model LUT missing anchor entry (soc=0.0, source='anchor'); SoH calculation may fail"
+            )
 
         soh = self.battery_model.get_soh()
         if not (0.0 < soh <= 1.0):
