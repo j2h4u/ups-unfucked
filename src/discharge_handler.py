@@ -19,7 +19,7 @@ from src.battery_math.cycle_roi import compute_cycle_roi
 from src.battery_math.regression import linear_regression_slope
 from src.battery_math.sulfation import SulfationState, compute_sulfation_score
 from src.capacity_estimator import CapacityEstimator
-from src.model import BatteryModel
+from src.model import BatteryModel, ConvergenceStatus
 from src.monitor_config import MIN_DISCHARGE_DURATION_SEC, DischargeBuffer, safe_save
 from src.runtime_calculator import runtime_minutes
 
@@ -208,7 +208,7 @@ class DischargeHandler:
         or None. Persists replacement_due date in the model.
         """
         convergence = self.battery_model.get_convergence_status()
-        if convergence.get("converged", False):
+        if convergence.converged:
             replacement_prediction = replacement_predictor.linear_regression_soh(
                 soh_history=self.battery_model.get_soh_history(),
                 threshold_soh=self.soh_threshold,
@@ -622,9 +622,9 @@ class DischargeHandler:
         safe_save(self.battery_model)
 
         convergence_status = self.battery_model.get_convergence_status()
-        sample_count = convergence_status["sample_count"]
-        cov = convergence_status.get("cov", 0.0)
-        mean_ah = convergence_status.get("mean_ah", 0.0)
+        sample_count = convergence_status.sample_count
+        cov = convergence_status.cov
+        mean_ah = convergence_status.mean_ah
         std_ah = cov * mean_ah
 
         confidence_pct = int(confidence * 100) if confidence else 0
@@ -650,7 +650,7 @@ class DischargeHandler:
         if self.capacity_estimator.has_converged():
             self._handle_capacity_convergence(convergence_status)
 
-    def _handle_capacity_convergence(self, convergence_status: dict) -> None:
+    def _handle_capacity_convergence(self, convergence_status: ConvergenceStatus) -> None:
         """Lock baseline on first convergence, detect new battery, persist flags.
 
         Write-once guard: baseline_lock is logged exactly once per daemon lifecycle
@@ -662,16 +662,16 @@ class DischargeHandler:
 
         if not self.has_logged_baseline_lock:
             logger.info(
-                f"baseline_lock: capacity converged at {convergence_status['latest_ah']:.2f}Ah after {convergence_status['sample_count']} deep discharges",
+                f"baseline_lock: capacity converged at {convergence_status.latest_ah:.2f}Ah after {convergence_status.sample_count} deep discharges",
                 extra={
                     "event_type": "baseline_lock",
-                    "capacity_ah": f"{convergence_status['latest_ah']:.2f}",
-                    "sample_count": str(convergence_status["sample_count"]),
+                    "capacity_ah": f"{convergence_status.latest_ah:.2f}",
+                    "sample_count": str(convergence_status.sample_count),
                 },
             )
             self.has_logged_baseline_lock = True
 
-        current_measured = convergence_status.get("latest_ah")
+        current_measured = convergence_status.latest_ah
         stored_baseline = self.battery_model.state.get("capacity_ah_measured", None)
 
         if stored_baseline is not None:
