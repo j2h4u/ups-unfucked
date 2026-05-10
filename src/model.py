@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -54,15 +55,6 @@ class RLSParams:
     P: float = 1.0
     sample_count: int = 0
     forgetting_factor: float = 0.97
-
-    def to_dict(self) -> dict:
-        return {
-            "theta": self.theta,
-            "P": self.P,
-            "sample_count": self.sample_count,
-            "forgetting_factor": self.forgetting_factor,
-        }
-
 
 @dataclass
 class PhysicsParams:
@@ -287,7 +279,7 @@ class BatteryModel:
                 "k_volts_per_percent": self.physics.ir_compensation.k_volts_per_percent,
                 "reference_load_percent": self.physics.ir_compensation.reference_load_percent,
             },
-            "rls_state": {name: rls.to_dict() for name, rls in self.physics.rls_state.items()},
+            "rls_state": {name: dataclasses.asdict(rls) for name, rls in self.physics.rls_state.items()},
         }
 
     def _apply_defaults(self):
@@ -509,8 +501,8 @@ class BatteryModel:
         """Get RLS estimator state as dict (for ScalarRLS.from_dict compatibility)."""
         rls = self.physics.rls_state.get(name)
         if rls is None:
-            return RLSParams().to_dict()
-        return rls.to_dict()
+            return dataclasses.asdict(RLSParams())
+        return dataclasses.asdict(rls)
 
     def set_rls_state(self, name: str, theta: float, P: float, sample_count: int) -> None:
         """Update RLS estimator state (persisted on next save)."""

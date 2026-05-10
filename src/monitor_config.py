@@ -284,7 +284,7 @@ def safe_save(model: BatteryModel) -> None:
         logger.error("Failed to persist model: %s", e, extra={"event_type": "model_save_failed"})
 
 
-@dataclass
+@dataclass(frozen=True)
 class HealthSnapshot:
     """Aggregated health state for external monitoring tools.
 

@@ -1,14 +1,16 @@
 """Capacity estimator: measures actual battery Ah from discharge events via coulomb counting."""
 
 import logging
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 from src.battery_math import integrate_current
 from src.battery_math.constants import MIN_DISCHARGE_DURATION_SEC
 from src.soc_predictor import soc_from_voltage
 
 
-class CapacityMeasurement(NamedTuple):
+@dataclass(frozen=True)
+class CapacityMeasurement:
     """Single capacity measurement from a discharge event."""
 
     timestamp: str
@@ -290,7 +292,7 @@ class CapacityEstimator:
         """Converged: count >= 3 AND CoV < 0.10."""
         if len(self.capacity_measurements) < 3:
             return False
-        return compute_cov([m[1] for m in self.capacity_measurements]) < 0.10
+        return compute_cov([m.ah for m in self.capacity_measurements]) < 0.10
 
     def get_weighted_estimate(self) -> float:
         """
@@ -318,10 +320,10 @@ class CapacityEstimator:
             return ah_sum / len(self.capacity_measurements)
 
         weighted_ah = 0.0
-        for timestamp, ah, confidence, metadata in self.capacity_measurements:
-            delta_soc_percent = metadata.get("delta_soc_percent", 0)
+        for m in self.capacity_measurements:
+            delta_soc_percent = m.metadata.get("delta_soc_percent", 0)
             weight = delta_soc_percent / total_delta_soc
-            weighted_ah += weight * ah
+            weighted_ah += weight * m.ah
 
         return weighted_ah
 
