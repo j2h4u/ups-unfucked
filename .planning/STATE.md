@@ -120,7 +120,8 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 |---|-------------|------|--------|-----------|
 | 260510-kre | Introduce DischargeMetrics dataclass to replace the 16-key opaque dict in discharge_handler.py | 2026-05-10 | 8476d56 | [260510-kre-introduce-dischargemetrics-dataclass-to-](./quick/260510-kre-introduce-dischargemetrics-dataclass-to-/) |
 | 260510-l19 | Introduce ConvergenceStatus frozen dataclass to replace the 8-key dict returned by get_convergence_status() in model.py | 2026-05-10 | aea0b0d | [260510-l19-introduce-convergencestatus-frozen-datac](./quick/260510-l19-introduce-convergencestatus-frozen-datac/) |
+| 260510-lhk | Three dataclass cleanups: frozen CapacityMeasurement (NamedTuple→dataclass, fix m[1]/tuple-unpack), frozen HealthSnapshot, drop RLSParams.to_dict() | 2026-05-10 | 19098c8 | [260510-lhk-three-small-dataclass-cleanups-capacitym](./quick/260510-lhk-three-small-dataclass-cleanups-capacitym/) |
 
 ---
 
-*State updated: 2026-05-10 — Completed quick task 260510-l19: Introduce ConvergenceStatus frozen dataclass*
+*State updated: 2026-05-10 — Completed quick task 260510-lhk: Three small dataclass cleanups (CapacityMeasurement/HealthSnapshot frozen, RLSParams.to_dict dropped)*
