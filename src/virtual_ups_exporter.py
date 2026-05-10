@@ -3,7 +3,7 @@
 import logging
 
 from src.event_classifier import EventType
-from src.monitor_config import RATED_CAPACITY_AH, HealthSnapshot, write_health_endpoint
+from src.monitor_config import HealthSnapshot, write_health_endpoint
 from src.virtual_ups import write_virtual_ups_dev
 
 logger = logging.getLogger("ups-battery-monitor")

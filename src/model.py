@@ -1,11 +1,11 @@
 """Battery model persistence with atomic JSON writes and VRLA LUT initialization."""
 
 import bisect
+import dataclasses
 import json
 import logging
 import os
 import tempfile
-import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
