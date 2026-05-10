@@ -1,6 +1,5 @@
 """Unit tests for event classifier module (EVT-01)."""
 
-import pytest
 from src.event_classifier import EventClassifier, EventType
 
 
@@ -35,12 +34,12 @@ class TestEventStateTransitions:
         # Start online
         classifier.classify(ups_status="OL", input_voltage=230)
         assert classifier.state == EventType.ONLINE
-        assert classifier.transition_occurred == False
+        assert not classifier.transition_occurred
 
         # Transition to blackout
         classifier.classify(ups_status="OB DISCHRG", input_voltage=0)
         assert classifier.state == EventType.BLACKOUT_REAL
-        assert classifier.transition_occurred == True, "Transition flag should be set"
+        assert classifier.transition_occurred, "Transition flag should be set"
 
     def test_transition_real_blackout_to_ol(self):
         """Test transition from BLACKOUT_REAL back to ONLINE (power restored)."""
@@ -52,7 +51,7 @@ class TestEventStateTransitions:
         # Transition back to online
         classifier.classify(ups_status="OL", input_voltage=230)
         assert classifier.state == EventType.ONLINE
-        assert classifier.transition_occurred == True, "Transition flag should be set"
+        assert classifier.transition_occurred, "Transition flag should be set"
 
     def test_no_transition_when_state_unchanged(self):
         """Test transition_occurred=False when state doesn't change."""
@@ -60,7 +59,7 @@ class TestEventStateTransitions:
         # Stay online
         classifier.classify(ups_status="OL", input_voltage=230)
         classifier.classify(ups_status="OL", input_voltage=230)
-        assert classifier.transition_occurred == False, "No transition should occur"
+        assert not classifier.transition_occurred, "No transition should occur"
 
 
 class TestEventUndefinedVoltage:
@@ -71,22 +70,25 @@ class TestEventUndefinedVoltage:
         classifier = EventClassifier()
         # Should not crash; should handle defensively
         result = classifier.classify(ups_status="OB DISCHRG", input_voltage=75)
-        assert result == EventType.BLACKOUT_REAL, \
+        assert result == EventType.BLACKOUT_REAL, (
             f"Expected BLACKOUT_REAL for undefined voltage range, got {result}"
+        )
 
     def test_undefined_voltage_range_50v(self):
         """Test input.voltage=50V (boundary of undefined range)."""
         classifier = EventClassifier()
         result = classifier.classify(ups_status="OB DISCHRG", input_voltage=50)
-        assert result == EventType.BLACKOUT_REAL, \
+        assert result == EventType.BLACKOUT_REAL, (
             f"Expected BLACKOUT_REAL at 50V boundary, got {result}"
+        )
 
     def test_undefined_voltage_range_100v(self):
         """Test input.voltage=100V (threshold boundary: >=100 = mains present)."""
         classifier = EventClassifier()
         result = classifier.classify(ups_status="OB DISCHRG", input_voltage=100)
-        assert result == EventType.BLACKOUT_TEST, \
+        assert result == EventType.BLACKOUT_TEST, (
             f"Expected BLACKOUT_TEST at 100V (>=threshold), got {result}"
+        )
 
 
 class TestFlagBasedMatching:
@@ -153,7 +155,7 @@ class TestEventInitialization:
     def test_initial_transition_flag_false(self):
         """Test transition_occurred starts as False."""
         classifier = EventClassifier()
-        assert classifier.transition_occurred == False, "Initial transition_occurred should be False"
+        assert not classifier.transition_occurred, "Initial transition_occurred should be False"
 
 
 class TestEventConsistency:
@@ -164,7 +166,9 @@ class TestEventConsistency:
         classifier = EventClassifier()
         for _ in range(3):
             classifier.classify(ups_status="OL", input_voltage=230)
-        assert classifier.transition_occurred == False, "Repeated same state shouldn't trigger transition"
+        assert not classifier.transition_occurred, (
+            "Repeated same state shouldn't trigger transition"
+        )
 
     def test_state_after_multiple_transitions(self):
         """Test state consistency after multiple transitions."""

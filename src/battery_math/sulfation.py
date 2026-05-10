@@ -12,7 +12,6 @@ during idle periods (rest) and high-temperature storage. The score combines:
 Source: IEEE-450 lead-acid standards, VRLA white papers, Shepherd model.
 """
 
-import math
 from dataclasses import dataclass
 
 
@@ -41,6 +40,7 @@ class SulfationState:
 
 
 def compute_sulfation_score(
+    *,
     days_since_deep: float,
     ir_trend_rate: float,
     recovery_delta: float,
@@ -98,11 +98,7 @@ def compute_sulfation_score(
         recovery_signal = 1.0
 
     # Weighted blend of three signals
-    score = (
-        baseline_score * days_weight
-        + ir_signal * ir_weight
-        + recovery_signal * recovery_weight
-    )
+    score = baseline_score * days_weight + ir_signal * ir_weight + recovery_signal * recovery_weight
 
     # Clamp to [0.0, 1.0]
     score = max(0.0, min(1.0, score))

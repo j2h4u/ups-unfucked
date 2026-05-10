@@ -12,8 +12,6 @@ Source: Battery physics (desulfation benefit with time), cycle life curves,
 IEEE-450 test standards.
 """
 
-import math
-
 
 def compute_cycle_roi(
     depth_of_discharge: float,
@@ -40,18 +38,10 @@ def compute_cycle_roi(
         cost = depth_of_discharge * 0.5 + (1 - cycles_remaining / 100) * 0.5
         roi = (benefit - cost) / (benefit + cost) → saturates to [-1, +1]
     """
-    desulfation_benefit = min(
-        1.0,
-        (sulfation_score * 0.7) +
-        (min(ir_trend_rate, 0.1) / 0.1 * 0.3)
-    )
+    desulfation_benefit = min(1.0, (sulfation_score * 0.7) + (min(ir_trend_rate, 0.1) / 0.1 * 0.3))
 
     cycle_exhaustion_cost = max(0.0, 1.0 - cycle_budget_remaining / 100.0)
-    wear_cost = min(
-        1.0,
-        (depth_of_discharge * 0.5) +
-        (cycle_exhaustion_cost * 0.5)
-    )
+    wear_cost = min(1.0, (depth_of_discharge * 0.5) + (cycle_exhaustion_cost * 0.5))
 
     # Normalize: ROI = (benefit - cost) / (benefit + cost)
     benefit_plus_cost = desulfation_benefit + wear_cost

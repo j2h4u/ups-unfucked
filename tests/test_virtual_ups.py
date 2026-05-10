@@ -5,13 +5,13 @@ Tests ensure virtual UPS metrics are written atomically to tmpfs without SSD wea
 format is fully NUT-compatible for transparent data source switching.
 """
 
-import pytest
 import tempfile
-import os
-import re
 from pathlib import Path
+
+import pytest
+
 from src.event_classifier import EventType
-from src.virtual_ups import write_virtual_ups_dev, compute_ups_status_override
+from src.virtual_ups import compute_ups_status_override, write_virtual_ups_dev
 
 
 class TestVirtualUPSWriting:
@@ -45,8 +45,7 @@ class TestVirtualUPSWriting:
 
             # Assert: All metrics appear in the file (production format: "key: value\n")
             for key, value in metrics.items():
-                assert f"{key}: {value}" in content, \
-                    f"Metric {key}={value} not found in output"
+                assert f"{key}: {value}" in content, f"Metric {key}={value} not found in output"
 
             # Assert: No leftover .tmp files
             tmp_files = list(Path(tmpdir).glob("*.tmp"))
@@ -82,24 +81,30 @@ class TestVirtualUPSWriting:
 
             # Assert: All passthrough fields appear exactly as provided
             passthrough_fields = {
-                "battery.voltage", "ups.load", "input.voltage",
-                "device.mfr", "device.model", "device.serial",
-                "battery.type", "ups.temperature"
+                "battery.voltage",
+                "ups.load",
+                "input.voltage",
+                "device.mfr",
+                "device.model",
+                "device.serial",
+                "battery.type",
+                "ups.temperature",
             }
             for field in passthrough_fields:
                 value = metrics[field]
-                assert f"{field}: {value}" in file_content, \
+                assert f"{field}: {value}" in file_content, (
                     f"Passthrough field {field} not found in output"
+                )
 
             # Assert: Override fields are also present
             for field in ["battery.runtime", "battery.charge", "ups.status"]:
-                assert field in file_content, \
-                    f"Override field {field} not found in output"
+                assert field in file_content, f"Override field {field} not found in output"
 
             # Assert: Correct line count
-            lines_in_file = [l for l in file_content.strip().split('\n') if l]
-            assert len(lines_in_file) == len(metrics), \
+            lines_in_file = [line for line in file_content.strip().split("\n") if line]
+            assert len(lines_in_file) == len(metrics), (
                 f"Field count mismatch: expected {len(metrics)}, got {len(lines_in_file)}"
+            )
 
 
 class TestFieldOverrides:
@@ -132,18 +137,21 @@ class TestFieldOverrides:
 
             # Parse output into dict (format: "key: value\n")
             var_dict = {}
-            for line in file_content.strip().split('\n'):
-                if ': ' in line:
-                    key, _, value = line.partition(': ')
+            for line in file_content.strip().split("\n"):
+                if ": " in line:
+                    key, _, value = line.partition(": ")
                     var_dict[key.strip()] = value.strip()
 
             # Assert: Three override fields are exactly as provided
-            assert var_dict["battery.runtime"] == "600", \
+            assert var_dict["battery.runtime"] == "600", (
                 f"battery.runtime not correctly written: {var_dict.get('battery.runtime')}"
-            assert var_dict["battery.charge"] == "87", \
+            )
+            assert var_dict["battery.charge"] == "87", (
                 f"battery.charge not correctly written: {var_dict.get('battery.charge')}"
-            assert var_dict["ups.status"] == "OB DISCHRG LB", \
+            )
+            assert var_dict["ups.status"] == "OB DISCHRG LB", (
                 f"ups.status not correctly written: {var_dict.get('ups.status')}"
+            )
 
 
 class TestNUTFormatCompliance:
@@ -173,16 +181,15 @@ class TestNUTFormatCompliance:
             assert test_file.exists(), "Virtual UPS file not created"
 
             content = test_file.read_text()
-            lines = [l for l in content.strip().split('\n') if l]
+            lines = [line for line in content.strip().split("\n") if line]
 
             # Assert: dummy-ups format compliance (each line: "key: value")
             for line in lines:
-                assert ': ' in line, f"Line doesn't match 'key: value' format: {line}"
+                assert ": " in line, f"Line doesn't match 'key: value' format: {line}"
 
             # Assert: All metrics present
             for key, value in metrics.items():
-                assert f"{key}: {value}" in content, \
-                    f"Metric {key} not found in output"
+                assert f"{key}: {value}" in content, f"Metric {key} not found in output"
 
             # Assert: Correct field count
             assert len(lines) == len(metrics), "Not all metrics written"
@@ -191,18 +198,21 @@ class TestNUTFormatCompliance:
 class TestShutdownThresholds:
     """Tests for LB flag and shutdown threshold logic (SHUT-01, SHUT-02, SHUT-03)."""
 
-    @pytest.mark.parametrize("time_rem,expected_status", [
-        (6, "OB DISCHRG"),          # time_rem > threshold: no LB
-        (5, "OB DISCHRG"),          # time_rem == threshold: no LB (uses <, not <=)
-        (4.9, "OB DISCHRG LB"),     # time_rem < threshold: LB flag set
-        (0, "OB DISCHRG LB"),       # time_rem = 0: LB flag set
-    ])
+    @pytest.mark.parametrize(
+        "time_rem,expected_status",
+        [
+            (6, "OB DISCHRG"),  # time_rem > threshold: no LB
+            (5, "OB DISCHRG"),  # time_rem == threshold: no LB (uses <, not <=)
+            (4.9, "OB DISCHRG LB"),  # time_rem < threshold: LB flag set
+            (0, "OB DISCHRG LB"),  # time_rem = 0: LB flag set
+        ],
+    )
     def test_lb_flag_threshold(self, time_rem, expected_status):
         """Test SHUT-01: LB flag set when time_rem < shutdown threshold (5 min)."""
         result = compute_ups_status_override(
             EventType.BLACKOUT_REAL,
             time_rem,
-            5  # default threshold
+            5,  # default threshold
         )
         assert result == expected_status
 
@@ -222,25 +232,21 @@ class TestShutdownThresholds:
         time_rem_below = threshold - 0.1
 
         # Act: Call compute_ups_status_override with various thresholds
-        result = compute_ups_status_override(
-            EventType.BLACKOUT_REAL,
-            time_rem_below,
-            threshold
-        )
+        result = compute_ups_status_override(EventType.BLACKOUT_REAL, time_rem_below, threshold)
 
         # Assert: LB flag fires for all thresholds when time_rem < threshold
-        assert result == "OB DISCHRG LB", \
+        assert result == "OB DISCHRG LB", (
             f"Threshold {threshold}: LB should fire when time_rem={time_rem_below} < {threshold}"
+        )
 
         # Verify threshold parameter actually controls the decision
         time_rem_above = threshold + 0.1
         result_above = compute_ups_status_override(
-            EventType.BLACKOUT_REAL,
-            time_rem_above,
-            threshold
+            EventType.BLACKOUT_REAL, time_rem_above, threshold
         )
-        assert result_above == "OB DISCHRG", \
+        assert result_above == "OB DISCHRG", (
             f"Threshold {threshold}: LB should not fire when time_rem={time_rem_above} > {threshold}"
+        )
 
     @pytest.mark.parametrize("calibration_threshold", [1, 0])
     def test_calibration_mode_threshold(self, calibration_threshold):
@@ -256,16 +262,18 @@ class TestShutdownThresholds:
             EventType.BLACKOUT_REAL, time_rem_above_floor, calibration_threshold
         )
         if time_rem_above_floor >= calibration_threshold:
-            assert result == "OB DISCHRG", \
+            assert result == "OB DISCHRG", (
                 f"time_rem={time_rem_above_floor} >= threshold={calibration_threshold} should not trigger LB"
+            )
 
         # Below safety floor (2 min): LB always fires regardless of threshold
         time_rem_below_floor = 0.9
         result_below = compute_ups_status_override(
             EventType.BLACKOUT_REAL, time_rem_below_floor, calibration_threshold
         )
-        assert result_below == "OB DISCHRG LB", \
+        assert result_below == "OB DISCHRG LB", (
             f"Below safety floor: time_rem={time_rem_below_floor} should always trigger LB"
+        )
 
 
 class TestMonitorIntegration:
@@ -295,18 +303,17 @@ class TestMonitorIntegration:
         event_type = EventType.BLACKOUT_REAL
         shutdown_threshold = 5
 
-        ups_status_override = compute_ups_status_override(
-            event_type,
-            time_rem,
-            shutdown_threshold
-        )
+        ups_status_override = compute_ups_status_override(event_type, time_rem, shutdown_threshold)
 
         virtual_metrics = {
             "battery.runtime": int(time_rem * 60),  # 210 seconds
             "battery.charge": int(battery_charge),  # 87%
             "ups.status": ups_status_override,
-            **{k: v for k, v in real_ups_data.items()
-               if k not in ["battery.runtime", "battery.charge", "ups.status"]}
+            **{
+                k: v
+                for k, v in real_ups_data.items()
+                if k not in ["battery.runtime", "battery.charge", "ups.status"]
+            },
         }
 
         # Assert: virtual_metrics dict structure
@@ -330,9 +337,9 @@ class TestMonitorIntegration:
 
             # Parse output
             var_dict = {}
-            for line in file_content.strip().split('\n'):
-                if ': ' in line:
-                    key, _, value = line.partition(': ')
+            for line in file_content.strip().split("\n"):
+                if ": " in line:
+                    key, _, value = line.partition(": ")
                     var_dict[key.strip()] = value.strip()
 
             assert var_dict["battery.runtime"] == "210"
@@ -354,18 +361,17 @@ class TestMonitorIntegration:
         event_type = EventType.BLACKOUT_REAL
         shutdown_threshold = 5
 
-        ups_status_override = compute_ups_status_override(
-            event_type,
-            time_rem,
-            shutdown_threshold
-        )
+        ups_status_override = compute_ups_status_override(event_type, time_rem, shutdown_threshold)
 
         virtual_metrics = {
             "battery.runtime": int(time_rem * 60),
             "battery.charge": int(battery_charge),
             "ups.status": ups_status_override,
-            **{k: v for k, v in real_ups_data.items()
-               if k not in ["battery.runtime", "battery.charge", "ups.status"]}
+            **{
+                k: v
+                for k, v in real_ups_data.items()
+                if k not in ["battery.runtime", "battery.charge", "ups.status"]
+            },
         }
 
         assert virtual_metrics["ups.status"] == "OB DISCHRG LB"
@@ -407,12 +413,14 @@ class TestEventTypeIntegration:
 
     def test_event_type_imports(self):
         """Verify EventType enum is available and has expected values."""
-        assert hasattr(EventType, 'ONLINE')
-        assert hasattr(EventType, 'BLACKOUT_REAL')
-        assert hasattr(EventType, 'BLACKOUT_TEST')
+        assert hasattr(EventType, "ONLINE")
+        assert hasattr(EventType, "BLACKOUT_REAL")
+        assert hasattr(EventType, "BLACKOUT_TEST")
 
     def test_compute_status_override_accepts_all_event_types(self):
         """Verify compute_ups_status_override handles all EventType values without error."""
         for et in EventType:
-            result = compute_ups_status_override(et, time_rem_minutes=10.0, shutdown_threshold_minutes=5)
+            result = compute_ups_status_override(
+                et, time_rem_minutes=10.0, shutdown_threshold_minutes=5
+            )
             assert isinstance(result, str), f"Expected str for {et}, got {type(result)}"

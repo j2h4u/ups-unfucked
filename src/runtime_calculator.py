@@ -3,16 +3,17 @@
 Production wrapper: applies 24h cap for zero-load to prevent false LB flags.
 """
 
+from src.battery_math.constants import NOMINAL_POWER_WATTS, RATED_CAPACITY_AH
 from src.battery_math.peukert import peukert_runtime_hours as _peukert_runtime_hours
 from src.battery_math.peukert import runtime_minutes as _kernel_runtime_minutes
 
 
 def peukert_runtime_hours(
     load_percent: float,
-    capacity_ah: float = 7.2,
+    capacity_ah: float = RATED_CAPACITY_AH,
     peukert_exponent: float = 1.2,
     nominal_voltage: float = 12.0,
-    nominal_power_watts: float = 425.0
+    nominal_power_watts: float = NOMINAL_POWER_WATTS,
 ) -> float:
     """Peukert runtime with 24h cap for zero/negative load.
 
@@ -22,19 +23,18 @@ def peukert_runtime_hours(
     if load_percent <= 0:
         return 24.0
     return _peukert_runtime_hours(
-        load_percent, capacity_ah, peukert_exponent,
-        nominal_voltage, nominal_power_watts
+        load_percent, capacity_ah, peukert_exponent, nominal_voltage, nominal_power_watts
     )
 
 
 def runtime_minutes(
     soc: float,
     load_percent: float,
-    capacity_ah: float = 7.2,
+    capacity_ah: float = RATED_CAPACITY_AH,
     soh: float = 1.0,
     peukert_exponent: float = 1.2,
     nominal_voltage: float = 12.0,
-    nominal_power_watts: float = 425.0
+    nominal_power_watts: float = NOMINAL_POWER_WATTS,
 ) -> float:
     """Predict remaining battery runtime in minutes.
 
@@ -44,6 +44,5 @@ def runtime_minutes(
     if load_percent <= 0:
         return 24.0 * 60  # 24h cap in minutes
     return _kernel_runtime_minutes(
-        soc, load_percent, capacity_ah, soh,
-        peukert_exponent, nominal_voltage, nominal_power_watts
+        soc, load_percent, capacity_ah, soh, peukert_exponent, nominal_voltage, nominal_power_watts
     )

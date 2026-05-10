@@ -1,6 +1,7 @@
 """Tests for scheduling configuration schema and validation."""
 
 import pytest
+
 from src.monitor_config import SchedulingConfig, get_scheduling_config
 
 
@@ -21,29 +22,31 @@ class TestSchedulingConfigValidation:
         """grid_stability_cooldown_hours=0 is valid (disables gate)."""
         config = SchedulingConfig(grid_stability_cooldown_hours=0.0)
         errors = config.validate()
-        assert not any('grid_stability_cooldown' in e for e in errors), \
+        assert not any("grid_stability_cooldown" in e for e in errors), (
             f"0.0 should be valid, got {errors}"
+        )
 
     def test_grid_stability_cooldown_negative_invalid(self):
         """grid_stability_cooldown_hours <0 is invalid."""
         config = SchedulingConfig(grid_stability_cooldown_hours=-1.0)
         errors = config.validate()
-        assert any('grid_stability_cooldown' in e for e in errors), \
+        assert any("grid_stability_cooldown" in e for e in errors), (
             f"Negative value should be invalid, got {errors}"
+        )
 
     def test_scheduler_eval_hour_range_valid(self):
         """scheduler_eval_hour_utc must be in [0, 23]."""
         for hour in [0, 8, 23]:
             config = SchedulingConfig(scheduler_eval_hour_utc=hour)
             errors = config.validate()
-            assert not any('scheduler_eval_hour' in e for e in errors)
+            assert not any("scheduler_eval_hour" in e for e in errors)
 
     def test_scheduler_eval_hour_range_invalid(self):
         """scheduler_eval_hour_utc outside [0, 23] is invalid."""
         for hour in [-1, 24]:
             config = SchedulingConfig(scheduler_eval_hour_utc=hour)
             errors = config.validate()
-            assert any('scheduler_eval_hour' in e for e in errors)
+            assert any("scheduler_eval_hour" in e for e in errors)
 
 
 class TestSchedulingConfigDefaults:
@@ -63,17 +66,16 @@ class TestSchedulingConfigDefaults:
         assert config.scheduler_eval_hour_utc == 8  # default
 
 
-
 class TestGetSchedulingConfigFromDict:
     """Test get_scheduling_config() helper function."""
 
     def test_get_scheduling_config_with_full_dict(self):
         """get_scheduling_config extracts and validates config dict."""
         cfg_dict = {
-            'scheduling': {
-                'grid_stability_cooldown_hours': 3.0,
-                'scheduler_eval_hour_utc': 10,
-                'verbose_scheduling': True,
+            "scheduling": {
+                "grid_stability_cooldown_hours": 3.0,
+                "scheduler_eval_hour_utc": 10,
+                "verbose_scheduling": True,
             }
         }
         sched = get_scheduling_config(cfg_dict)
@@ -83,7 +85,7 @@ class TestGetSchedulingConfigFromDict:
 
     def test_get_scheduling_config_with_empty_section(self):
         """get_scheduling_config applies defaults when section is empty."""
-        cfg_dict = {'scheduling': {}}
+        cfg_dict = {"scheduling": {}}
         sched = get_scheduling_config(cfg_dict)
         assert sched.grid_stability_cooldown_hours == 4.0
         assert sched.scheduler_eval_hour_utc == 8
@@ -97,22 +99,22 @@ class TestGetSchedulingConfigFromDict:
     def test_get_scheduling_config_invalid_raises_error(self):
         """get_scheduling_config raises ValueError for invalid config."""
         cfg_dict = {
-            'scheduling': {
-                'grid_stability_cooldown_hours': -1.0,  # invalid
+            "scheduling": {
+                "grid_stability_cooldown_hours": -1.0,  # invalid
             }
         }
         with pytest.raises(ValueError) as exc_info:
             get_scheduling_config(cfg_dict)
-        assert 'grid_stability_cooldown' in str(exc_info.value)
+        assert "grid_stability_cooldown" in str(exc_info.value)
 
     def test_get_scheduling_config_ignores_unknown_keys(self):
         """Unknown keys in [scheduling] are filtered out with a warning, not crash."""
         cfg_dict = {
-            'scheduling': {
-                'grid_stability_cooldown_hours': 4.0,
-                'soh_floor_threshold': 0.60,  # unknown key — filtered
+            "scheduling": {
+                "grid_stability_cooldown_hours": 4.0,
+                "soh_floor_threshold": 0.60,  # unknown key — filtered
             }
         }
         result = get_scheduling_config(cfg_dict)
         assert result.grid_stability_cooldown_hours == 4.0
-        assert not hasattr(result, 'soh_floor_threshold')
+        assert not hasattr(result, "soh_floor_threshold")

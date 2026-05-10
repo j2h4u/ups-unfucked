@@ -10,12 +10,13 @@ StartLimitIntervalSec=60
 [Service]
 Type=notify
 WatchdogSec=120
-User=j2h4u
-Group=j2h4u
+# User, WorkingDirectory, PYTHONPATH, and ReadWritePaths are filled in by install.sh (sudo bash scripts/install.sh).
+User=@RUN_USER@
+Group=@RUN_USER@
 RuntimeDirectory=ups-battery-monitor
 RuntimeDirectoryPreserve=restart
-WorkingDirectory=/home/j2h4u/repos/j2h4u/ups-battery-monitor
-Environment="PYTHONPATH=/home/j2h4u/repos/j2h4u/ups-battery-monitor"
+WorkingDirectory=@INSTALL_DIR@
+Environment="PYTHONPATH=@INSTALL_DIR@"
 ExecStart=/usr/bin/python3 -m src.monitor
 Restart=on-failure
 RestartSec=10
@@ -27,7 +28,7 @@ SyslogIdentifier=ups-battery-monitor
 # Hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/j2h4u/.config/ups-battery-monitor/
+ReadWritePaths=@INSTALL_HOME@/.config/ups-battery-monitor/
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes

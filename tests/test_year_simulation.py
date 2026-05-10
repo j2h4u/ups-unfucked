@@ -9,15 +9,14 @@ Wave 2 deliverable: simulation infrastructure for Wave 3+ stability tests.
 import random
 import time
 from dataclasses import replace
-from typing import Tuple, List
+from typing import List, Tuple
+
 import pytest
 
 from src.battery_math import (
     BatteryState,
-    peukert_runtime_hours,
 )
 from tests.auc_soh_kernel import calculate_soh_from_discharge
-from src.soc_predictor import soc_from_voltage
 
 # ============================================================================
 # VRLA Reference LUT (from research: 12.1-RESEARCH.md)
@@ -35,6 +34,7 @@ VRLA_REFERENCE_LUT = (
 # ============================================================================
 # Synthetic Discharge Generator
 # ============================================================================
+
 
 def synthetic_discharge(
     initial_soc: float,
@@ -92,6 +92,7 @@ def synthetic_discharge(
 # Parametrized Fixtures
 # ============================================================================
 
+
 @pytest.fixture(params=[42, 123, 456, 789, 999])
 def random_seed(request):
     """Parametrize tests across 5 different random seeds.
@@ -121,6 +122,7 @@ def initial_battery_state():
 # ============================================================================
 # Year Simulation Test: Performance Gate
 # ============================================================================
+
 
 def test_year_simulation_runtime_budget(random_seed, initial_battery_state):
     """Simulation of 365 days completes in < 30 seconds (performance gate).
@@ -199,18 +201,19 @@ def test_year_simulation_runtime_budget(random_seed, initial_battery_state):
 
     # Diagnostic output for performance tuning
     print(f"\n365-day sim: {event_count} events, {elapsed:.2f}s (seed={random_seed})")
-    print(f"  Final state: soh={state.soh:.4f}, cycles={state.cycle_count}, "
-          f"on_battery={state.cumulative_on_battery_sec:.0f}s")
+    print(
+        f"  Final state: soh={state.soh:.4f}, cycles={state.cycle_count}, "
+        f"on_battery={state.cumulative_on_battery_sec:.0f}s"
+    )
 
     # Performance assertion: must complete in < 30 seconds
-    assert (
-        elapsed < 30
-    ), f"Simulation took {elapsed:.2f}s, must be < 30s (performance gate failure)"
+    assert elapsed < 30, f"Simulation took {elapsed:.2f}s, must be < 30s (performance gate failure)"
 
 
 # ============================================================================
 # Seed Reproducibility Test
 # ============================================================================
+
 
 def test_year_simulation_seed_reproducibility(initial_battery_state):
     """Results at same iteration are reproducible across runs.
@@ -307,13 +310,15 @@ def test_year_simulation_seed_reproducibility(initial_battery_state):
 
         final_states_rerun.append(state.soh)
 
-    assert final_states == final_states_rerun, \
+    assert final_states == final_states_rerun, (
         f"Same seeds must produce identical results: {final_states} != {final_states_rerun}"
+    )
 
 
 # ============================================================================
 # Basic Integration: Synthetic Discharge Generator
 # ============================================================================
+
 
 def test_synthetic_discharge_generator_output_format():
     """Synthetic discharge generator produces valid output format.
@@ -372,6 +377,7 @@ def test_synthetic_discharge_generator_voltage_trend():
 # BatteryState Immutability Check
 # ============================================================================
 
+
 def test_battery_state_immutability():
     """BatteryState is frozen; mutations are forbidden.
 
@@ -402,6 +408,7 @@ def test_battery_state_immutability():
 # Wave 3: Stability Tests (Primary, Secondary, Path-Invariant Gates)
 # ============================================================================
 
+
 def test_lyapunov_stability(random_seed, initial_battery_state):
     """Per-iteration Lyapunov stability: divergence relative to SoH stays bounded.
 
@@ -421,8 +428,7 @@ def test_lyapunov_stability(random_seed, initial_battery_state):
 
     # Perturbation: ±1% capacity
     perturbed_state = replace(
-        initial_battery_state,
-        capacity_ah_rated=initial_battery_state.capacity_ah_rated * 1.01
+        initial_battery_state, capacity_ah_rated=initial_battery_state.capacity_ah_rated * 1.01
     )
 
     relative_divergence_history = []
@@ -456,7 +462,7 @@ def test_lyapunov_stability(random_seed, initial_battery_state):
         baseline = replace(
             baseline,
             cycle_count=baseline.cycle_count + 1,
-            cumulative_on_battery_sec=baseline.cumulative_on_battery_sec + duration
+            cumulative_on_battery_sec=baseline.cumulative_on_battery_sec + duration,
         )
 
         # Update perturbed
@@ -475,7 +481,7 @@ def test_lyapunov_stability(random_seed, initial_battery_state):
         perturbed = replace(
             perturbed,
             cycle_count=perturbed.cycle_count + 1,
-            cumulative_on_battery_sec=perturbed.cumulative_on_battery_sec + duration
+            cumulative_on_battery_sec=perturbed.cumulative_on_battery_sec + duration,
         )
 
         # Compute relative divergence (normalized by max SoH to handle scale changes)
@@ -489,16 +495,20 @@ def test_lyapunov_stability(random_seed, initial_battery_state):
     # exponentially (e.g., 1.05^100 = 131x). A 30% bound allows for information accumulation
     # but prevents catastrophic blowup.
     final_relative_divergence = relative_divergence_history[-1]
-    assert final_relative_divergence < 0.30, \
+    assert final_relative_divergence < 0.30, (
         f"Divergence unbounded: final relative divergence {final_relative_divergence:.4f} > 30%"
+    )
 
     # Secondary check: No iteration should show > 100% divergence (would indicate NaN/infinite)
     max_divergence = max(relative_divergence_history)
-    assert max_divergence < 1.0, \
+    assert max_divergence < 1.0, (
         f"Catastrophic divergence at some iteration: max={max_divergence:.4f}"
+    )
 
-    print(f"\nLyapunov stability (seed={random_seed}): final relative divergence={final_relative_divergence:.4f}, "
-          f"max={max_divergence:.4f}")
+    print(
+        f"\nLyapunov stability (seed={random_seed}): final relative divergence={final_relative_divergence:.4f}, "
+        f"max={max_divergence:.4f}"
+    )
 
 
 def test_fixed_point_convergence(initial_battery_state):
@@ -516,7 +526,7 @@ def test_fixed_point_convergence(initial_battery_state):
         duration_sec=1800,  # 30 minutes
         load_percent=25,
         lut=state.lut,
-        num_samples=20
+        num_samples=20,
     )
 
     soh_history = []
@@ -539,7 +549,7 @@ def test_fixed_point_convergence(initial_battery_state):
         state = replace(
             state,
             cycle_count=state.cycle_count + 1,
-            cumulative_on_battery_sec=state.cumulative_on_battery_sec + 1800
+            cumulative_on_battery_sec=state.cumulative_on_battery_sec + 1800,
         )
 
     # Check convergence: range over last 5 iterations < 1% of mean
@@ -549,10 +559,13 @@ def test_fixed_point_convergence(initial_battery_state):
 
     convergence_pct = (range_soh / mean_soh) * 100 if mean_soh > 0 else 0
 
-    assert convergence_pct < 1.0, \
+    assert convergence_pct < 1.0, (
         f"Fixed point not converged: SoH range={range_soh:.4f}, mean={mean_soh:.4f}, {convergence_pct:.2f}% > 1%"
+    )
 
-    print(f"\nFixed-point convergence: SoH history (last 5)={[f'{s:.4f}' for s in last_five]}, range={convergence_pct:.2f}%")
+    print(
+        f"\nFixed-point convergence: SoH history (last 5)={[f'{s:.4f}' for s in last_five]}, range={convergence_pct:.2f}%"
+    )
 
 
 def test_permutation_invariance(initial_battery_state):
@@ -596,7 +609,7 @@ def test_permutation_invariance(initial_battery_state):
             state = replace(
                 state,
                 cycle_count=state.cycle_count + 1,
-                cumulative_on_battery_sec=state.cumulative_on_battery_sec + 600
+                cumulative_on_battery_sec=state.cumulative_on_battery_sec + 600,
             )
 
         final_states.append(state.soh)
@@ -606,16 +619,20 @@ def test_permutation_invariance(initial_battery_state):
 
     for i, final_soh in enumerate(final_states):
         delta_pct = abs(final_soh - mean_soh) / mean_soh * 100 if mean_soh > 0 else 0
-        assert delta_pct < 2.0, \
+        assert delta_pct < 2.0, (
             f"Permutation {i}: final SoH={final_soh:.4f} differs from mean={mean_soh:.4f} by {delta_pct:.2f}% > 2%"
+        )
 
-    print(f"\nPermutation invariance: final SoH across 5 orderings = {[f'{s:.4f}' for s in final_states]}, "
-          f"agreement within ±{(max(final_states)-min(final_states))/mean_soh*100:.2f}%")
+    print(
+        f"\nPermutation invariance: final SoH across 5 orderings = {[f'{s:.4f}' for s in final_states]}, "
+        f"agreement within ±{(max(final_states) - min(final_states)) / mean_soh * 100:.2f}%"
+    )
 
 
 # ============================================================================
 # Wave 5: Adversarial Scenario Tests
 # ============================================================================
+
 
 def test_flicker_storm_no_history_pollution(initial_battery_state):
     """VAL-01: 20×3s power transitions don't pollute SoH history with noise.
@@ -639,7 +656,7 @@ def test_flicker_storm_no_history_pollution(initial_battery_state):
             capacity_ah=state.capacity_ah_rated,
             load_percent=25,
             peukert_exponent=state.peukert_exponent,
-            min_duration_sec=30.0
+            min_duration_sec=30.0,
         )
 
         # Should be None (duration < 30s, VAL-01)
@@ -649,7 +666,7 @@ def test_flicker_storm_no_history_pollution(initial_battery_state):
         state = replace(
             state,
             cycle_count=state.cycle_count + 1,  # Increment counter
-            cumulative_on_battery_sec=state.cumulative_on_battery_sec + 3.0
+            cumulative_on_battery_sec=state.cumulative_on_battery_sec + 3.0,
         )
 
     # After flicker storm: SoH unchanged, counters incremented
@@ -690,13 +707,13 @@ def test_interrupted_discharge_as_continuation(initial_battery_state):
         capacity_ah=state.capacity_ah_rated,
         load_percent=load,
         peukert_exponent=state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
 
     assert new_soh is not None, "Interrupted discharge (total > 30s) should return SoH"
     assert new_soh < state.soh, "Deep discharge should lower SoH"
 
-    print(f"\nInterrupted discharge: {300+295}s total, SoH updated from {state.soh} to {new_soh}")
+    print(f"\nInterrupted discharge: {300 + 295}s total, SoH updated from {state.soh} to {new_soh}")
 
 
 def test_voltage_spike_sample_rejection(initial_battery_state):
@@ -720,7 +737,7 @@ def test_voltage_spike_sample_rejection(initial_battery_state):
         capacity_ah=state.capacity_ah_rated,
         load_percent=load,
         peukert_exponent=state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
 
     # AUC kernel trims at 10.5V anchor, so 8.5V spike causes early trim.
@@ -751,11 +768,12 @@ def test_stale_adc_no_soh_inflation(initial_battery_state):
         capacity_ah=state.capacity_ah_rated,
         load_percent=load,
         peukert_exponent=state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
 
-    assert new_soh is None or abs(new_soh - state.soh) < 0.15, \
+    assert new_soh is None or abs(new_soh - state.soh) < 0.15, (
         f"SoH inflated: {new_soh} vs previous {state.soh}"
+    )
 
 
 def test_ntp_clock_jump_handled_gracefully(initial_battery_state):
@@ -779,7 +797,7 @@ def test_ntp_clock_jump_handled_gracefully(initial_battery_state):
         capacity_ah=state.capacity_ah_rated,
         load_percent=load,
         peukert_exponent=state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
     assert new_soh is None or 0.0 <= new_soh <= 1.0, f"SoH out of bounds: {new_soh}"
     print(f"\nNTP clock jump: SoH={new_soh} (no crash, handled gracefully)")
@@ -788,6 +806,7 @@ def test_ntp_clock_jump_handled_gracefully(initial_battery_state):
 # ============================================================================
 # Wave 6: Lifecycle Scenario Tests
 # ============================================================================
+
 
 def test_cliff_edge_degradation(initial_battery_state):
     """Cliff-edge degradation: 1.5% → 5% → 15%/month tracking.
@@ -824,7 +843,7 @@ def test_cliff_edge_degradation(initial_battery_state):
             )
 
             # Update true SoH (degradation)
-            true_soh *= (1.0 - degradation_rate_monthly / 12)  # Monthly to daily
+            true_soh *= 1.0 - degradation_rate_monthly / 12  # Monthly to daily
 
             # Update model SoH (Bayesian update)
             new_soh = calculate_soh_from_discharge(
@@ -834,7 +853,7 @@ def test_cliff_edge_degradation(initial_battery_state):
                 capacity_ah=state.capacity_ah_rated,
                 load_percent=load,
                 peukert_exponent=state.peukert_exponent,
-                min_duration_sec=30.0
+                min_duration_sec=30.0,
             )
 
             if new_soh is not None:
@@ -843,7 +862,7 @@ def test_cliff_edge_degradation(initial_battery_state):
             state = replace(
                 state,
                 cycle_count=state.cycle_count + 1,
-                cumulative_on_battery_sec=state.cumulative_on_battery_sec + duration
+                cumulative_on_battery_sec=state.cumulative_on_battery_sec + duration,
             )
 
         # Track error
@@ -852,24 +871,31 @@ def test_cliff_edge_degradation(initial_battery_state):
 
         # Check constraint
         if error > 0.15:
-            print(f"\nCliff-edge WARNING (month {month}): model SoH={state.soh:.3f}, true SoH={true_soh:.3f}, error={error*100:.1f}% > 15%")
+            print(
+                f"\nCliff-edge WARNING (month {month}): model SoH={state.soh:.3f}, true SoH={true_soh:.3f}, error={error * 100:.1f}% > 15%"
+            )
             # Note: not failing test, documenting limitation
             # This is expected at cliff edge due to Bayesian inertia (Phase 2.1 fix candidate)
 
     mean_error = sum(soh_tracking_errors) / len(soh_tracking_errors)
-    print(f"\nCliff-edge degradation: mean tracking error={mean_error*100:.2f}%, max={max(soh_tracking_errors)*100:.2f}%")
+    print(
+        f"\nCliff-edge degradation: mean tracking error={mean_error * 100:.2f}%, max={max(soh_tracking_errors) * 100:.2f}%"
+    )
 
     # Soft assertion: document behavior without hard failure
     # Bayesian SoH inertia means model lags true state during cliff edge.
     # This is a known limitation documented for Phase 2.1 fix.
     errors_exceeding_threshold = sum(1 for e in soh_tracking_errors if e > 0.15)
-    print(f"\nCliff-edge limitation discovered: {errors_exceeding_threshold}/{len(soh_tracking_errors)} months exceeded ±15% error")
+    print(
+        f"\nCliff-edge limitation discovered: {errors_exceeding_threshold}/{len(soh_tracking_errors)} months exceeded ±15% error"
+    )
     print("This documents Bayesian inertia (Phase 2.1 fix candidate)")
 
     assert len(soh_tracking_errors) == 33, "Should complete all 33 months"
     # Hard bound: SoH must degrade over 33 months of cycling
-    assert state.soh < initial_battery_state.soh, \
+    assert state.soh < initial_battery_state.soh, (
         f"SoH should degrade: final {state.soh:.3f} >= initial {initial_battery_state.soh:.3f}"
+    )
     # Document tracking error — Bayesian inertia causes significant lag
     # at cliff edge (known limitation, Phase 2.1 fix candidate).
     # Hard assertion: SoH must not go negative or exceed 1.0 (physics bounds)
@@ -904,12 +930,12 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
                 capacity_ah=state.capacity_ah_rated,
                 load_percent=load,
                 peukert_exponent=state.peukert_exponent,
-                min_duration_sec=30.0
+                min_duration_sec=30.0,
             )
 
             if new_soh is not None:
                 state = replace(state, soh=new_soh)
-                print(f"  Week {week+1}, event {event_num+1}: SoH={state.soh:.4f}")
+                print(f"  Week {week + 1}, event {event_num + 1}: SoH={state.soh:.4f}")
 
             state = replace(state, cycle_count=state.cycle_count + 1)
 
@@ -918,9 +944,7 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
 
     # Week 4: recovery event (shallower discharge to simulate calibration)
     recovery_depth = 0.20
-    recovery_discharge = synthetic_discharge(
-        1.0, 1.0 - recovery_depth, 900, 18.0, state.lut, 12
-    )
+    recovery_discharge = synthetic_discharge(1.0, 1.0 - recovery_depth, 900, 18.0, state.lut, 12)
     v_series, t_series, _ = recovery_discharge
 
     new_soh = calculate_soh_from_discharge(
@@ -930,7 +954,7 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
         capacity_ah=state.capacity_ah_rated,
         load_percent=18.0,
         peukert_exponent=state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
 
     if new_soh is not None:
@@ -943,7 +967,9 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
     # or stay stable (if recovery effect not detected in shallow discharge)
     assert state.soh <= 1.0, "SoH should not exceed 1.0"
     # Accept either recovery (delta > 0) or stability (delta ~0, within measurement noise)
-    assert recovery_delta > -0.05, f"Recovery should not degrade further (delta={recovery_delta:.4f})"
+    assert recovery_delta > -0.05, (
+        f"Recovery should not degrade further (delta={recovery_delta:.4f})"
+    )
 
 
 def test_seasonal_thermal_variation(initial_battery_state):
@@ -962,7 +988,7 @@ def test_seasonal_thermal_variation(initial_battery_state):
     # 12-month simulation with seasonal capacity offset
     for month in range(12):
         # Seasonal offset: sine wave, -3% to +3%
-        seasonal_factor = 1.0 + 0.03 * __import__('math').sin(month * __import__('math').pi / 6)
+        seasonal_factor = 1.0 + 0.03 * __import__("math").sin(month * __import__("math").pi / 6)
 
         # 4 discharges per month
         for event_num in range(4):
@@ -981,7 +1007,7 @@ def test_seasonal_thermal_variation(initial_battery_state):
                 capacity_ah=state.capacity_ah_rated * seasonal_factor,
                 load_percent=load,
                 peukert_exponent=state.peukert_exponent,
-                min_duration_sec=30.0
+                min_duration_sec=30.0,
             )
 
             if new_soh is not None:
@@ -996,7 +1022,9 @@ def test_seasonal_thermal_variation(initial_battery_state):
         std_cap = statistics.stdev(capacity_estimates) if len(capacity_estimates) > 1 else 0
         cov = (std_cap / mean_cap) * 100 if mean_cap > 0 else 0
 
-        print(f"\nSeasonal variation: capacity estimates {[f'{c:.2f}' for c in capacity_estimates[:4]]}..., CoV={cov:.2f}%")
+        print(
+            f"\nSeasonal variation: capacity estimates {[f'{c:.2f}' for c in capacity_estimates[:4]]}..., CoV={cov:.2f}%"
+        )
 
         assert cov < 10, f"Convergence score broken by seasonal variation (CoV={cov:.2f}% > 10%)"
 
@@ -1024,7 +1052,7 @@ def test_instrument_characterization(initial_battery_state):
         capacity_ah=initial_battery_state.capacity_ah_rated,
         load_percent=25.0,
         peukert_exponent=initial_battery_state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
 
     # Path (b): quantized + EMA
@@ -1047,7 +1075,7 @@ def test_instrument_characterization(initial_battery_state):
         capacity_ah=initial_battery_state.capacity_ah_rated,
         load_percent=25.0,
         peukert_exponent=initial_battery_state.peukert_exponent,
-        min_duration_sec=30.0
+        min_duration_sec=30.0,
     )
 
     # Both paths must produce valid SoH

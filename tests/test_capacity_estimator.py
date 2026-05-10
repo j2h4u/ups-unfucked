@@ -1,11 +1,8 @@
 """Tests for CapacityEstimator class (capacity measurement via coulomb counting)."""
 
 import pytest
-import math
-import json
-from datetime import datetime
+
 from src.capacity_estimator import CapacityEstimator
-from tests.conftest import synthetic_discharge, synthetic_discharge_full
 
 
 class TestCoulombIntegration:
@@ -27,8 +24,9 @@ class TestCoulombIntegration:
         # Expected: (10.625A * 990s) / 3600 ≈ 2.92Ah
         # Allow ±2% deviation (accounts for trapezoidal rule)
         expected_ah = 2.92
-        assert abs(ah_estimate - expected_ah) / expected_ah < 0.02, \
+        assert abs(ah_estimate - expected_ah) / expected_ah < 0.02, (
             f"Coulomb estimate {ah_estimate}Ah not within ±2% of expected {expected_ah}Ah"
+        )
 
     def test_coulomb_integration_low_noise(self):
         """Test coulomb integration with known low-noise data."""
@@ -36,10 +34,7 @@ class TestCoulombIntegration:
         time_series = [float(i * 20) for i in range(30)]  # 0, 20, 40, ..., 580 seconds (600s total)
         load_series = [30.0] * 30  # 30% load constant
         voltage_series = [13.0 - (i * 0.083) for i in range(30)]  # 13.0V → 10.56V (>50% ΔSoC)
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 10.5, "soc": 0.0}
-        ]
+        lut = [{"v": 13.0, "soc": 1.0}, {"v": 10.5, "soc": 0.0}]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -62,11 +57,7 @@ class TestQualityFilter:
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds (passes duration)
         load_series = [20.0] * 100
         voltage_series = [13.0 - (i * 0.002) for i in range(100)]  # V drops from 13.0 to 12.8
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 12.8, "soc": 0.90},
-            {"v": 10.5, "soc": 0.0}
-        ]
+        lut = [{"v": 13.0, "soc": 1.0}, {"v": 12.8, "soc": 0.90}, {"v": 10.5, "soc": 0.0}]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -80,11 +71,7 @@ class TestQualityFilter:
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds
         load_series = [20.0] * 100
         voltage_series = [13.0 - (i * 0.005) for i in range(100)]  # V drops 13.0 → 12.5
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 12.5, "soc": 0.80},
-            {"v": 10.5, "soc": 0.0}
-        ]
+        lut = [{"v": 13.0, "soc": 1.0}, {"v": 12.5, "soc": 0.80}, {"v": 10.5, "soc": 0.0}]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -92,17 +79,13 @@ class TestQualityFilter:
         # Should now pass (ΔSoC=20% >= 15%, was rejected at old 25% gate)
         assert result is not None
 
-
     def test_rejects_micro_discharge(self):
         """Rejects discharge with duration < 300s (micro)."""
         # Short discharge: only 200 seconds
         time_series = [float(i * 2) for i in range(100)]  # 0, 2, 4, ..., 198 seconds (< 300s)
         load_series = [30.0] * 100
         voltage_series = [13.0 - (i * 0.025) for i in range(100)]  # V drops 13.0 → 10.5 (50% ΔSoC)
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 10.5, "soc": 0.0}
-        ]
+        lut = [{"v": 13.0, "soc": 1.0}, {"v": 10.5, "soc": 0.0}]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -110,16 +93,12 @@ class TestQualityFilter:
         # Should reject as micro (duration < 300s)
         assert result is None
 
-
     def test_accepts_valid_discharge(self):
         """Accepts discharge with ΔSoC >= 25% AND duration >= 300s."""
         time_series = [float(i * 10) for i in range(100)]  # 990 seconds (> 300s)
         load_series = [35.0] * 100
         voltage_series = [13.0 - (i * 0.025) for i in range(100)]  # V drops 13.0 → 10.5 (50% ΔSoC)
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 10.5, "soc": 0.0}
-        ]
+        lut = [{"v": 13.0, "soc": 1.0}, {"v": 10.5, "soc": 0.0}]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -138,10 +117,7 @@ class TestMetadata:
         time_series = [float(i * 10) for i in range(100)]
         load_series = [35.0] * 100
         voltage_series = [13.0 - (i * 0.025) for i in range(100)]
-        lut = [
-            {"v": 13.0, "soc": 1.0},
-            {"v": 10.5, "soc": 0.0}
-        ]
+        lut = [{"v": 13.0, "soc": 1.0}, {"v": 10.5, "soc": 0.0}]
 
         estimator = CapacityEstimator(peukert_exponent=1.2)
         result = estimator.estimate(voltage_series, time_series, load_series, lut)
@@ -150,18 +126,25 @@ class TestMetadata:
         ah_estimate, confidence, metadata = result
 
         # Check metadata keys
-        required_keys = {'delta_soc_percent', 'duration_sec', 'discharge_slope_mohm', 'load_avg_percent',
-                        'coulomb_ah', 'voltage_check_ah'}
-        assert set(metadata.keys()) >= required_keys, \
+        required_keys = {
+            "delta_soc_percent",
+            "duration_sec",
+            "discharge_slope_mohm",
+            "load_avg_percent",
+            "coulomb_ah",
+            "voltage_check_ah",
+        }
+        assert set(metadata.keys()) >= required_keys, (
             f"Metadata missing keys: {required_keys - set(metadata.keys())}"
+        )
 
         # Check metadata types
-        assert isinstance(metadata['delta_soc_percent'], (int, float))
-        assert isinstance(metadata['duration_sec'], (int, float))
-        assert isinstance(metadata['discharge_slope_mohm'], (int, float))
-        assert isinstance(metadata['load_avg_percent'], (int, float))
-        assert isinstance(metadata['coulomb_ah'], (int, float))
-        assert isinstance(metadata['voltage_check_ah'], (int, float))
+        assert isinstance(metadata["delta_soc_percent"], (int, float))
+        assert isinstance(metadata["duration_sec"], (int, float))
+        assert isinstance(metadata["discharge_slope_mohm"], (int, float))
+        assert isinstance(metadata["load_avg_percent"], (int, float))
+        assert isinstance(metadata["coulomb_ah"], (int, float))
+        assert isinstance(metadata["voltage_check_ah"], (int, float))
 
 
 class TestPeukertParameter:
@@ -175,7 +158,6 @@ class TestPeukertParameter:
 
         estimator_2 = CapacityEstimator(peukert_exponent=1.3)
         assert estimator_2.peukert_exponent == 1.3
-
 
     def test_peukert_parameter_default_1_2(self):
         """CapacityEstimator has default peukert_exponent of 1.2."""
@@ -196,7 +178,6 @@ class TestConvergenceScore:
         # Confidence should be 0.0 (< 3 measurements)
         assert estimator.get_confidence() == 0.0
 
-
     def test_convergence_score_two_measurements(self):
         """Convergence score = 0.0 for 2 measurements (need 3+ for meaningful CoV)."""
         estimator = CapacityEstimator(peukert_exponent=1.2)
@@ -206,7 +187,6 @@ class TestConvergenceScore:
 
         # Confidence should still be 0.0 (< 3 measurements)
         assert estimator.get_confidence() == 0.0
-
 
     def test_convergence_score_three_consistent_measurements(self):
         """Convergence score >= 0.90 for 3 measurements with CoV < 0.10."""
@@ -220,7 +200,6 @@ class TestConvergenceScore:
         confidence = estimator.get_confidence()
         # CoV = std / mean ≈ 0.082 → confidence ≈ 0.918 >= 0.90
         assert confidence >= 0.90, f"Expected confidence >= 0.90, got {confidence}"
-
 
     def test_convergence_score_may_fluctuate(self):
         """Convergence score may decrease when noisy sample is added."""
@@ -258,7 +237,6 @@ class TestConvergenceDetection:
         estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {})
         assert not estimator.has_converged()
 
-
     def test_converged_with_consistent_measurements(self):
         """has_converged() returns True when count >= 3 AND CoV < 0.10."""
         estimator = CapacityEstimator(peukert_exponent=1.2)
@@ -281,12 +259,11 @@ class TestMeasurementAccumulation:
 
         assert estimator.get_measurement_count() == 0
 
-        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {'key': 'value'})
+        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {"key": "value"})
         assert estimator.get_measurement_count() == 1
 
-        estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {'key': 'value2'})
+        estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {"key": "value2"})
         assert estimator.get_measurement_count() == 2
-
 
     def test_get_measurements_returns_all(self):
         """get_measurements() returns list of all accumulated measurements."""
@@ -297,7 +274,6 @@ class TestMeasurementAccumulation:
 
         measurements = estimator.get_measurements()
         assert len(measurements) == 2
-
 
     def test_get_confidence_after_measurements(self):
         """get_confidence() returns current confidence based on accumulated measurements."""
@@ -332,9 +308,9 @@ class TestWeightedAveraging:
         # Weight 3 = 40/120 = 0.333 → 7.1 * 0.333 = 2.364
         # Weighted sum ≈ 7.116
 
-        metadata1 = {'delta_soc_percent': 30}
-        metadata2 = {'delta_soc_percent': 50}
-        metadata3 = {'delta_soc_percent': 40}
+        metadata1 = {"delta_soc_percent": 30}
+        metadata2 = {"delta_soc_percent": 50}
+        metadata3 = {"delta_soc_percent": 40}
 
         estimator.add_measurement(7.0, "2026-03-16T10:00:00Z", metadata1)
         estimator.add_measurement(7.2, "2026-03-16T10:30:00Z", metadata2)
@@ -342,18 +318,18 @@ class TestWeightedAveraging:
 
         weighted_ah = estimator.get_weighted_estimate()
         expected_ah = 7.116
-        assert abs(weighted_ah - expected_ah) < 0.1, \
+        assert abs(weighted_ah - expected_ah) < 0.1, (
             f"Weighted estimate {weighted_ah} not close to expected {expected_ah}"
-
+        )
 
     def test_weighted_average_fallback_equal_depth(self):
         """get_weighted_estimate() falls back to arithmetic mean if all ΔSoC = 0."""
         estimator = CapacityEstimator(peukert_exponent=1.2)
 
         # All measurements with delta_soc = 0
-        estimator.add_measurement(7.0, "2026-03-16T10:00:00Z", {'delta_soc_percent': 0})
-        estimator.add_measurement(7.1, "2026-03-16T10:30:00Z", {'delta_soc_percent': 0})
-        estimator.add_measurement(7.2, "2026-03-16T11:00:00Z", {'delta_soc_percent': 0})
+        estimator.add_measurement(7.0, "2026-03-16T10:00:00Z", {"delta_soc_percent": 0})
+        estimator.add_measurement(7.1, "2026-03-16T10:30:00Z", {"delta_soc_percent": 0})
+        estimator.add_measurement(7.2, "2026-03-16T11:00:00Z", {"delta_soc_percent": 0})
 
         weighted_ah = estimator.get_weighted_estimate()
         arithmetic_mean = (7.0 + 7.1 + 7.2) / 3
@@ -385,13 +361,12 @@ class TestValidationGates:
         # Coulomb error < ±10%
         true_capacity = 7.2  # Ground truth from 47min observed discharge
         error_percent = abs(ah_estimate - true_capacity) / true_capacity
-        assert error_percent < 0.10, \
-            f"Coulomb error {error_percent:.1%} exceeds ±10% threshold"
+        assert error_percent < 0.10, f"Coulomb error {error_percent:.1%} exceeds ±10% threshold"
 
         # Metadata should be populated
-        assert metadata['delta_soc_percent'] > 50, "Real discharge should be deep (>50%)"
-        assert metadata['duration_sec'] > 2700, "Real discharge should be long (>45 min)"
-        assert metadata['discharge_slope_mohm'] > 0, "IR should be computed"
+        assert metadata["delta_soc_percent"] > 50, "Real discharge should be deep (>50%)"
+        assert metadata["duration_sec"] > 2700, "Real discharge should be long (>45 min)"
+        assert metadata["discharge_slope_mohm"] > 0, "IR should be computed"
 
     @pytest.mark.slow
     def test_monte_carlo_convergence(self, synthetic_discharge):
@@ -411,6 +386,7 @@ class TestValidationGates:
         Mark: @pytest.mark.slow — exclude from fast CI with '-m "not slow"'.
         """
         import random
+
         random.seed(42)
 
         converged_count = 0
@@ -437,8 +413,7 @@ class TestValidationGates:
                     converged_count += 1
 
         # Expert panel: 95% of trials should converge
-        assert converged_count >= 95, \
-            f"Only {converged_count}/100 trials converged; need 95+"
+        assert converged_count >= 95, f"Only {converged_count}/100 trials converged; need 95+"
 
     def test_load_sensitivity(self, synthetic_discharge):
         """
@@ -481,8 +456,7 @@ class TestValidationGates:
             result = estimator.estimate(voltage_series, time_series, load_series, lut)
 
             # All loads should pass quality filter (ΔSoC > 25%, duration > 300s)
-            assert result is not None, \
-                f"Load {load_percent}% discharge should pass quality filter"
+            assert result is not None, f"Load {load_percent}% discharge should pass quality filter"
 
             ah_estimate, confidence, metadata = result
 
@@ -494,6 +468,7 @@ class TestValidationGates:
 
             # Verify estimate is within ±3% of expected coulomb result
             accuracy_ratio = ah_estimate / expected_ah
-            assert 0.97 <= accuracy_ratio <= 1.03, \
-                f"Load {load_percent}%: coulomb estimate {ah_estimate:.2f}Ah vs expected {expected_ah:.2f}Ah " \
+            assert 0.97 <= accuracy_ratio <= 1.03, (
+                f"Load {load_percent}%: coulomb estimate {ah_estimate:.2f}Ah vs expected {expected_ah:.2f}Ah "
                 f"(accuracy {accuracy_ratio:.1%}) exceeds ±3% tolerance"
+            )

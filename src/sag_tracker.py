@@ -10,11 +10,11 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from src.model import BatteryModel
 from src.battery_math.rls import ScalarRLS
-from src.monitor_config import SagState, SAG_SAMPLES_REQUIRED
+from src.model import BatteryModel
+from src.monitor_config import SAG_SAMPLES_REQUIRED, SagState
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 # Physical bounds for ir_k: below 0.005 is noise, above 0.025 is implausible for VRLA.
 IR_K_MIN = 0.005
@@ -163,9 +163,10 @@ class SagTracker:
 
         delta_v = self._v_before_sag - v_sag
         r_ohm = delta_v / I_actual
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime("%Y-%m-%d")
         self.battery_model.add_r_internal_entry(
-            today, r_ohm, self._v_before_sag, v_sag, load, event_type.name)
+            today, r_ohm, self._v_before_sag, v_sag, load, event_type.name
+        )
 
         # RLS auto-calibration of ir_k from measured sag data.
         if nominal_voltage > 0:
@@ -174,29 +175,29 @@ class SagTracker:
             new_ir_k = max(IR_K_MIN, min(IR_K_MAX, new_ir_k))
             self.ir_k = new_ir_k
             self.battery_model.set_ir_k(new_ir_k)
-            self.battery_model.set_rls_state(
-                'ir_k', new_ir_k, new_P, self.rls_ir_k.sample_count)
+            self.battery_model.set_rls_state("ir_k", new_ir_k, new_P, self.rls_ir_k.sample_count)
             logger.info(
                 f"ir_k calibrated: {new_ir_k:.4f} (P={new_P:.4f}, "
                 f"confidence={self.rls_ir_k.confidence:.0%}, "
                 f"measured={ir_k_measured:.4f})",
                 extra={
-                    'event_type': 'ir_k_calibration',
-                    'ir_k': f'{new_ir_k:.4f}',
-                    'ir_k_measured': f'{ir_k_measured:.4f}',
-                    'rls_p': f'{new_P:.4f}',
-                    'rls_confidence': f'{self.rls_ir_k.confidence:.3f}',
-                    'sample_count': str(self.rls_ir_k.sample_count),
-                })
+                    "event_type": "ir_k_calibration",
+                    "ir_k": f"{new_ir_k:.4f}",
+                    "ir_k_measured": f"{ir_k_measured:.4f}",
+                    "rls_p": f"{new_P:.4f}",
+                    "rls_confidence": f"{self.rls_ir_k.confidence:.3f}",
+                    "sample_count": str(self.rls_ir_k.sample_count),
+                },
+            )
 
         logger.info(
             f"Voltage sag: {self._v_before_sag:.2f}V -> {v_sag:.2f}V, "
-            f"R_internal={r_ohm*1000:.1f}mOhm at {load:.1f}% load",
+            f"R_internal={r_ohm * 1000:.1f}mOhm at {load:.1f}% load",
             extra={
-                'event_type': 'voltage_sag',
-                'v_before': f'{self._v_before_sag:.2f}',
-                'v_sag': f'{v_sag:.2f}',
-                'r_internal_mohm': f'{r_ohm*1000:.1f}',
-                'load_pct': f'{load:.1f}',
-            }
+                "event_type": "voltage_sag",
+                "v_before": f"{self._v_before_sag:.2f}",
+                "v_sag": f"{v_sag:.2f}",
+                "r_internal_mohm": f"{r_ohm * 1000:.1f}",
+                "load_pct": f"{load:.1f}",
+            },
         )

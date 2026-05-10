@@ -14,7 +14,7 @@ def calibrate_peukert(
     capacity_ah: float,
     current_exponent: float,
     nominal_voltage: float = 12.0,
-    nominal_power_watts: float = 425.0
+    nominal_power_watts: float = 425.0,
 ) -> Optional[float]:
     """Pure function: Calibrate Peukert exponent from measured discharge.
 

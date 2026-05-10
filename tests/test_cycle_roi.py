@@ -1,6 +1,5 @@
 """Unit tests for cycle_roi.py — compute_cycle_roi() pure function."""
 
-import pytest
 from src.battery_math.cycle_roi import compute_cycle_roi
 
 
@@ -83,6 +82,4 @@ class TestComputeCycleROI:
             sulfation_score=0.6,
         )
 
-        assert roi2 > roi1, (
-            f"Expected roi2={roi2:.3f} > roi1={roi1:.3f} for doubled sulfation"
-        )
+        assert roi2 > roi1, f"Expected roi2={roi2:.3f} > roi1={roi1:.3f} for doubled sulfation"

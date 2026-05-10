@@ -1,9 +1,10 @@
 """Pytest configuration and shared fixtures for UPS Battery Monitor tests."""
 
-import tempfile
 import socket
+import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+
 import pytest
 
 
@@ -76,7 +77,7 @@ def temporary_model_path():
     Yields:
         str: Path to temporary JSON file
     """
-    with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         tmp_path = tmp.name
 
     yield tmp_path
@@ -130,9 +131,7 @@ def sample_model_data(mock_lut_standard):
         "capacity_ah": 7.2,
         "soh": 1.0,
         "lut": mock_lut_standard,
-        "soh_history": [
-            {"date": "2026-03-12", "soh": 1.0}
-        ]
+        "soh_history": [{"date": "2026-03-12", "soh": 1.0}],
     }
 
 
@@ -147,9 +146,10 @@ def current_metrics():
     Returns:
         CurrentMetrics: Current metrics with typed field values for SoC, charge, runtime, event state.
     """
-    from src.monitor_config import CurrentMetrics
-    from src.event_classifier import EventType
     from datetime import datetime, timezone
+
+    from src.event_classifier import EventType
+    from src.monitor_config import CurrentMetrics
 
     return CurrentMetrics(
         soc=0.75,
@@ -178,8 +178,8 @@ def daemon_config(tmp_path):
     Returns:
         Config: Configuration dataclass with UPS name, intervals, hosts, paths, thresholds, model parameters.
     """
+
     from src.monitor_config import Config
-    from pathlib import Path
 
     return Config(
         ups_name="test-cyberpower",
@@ -247,7 +247,7 @@ def synthetic_discharge_full():
     for i in range(num_samples):
         progress = i / num_samples  # 0 to 1
         # Voltage drop with slight non-linearity
-        v = 13.2 - (progress * 2.7) - (0.1 * (progress ** 2))
+        v = 13.2 - (progress * 2.7) - (0.1 * (progress**2))
         voltage_series.append(v)
 
     # Variable load: ~26% average with some realistic variations

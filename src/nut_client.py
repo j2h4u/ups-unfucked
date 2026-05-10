@@ -5,17 +5,17 @@ Implements stateless polling pattern: connect → send → receive → close on 
 to enable automatic recovery from NUT service restarts.
 """
 
+import logging
 import re
 import socket
-import logging
 import time
 from contextlib import contextmanager
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
+logger = logging.getLogger("ups-battery-monitor")
 
-logger = logging.getLogger('ups-battery-monitor')
+_NUT_SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+$")
 
-_NUT_SAFE_NAME = re.compile(r'^[a-zA-Z0-9._-]+$')
 
 def _validate_nut_identifier(value: str, label: str) -> None:
     """Validate a NUT protocol identifier (ups_name, var_name, cmd_name).
@@ -38,7 +38,7 @@ class NUTClient:
     - Returns dict with all requested variables; None for failed reads
     """
 
-    def __init__(self, host='localhost', port=3493, timeout=2.0, ups_name='cyberpower'):
+    def __init__(self, host="localhost", port=3493, timeout=2.0, ups_name="cyberpower"):
         """
         Initialize NUT client.
 
@@ -52,7 +52,7 @@ class NUTClient:
         self.port = port
         self.timeout = timeout
         self.ups_name = ups_name
-        _validate_nut_identifier(ups_name, 'ups_name')
+        _validate_nut_identifier(ups_name, "ups_name")
         self.sock = None
 
     def _close_socket(self):
@@ -70,7 +70,7 @@ class NUTClient:
 
         Returns (var_name, float_or_str) or None if line is not a VAR line.
         """
-        if not line.startswith('VAR '):
+        if not line.startswith("VAR "):
             return None
         words = line.split()
         if len(words) < 3:
@@ -114,9 +114,9 @@ class NUTClient:
         Returns:
             Response string (stripped)
         """
-        if '\n' in command or '\r' in command:
+        if "\n" in command or "\r" in command:
             raise ValueError(f"NUT protocol injection: control char in command: {command!r}")
-        self.sock.sendall((command + '\n').encode())
+        self.sock.sendall((command + "\n").encode())
         response = self.sock.recv(4096).decode().strip()
         return response
 
@@ -135,14 +135,17 @@ class NUTClient:
             socket.error: If socket communication fails
         """
         with self._socket_session():
-            _validate_nut_identifier(var_name, 'var_name')
-            response = self.send_command(f'GET VAR {self.ups_name} {var_name}')
+            _validate_nut_identifier(var_name, "var_name")
+            response = self.send_command(f"GET VAR {self.ups_name} {var_name}")
             parsed = self._parse_var_line(response)
             if parsed is not None:
                 return parsed[1]
-            logger.error("Unexpected NUT response for %s: %.200s",
-                         var_name, response,
-                         extra={'event_type': 'nut_unexpected_response', 'var_name': var_name})
+            logger.error(
+                "Unexpected NUT response for %s: %.200s",
+                var_name,
+                response,
+                extra={"event_type": "nut_unexpected_response", "var_name": var_name},
+            )
             return None
 
     _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB
@@ -163,7 +166,7 @@ class NUTClient:
         Raises:
             socket.timeout: If wall-clock deadline exceeded or individual recv times out
         """
-        buf = b''
+        buf = b""
         delim_bytes = delimiter.encode()
         deadline = time.monotonic() + self.timeout
         while delim_bytes not in buf:
@@ -174,7 +177,9 @@ class NUTClient:
                 break
             buf += chunk
             if len(buf) > self._MAX_RECV_BYTES:
-                raise ConnectionError("LIST VAR response too large (>64KB) — possible protocol violation")
+                raise ConnectionError(
+                    "LIST VAR response too large (>64KB) — possible protocol violation"
+                )
         return buf.decode()
 
     def get_ups_vars(self):
@@ -192,8 +197,8 @@ class NUTClient:
             socket.error: If socket communication fails (caller should retry)
         """
         with self._socket_session():
-            self.sock.sendall(f'LIST VAR {self.ups_name}\n'.encode())
-            raw = self._recv_until(f'END LIST VAR {self.ups_name}')
+            self.sock.sendall(f"LIST VAR {self.ups_name}\n".encode())
+            raw = self._recv_until(f"END LIST VAR {self.ups_name}")
 
             ups_vars = {}
             for line in raw.splitlines():
@@ -238,8 +243,8 @@ class NUTClient:
         """
         with self._socket_session():
             try:
-                response = self.send_command('USERNAME upsmon')
-                if not response.startswith('OK'):
+                response = self.send_command("USERNAME upsmon")
+                if not response.startswith("OK"):
                     return (False, f"USERNAME failed: {response}")
 
                 # Security note: empty PASSWORD is intentional. NUT upsd.users
@@ -248,26 +253,26 @@ class NUTClient:
                 # single-server deployment where NUT listens on loopback only
                 # (LISTEN 127.0.0.1 in upsd.conf). If NUT is exposed on the
                 # network, configure a password in upsd.users and update this call.
-                response = self.send_command('PASSWORD')
-                if not response.startswith('OK'):
+                response = self.send_command("PASSWORD")
+                if not response.startswith("OK"):
                     return (False, f"PASSWORD failed: {response}")
 
-                response = self.send_command(f'LOGIN {self.ups_name}')
-                if not response.startswith('OK'):
+                response = self.send_command(f"LOGIN {self.ups_name}")
+                if not response.startswith("OK"):
                     return (False, f"LOGIN failed: {response}")
 
-                _validate_nut_identifier(cmd_name, 'cmd_name')
+                _validate_nut_identifier(cmd_name, "cmd_name")
                 if cmd_param is not None:
-                    _validate_nut_identifier(cmd_param, 'cmd_param')
-                    cmd = f'INSTCMD {self.ups_name} {cmd_name} {cmd_param}'
+                    _validate_nut_identifier(cmd_param, "cmd_param")
+                    cmd = f"INSTCMD {self.ups_name} {cmd_name} {cmd_param}"
                 else:
-                    cmd = f'INSTCMD {self.ups_name} {cmd_name}'
+                    cmd = f"INSTCMD {self.ups_name} {cmd_name}"
 
                 response = self.send_command(cmd)
 
-                if response.startswith('OK'):
+                if response.startswith("OK"):
                     return (True, response)
-                elif response.startswith('ERR'):
+                elif response.startswith("ERR"):
                     return (False, response)
                 else:
                     return (False, f"Unexpected response: {response}")

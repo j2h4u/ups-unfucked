@@ -11,7 +11,7 @@ class MetricEMA:
         metric_name: str,
         window_sec: int = 120,
         poll_interval_sec: int = 10,
-        sensitivity: float = 0.05
+        sensitivity: float = 0.05,
     ):
         """Initialize MetricEMA for a named metric.
 
@@ -145,8 +145,9 @@ class EMAFilter:
         return self.load_ema.value
 
 
-def ir_compensate(v_ema: Optional[float], l_ema: Optional[float],
-                   l_base: float = 20.0, k: float = 0.015) -> Optional[float]:
+def ir_compensate(
+    v_ema: Optional[float], l_ema: Optional[float], l_base: float = 20.0, k: float = 0.015
+) -> Optional[float]:
     """Apply IR compensation to normalize voltage for load-independent SoC lookup.
 
     Formula: V_norm = V_ema + k * (L_ema - L_base)

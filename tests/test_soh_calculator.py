@@ -1,21 +1,25 @@
 """Unit tests for soh_calculator.py — capacity-based SoH (F19/F20/F21)."""
 
-import pytest
 from unittest.mock import Mock
+
 from src.soh_calculator import calculate_soh_from_discharge
 
 
 def _mock_battery_model(lut=None, capacity_ah=7.2):
     """Helper: create mock BatteryModel with LUT and capacity."""
     model = Mock()
-    model.get_lut.return_value = lut if lut is not None else [
-        {"v": 13.4, "soc": 1.0},
-        {"v": 12.8, "soc": 0.9},
-        {"v": 12.4, "soc": 0.64},
-        {"v": 12.0, "soc": 0.4},
-        {"v": 11.5, "soc": 0.2},
-        {"v": 10.5, "soc": 0.0},
-    ]
+    model.get_lut.return_value = (
+        lut
+        if lut is not None
+        else [
+            {"v": 13.4, "soc": 1.0},
+            {"v": 12.8, "soc": 0.9},
+            {"v": 12.4, "soc": 0.64},
+            {"v": 12.0, "soc": 0.4},
+            {"v": 11.5, "soc": 0.2},
+            {"v": 10.5, "soc": 0.0},
+        ]
+    )
     model.get_capacity_ah.return_value = capacity_ah
     return model
 
@@ -42,7 +46,6 @@ class TestCapacityBasedSoH:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
 
         assert result is not None
@@ -77,14 +80,15 @@ class TestCapacityBasedSoH:
             load_percent=30.0,  # 30% load = 10.625A
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
 
         assert result is not None
         soh_new, capacity_ah_ref = result
         # measured_capacity = Ah/ΔSoC; if < rated → SoH < 1.0
         # 600s discharge, 13.4→11.0V at 30% load with 7.2Ah rated: expect SoH ~0.30–0.45
-        assert 0.30 < soh_new < 0.42, f"Degraded battery SoH={soh_new:.3f} expected ~0.30-0.42 for this scenario"
+        assert 0.30 < soh_new < 0.42, (
+            f"Degraded battery SoH={soh_new:.3f} expected ~0.30-0.42 for this scenario"
+        )
         assert capacity_ah_ref == 7.2
 
     def test_shallow_discharge_rejected(self):
@@ -103,7 +107,6 @@ class TestCapacityBasedSoH:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
 
         assert result is None
@@ -122,7 +125,6 @@ class TestCapacityBasedSoH:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
 
         assert result is None
@@ -147,7 +149,6 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
 
         assert result is not None
@@ -159,7 +160,9 @@ class TestBayesianBlend:
         # soh_raw = 1.947/7.2 = 0.27
         # With full weight: soh = 0.50*(1-1.0) + 0.27*1.0 = 0.27
         # The reference (0.50) should be almost completely overridden
-        assert 0.20 <= soh_new <= 0.35, f"Full ΔSoC should override reference to ~0.27, got {soh_new}"
+        assert 0.20 <= soh_new <= 0.35, (
+            f"Full ΔSoC should override reference to ~0.27, got {soh_new}"
+        )
 
     def test_soh_blend_with_reference(self):
         """Partial ΔSoC → blended result between reference and measured."""
@@ -177,7 +180,6 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
 
         assert result is not None
@@ -196,7 +198,6 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
         assert result is None
 
@@ -211,6 +212,5 @@ class TestBayesianBlend:
             load_percent=20.0,
             nominal_power_watts=425.0,
             nominal_voltage=12.0,
-
         )
         assert result is None

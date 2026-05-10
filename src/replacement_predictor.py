@@ -2,17 +2,17 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, List, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.battery_math.regression import linear_regression
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 
 def linear_regression_soh(
     soh_history: List[Dict[str, Any]],
     threshold_soh: float = 0.80,
-    capacity_ah_ref: Optional[float] = None
+    capacity_ah_ref: Optional[float] = None,
 ) -> Optional[Tuple[float, float, float, Optional[str]]]:
     """
     Fit line to SoH history and predict replacement date.
@@ -60,8 +60,7 @@ def linear_regression_soh(
         # Keep only entries matching the baseline
         # Default missing field to 7.2Ah (original rated capacity)
         filtered_history = [
-            e for e in soh_history
-            if e.get('capacity_ah_ref', 7.2) == capacity_ah_ref
+            e for e in soh_history if e.get("capacity_ah_ref", 7.2) == capacity_ah_ref
         ]
 
         if len(filtered_history) < 3:
@@ -73,11 +72,14 @@ def linear_regression_soh(
         return None
 
     try:
-        dates = [datetime.strptime(entry['date'], '%Y-%m-%d') for entry in soh_history]
-        soh_values = [entry['soh'] for entry in soh_history]
+        dates = [datetime.strptime(entry["date"], "%Y-%m-%d") for entry in soh_history]
+        soh_values = [entry["soh"] for entry in soh_history]
     except (ValueError, KeyError, TypeError) as e:
-        logger.warning("SoH history parse failed (corrupt data?): %s", e,
-                       extra={'event_type': 'soh_history_parse_error'})
+        logger.warning(
+            "SoH history parse failed (corrupt data?): %s",
+            e,
+            extra={"event_type": "soh_history_parse_error"},
+        )
         return None
 
     first_date = dates[0]
@@ -101,7 +103,7 @@ def linear_regression_soh(
     latest_recorded_soh = soh_values[-1]
     if latest_recorded_soh < threshold_soh:
         # Return today as overdue
-        return (slope, intercept, r_squared, datetime.now().strftime('%Y-%m-%d'))
+        return (slope, intercept, r_squared, datetime.now().strftime("%Y-%m-%d"))
 
     # Predict replacement date: when SoH hits threshold
     # threshold_soh = slope * days_to_threshold + intercept
@@ -110,8 +112,8 @@ def linear_regression_soh(
 
     if days_to_threshold <= 0:
         # Already past threshold or threshold in past
-        return (slope, intercept, r_squared, datetime.now().strftime('%Y-%m-%d'))
+        return (slope, intercept, r_squared, datetime.now().strftime("%Y-%m-%d"))
 
-    replacement_date = (first_date + timedelta(days=days_to_threshold)).strftime('%Y-%m-%d')
+    replacement_date = (first_date + timedelta(days=days_to_threshold)).strftime("%Y-%m-%d")
 
     return (slope, intercept, r_squared, replacement_date)

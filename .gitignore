@@ -1,7 +1,32 @@
+# Python build / bytecode
 __pycache__/
 *.pyc
-.pytest_cache/
 *.egg-info/
 dist/
 build/
+
+# Test and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Runtime data (model state, secrets)
 model.json
+.env
+.env.*
+
+# Linter / type-checker caches
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

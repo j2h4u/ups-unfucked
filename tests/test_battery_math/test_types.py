@@ -1,9 +1,10 @@
 """Tests for BatteryState frozen dataclass."""
 
-import pytest
 from dataclasses import FrozenInstanceError, replace
-from src.battery_math import BatteryState
 
+import pytest
+
+from src.battery_math import BatteryState
 
 VRLA_REFERENCE_LUT = (
     (12.0, 1.0, "reference"),
@@ -22,7 +23,7 @@ def initial_battery_state():
         capacity_ah_measured=None,
         lut=VRLA_REFERENCE_LUT,
         cycle_count=0,
-        cumulative_on_battery_sec=0.0
+        cumulative_on_battery_sec=0.0,
     )
 
 
@@ -47,7 +48,7 @@ def test_battery_state_new_with_replace():
         capacity_ah_measured=None,
         lut=VRLA_REFERENCE_LUT,
         cycle_count=0,
-        cumulative_on_battery_sec=0.0
+        cumulative_on_battery_sec=0.0,
     )
     # Create new state with updated fields
     updated = replace(initial, soh=0.95, cycle_count=1)
@@ -67,7 +68,7 @@ def test_battery_state_fields():
         capacity_ah_measured=7.1,
         lut=VRLA_REFERENCE_LUT,
         cycle_count=5,
-        cumulative_on_battery_sec=3600.0
+        cumulative_on_battery_sec=3600.0,
     )
     assert state.soh == 0.90
     assert state.peukert_exponent == 1.2
@@ -87,6 +88,6 @@ def test_battery_state_measured_capacity_optional():
         capacity_ah_measured=None,
         lut=VRLA_REFERENCE_LUT,
         cycle_count=0,
-        cumulative_on_battery_sec=0.0
+        cumulative_on_battery_sec=0.0,
     )
     assert state.capacity_ah_measured is None

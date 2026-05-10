@@ -4,13 +4,15 @@ Pure physics — no I/O, no state mutation. See runtime_calculator.py for
 the production wrapper that applies SoC/SoH scaling and the 24h zero-load cap.
 """
 
+from src.battery_math.constants import NOMINAL_POWER_WATTS, RATED_CAPACITY_AH
+
 
 def peukert_runtime_hours(
     load_percent: float,
-    capacity_ah: float = 7.2,
+    capacity_ah: float = RATED_CAPACITY_AH,
     peukert_exponent: float = 1.2,
     nominal_voltage: float = 12.0,
-    nominal_power_watts: float = 425.0
+    nominal_power_watts: float = NOMINAL_POWER_WATTS,
 ) -> float:
     """Pure function: Peukert runtime calculation. No I/O, no time.time().
 
@@ -37,11 +39,11 @@ def peukert_runtime_hours(
 def runtime_minutes(
     soc: float,
     load_percent: float,
-    capacity_ah: float = 7.2,
+    capacity_ah: float = RATED_CAPACITY_AH,
     soh: float = 1.0,
     peukert_exponent: float = 1.2,
     nominal_voltage: float = 12.0,
-    nominal_power_watts: float = 425.0
+    nominal_power_watts: float = NOMINAL_POWER_WATTS,
 ) -> float:
     """Pure function: Predict remaining battery runtime in minutes.
 
@@ -62,9 +64,12 @@ def runtime_minutes(
     if soc <= 0:
         return 0.0
 
-    T_hours = peukert_runtime_hours(
-        load_percent, capacity_ah, peukert_exponent,
-        nominal_voltage, nominal_power_watts
-    ) * soc * soh
+    T_hours = (
+        peukert_runtime_hours(
+            load_percent, capacity_ah, peukert_exponent, nominal_voltage, nominal_power_watts
+        )
+        * soc
+        * soh
+    )
 
     return max(0.0, T_hours * 60)

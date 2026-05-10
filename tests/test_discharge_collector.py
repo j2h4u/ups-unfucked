@@ -4,11 +4,11 @@ Tests the DischargeCollector class directly without constructing MonitorDaemon.
 BatteryModel, Config, DischargeHandler, and EMAFilter are mocked.
 """
 
-import pytest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
+
 from src.discharge_collector import DischargeCollector
-from src.monitor_config import DischargeBuffer, DISCHARGE_BUFFER_MAX_SAMPLES, Config
 from src.event_classifier import EventType
+from src.monitor_config import DISCHARGE_BUFFER_MAX_SAMPLES, Config, DischargeBuffer
 
 
 def make_collector(polling_interval=10, reporting_interval=60, reference_load_percent=20.0):
@@ -37,8 +37,9 @@ def make_collector(polling_interval=10, reporting_interval=60, reference_load_pe
     return collector, mock_model, mock_config, mock_handler, mock_ema
 
 
-def make_metrics(event_type=EventType.BLACKOUT_REAL, previous_event_type=EventType.ONLINE,
-                 time_rem_minutes=30.0):
+def make_metrics(
+    event_type=EventType.BLACKOUT_REAL, previous_event_type=EventType.ONLINE, time_rem_minutes=30.0
+):
     """Build a mock CurrentMetrics object."""
     m = MagicMock()
     m.event_type = event_type
@@ -50,6 +51,7 @@ def make_metrics(event_type=EventType.BLACKOUT_REAL, previous_event_type=EventTy
 # ------------------------------------------------------------------
 # Properties
 # ------------------------------------------------------------------
+
 
 def test_is_collecting_initially_false():
     """is_collecting property reflects buffer.collecting initial state (False)."""
@@ -80,6 +82,7 @@ def test_reset_buffer_replaces_with_fresh():
 # ------------------------------------------------------------------
 # track() — accumulation
 # ------------------------------------------------------------------
+
 
 def test_track_ob_starts_collection():
     """track() on OB event with non-collecting buffer starts collection (collecting=True)."""
@@ -124,6 +127,7 @@ def test_track_returns_false_during_normal_accumulation():
 # ------------------------------------------------------------------
 # track() — cooldown state machine
 # ------------------------------------------------------------------
+
 
 def test_track_ob_to_ol_starts_cooldown():
     """track() on OB->OL transition starts 60s cooldown (set to 60, then decremented once)."""
@@ -187,6 +191,7 @@ def test_track_returns_false_during_active_cooldown():
 # _start_discharge_collection — cycle count and snapshot
 # ------------------------------------------------------------------
 
+
 def test_start_discharge_collection_increments_cycle_count():
     """_start_discharge_collection increments cycle_count via battery_model."""
     collector, mock_model, *_ = make_collector()
@@ -217,6 +222,7 @@ def test_start_discharge_collection_no_snapshot_when_not_stabilized():
 # ------------------------------------------------------------------
 # finalize()
 # ------------------------------------------------------------------
+
 
 def test_finalize_records_on_battery_time():
     """finalize() records on-battery time via battery_model.add_on_battery_time()."""
@@ -259,6 +265,7 @@ def test_finalize_handles_no_start_time():
 # _write_calibration_points
 # ------------------------------------------------------------------
 
+
 def test_write_calibration_points_every_reporting_interval():
     """track() writes calibration points every reporting_interval polls via battery_model."""
     # polling_interval=10, reporting_interval=60 → every 6 polls
@@ -269,7 +276,6 @@ def test_write_calibration_points_every_reporting_interval():
     ]
     collector.discharge_buffer.collecting = True
 
-    metrics = make_metrics(event_type=EventType.BLACKOUT_REAL)
     # Add 6 samples (enough to trigger one calibration flush: 6 >= 60//10)
     for i in range(6):
         collector.discharge_buffer.voltages.append(12.0 - i * 0.1)

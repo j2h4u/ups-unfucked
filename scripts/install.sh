@@ -103,8 +103,14 @@ log_ok "All prerequisites met"
 # Find the repository root (parent of scripts/ directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RUN_USER="${SUDO_USER:-$(id -un)}"
+INSTALL_HOME=$(getent passwd "$RUN_USER" | cut -d: -f6)
+UPS_NAME="cyberpower"
+UPS_VIRTUAL_NAME="${UPS_NAME}-virtual"
+RUNTIME_DIR="/run/ups-battery-monitor"
 
 log_info "Repository root: $REPO_ROOT"
+log_info "Service will run as user: $RUN_USER"
 
 if [[ ! -f "$REPO_ROOT/systemd/ups-battery-monitor.service" ]]; then
     log_error "Service file not found at $REPO_ROOT/systemd/ups-battery-monitor.service"
@@ -124,15 +130,18 @@ SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
 SERVICE_DST="/etc/systemd/system/ups-battery-monitor.service"
 
 DROPIN_SRC="$REPO_ROOT/systemd/nut-driver-virtual.conf"
-DROPIN_DIR="/etc/systemd/system/nut-driver@cyberpower-virtual.service.d"
+DROPIN_DIR="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service.d"
 
 if [[ "$DRY_RUN" == "yes" ]]; then
-    echo "[DRY-RUN] Would install: $SERVICE_SRC -> $SERVICE_DST"
+    echo "[DRY-RUN] Would install: $SERVICE_SRC -> $SERVICE_DST (User=$RUN_USER, Dir=$REPO_ROOT)"
     echo "[DRY-RUN] Would install: $DROPIN_SRC -> $DROPIN_DIR/"
 else
-    cp "$SERVICE_SRC" "$SERVICE_DST"
+    sed -e "s|@RUN_USER@|$RUN_USER|g" \
+        -e "s|@INSTALL_DIR@|$REPO_ROOT|g" \
+        -e "s|@INSTALL_HOME@|$INSTALL_HOME|g" \
+        "$SERVICE_SRC" > "$SERVICE_DST"
     chmod 644 "$SERVICE_DST"
-    log_ok "Service file installed to $SERVICE_DST"
+    log_ok "Service file installed to $SERVICE_DST (User=$RUN_USER, Dir=$REPO_ROOT)"
     mkdir -p "$DROPIN_DIR"
     cp "$DROPIN_SRC" "$DROPIN_DIR/"
     chmod 644 "$DROPIN_DIR/$(basename "$DROPIN_SRC")"
@@ -157,7 +166,7 @@ log_info "Configuring NUT dummy-ups..."
 NUT_CONFIG="/etc/nut/ups.conf"
 DUMMY_UPS_CONFIG="$REPO_ROOT/config/dummy-ups.conf"
 
-EXPECTED_PORT="port = /run/ups-battery-monitor/ups-virtual.dev"
+EXPECTED_PORT="port = ${RUNTIME_DIR}/ups-virtual.dev"
 if grep -qF "$EXPECTED_PORT" "$NUT_CONFIG" 2>/dev/null && ! grep -q "dummy-once" "$NUT_CONFIG" 2>/dev/null; then
     log_ok "Dummy-ups already configured correctly in $NUT_CONFIG (skipped)"
 else
@@ -275,7 +284,7 @@ run_cmd systemctl restart ups-battery-monitor
 log_ok "Monitor service (re)started"
 
 # NUT driver drop-in handles dependency — restart dummy-ups after daemon is ready
-run_cmd systemctl restart nut-driver@cyberpower-virtual
+run_cmd systemctl restart "nut-driver@${UPS_VIRTUAL_NAME}"
 log_ok "NUT dummy-ups driver (re)started"
 
 # === POST-INSTALL VERIFICATION ===
@@ -288,15 +297,15 @@ fi
 log_info "Verifying installation..."
 
 # Wait for virtual UPS device file
-log_info "Waiting for virtual UPS device (/run/ups-battery-monitor/ups-virtual.dev)..."
+log_info "Waiting for virtual UPS device (${RUNTIME_DIR}/ups-virtual.dev)..."
 TIMEOUT=10
 COUNTER=0
-while [[ ! -f /run/ups-battery-monitor/ups-virtual.dev && $COUNTER -lt $TIMEOUT ]]; do
+while [[ ! -f "${RUNTIME_DIR}/ups-virtual.dev" && $COUNTER -lt $TIMEOUT ]]; do
     sleep 1
     COUNTER=$((COUNTER + 1))
 done
 
-if [[ -f /run/ups-battery-monitor/ups-virtual.dev ]]; then
+if [[ -f "${RUNTIME_DIR}/ups-virtual.dev" ]]; then
     log_ok "Virtual UPS device created"
 else
     log_error "Virtual UPS device not created after $TIMEOUT seconds"
@@ -307,10 +316,10 @@ fi
 
 # Test virtual UPS readability
 log_info "Testing NUT access to virtual UPS..."
-if upsc cyberpower-virtual@localhost >/dev/null 2>&1; then
-    log_ok "NUT dummy-ups readable (cyberpower-virtual@localhost)"
+if upsc "${UPS_VIRTUAL_NAME}@localhost" >/dev/null 2>&1; then
+    log_ok "NUT dummy-ups readable (${UPS_VIRTUAL_NAME}@localhost)"
 else
-    log_error "Failed to read cyberpower-virtual via upsc"
+    log_error "Failed to read ${UPS_VIRTUAL_NAME} via upsc"
     log_error "Daemon logs:"
     journalctl -u ups-battery-monitor -n 20 --no-pager >&2
     exit 1
@@ -332,7 +341,7 @@ log_info ""
 log_info "=== Installation Complete ==="
 log_info ""
 log_info "Next steps:"
-log_info "  1. Verify UPS status: upsc cyberpower-virtual@localhost | head"
+log_info "  1. Verify UPS status: upsc ${UPS_VIRTUAL_NAME}@localhost | head"
 log_info "  2. View daemon logs: journalctl -u ups-battery-monitor -f"
 log_info "  3. Check MOTD: bash ~/scripts/motd/51-ups-health.sh"
 log_info ""

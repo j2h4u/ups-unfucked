@@ -17,7 +17,7 @@ def calculate_soh_from_discharge(
     peukert_exponent: float = 1.2,
     nominal_voltage: float = 12.0,
     nominal_power_watts: float = 425.0,
-    min_duration_sec: float = 30.0
+    min_duration_sec: float = 30.0,
 ) -> Optional[float]:
     """Pure function: SoH from discharge curve analysis.
 
@@ -61,10 +61,12 @@ def calculate_soh_from_discharge(
     # Reference area from Peukert's Law (pure physics)
     from src.battery_math.peukert import peukert_runtime_hours
 
-    T_expected_sec = peukert_runtime_hours(
-        load_percent, capacity_ah, peukert_exponent,
-        nominal_voltage, nominal_power_watts
-    ) * 3600
+    T_expected_sec = (
+        peukert_runtime_hours(
+            load_percent, capacity_ah, peukert_exponent, nominal_voltage, nominal_power_watts
+        )
+        * 3600
+    )
 
     avg_voltage = sum(trimmed_v) / len(trimmed_v)
     area_reference = avg_voltage * T_expected_sec

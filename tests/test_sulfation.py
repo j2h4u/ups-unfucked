@@ -1,6 +1,5 @@
 """Unit tests for sulfation.py — compute_sulfation_score() and estimate_recovery_delta()."""
 
-import pytest
 from src.battery_math.sulfation import compute_sulfation_score, estimate_recovery_delta
 
 

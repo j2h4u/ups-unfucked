@@ -1,7 +1,6 @@
 """Unit tests for SoC predictor module (PRED-01, PRED-03)."""
 
-import pytest
-from src.soc_predictor import soc_from_voltage, charge_percentage
+from src.soc_predictor import charge_percentage, soc_from_voltage
 
 
 class TestSoCExactLookup:
@@ -65,17 +64,23 @@ class TestSoCFloatingPointTolerance:
         # Case 1: EMA voltage slightly below LUT entry (12.4 - 1e-6)
         ema_voltage_below = 12.4 - 1e-6  # 12.3999990
         result_below = soc_from_voltage(ema_voltage_below, lut)
-        assert result_below == 0.64, f"Expected 0.64 for voltage {ema_voltage_below}, got {result_below}"
+        assert result_below == 0.64, (
+            f"Expected 0.64 for voltage {ema_voltage_below}, got {result_below}"
+        )
 
         # Case 2: EMA voltage slightly above LUT entry (12.4 + 1e-6)
         ema_voltage_above = 12.4 + 1e-6  # 12.4000010
         result_above = soc_from_voltage(ema_voltage_above, lut)
-        assert result_above == 0.64, f"Expected 0.64 for voltage {ema_voltage_above}, got {result_above}"
+        assert result_above == 0.64, (
+            f"Expected 0.64 for voltage {ema_voltage_above}, got {result_above}"
+        )
 
         # Case 3: Voltage at tolerance boundary (±0.005V still matches)
         ema_voltage_near = 12.395  # Within 0.005V of 12.4
         result_near = soc_from_voltage(ema_voltage_near, lut)
-        assert result_near == 0.64, f"Expected 0.64 for voltage {ema_voltage_near}, got {result_near}"
+        assert result_near == 0.64, (
+            f"Expected 0.64 for voltage {ema_voltage_near}, got {result_near}"
+        )
 
         # Case 4: Voltage outside tolerance (should use interpolation, not exact match)
         ema_voltage_far = 12.2  # 0.2V away from 12.4, should interpolate
@@ -147,9 +152,7 @@ class TestSoCEdgeCases:
 
     def test_soc_single_point_lut_clamping(self):
         """Test single-point LUT doesn't crash, clamps appropriately."""
-        single_point_lut = [
-            {"v": 12.0, "soc": 0.5, "source": "test"}
-        ]
+        single_point_lut = [{"v": 12.0, "soc": 0.5, "source": "test"}]
         # Below anchor should clamp to 0.0
         result_low = soc_from_voltage(10.0, single_point_lut)
         assert result_low == 0.0, f"Expected 0.0, got {result_low}"

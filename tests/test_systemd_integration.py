@@ -8,12 +8,7 @@ Tests parse and validate the service file directly against systemd.service(5)
 specifications and project OPS requirements.
 """
 
-import re
 from pathlib import Path
-from configparser import ConfigParser
-import io
-import pytest
-
 
 # Service file path (relative to repo root)
 SERVICE_FILE_PATH = Path(__file__).parent.parent / "systemd" / "ups-battery-monitor.service"
@@ -30,29 +25,29 @@ def parse_service_file(path):
     config = {}
     current_section = None
 
-    with open(path, 'r') as f:
+    with open(path, "r") as f:
         for line in f:
             line = line.strip()
 
             # Skip empty lines and comments
-            if not line or line.startswith(';') or line.startswith('#'):
+            if not line or line.startswith(";") or line.startswith("#"):
                 continue
 
             # Section header
-            if line.startswith('[') and line.endswith(']'):
+            if line.startswith("[") and line.endswith("]"):
                 current_section = line[1:-1]
                 config[current_section] = {}
                 continue
 
             # Key=Value pair
-            if '=' in line and current_section:
-                key, _, value = line.partition('=')
+            if "=" in line and current_section:
+                key, _, value = line.partition("=")
                 key = key.strip()
                 value = value.strip()
                 # Handle multiple values (e.g., "After=target1 target2")
                 if key in config[current_section]:
                     # Append to existing value (for multi-value directives)
-                    config[current_section][key] += ' ' + value
+                    config[current_section][key] += " " + value
                 else:
                     config[current_section][key] = value
 
@@ -62,6 +57,7 @@ def parse_service_file(path):
 # ============================================================================
 # Test 1: File existence and readability
 # ============================================================================
+
 
 def test_service_file_exists_and_readable():
     """
@@ -77,6 +73,7 @@ def test_service_file_exists_and_readable():
 # Test 2: [Unit] section required fields
 # ============================================================================
 
+
 def test_service_file_unit_section_required_fields():
     """
     Test: [Unit] section has all required directives.
@@ -91,32 +88,34 @@ def test_service_file_unit_section_required_fields():
 
     # Description must be present and mention UPS/Battery
     assert "Description" in unit, "Description missing"
-    assert "UPS" in unit["Description"] or "Battery" in unit["Description"], \
+    assert "UPS" in unit["Description"] or "Battery" in unit["Description"], (
         "Description should mention UPS or Battery"
+    )
 
     # After must include sysinit.target (ensures /run tmpfs is available)
     assert "After" in unit, "After directive missing"
-    assert "sysinit.target" in unit["After"], \
+    assert "sysinit.target" in unit["After"], (
         "sysinit.target not in After (tmpfs /run dependency missing)"
+    )
 
     # After must include nut-server.service
-    assert "nut-server.service" in unit["After"], \
+    assert "nut-server.service" in unit["After"], (
         "nut-server.service not in After (NUT dependency missing)"
+    )
 
     # Wants for network-online.target
     assert "Wants" in unit, "Wants directive missing"
-    assert "network-online.target" in unit["Wants"], \
-        "network-online.target not in Wants"
+    assert "network-online.target" in unit["Wants"], "network-online.target not in Wants"
 
     # ConditionPathExists for soft NUT check
     assert "ConditionPathExists" in unit, "ConditionPathExists missing"
-    assert "/run/nut/" in unit["ConditionPathExists"], \
-        "ConditionPathExists should check /run/nut/"
+    assert "/run/nut/" in unit["ConditionPathExists"], "ConditionPathExists should check /run/nut/"
 
 
 # ============================================================================
 # Test 3: [Service] section restart configuration
 # ============================================================================
+
 
 def test_service_file_service_section_restart_config():
     """
@@ -132,13 +131,13 @@ def test_service_file_service_section_restart_config():
 
     # Restart must be on-failure (respects exit 0, auto-restarts on non-zero)
     assert "Restart" in service, "Restart directive missing"
-    assert service["Restart"] == "on-failure", \
+    assert service["Restart"] == "on-failure", (
         f"Restart should be 'on-failure', got '{service['Restart']}'"
+    )
 
     # RestartSec must be 10 seconds
     assert "RestartSec" in service, "RestartSec missing"
-    assert service["RestartSec"] == "10", \
-        f"RestartSec should be 10, got '{service['RestartSec']}'"
+    assert service["RestartSec"] == "10", f"RestartSec should be 10, got '{service['RestartSec']}'"
 
     # StartLimitBurst/IntervalSec belong in [Unit], not [Service]
     assert "Unit" in config, "[Unit] section missing"
@@ -146,18 +145,21 @@ def test_service_file_service_section_restart_config():
 
     # StartLimitBurst = 3 (max 3 restarts before giving up)
     assert "StartLimitBurst" in unit, "StartLimitBurst missing from [Unit]"
-    assert unit["StartLimitBurst"] == "3", \
+    assert unit["StartLimitBurst"] == "3", (
         f"StartLimitBurst should be 3, got '{unit['StartLimitBurst']}'"
+    )
 
     # StartLimitIntervalSec = 60 (within 60-second window)
     assert "StartLimitIntervalSec" in unit, "StartLimitIntervalSec missing from [Unit]"
-    assert unit["StartLimitIntervalSec"] == "60", \
+    assert unit["StartLimitIntervalSec"] == "60", (
         f"StartLimitIntervalSec should be 60, got '{unit['StartLimitIntervalSec']}'"
+    )
 
 
 # ============================================================================
 # Test 4: Unprivileged execution (User/Group)
 # ============================================================================
+
 
 def test_service_file_unprivileged_execution():
     """
@@ -181,6 +183,7 @@ def test_service_file_unprivileged_execution():
 # Test 5: Logging configuration (journald integration)
 # ============================================================================
 
+
 def test_service_file_logging_configuration():
     """
     Test: Service logs to journald with proper tagging.
@@ -195,23 +198,27 @@ def test_service_file_logging_configuration():
 
     # StandardOutput=null — JournalHandler writes to journald directly, stdout would duplicate
     assert "StandardOutput" in service, "StandardOutput missing"
-    assert service["StandardOutput"] == "null", \
+    assert service["StandardOutput"] == "null", (
         f"StandardOutput should be 'null', got '{service['StandardOutput']}'"
+    )
 
     # StandardError must be journal
     assert "StandardError" in service, "StandardError missing"
-    assert service["StandardError"] == "journal", \
+    assert service["StandardError"] == "journal", (
         f"StandardError should be 'journal', got '{service['StandardError']}'"
+    )
 
     # SyslogIdentifier for searchability
     assert "SyslogIdentifier" in service, "SyslogIdentifier missing"
-    assert service["SyslogIdentifier"] == "ups-battery-monitor", \
+    assert service["SyslogIdentifier"] == "ups-battery-monitor", (
         f"SyslogIdentifier should be 'ups-battery-monitor', got '{service['SyslogIdentifier']}'"
+    )
 
 
 # ============================================================================
 # Test 6: [Install] section for boot auto-start
 # ============================================================================
+
 
 def test_service_file_install_section_boot_start():
     """
@@ -226,15 +233,16 @@ def test_service_file_install_section_boot_start():
 
     # WantedBy must enable boot start
     assert "WantedBy" in install, "WantedBy missing"
-    assert "multi-user.target" in install["WantedBy"], \
+    assert "multi-user.target" in install["WantedBy"], (
         f"WantedBy should include 'multi-user.target', got '{install['WantedBy']}'"
-    assert install["WantedBy"] != "emergency.target", \
-        "WantedBy should not be emergency.target"
+    )
+    assert install["WantedBy"] != "emergency.target", "WantedBy should not be emergency.target"
 
 
 # ============================================================================
 # Test 7: ExecStart uses absolute path
 # ============================================================================
+
 
 def test_exec_start_is_absolute_path():
     """
@@ -251,12 +259,12 @@ def test_exec_start_is_absolute_path():
     exec_start = service["ExecStart"]
 
     # Must start with / (absolute path)
-    assert exec_start.startswith("/"), \
-        f"ExecStart must use absolute path, got '{exec_start}'"
+    assert exec_start.startswith("/"), f"ExecStart must use absolute path, got '{exec_start}'"
 
     # Should use /usr/bin/python3 (standard location)
-    assert "/usr/bin/python3" in exec_start, \
+    assert "/usr/bin/python3" in exec_start, (
         f"ExecStart should use /usr/bin/python3, got '{exec_start}'"
+    )
 
     # Should not contain ~ or relative paths
     assert "~" not in exec_start, "ExecStart should not use ~ path expansion"
@@ -265,6 +273,7 @@ def test_exec_start_is_absolute_path():
 # ============================================================================
 # Test 8: WorkingDirectory is absolute and documented
 # ============================================================================
+
 
 def test_working_directory_exists_or_documented():
     """
@@ -280,18 +289,16 @@ def test_working_directory_exists_or_documented():
     assert "WorkingDirectory" in service, "WorkingDirectory missing"
     work_dir = service["WorkingDirectory"]
 
-    # Must be absolute path
-    assert work_dir.startswith("/"), \
-        f"WorkingDirectory must be absolute, got '{work_dir}'"
-
-    # Must point to a directory (structural check, not repo-name dependent)
-    assert len(work_dir) > 1, \
-        f"WorkingDirectory must be a non-trivial path, got '{work_dir}'"
+    # Must be an absolute path or an install-time placeholder filled by install.sh
+    assert work_dir.startswith("/") or work_dir == "@INSTALL_DIR@", (
+        f"WorkingDirectory must be absolute or '@INSTALL_DIR@' placeholder, got '{work_dir}'"
+    )
 
 
 # ============================================================================
 # Test 9: PYTHONPATH environment variable set
 # ============================================================================
+
 
 def test_service_pythonpath_environment():
     """
@@ -308,9 +315,9 @@ def test_service_pythonpath_environment():
     env_var = service["Environment"]
 
     # Must include PYTHONPATH
-    assert "PYTHONPATH" in env_var, \
-        f"Environment should set PYTHONPATH, got '{env_var}'"
+    assert "PYTHONPATH" in env_var, f"Environment should set PYTHONPATH, got '{env_var}'"
 
-    # Must reference repo directory
-    assert "ups-battery-monitor" in env_var, \
-        f"PYTHONPATH should reference repo, got '{env_var}'"
+    # Must reference repo directory or contain the install-time placeholder
+    assert "ups-battery-monitor" in env_var or "@INSTALL_DIR@" in env_var, (
+        f"PYTHONPATH should reference repo or '@INSTALL_DIR@' placeholder, got '{env_var}'"
+    )

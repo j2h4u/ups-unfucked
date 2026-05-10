@@ -1,6 +1,5 @@
 """Tests for battery_math.integrate_current() standalone function."""
 
-import pytest
 from src.battery_math import integrate_current
 
 
@@ -89,7 +88,9 @@ class TestIntegrateCurrent:
         # So |trapezoidal - analytical| = 0, |scalar - analytical| = 0.1576
         # Trapezoidal is exactly the analytical for piecewise-linear functions.
 
-        trapezoidal = integrate_current(load_percent, time_sec, nominal_power_watts, nominal_voltage)
+        trapezoidal = integrate_current(
+            load_percent, time_sec, nominal_power_watts, nominal_voltage
+        )
 
         # Analytical = trapezoidal for piecewise-linear current (exact)
         # Compute by hand for verification

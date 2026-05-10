@@ -50,19 +50,19 @@ class ScalarRLS:
     def to_dict(self) -> dict:
         """Serialize state for model.json persistence."""
         return {
-            'theta': self.theta,
-            'P': self.P,
-            'sample_count': self.sample_count,
-            'forgetting_factor': self.forgetting_factor,
+            "theta": self.theta,
+            "P": self.P,
+            "sample_count": self.sample_count,
+            "forgetting_factor": self.forgetting_factor,
         }
 
     @classmethod
     def from_dict(cls, d: dict, forgetting_factor: float = 0.97) -> ScalarRLS:
         """Restore from serialized dict. Missing keys → sensible defaults."""
         obj = cls(
-            theta=d.get('theta', 0.0),
-            P=d.get('P', 1.0),
-            forgetting_factor=d.get('forgetting_factor', forgetting_factor),
+            theta=d.get("theta", 0.0),
+            P=d.get("P", 1.0),
+            forgetting_factor=d.get("forgetting_factor", forgetting_factor),
         )
-        obj.sample_count = d.get('sample_count', 0)
+        obj.sample_count = d.get("sample_count", 0)
         return obj

@@ -12,10 +12,11 @@ Key responsibilities:
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+
 from src.event_classifier import EventType
 from src.model import atomic_write
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 
 def write_virtual_ups_dev(
@@ -55,9 +56,11 @@ def write_virtual_ups_dev(
 
     # Sanitize keys and values: strip newlines/colons from keys to prevent NUT field injection
     def _safe_key(k: str) -> str:
-        return str(k).replace('\n', '').replace('\r', '').replace(':', '.')
+        return str(k).replace("\n", "").replace("\r", "").replace(":", ".")
 
-    sanitized = {_safe_key(k): str(v).replace('\n', '').replace('\r', '') for k, v in metrics.items()}
+    sanitized = {
+        _safe_key(k): str(v).replace("\n", "").replace("\r", "") for k, v in metrics.items()
+    }
     content = "".join(f"{key}: {value}\n" for key, value in sanitized.items())
 
     atomic_write(virtual_ups_path, content, mode=0o644)
@@ -76,9 +79,7 @@ SAFETY_LB_FLOOR_MINUTES = 2  # Triggers upsmon FSD (forced shutdown) via LB flag
 
 
 def compute_ups_status_override(
-    event_type: EventType,
-    time_rem_minutes: float,
-    shutdown_threshold_minutes: int
+    event_type: EventType, time_rem_minutes: float, shutdown_threshold_minutes: int
 ) -> str:
     """
     Compute UPS status override value for virtual UPS based on event and time remaining.

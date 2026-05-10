@@ -1,7 +1,9 @@
 """Tests for EMAFilter class: convergence, stabilization gate, alpha factor, adaptive alpha."""
 
-import pytest
 import math
+
+import pytest
+
 from src.ema_filter import EMAFilter, MetricEMA
 
 
@@ -36,8 +38,9 @@ class TestStabilizationGate:
 
     def test_stabilization_false_before_window(self, monkeypatch):
         import time as time_mod
+
         t0 = 1000.0
-        monkeypatch.setattr(time_mod, 'monotonic', lambda: t0)
+        monkeypatch.setattr(time_mod, "monotonic", lambda: t0)
         buf = EMAFilter(window_sec=120, poll_interval_sec=10)
         fill_samples(buf, 20)
         # Monotonic clock frozen — no real time elapsed
@@ -46,8 +49,9 @@ class TestStabilizationGate:
     def test_stabilization_true_after_window(self, monkeypatch):
         """Stabilized after window_sec of real time has elapsed."""
         import time as time_mod
+
         t0 = time_mod.monotonic()
-        monkeypatch.setattr(time_mod, 'monotonic', lambda: t0 + 121)
+        monkeypatch.setattr(time_mod, "monotonic", lambda: t0 + 121)
         buf = EMAFilter(window_sec=120, poll_interval_sec=10)
         # Fake that first sample was 121s ago
         buf.voltage_ema._first_sample_time = t0
@@ -181,6 +185,7 @@ class TestMetricEMA:
     def test_metric_ema_stabilized_flag(self, monkeypatch):
         """MetricEMA.stabilized is time-based, not sample-count."""
         import time as time_mod
+
         t0 = time_mod.monotonic()
 
         ema = MetricEMA("voltage", window_sec=120, poll_interval_sec=10)
@@ -191,5 +196,5 @@ class TestMetricEMA:
         assert ema.stabilized is False
 
         # Simulate 121s elapsed
-        monkeypatch.setattr(time_mod, 'monotonic', lambda: t0 + 121)
+        monkeypatch.setattr(time_mod, "monotonic", lambda: t0 + 121)
         assert ema.stabilized is True

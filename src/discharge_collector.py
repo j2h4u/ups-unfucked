@@ -9,12 +9,12 @@ belong inline in the daemon orchestration loop.
 import logging
 from typing import Optional
 
-from src.model import BatteryModel
-from src.monitor_config import DischargeBuffer, DISCHARGE_BUFFER_MAX_SAMPLES, Config
-from src.soc_predictor import soc_from_voltage
 from src.event_classifier import EventType
+from src.model import BatteryModel
+from src.monitor_config import DISCHARGE_BUFFER_MAX_SAMPLES, Config, DischargeBuffer
+from src.soc_predictor import soc_from_voltage
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 
 class DischargeCollector:
@@ -40,8 +40,8 @@ class DischargeCollector:
         self,
         battery_model: BatteryModel,
         config: Config,
-        discharge_handler,   # DischargeHandler — for discharge_predicted_runtime handoff
-        ema_filter,          # EMAFilter — for stabilized check and load reads
+        discharge_handler,  # DischargeHandler — for discharge_predicted_runtime handoff
+        ema_filter,  # EMAFilter — for stabilized check and load reads
     ):
         """Initialize DischargeCollector.
 
@@ -116,8 +116,8 @@ class DischargeCollector:
                     logger.warning(
                         f"Discharge buffer capped at {DISCHARGE_BUFFER_MAX_SAMPLES} samples",
                         extra={
-                            'event_type': 'discharge_buffer_capped',
-                            'max_samples': DISCHARGE_BUFFER_MAX_SAMPLES,
+                            "event_type": "discharge_buffer_capped",
+                            "max_samples": DISCHARGE_BUFFER_MAX_SAMPLES,
                         },
                     )
                 else:
@@ -192,9 +192,9 @@ class DischargeCollector:
             f"Starting discharge buffer collection ({event_type.name}), "
             f"cycle #{self.battery_model.get_cycle_count()}",
             extra={
-                'event_type': 'discharge_start',
-                'discharge_type': event_type.name,
-                'cycle_count': self.battery_model.get_cycle_count(),
+                "event_type": "discharge_start",
+                "discharge_type": event_type.name,
+                "cycle_count": self.battery_model.get_cycle_count(),
             },
         )
 
@@ -218,23 +218,24 @@ class DischargeCollector:
             if previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
                 logger.info(
                     "Power loss detected; starting 60s discharge cooldown",
-                    extra={'event_type': 'discharge_cooldown_start'},
+                    extra={"event_type": "discharge_cooldown_start"},
                 )
                 self._discharge_buffer_clear_countdown = 60
 
         if is_discharging and self._discharge_buffer_clear_countdown is not None:
             logger.info(
                 "Power restored during cooldown; treating as discharge continuation",
-                extra={'event_type': 'discharge_cooldown_cancelled'},
+                extra={"event_type": "discharge_cooldown_cancelled"},
             )
             self._discharge_buffer_clear_countdown = None
 
         if self._discharge_buffer_clear_countdown is not None:
             self._discharge_buffer_clear_countdown -= self.config.polling_interval
             if self._discharge_buffer_clear_countdown <= 0:
+                self._discharge_buffer_clear_countdown = None
                 logger.info(
                     "Cooldown expired (60s OL confirmed); clearing discharge buffer and calling _update_battery_health",
-                    extra={'event_type': 'discharge_cooldown_expired'},
+                    extra={"event_type": "discharge_cooldown_expired"},
                 )
                 return True
 
@@ -247,8 +248,10 @@ class DischargeCollector:
             event_type: Current event type (used for logging context).
         """
         reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
-        if (len(self.discharge_buffer.voltages) - self._calibration_last_written_index
-                < reporting_interval_polls):
+        if (
+            len(self.discharge_buffer.voltages) - self._calibration_last_written_index
+            < reporting_interval_polls
+        ):
             return
 
         for i in range(self._calibration_last_written_index, len(self.discharge_buffer.voltages)):
@@ -274,13 +277,13 @@ class DischargeCollector:
                 logger.info(
                     f"Batch flushed {points_written} calibration points to disk",
                     extra={
-                        'event_type': 'calibration_batch_flush',
-                        'points_written': points_written,
+                        "event_type": "calibration_batch_flush",
+                        "points_written": points_written,
                     },
                 )
             except OSError as e:
                 logger.error(
                     f"Calibration batch flush failed: {e}",
                     exc_info=True,
-                    extra={'event_type': 'calibration_flush_failed'},
+                    extra={"event_type": "calibration_flush_failed"},
                 )

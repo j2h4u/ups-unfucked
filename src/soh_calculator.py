@@ -11,11 +11,12 @@ to full Peukert area, producing SoH << 1.0 on every discharge.
 
 import logging
 from typing import List, Optional, Tuple
-from src.soc_predictor import soc_from_voltage
+
 from src.model import BatteryModel
 from src.monitor_config import MIN_DISCHARGE_DURATION_SEC
+from src.soc_predictor import soc_from_voltage
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 # Minimum ΔSoC for meaningful SoH update (5% depth too shallow)
 MIN_DELTA_SOC = 0.05
@@ -58,7 +59,9 @@ def calculate_soh_from_discharge(
 
     duration = time_series[-1] - time_series[0]
     if duration < MIN_DISCHARGE_DURATION_SEC:
-        logger.debug(f"SoH skipped: discharge too short ({duration:.0f}s < {MIN_DISCHARGE_DURATION_SEC}s)")
+        logger.debug(
+            f"SoH skipped: discharge too short ({duration:.0f}s < {MIN_DISCHARGE_DURATION_SEC}s)"
+        )
         return None
 
     lut = battery_model.get_lut()
@@ -72,7 +75,7 @@ def calculate_soh_from_discharge(
     delta_soc = soc_start - soc_end
 
     if delta_soc < MIN_DELTA_SOC:
-        logger.debug(f"SoH skipped: ΔSoC {delta_soc*100:.1f}% < {MIN_DELTA_SOC*100:.0f}%")
+        logger.debug(f"SoH skipped: ΔSoC {delta_soc * 100:.1f}% < {MIN_DELTA_SOC * 100:.0f}%")
         return None
 
     # Coulomb counting: Ah delivered during discharge
@@ -101,15 +104,15 @@ def calculate_soh_from_discharge(
     logger.info(
         f"SoH capacity-based: measured={extrapolated_capacity_ah:.2f}Ah, "
         f"rated={capacity_ah_ref:.2f}Ah, raw={soh_raw:.3f}, "
-        f"blended={soh_new:.3f} (ΔSoC={delta_soc*100:.1f}%, blend_weight={blend_weight:.2f})",
+        f"blended={soh_new:.3f} (ΔSoC={delta_soc * 100:.1f}%, blend_weight={blend_weight:.2f})",
         extra={
-            'event_type': 'soh_calculation',
-            'measured_capacity_ah': f'{extrapolated_capacity_ah:.2f}',
-            'rated_capacity_ah': f'{capacity_ah_ref:.2f}',
-            'soh_raw': f'{soh_raw:.3f}',
-            'soh_blended': f'{soh_new:.3f}',
-            'delta_soc_pct': f'{delta_soc*100:.1f}',
-        }
+            "event_type": "soh_calculation",
+            "measured_capacity_ah": f"{extrapolated_capacity_ah:.2f}",
+            "rated_capacity_ah": f"{capacity_ah_ref:.2f}",
+            "soh_raw": f"{soh_raw:.3f}",
+            "soh_blended": f"{soh_new:.3f}",
+            "delta_soc_pct": f"{delta_soc * 100:.1f}",
+        },
     )
 
     return soh_new, capacity_ah_ref

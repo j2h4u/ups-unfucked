@@ -2,9 +2,8 @@
 
 import json
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, mock_open
+from unittest.mock import patch
 
 import pytest
 
@@ -17,45 +16,45 @@ class TestAtomicWriteJson:
     def test_atomic_write_creates_file(self, tmp_path):
         """Verify file is created with JSON content."""
         model_file = tmp_path / "model.json"
-        data = {'test': 'value', 'number': 42}
+        data = {"test": "value", "number": 42}
 
         atomic_write_json(model_file, data)
 
         assert model_file.exists()
-        with open(model_file, 'r') as f:
+        with open(model_file, "r") as f:
             loaded = json.load(f)
         assert loaded == data
 
     def test_atomic_write_no_temp_files_left(self, tmp_path):
         """Verify no .tmp files remain after successful write."""
         model_file = tmp_path / "model.json"
-        data = {'test': 'value'}
+        data = {"test": "value"}
 
         atomic_write_json(model_file, data)
 
         # Check that no .tmp files exist in the directory
-        tmp_files = list(tmp_path.glob('*.tmp'))
+        tmp_files = list(tmp_path.glob("*.tmp"))
         assert len(tmp_files) == 0, f"Found leftover temp files: {tmp_files}"
 
     def test_atomic_write_creates_parent_dirs(self, tmp_path):
         """Verify parent directories are created automatically."""
         nested_file = tmp_path / "deep" / "nested" / "model.json"
-        data = {'test': 'value'}
+        data = {"test": "value"}
 
         atomic_write_json(nested_file, data)
 
         assert nested_file.exists()
-        with open(nested_file, 'r') as f:
+        with open(nested_file, "r") as f:
             loaded = json.load(f)
         assert loaded == data
 
     def test_atomic_write_handles_exception(self, tmp_path):
         """Verify temp file is cleaned up on write error."""
         model_file = tmp_path / "model.json"
-        data = {'test': 'value'}
+        data = {"test": "value"}
 
         # Mock os.fdatasync to raise an error (now using fdatasync instead of fsync)
-        with patch('os.fdatasync', side_effect=OSError("Disk error")):
+        with patch("os.fdatasync", side_effect=OSError("Disk error")):
             with pytest.raises(IOError):
                 atomic_write_json(model_file, data)
 
@@ -65,19 +64,23 @@ class TestAtomicWriteJson:
     def test_atomic_write_logs_cleanup_failure(self, tmp_path, caplog):
         """Verify cleanup failure during exception is logged, not silently swallowed."""
         import logging
-        model_file = tmp_path / "model.json"
-        data = {'test': 'value'}
 
-        with patch('os.fdatasync', side_effect=OSError("Disk error")):
-            with patch.object(Path, 'unlink', side_effect=OSError("Permission denied")):
-                with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        model_file = tmp_path / "model.json"
+        data = {"test": "value"}
+
+        with patch("os.fdatasync", side_effect=OSError("Disk error")):
+            with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
+                with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
                     with pytest.raises(IOError):
                         atomic_write_json(model_file, data)
 
-        assert any('atomic_write_cleanup_failed' in r.message or
-                   getattr(r, 'event_type', '') == 'atomic_write_cleanup_failed'
-                   for r in caplog.records), \
+        assert any(
+            "atomic_write_cleanup_failed" in r.message
+            or getattr(r, "event_type", "") == "atomic_write_cleanup_failed"
+            for r in caplog.records
+        ), (
             f"Expected 'atomic_write_cleanup_failed' log entry, got: {[r.message for r in caplog.records]}"
+        )
 
 
 class TestBatteryModelLoad:
@@ -87,12 +90,12 @@ class TestBatteryModelLoad:
         """Verify model loads from existing JSON file."""
         model_file = tmp_path / "model.json"
         model_data = {
-            'full_capacity_ah_ref': 7.2,
-            'soh': 0.95,
-            'lut': [{'v': 13.4, 'soc': 1.0, 'source': 'standard'}],
-            'soh_history': [{'date': '2026-03-13', 'soh': 0.95}]
+            "full_capacity_ah_ref": 7.2,
+            "soh": 0.95,
+            "lut": [{"v": 13.4, "soc": 1.0, "source": "standard"}],
+            "soh_history": [{"date": "2026-03-13", "soh": 0.95}],
         }
-        with open(model_file, 'w') as f:
+        with open(model_file, "w") as f:
             json.dump(model_data, f)
 
         model = BatteryModel(model_path=model_file)
@@ -112,13 +115,13 @@ class TestBatteryModelLoad:
         assert model.get_capacity_ah() == 7.2
         lut = model.get_lut()
         assert len(lut) >= 7  # At least 7 standard curve points
-        assert lut[0]['v'] == 13.4
-        assert lut[-1]['v'] == 10.5
+        assert lut[0]["v"] == 13.4
+        assert lut[-1]["v"] == 10.5
 
     def test_model_handles_malformed_json(self, tmp_path, caplog):
         """Verify malformed JSON triggers fallback to default curve."""
         model_file = tmp_path / "model.json"
-        with open(model_file, 'w') as f:
+        with open(model_file, "w") as f:
             f.write("{invalid json content")
 
         model = BatteryModel(model_path=model_file)
@@ -131,9 +134,9 @@ class TestBatteryModelLoad:
 
     def test_model_initializes_with_default_path(self, tmp_path):
         """Verify model uses ~/.config path when no model_path given."""
-        with patch('pathlib.Path.home') as mock_home:
+        with patch("pathlib.Path.home") as mock_home:
             mock_home.return_value = tmp_path
-            model_file = tmp_path / '.config' / 'ups-battery-monitor' / 'model.json'
+            model_file = tmp_path / ".config" / "ups-battery-monitor" / "model.json"
 
             model = BatteryModel()
 
@@ -151,23 +154,23 @@ class TestBatteryModelSave:
         model.save()
 
         assert model_file.exists()
-        with open(model_file, 'r') as f:
+        with open(model_file, "r") as f:
             loaded = json.load(f)
-        assert 'lut' in loaded
-        assert 'soh' in loaded
-        assert 'soh_history' in loaded
+        assert "lut" in loaded
+        assert "soh" in loaded
+        assert "soh_history" in loaded
 
     def test_model_save_preserves_data(self, tmp_path):
         """Verify data is preserved across save/load cycle."""
         model_file = tmp_path / "model.json"
         model1 = BatteryModel(model_path=model_file)
-        model1.add_soh_history_entry('2026-03-14', 0.95)
+        model1.add_soh_history_entry("2026-03-14", 0.95)
 
         model1.save()
 
         model2 = BatteryModel(model_path=model_file)
         assert len(model2.get_soh_history()) == 2
-        assert model2.get_soh_history()[1] == {'date': '2026-03-14', 'soh': 0.95}
+        assert model2.get_soh_history()[1] == {"date": "2026-03-14", "soh": 0.95}
 
 
 class TestVRLALUTInitialization:
@@ -179,7 +182,7 @@ class TestVRLALUTInitialization:
         model = BatteryModel(model_path=model_file)
 
         lut = model.get_lut()
-        voltages = [entry['v'] for entry in lut]
+        voltages = [entry["v"] for entry in lut]
 
         assert 13.4 in voltages  # Full charge
         assert 12.4 in voltages  # Knee point
@@ -192,8 +195,9 @@ class TestVRLALUTInitialization:
 
         lut = model.get_lut()
         for i in range(len(lut) - 1):
-            assert lut[i]['soc'] >= lut[i+1]['soc'], \
-                f"SoC not monotonic: {lut[i]['soc']} > {lut[i+1]['soc']}"
+            assert lut[i]["soc"] >= lut[i + 1]["soc"], (
+                f"SoC not monotonic: {lut[i]['soc']} > {lut[i + 1]['soc']}"
+            )
 
     def test_default_lut_source_tracking(self, tmp_path):
         """Verify all LUT entries have source field."""
@@ -202,8 +206,8 @@ class TestVRLALUTInitialization:
 
         lut = model.get_lut()
         for entry in lut:
-            assert 'source' in entry
-            assert entry['source'] in ['standard', 'measured', 'anchor']
+            assert "source" in entry
+            assert entry["source"] in ["standard", "measured", "anchor"]
 
     def test_anchor_voltage_is_10_5v(self, tmp_path):
         """Verify anchor point is 10.5V (0% SoC)."""
@@ -220,9 +224,9 @@ class TestVRLALUTInitialization:
 
         history = model.get_soh_history()
         assert len(history) >= 1
-        assert 'date' in history[0]
-        assert 'soh' in history[0]
-        assert history[0]['soh'] == 1.0
+        assert "date" in history[0]
+        assert "soh" in history[0]
+        assert history[0]["soh"] == 1.0
 
 
 class TestBatteryModelMethods:
@@ -234,11 +238,11 @@ class TestBatteryModelMethods:
         model = BatteryModel(model_path=model_file)
 
         initial_count = len(model.get_soh_history())
-        model.add_soh_history_entry('2026-03-14', 0.90)
+        model.add_soh_history_entry("2026-03-14", 0.90)
 
         history = model.get_soh_history()
         assert len(history) == initial_count + 1
-        assert history[-1] == {'date': '2026-03-14', 'soh': 0.90}
+        assert history[-1] == {"date": "2026-03-14", "soh": 0.90}
         assert model.get_soh() == 0.90
 
     def test_has_measured_data_false_by_default(self, tmp_path):
@@ -254,7 +258,7 @@ class TestBatteryModelMethods:
         model = BatteryModel(model_path=model_file)
 
         # Add a measured entry
-        model.state['lut'].append({'v': 12.5, 'soc': 0.70, 'source': 'measured'})
+        model.state["lut"].append({"v": 12.5, "soc": 0.70, "source": "measured"})
 
         assert model.has_measured_data() is True
 
@@ -303,14 +307,17 @@ class TestRInternalHistory:
 
     def test_add_r_internal_entry(self, tmp_path):
         model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_r_internal_entry('2026-03-14', 0.0396, 13.50, 13.22, 16.5, 'BLACKOUT_TEST')
+        model.add_r_internal_entry("2026-03-14", 0.0396, 13.50, 13.22, 16.5, "BLACKOUT_TEST")
 
         history = model.get_r_internal_history()
         assert len(history) == 1
         assert history[0] == {
-            'date': '2026-03-14', 'r_ohm': 0.0396,
-            'v_before': 13.50, 'v_sag': 13.22,
-            'load_percent': 16.5, 'event': 'BLACKOUT_TEST'
+            "date": "2026-03-14",
+            "r_ohm": 0.0396,
+            "v_before": 13.50,
+            "v_sag": 13.22,
+            "load_percent": 16.5,
+            "event": "BLACKOUT_TEST",
         }
 
     def test_r_internal_history_empty_by_default(self, tmp_path):
@@ -320,7 +327,7 @@ class TestRInternalHistory:
     def test_r_internal_history_persists(self, tmp_path):
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
-        model.add_r_internal_entry('2026-03-14', 0.0396, 13.50, 13.22, 16.5, 'BLACKOUT_TEST')
+        model.add_r_internal_entry("2026-03-14", 0.0396, 13.50, 13.22, 16.5, "BLACKOUT_TEST")
         model.save()
 
         model2 = BatteryModel(model_path=model_file)
@@ -328,18 +335,18 @@ class TestRInternalHistory:
 
     def test_r_internal_multiple_entries(self, tmp_path):
         model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_r_internal_entry('2026-03-14', 0.0396, 13.50, 13.22, 16.5, 'BLACKOUT_TEST')
-        model.add_r_internal_entry('2026-03-15', 0.0410, 13.48, 13.19, 17.0, 'BLACKOUT_REAL')
+        model.add_r_internal_entry("2026-03-14", 0.0396, 13.50, 13.22, 16.5, "BLACKOUT_TEST")
+        model.add_r_internal_entry("2026-03-15", 0.0410, 13.48, 13.19, 17.0, "BLACKOUT_REAL")
         assert len(model.get_r_internal_history()) == 2
 
     def test_r_internal_rounding(self, tmp_path):
         model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_r_internal_entry('2026-03-14', 0.03961111, 13.501, 13.219, 16.55, 'BLACKOUT_TEST')
+        model.add_r_internal_entry("2026-03-14", 0.03961111, 13.501, 13.219, 16.55, "BLACKOUT_TEST")
         entry = model.get_r_internal_history()[0]
-        assert entry['r_ohm'] == 0.0396
-        assert entry['v_before'] == 13.50
-        assert entry['v_sag'] == 13.22
-        assert entry['load_percent'] == 16.6
+        assert entry["r_ohm"] == 0.0396
+        assert entry["v_before"] == 13.50
+        assert entry["v_sag"] == 13.22
+        assert entry["load_percent"] == 16.6
 
 
 class TestCalibrationWrite:
@@ -357,11 +364,11 @@ class TestCalibrationWrite:
         assert len(lut) == initial_count + 1
 
         # Find the new entry
-        new_entry = [e for e in lut if e['v'] == 12.5]
+        new_entry = [e for e in lut if e["v"] == 12.5]
         assert len(new_entry) == 1
-        assert new_entry[0]['soc'] == 0.65
-        assert new_entry[0]['source'] == 'measured'
-        assert new_entry[0]['timestamp'] == 1234567890.0
+        assert new_entry[0]["soc"] == 0.65
+        assert new_entry[0]["source"] == "measured"
+        assert new_entry[0]["timestamp"] == 1234567890.0
 
     def test_calibration_write_duplicate_prevention(self, tmp_path):
         """Verify calibration_write() skips duplicates by timestamp."""
@@ -399,7 +406,7 @@ class TestCalibrationWrite:
         # Reload from disk to verify persistence
         model2 = BatteryModel(model_path=model_file)
         lut = model2.get_lut()
-        new_entries = [e for e in lut if e['v'] == 12.5]
+        new_entries = [e for e in lut if e["v"] == 12.5]
         assert len(new_entries) == 1
 
     def test_calibration_write_sorts_lut(self, tmp_path):
@@ -414,7 +421,7 @@ class TestCalibrationWrite:
 
         # Check LUT is sorted descending
         lut = model.get_lut()
-        voltages = [e['v'] for e in lut]
+        voltages = [e["v"] for e in lut]
         assert voltages == sorted(voltages, reverse=True)
 
     def test_calibration_write_multiple_calls(self, tmp_path):
@@ -433,7 +440,7 @@ class TestCalibrationWrite:
         assert len(lut) == initial_count + 3
 
         # Check all entries are present
-        voltages = [e['v'] for e in lut if e['source'] == 'measured']
+        voltages = [e["v"] for e in lut if e["source"] == "measured"]
         assert 13.0 in voltages
         assert 12.5 in voltages
         assert 11.5 in voltages
@@ -447,16 +454,13 @@ class TestUpdateLutFromCalibration:
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
-        # Original LUT
-        original_count = len(model.get_lut())
-
         # Create new LUT (interpolated)
         new_lut = [
-            {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-            {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-            {'v': 10.8, 'soc': 0.40, 'source': 'interpolated'},
-            {'v': 10.6, 'soc': 0.20, 'source': 'interpolated'},
-            {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+            {"v": 13.4, "soc": 1.00, "source": "standard"},
+            {"v": 11.0, "soc": 0.50, "source": "measured"},
+            {"v": 10.8, "soc": 0.40, "source": "interpolated"},
+            {"v": 10.6, "soc": 0.20, "source": "interpolated"},
+            {"v": 10.5, "soc": 0.00, "source": "measured"},
         ]
 
         # Update
@@ -473,9 +477,9 @@ class TestUpdateLutFromCalibration:
 
         # New LUT
         new_lut = [
-            {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-            {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-            {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+            {"v": 13.4, "soc": 1.00, "source": "standard"},
+            {"v": 11.0, "soc": 0.50, "source": "measured"},
+            {"v": 10.5, "soc": 0.00, "source": "measured"},
         ]
 
         # Update
@@ -488,23 +492,24 @@ class TestUpdateLutFromCalibration:
     def test_update_lut_from_calibration_logging(self, tmp_path, caplog):
         """Verify update_lut_from_calibration() logs with entry count."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
         new_lut = [
-            {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-            {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-            {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+            {"v": 13.4, "soc": 1.00, "source": "standard"},
+            {"v": 11.0, "soc": 0.50, "source": "measured"},
+            {"v": 10.5, "soc": 0.00, "source": "measured"},
         ]
 
         model.update_lut_from_calibration(new_lut)
 
         # Check log message
-        assert 'LUT updated from calibration' in caplog.text
-        assert '3 entries' in caplog.text
-        assert 'cliff region interpolated' in caplog.text
+        assert "LUT updated from calibration" in caplog.text
+        assert "3 entries" in caplog.text
+        assert "cliff region interpolated" in caplog.text
 
     def test_update_lut_from_calibration_with_mixed_sources(self, tmp_path):
         """Verify update preserves source field values (measured, interpolated, standard)."""
@@ -512,21 +517,21 @@ class TestUpdateLutFromCalibration:
         model = BatteryModel(model_path=model_file)
 
         new_lut = [
-            {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-            {'v': 11.0, 'soc': 0.50, 'source': 'measured'},
-            {'v': 10.8, 'soc': 0.40, 'source': 'interpolated'},
-            {'v': 10.6, 'soc': 0.20, 'source': 'interpolated'},
-            {'v': 10.5, 'soc': 0.00, 'source': 'measured'},
+            {"v": 13.4, "soc": 1.00, "source": "standard"},
+            {"v": 11.0, "soc": 0.50, "source": "measured"},
+            {"v": 10.8, "soc": 0.40, "source": "interpolated"},
+            {"v": 10.6, "soc": 0.20, "source": "interpolated"},
+            {"v": 10.5, "soc": 0.00, "source": "measured"},
         ]
 
         model.update_lut_from_calibration(new_lut)
 
         lut = model.get_lut()
-        assert lut[0]['source'] == 'standard'
-        assert lut[1]['source'] == 'measured'
-        assert lut[2]['source'] == 'interpolated'
-        assert lut[3]['source'] == 'interpolated'
-        assert lut[4]['source'] == 'measured'
+        assert lut[0]["source"] == "standard"
+        assert lut[1]["source"] == "measured"
+        assert lut[2]["source"] == "interpolated"
+        assert lut[3]["source"] == "interpolated"
+        assert lut[4]["source"] == "measured"
 
 
 class TestHistoryPruning:
@@ -539,19 +544,19 @@ class TestHistoryPruning:
 
         # Create 50 history entries
         for i in range(50):
-            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 1.0 - (i * 0.001))
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001))
 
         initial_count = len(model.get_soh_history())
         assert initial_count >= 50
 
         # Prune
-        model._cap_history_entries('soh_history', keep_count=30)
+        model._cap_history_entries("soh_history", keep_count=30)
 
         # Verify only last 30 are kept
         history = model.get_soh_history()
         assert len(history) == 30
         # Verify we kept the most recent entries (last ones added)
-        assert history[-1]['soh'] == pytest.approx(1.0 - (49 * 0.001))
+        assert history[-1]["soh"] == pytest.approx(1.0 - (49 * 0.001))
 
     def test_prune_soh_history_no_change_if_small(self, tmp_path):
         """Verify _prune_soh_history() leaves history unchanged if ≤ 30 entries."""
@@ -560,12 +565,12 @@ class TestHistoryPruning:
 
         # Create only 15 entries
         for i in range(15):
-            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95)
 
         initial_history = model.get_soh_history().copy()
 
         # Prune (should have no effect)
-        model._cap_history_entries('soh_history', keep_count=30)
+        model._cap_history_entries("soh_history", keep_count=30)
 
         # Verify no change
         assert model.get_soh_history() == initial_history
@@ -578,19 +583,19 @@ class TestHistoryPruning:
         # Create 40 r_internal entries
         for i in range(40):
             model.add_r_internal_entry(
-                f'2026-03-{(i % 28) + 1:02d}',
+                f"2026-03-{(i % 28) + 1:02d}",
                 0.03 + (i * 0.0001),
                 13.5 - (i * 0.01),
                 13.0,
                 15.0,
-                'TEST'
+                "TEST",
             )
 
         initial_count = len(model.get_r_internal_history())
         assert initial_count >= 40
 
         # Prune
-        model._cap_history_entries('r_internal_history', keep_count=30)
+        model._cap_history_entries("r_internal_history", keep_count=30)
 
         # Verify only last 30 are kept
         history = model.get_r_internal_history()
@@ -603,14 +608,14 @@ class TestHistoryPruning:
 
         # Create 35 history entries
         for i in range(35):
-            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95)
 
         # Prune once
-        model._cap_history_entries('soh_history', keep_count=30)
+        model._cap_history_entries("soh_history", keep_count=30)
         history_after_first = model.get_soh_history().copy()
 
         # Prune again
-        model._cap_history_entries('soh_history', keep_count=30)
+        model._cap_history_entries("soh_history", keep_count=30)
         history_after_second = model.get_soh_history().copy()
 
         # Should be identical
@@ -623,7 +628,7 @@ class TestHistoryPruning:
 
         # Create 40 history entries
         for i in range(40):
-            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 1.0 - (i * 0.001))
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001))
 
         # Save (should prune internally)
         model.save()
@@ -642,8 +647,10 @@ class TestHistoryPruning:
 
         # Add many entries to both histories
         for i in range(35):
-            model.add_soh_history_entry(f'2026-03-{(i % 28) + 1:02d}', 0.95)
-            model.add_r_internal_entry(f'2026-03-{(i % 28) + 1:02d}', 0.03, 13.5, 13.0, 15.0, 'TEST')
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95)
+            model.add_r_internal_entry(
+                f"2026-03-{(i % 28) + 1:02d}", 0.03, 13.5, 13.0, 15.0, "TEST"
+            )
 
         # Save
         model.save()
@@ -660,13 +667,15 @@ class TestFdatasyncOptimization:
     def test_atomic_write_uses_fdatasync(self, tmp_path):
         """Verify atomic_write_json() calls os.fdatasync instead of os.fsync."""
         model_file = tmp_path / "model.json"
-        data = {'test': 'value', 'number': 42}
+        data = {"test": "value", "number": 42}
 
         # Patch both os.fdatasync and os.fsync to track calls
-        with patch('os.fdatasync') as mock_fdatasync, \
-             patch('os.fsync') as mock_fsync, \
-             patch('os.open', wraps=os.open), \
-             patch('os.close', wraps=os.close):
+        with (
+            patch("os.fdatasync") as mock_fdatasync,
+            patch("os.fsync") as mock_fsync,
+            patch("os.open", wraps=os.open),
+            patch("os.close", wraps=os.close),
+        ):
             atomic_write_json(model_file, data)
 
             # fdatasync should be called
@@ -677,14 +686,14 @@ class TestFdatasyncOptimization:
     def test_atomic_write_json_still_works_with_fdatasync(self, tmp_path):
         """Verify atomic file write still succeeds after switching to fdatasync."""
         model_file = tmp_path / "model.json"
-        data = {'test': 'value', 'nested': {'key': 'value'}, 'list': [1, 2, 3]}
+        data = {"test": "value", "nested": {"key": "value"}, "list": [1, 2, 3]}
 
         # Write with fdatasync (already implemented)
         atomic_write_json(model_file, data)
 
         # Verify file was created and contains correct data
         assert model_file.exists()
-        with open(model_file, 'r') as f:
+        with open(model_file, "r") as f:
             loaded = json.load(f)
         assert loaded == data
 
@@ -692,25 +701,25 @@ class TestFdatasyncOptimization:
         """Verify JSON content remains intact after switching to fdatasync."""
         model_file = tmp_path / "model.json"
         data = {
-            'lut': [
-                {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
-                {'v': 12.4, 'soc': 0.8, 'source': 'measured'},
-                {'v': 10.5, 'soc': 0.0, 'source': 'anchor'}
+            "lut": [
+                {"v": 13.4, "soc": 1.0, "source": "standard"},
+                {"v": 12.4, "soc": 0.8, "source": "measured"},
+                {"v": 10.5, "soc": 0.0, "source": "anchor"},
             ],
-            'soh': 0.95,
-            'full_capacity_ah_ref': 7.2,
-            'cycle_count': 42
+            "soh": 0.95,
+            "full_capacity_ah_ref": 7.2,
+            "cycle_count": 42,
         }
 
         atomic_write_json(model_file, data)
 
         # Read back and verify exact match
-        with open(model_file, 'r') as f:
+        with open(model_file, "r") as f:
             loaded = json.load(f)
         assert loaded == data
-        assert loaded['lut'][0]['v'] == 13.4
-        assert loaded['soh'] == 0.95
-        assert loaded['full_capacity_ah_ref'] == 7.2
+        assert loaded["lut"][0]["v"] == 13.4
+        assert loaded["soh"] == 0.95
+        assert loaded["full_capacity_ah_ref"] == 7.2
 
 
 class TestCapacityEstimates:
@@ -719,31 +728,34 @@ class TestCapacityEstimates:
     def test_add_capacity_estimate_creates_array_if_missing(self, tmp_path):
         """Test 1: model.add_capacity_estimate() creates array if not present."""
         model = BatteryModel(model_path=tmp_path / "model.json")
-        assert 'capacity_estimates' not in model.state or len(model.state.get('capacity_estimates', [])) == 0
+        assert (
+            "capacity_estimates" not in model.state
+            or len(model.state.get("capacity_estimates", [])) == 0
+        )
 
         model.add_capacity_estimate(
             ah_estimate=7.5,
             confidence=0.85,
-            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
-            timestamp='2026-03-15T12:34:56Z'
+            metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
+            timestamp="2026-03-15T12:34:56Z",
         )
 
-        assert 'capacity_estimates' in model.state
-        assert len(model.state['capacity_estimates']) == 1
+        assert "capacity_estimates" in model.state
+        assert len(model.state["capacity_estimates"]) == 1
 
     def test_get_capacity_estimates_returns_list_latest_first(self, tmp_path):
         """Test 2: model.get_capacity_estimates() returns list with latest first."""
         model = BatteryModel(model_path=tmp_path / "model.json")
 
         # Add two estimates
-        model.add_capacity_estimate(7.4, 0.80, {'delta_soc_percent': 50.0}, '2026-03-15T10:00:00Z')
-        model.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 52.0}, '2026-03-15T11:00:00Z')
+        model.add_capacity_estimate(7.4, 0.80, {"delta_soc_percent": 50.0}, "2026-03-15T10:00:00Z")
+        model.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 52.0}, "2026-03-15T11:00:00Z")
 
         estimates = model.get_capacity_estimates()
         assert len(estimates) == 2
         # Latest first
-        assert estimates[0]['timestamp'] == '2026-03-15T11:00:00Z'
-        assert estimates[1]['timestamp'] == '2026-03-15T10:00:00Z'
+        assert estimates[0]["timestamp"] == "2026-03-15T11:00:00Z"
+        assert estimates[1]["timestamp"] == "2026-03-15T10:00:00Z"
 
     def test_get_latest_capacity_returns_float_or_none(self, tmp_path):
         """Test 3: model.get_latest_capacity() returns float (latest Ah) or None."""
@@ -754,7 +766,7 @@ class TestCapacityEstimates:
         assert latest is None
 
         # After adding estimate
-        model.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 50.0}, '2026-03-15T12:34:56Z')
+        model.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 50.0}, "2026-03-15T12:34:56Z")
         latest = model.get_latest_capacity()
         assert isinstance(latest, float)
         assert latest == 7.5
@@ -768,12 +780,12 @@ class TestCapacityEstimates:
             model.add_capacity_estimate(
                 ah_estimate=7.0 + (i * 0.01),
                 confidence=0.5 + (i * 0.01),
-                metadata={'delta_soc_percent': 50.0},
-                timestamp=f'2026-03-15T{i:02d}:00:00Z'
+                metadata={"delta_soc_percent": 50.0},
+                timestamp=f"2026-03-15T{i:02d}:00:00Z",
             )
 
         # After adding the 35th, should be pruned to 30
-        estimates = model.state['capacity_estimates']
+        estimates = model.state["capacity_estimates"]
         assert len(estimates) <= 30, f"Expected <= 30 estimates, got {len(estimates)}"
 
     def test_save_persists_capacity_estimates_atomically(self, tmp_path):
@@ -781,16 +793,16 @@ class TestCapacityEstimates:
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
-        model.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 50.0}, '2026-03-15T12:34:56Z')
+        model.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 50.0}, "2026-03-15T12:34:56Z")
         model.save()
 
         # Verify file exists
         assert model_file.exists()
-        with open(model_file, 'r') as f:
+        with open(model_file, "r") as f:
             loaded = json.load(f)
-        assert 'capacity_estimates' in loaded
-        assert len(loaded['capacity_estimates']) == 1
-        assert loaded['capacity_estimates'][0]['ah_estimate'] == 7.5
+        assert "capacity_estimates" in loaded
+        assert len(loaded["capacity_estimates"]) == 1
+        assert loaded["capacity_estimates"][0]["ah_estimate"] == 7.5
 
     def test_reload_persists_capacity_estimates(self, tmp_path):
         """Test 6: Reload from model.json → capacity_estimates persists across daemon restarts."""
@@ -798,15 +810,15 @@ class TestCapacityEstimates:
         model1 = BatteryModel(model_path=model_file)
 
         # Add estimates and save
-        model1.add_capacity_estimate(7.4, 0.80, {'delta_soc_percent': 50.0}, '2026-03-15T10:00:00Z')
-        model1.add_capacity_estimate(7.5, 0.85, {'delta_soc_percent': 52.0}, '2026-03-15T11:00:00Z')
+        model1.add_capacity_estimate(7.4, 0.80, {"delta_soc_percent": 50.0}, "2026-03-15T10:00:00Z")
+        model1.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 52.0}, "2026-03-15T11:00:00Z")
         model1.save()
 
         # Create new model instance, load from file
         model2 = BatteryModel(model_path=model_file)
         estimates = model2.get_capacity_estimates()
         assert len(estimates) == 2
-        assert estimates[0]['ah_estimate'] == 7.5  # Latest first
+        assert estimates[0]["ah_estimate"] == 7.5  # Latest first
 
     def test_capacity_estimates_schema_has_required_fields(self, tmp_path):
         """Verify capacity_estimates array elements have all required fields."""
@@ -816,35 +828,35 @@ class TestCapacityEstimates:
             ah_estimate=7.45,
             confidence=0.82,
             metadata={
-                'delta_soc_percent': 52.0,
-                'duration_sec': 1234,
-                'discharge_slope_mohm': 45.2,
-                'load_avg_percent': 35.0
+                "delta_soc_percent": 52.0,
+                "duration_sec": 1234,
+                "discharge_slope_mohm": 45.2,
+                "load_avg_percent": 35.0,
             },
-            timestamp='2026-03-15T12:34:56Z'
+            timestamp="2026-03-15T12:34:56Z",
         )
 
-        estimate = model.state['capacity_estimates'][0]
-        assert 'timestamp' in estimate
-        assert 'ah_estimate' in estimate
-        assert 'confidence' in estimate
-        assert 'metadata' in estimate
-        assert estimate['timestamp'] == '2026-03-15T12:34:56Z'
-        assert estimate['ah_estimate'] == 7.45
-        assert estimate['confidence'] == 0.82
-        assert estimate['metadata']['delta_soc_percent'] == 52.0
+        estimate = model.state["capacity_estimates"][0]
+        assert "timestamp" in estimate
+        assert "ah_estimate" in estimate
+        assert "confidence" in estimate
+        assert "metadata" in estimate
+        assert estimate["timestamp"] == "2026-03-15T12:34:56Z"
+        assert estimate["ah_estimate"] == 7.45
+        assert estimate["confidence"] == 0.82
+        assert estimate["metadata"]["delta_soc_percent"] == 52.0
 
     def test_get_convergence_status_empty_model(self, tmp_path):
         """Test: get_convergence_status() returns zeros for empty model."""
         model = BatteryModel(model_path=tmp_path / "model.json")
 
         status = model.get_convergence_status()
-        assert status['sample_count'] == 0
-        assert status['confidence_percent'] == 0.0
-        assert status['latest_ah'] is None
-        assert status['rated_ah'] == 7.2
-        assert status['converged'] is False
-        assert status['capacity_ah_measured'] is None
+        assert status["sample_count"] == 0
+        assert status["confidence_percent"] == 0.0
+        assert status["latest_ah"] is None
+        assert status["rated_ah"] == 7.2
+        assert status["converged"] is False
+        assert status["capacity_ah_measured"] is None
 
     def test_get_convergence_status_two_measurements(self, tmp_path):
         """Test: get_convergence_status() with 2 measurements (not converged)."""
@@ -853,22 +865,22 @@ class TestCapacityEstimates:
         model.add_capacity_estimate(
             ah_estimate=7.0,
             confidence=0.0,
-            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
-            timestamp='2026-03-16T10:00:00Z'
+            metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
+            timestamp="2026-03-16T10:00:00Z",
         )
         model.add_capacity_estimate(
             ah_estimate=7.2,
             confidence=0.0,
-            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
-            timestamp='2026-03-16T11:00:00Z'
+            metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
+            timestamp="2026-03-16T11:00:00Z",
         )
 
         status = model.get_convergence_status()
-        assert status['sample_count'] == 2
-        assert status['confidence_percent'] == 0.0  # < 3 samples = 0% confidence
-        assert status['latest_ah'] == 7.2
-        assert status['rated_ah'] == 7.2
-        assert status['converged'] is False  # Need >= 3 samples
+        assert status["sample_count"] == 2
+        assert status["confidence_percent"] == 0.0  # < 3 samples = 0% confidence
+        assert status["latest_ah"] == 7.2
+        assert status["rated_ah"] == 7.2
+        assert status["converged"] is False  # Need >= 3 samples
 
     def test_get_convergence_status_three_consistent_measurements(self, tmp_path):
         """Test: get_convergence_status() with 3 consistent measurements (converged)."""
@@ -878,28 +890,28 @@ class TestCapacityEstimates:
         model.add_capacity_estimate(
             ah_estimate=7.0,
             confidence=0.0,
-            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
-            timestamp='2026-03-16T10:00:00Z'
+            metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
+            timestamp="2026-03-16T10:00:00Z",
         )
         model.add_capacity_estimate(
             ah_estimate=7.2,
             confidence=0.0,
-            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
-            timestamp='2026-03-16T11:00:00Z'
+            metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
+            timestamp="2026-03-16T11:00:00Z",
         )
         model.add_capacity_estimate(
             ah_estimate=7.1,
             confidence=0.86,
-            metadata={'delta_soc_percent': 50.0, 'duration_sec': 1234},
-            timestamp='2026-03-16T12:00:00Z'
+            metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
+            timestamp="2026-03-16T12:00:00Z",
         )
 
         status = model.get_convergence_status()
-        assert status['sample_count'] == 3
-        assert status['latest_ah'] == 7.1
-        assert status['rated_ah'] == 7.2
-        assert status['converged'] is True  # 3 samples + low CoV
-        assert status['confidence_percent'] > 80  # High confidence with consistent estimates
+        assert status["sample_count"] == 3
+        assert status["latest_ah"] == 7.1
+        assert status["rated_ah"] == 7.2
+        assert status["converged"] is True  # 3 samples + low CoV
+        assert status["confidence_percent"] > 80  # High confidence with consistent estimates
 
 
 class TestSoHHistoryVersioning:
@@ -911,17 +923,13 @@ class TestSoHHistoryVersioning:
         model = BatteryModel(model_path)
 
         # Add entry with capacity baseline
-        model.add_soh_history_entry(
-            date='2026-03-16',
-            soh=0.92,
-            capacity_ah_ref=6.8
-        )
+        model.add_soh_history_entry(date="2026-03-16", soh=0.92, capacity_ah_ref=6.8)
 
         # Verify entry contains baseline tag
-        entry = model.state['soh_history'][-1]
-        assert entry['date'] == '2026-03-16'
-        assert entry['soh'] == 0.92
-        assert entry['capacity_ah_ref'] == 6.8  # Tagged
+        entry = model.state["soh_history"][-1]
+        assert entry["date"] == "2026-03-16"
+        assert entry["soh"] == 0.92
+        assert entry["capacity_ah_ref"] == 6.8  # Tagged
 
     def test_soh_history_entry_backward_compat(self, tmp_path):
         """SOH-02: add_soh_history_entry() without capacity_ah_ref is backward compatible."""
@@ -929,39 +937,36 @@ class TestSoHHistoryVersioning:
         model = BatteryModel(model_path)
 
         # Add entry without capacity baseline (old-style)
-        model.add_soh_history_entry(
-            date='2026-03-15',
-            soh=0.95
-        )
+        model.add_soh_history_entry(date="2026-03-15", soh=0.95)
 
         # Verify entry exists but has no capacity_ah_ref field
-        entry = model.state['soh_history'][-1]
-        assert entry['date'] == '2026-03-15'
-        assert entry['soh'] == 0.95
-        assert 'capacity_ah_ref' not in entry  # Not tagged (backward compat)
+        entry = model.state["soh_history"][-1]
+        assert entry["date"] == "2026-03-15"
+        assert entry["soh"] == 0.95
+        assert "capacity_ah_ref" not in entry  # Not tagged (backward compat)
 
     def test_mixed_baseline_entries(self, tmp_path):
         """SOH-02: soh_history can contain entries with and without capacity_ah_ref field."""
         model_path = tmp_path / "model.json"
         model = BatteryModel(model_path)
         # Clear default entry
-        model.state['soh_history'] = []
+        model.state["soh_history"] = []
 
         # Add old-style entry (no baseline tag)
-        model.add_soh_history_entry('2026-03-14', 0.97)
+        model.add_soh_history_entry("2026-03-14", 0.97)
 
         # Add new-style entry with measured baseline
-        model.add_soh_history_entry('2026-03-15', 0.95, capacity_ah_ref=6.8)
+        model.add_soh_history_entry("2026-03-15", 0.95, capacity_ah_ref=6.8)
 
         # Add another new-style entry with different baseline (after battery replaced)
-        model.add_soh_history_entry('2026-03-16', 0.92, capacity_ah_ref=6.9)
+        model.add_soh_history_entry("2026-03-16", 0.92, capacity_ah_ref=6.9)
 
         # Verify history contains mixed entries
-        history = model.state['soh_history']
+        history = model.state["soh_history"]
         assert len(history) == 3
-        assert 'capacity_ah_ref' not in history[0]  # Old entry
-        assert history[1]['capacity_ah_ref'] == 6.8
-        assert history[2]['capacity_ah_ref'] == 6.9
+        assert "capacity_ah_ref" not in history[0]  # Old entry
+        assert history[1]["capacity_ah_ref"] == 6.8
+        assert history[2]["capacity_ah_ref"] == 6.9
 
 
 class TestSchedulingSchema:
@@ -970,104 +975,105 @@ class TestSchedulingSchema:
     def test_scheduling_schema_fields_initialized(self, temporary_model_path):
         """Scheduling fields initialized to None on new model creation."""
         model = BatteryModel(temporary_model_path)
-        assert model.state.get('last_upscmd_timestamp') is None
-        assert model.state.get('last_upscmd_type') is None
-        assert model.state.get('last_upscmd_status') is None
-        assert model.state.get('scheduled_test_timestamp') is None
-        assert model.state.get('scheduled_test_reason') is None
-        assert model.state.get('test_block_reason') is None
-        assert model.state.get('blackout_credit') is None
+        assert model.state.get("last_upscmd_timestamp") is None
+        assert model.state.get("last_upscmd_type") is None
+        assert model.state.get("last_upscmd_status") is None
+        assert model.state.get("scheduled_test_timestamp") is None
+        assert model.state.get("scheduled_test_reason") is None
+        assert model.state.get("test_block_reason") is None
+        assert model.state.get("blackout_credit") is None
 
     def test_scheduling_fields_persist_after_save(self, temporary_model_path):
         """Scheduling fields persist correctly through save/reload cycle."""
         model = BatteryModel(temporary_model_path)
 
         # Set scheduling fields
-        model.state['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
-        model.state['last_upscmd_type'] = 'test.battery.start.deep'
-        model.state['last_upscmd_status'] = 'OK'
+        model.state["last_upscmd_timestamp"] = "2026-03-17T10:30:00Z"
+        model.state["last_upscmd_type"] = "test.battery.start.deep"
+        model.state["last_upscmd_status"] = "OK"
         model.save()
 
         # Reload and verify
         model2 = BatteryModel(temporary_model_path)
-        assert model2.state.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
-        assert model2.state.get('last_upscmd_type') == 'test.battery.start.deep'
-        assert model2.state.get('last_upscmd_status') == 'OK'
+        assert model2.state.get("last_upscmd_timestamp") == "2026-03-17T10:30:00Z"
+        assert model2.state.get("last_upscmd_type") == "test.battery.start.deep"
+        assert model2.state.get("last_upscmd_status") == "OK"
 
     def test_set_blackout_credit_method(self, temporary_model_path):
         """set_blackout_credit() sets credit dict correctly."""
         model = BatteryModel(temporary_model_path)
         credit = {
-            'active': True,
-            'credited_event_timestamp': '2026-03-16T15:30:00Z',
-            'credit_expires': '2026-03-23T15:30:00Z',
-            'desulfation_credit': 0.18,
+            "active": True,
+            "credited_event_timestamp": "2026-03-16T15:30:00Z",
+            "credit_expires": "2026-03-23T15:30:00Z",
+            "desulfation_credit": 0.18,
         }
         model.set_blackout_credit(credit)
-        assert model.state['blackout_credit'] == credit
+        assert model.state["blackout_credit"] == credit
         assert model.get_blackout_credit() == credit
 
     def test_clear_blackout_credit_method(self, temporary_model_path):
         """clear_blackout_credit() sets active=False."""
         model = BatteryModel(temporary_model_path)
         credit = {
-            'active': True,
-            'credited_event_timestamp': '2026-03-16T15:30:00Z',
-            'credit_expires': '2026-03-23T15:30:00Z',
+            "active": True,
+            "credited_event_timestamp": "2026-03-16T15:30:00Z",
+            "credit_expires": "2026-03-23T15:30:00Z",
         }
         model.set_blackout_credit(credit)
         model.clear_blackout_credit()
-        assert model.state['blackout_credit']['active'] is False
+        assert model.state["blackout_credit"]["active"] is False
 
     def test_update_scheduling_state_method(self, temporary_model_path):
         """update_scheduling_state() updates scheduled test info."""
         model = BatteryModel(temporary_model_path)
         model.update_scheduling_state(
-            scheduled_timestamp='2026-03-24T08:00:00Z',
-            reason='sulfation_0.65_roi_0.34',
+            scheduled_timestamp="2026-03-24T08:00:00Z",
+            reason="sulfation_0.65_roi_0.34",
             block_reason=None,
         )
-        assert model.state['scheduled_test_timestamp'] == '2026-03-24T08:00:00Z'
-        assert model.state['scheduled_test_reason'] == 'sulfation_0.65_roi_0.34'
-        assert model.state['test_block_reason'] is None
+        assert model.state["scheduled_test_timestamp"] == "2026-03-24T08:00:00Z"
+        assert model.state["scheduled_test_reason"] == "sulfation_0.65_roi_0.34"
+        assert model.state["test_block_reason"] is None
 
     def test_update_upscmd_result_method(self, temporary_model_path):
         """update_upscmd_result() updates last command info."""
         model = BatteryModel(temporary_model_path)
         model.update_upscmd_result(
-            upscmd_timestamp='2026-03-17T10:30:00Z',
-            upscmd_type='test.battery.start.deep',
-            upscmd_status='OK',
+            upscmd_timestamp="2026-03-17T10:30:00Z",
+            upscmd_type="test.battery.start.deep",
+            upscmd_status="OK",
         )
-        assert model.state['last_upscmd_timestamp'] == '2026-03-17T10:30:00Z'
-        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
-        assert model.state['last_upscmd_status'] == 'OK'
+        assert model.state["last_upscmd_timestamp"] == "2026-03-17T10:30:00Z"
+        assert model.state["last_upscmd_type"] == "test.battery.start.deep"
+        assert model.state["last_upscmd_status"] == "OK"
 
     def test_legacy_model_loads_with_scheduling_code(self, temporary_model_path):
         """Legacy model.json (no scheduling fields) loads correctly with scheduling code."""
         import json
+
         # Create legacy model.json (no scheduling fields)
         legacy_data = {
-            'full_capacity_ah_ref': 7.2,
-            'soh': 0.95,
-            'physics': {},
-            'lut': [
-                {'v': 13.4, 'soc': 1.0, 'source': 'standard'},
-                {'v': 10.5, 'soc': 0.0, 'source': 'anchor'},
+            "full_capacity_ah_ref": 7.2,
+            "soh": 0.95,
+            "physics": {},
+            "lut": [
+                {"v": 13.4, "soc": 1.0, "source": "standard"},
+                {"v": 10.5, "soc": 0.0, "source": "anchor"},
             ],
-            'soh_history': [],
-            'sulfation_history': [],
-            'discharge_events': [],
+            "soh_history": [],
+            "sulfation_history": [],
+            "discharge_events": [],
         }
-        with open(temporary_model_path, 'w') as f:
+        with open(temporary_model_path, "w") as f:
             json.dump(legacy_data, f)
 
         # Load with scheduling code
         model = BatteryModel(temporary_model_path)
 
         # Verify scheduling fields are initialized
-        assert model.state.get('last_upscmd_timestamp') is None
-        assert model.state.get('blackout_credit') is None
+        assert model.state.get("last_upscmd_timestamp") is None
+        assert model.state.get("blackout_credit") is None
         assert model.get_soh() == 0.95  # Legacy data still intact
 
     def test_scheduling_fields_not_stripped_on_save(self, temporary_model_path):
@@ -1075,10 +1081,10 @@ class TestSchedulingSchema:
         model = BatteryModel(temporary_model_path)
 
         # Set scheduling fields
-        model.state['last_upscmd_timestamp'] = '2026-03-17T10:30:00Z'
-        model.state['blackout_credit'] = {
-            'active': True,
-            'credit_expires': '2026-03-24T00:00:00Z',
+        model.state["last_upscmd_timestamp"] = "2026-03-17T10:30:00Z"
+        model.state["blackout_credit"] = {
+            "active": True,
+            "credit_expires": "2026-03-24T00:00:00Z",
         }
 
         # Save and reload
@@ -1086,8 +1092,8 @@ class TestSchedulingSchema:
         model2 = BatteryModel(temporary_model_path)
 
         # Verify fields persist
-        assert model2.state.get('last_upscmd_timestamp') == '2026-03-17T10:30:00Z'
-        assert model2.state.get('blackout_credit')['active'] is True
+        assert model2.state.get("last_upscmd_timestamp") == "2026-03-17T10:30:00Z"
+        assert model2.state.get("blackout_credit")["active"] is True
 
     def test_get_last_upscmd_timestamp_method(self, temporary_model_path):
         """get_last_upscmd_timestamp() returns correct value or None."""
@@ -1095,11 +1101,11 @@ class TestSchedulingSchema:
         assert model.get_last_upscmd_timestamp() is None
 
         model.update_upscmd_result(
-            upscmd_timestamp='2026-03-17T10:30:00Z',
-            upscmd_type='test.battery.start.quick',
-            upscmd_status='OK',
+            upscmd_timestamp="2026-03-17T10:30:00Z",
+            upscmd_type="test.battery.start.quick",
+            upscmd_status="OK",
         )
-        assert model.get_last_upscmd_timestamp() == '2026-03-17T10:30:00Z'
+        assert model.get_last_upscmd_timestamp() == "2026-03-17T10:30:00Z"
 
     def test_get_blackout_credit_method(self, temporary_model_path):
         """get_blackout_credit() returns credit dict or None."""
@@ -1107,8 +1113,8 @@ class TestSchedulingSchema:
         assert model.get_blackout_credit() is None
 
         credit = {
-            'active': True,
-            'credit_expires': '2026-03-24T00:00:00Z',
+            "active": True,
+            "credit_expires": "2026-03-24T00:00:00Z",
         }
         model.set_blackout_credit(credit)
         assert model.get_blackout_credit() == credit
@@ -1120,152 +1126,201 @@ class TestFieldLevelValidation:
     def _base_model_data(self):
         """Return a valid base model dict that passes all validation."""
         return {
-            'full_capacity_ah_ref': 7.2,
-            'soh': 0.95,
-            'physics': {
-                'peukert_exponent': 1.2,
-                'nominal_voltage': 12.0,
-                'nominal_power_watts': 425.0,
-                'ir_compensation': {'k_volts_per_percent': 0.015, 'reference_load_percent': 20.0},
-                'rls_state': {
-                    'ir_k': {'theta': 0.015, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
-                    'peukert': {'theta': 1.2, 'P': 1.0, 'sample_count': 0, 'forgetting_factor': 0.97},
+            "full_capacity_ah_ref": 7.2,
+            "soh": 0.95,
+            "physics": {
+                "peukert_exponent": 1.2,
+                "nominal_voltage": 12.0,
+                "nominal_power_watts": 425.0,
+                "ir_compensation": {"k_volts_per_percent": 0.015, "reference_load_percent": 20.0},
+                "rls_state": {
+                    "ir_k": {
+                        "theta": 0.015,
+                        "P": 1.0,
+                        "sample_count": 0,
+                        "forgetting_factor": 0.97,
+                    },
+                    "peukert": {
+                        "theta": 1.2,
+                        "P": 1.0,
+                        "sample_count": 0,
+                        "forgetting_factor": 0.97,
+                    },
                 },
             },
-            'lut': [
-                {'v': 13.4, 'soc': 1.00, 'source': 'standard'},
-                {'v': 10.5, 'soc': 0.00, 'source': 'anchor'},
+            "lut": [
+                {"v": 13.4, "soc": 1.00, "source": "standard"},
+                {"v": 10.5, "soc": 0.00, "source": "anchor"},
             ],
-            'soh_history': [{'date': '2026-03-01', 'soh': 0.95}],
+            "soh_history": [{"date": "2026-03-01", "soh": 0.95}],
         }
 
     def test_validate_string_field_last_upscmd_type_non_string(self, temporary_model_path, caplog):
         """last_upscmd_type=123 (int) → reset to None, warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['last_upscmd_type'] = 123
-        with open(temporary_model_path, 'w') as f:
+        data["last_upscmd_type"] = 123
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['last_upscmd_type'] is None
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
-        assert len(clamped_records) >= 1, f"Expected model_field_clamped warning, got: {[r.message for r in caplog.records]}"
+        assert model.state["last_upscmd_type"] is None
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
+        assert len(clamped_records) >= 1, (
+            f"Expected model_field_clamped warning, got: {[r.message for r in caplog.records]}"
+        )
 
-    def test_validate_string_field_last_upscmd_status_non_string(self, temporary_model_path, caplog):
+    def test_validate_string_field_last_upscmd_status_non_string(
+        self, temporary_model_path, caplog
+    ):
         """last_upscmd_status=True (bool) → reset to None, warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['last_upscmd_status'] = True
-        with open(temporary_model_path, 'w') as f:
+        data["last_upscmd_status"] = True
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['last_upscmd_status'] is None
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert model.state["last_upscmd_status"] is None
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
         assert len(clamped_records) >= 1
 
-    def test_validate_string_field_scheduled_test_reason_non_string(self, temporary_model_path, caplog):
+    def test_validate_string_field_scheduled_test_reason_non_string(
+        self, temporary_model_path, caplog
+    ):
         """scheduled_test_reason=['wrong'] (list) → reset to None, warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['scheduled_test_reason'] = ['wrong']
-        with open(temporary_model_path, 'w') as f:
+        data["scheduled_test_reason"] = ["wrong"]
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['scheduled_test_reason'] is None
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert model.state["scheduled_test_reason"] is None
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
         assert len(clamped_records) >= 1
 
     def test_validate_string_field_test_block_reason_non_string(self, temporary_model_path, caplog):
         """test_block_reason=42 (int) → reset to None, warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['test_block_reason'] = 42
-        with open(temporary_model_path, 'w') as f:
+        data["test_block_reason"] = 42
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['test_block_reason'] is None
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert model.state["test_block_reason"] is None
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
         assert len(clamped_records) >= 1
 
     def test_validate_list_field_sulfation_history_non_list(self, temporary_model_path, caplog):
         """sulfation_history='not_a_list' (str) → reset to [], warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['sulfation_history'] = 'not_a_list'
-        with open(temporary_model_path, 'w') as f:
+        data["sulfation_history"] = "not_a_list"
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['sulfation_history'] == []
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert model.state["sulfation_history"] == []
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
         assert len(clamped_records) >= 1
 
     def test_validate_list_field_discharge_events_non_list(self, temporary_model_path, caplog):
         """discharge_events=123 (int) → reset to [], warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['discharge_events'] = 123
-        with open(temporary_model_path, 'w') as f:
+        data["discharge_events"] = 123
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['discharge_events'] == []
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert model.state["discharge_events"] == []
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
         assert len(clamped_records) >= 1
 
-    def test_validate_list_field_natural_blackout_events_non_list(self, temporary_model_path, caplog):
+    def test_validate_list_field_natural_blackout_events_non_list(
+        self, temporary_model_path, caplog
+    ):
         """natural_blackout_events={'bad': True} (dict) → reset to [], warning logged."""
         import logging
+
         data = self._base_model_data()
-        data['natural_blackout_events'] = {'bad': True}
-        with open(temporary_model_path, 'w') as f:
+        data["natural_blackout_events"] = {"bad": True}
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        assert model.state['natural_blackout_events'] == []
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
+        assert model.state["natural_blackout_events"] == []
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
         assert len(clamped_records) >= 1
 
     def test_validate_valid_fields_no_warnings(self, temporary_model_path, caplog):
         """Valid string and list fields → no model_field_clamped warnings, fields unchanged."""
         import logging
+
         data = self._base_model_data()
-        data['last_upscmd_type'] = 'test.battery.start.deep'
-        data['last_upscmd_status'] = 'OK'
-        data['scheduled_test_reason'] = 'sulfation_0.65'
-        data['test_block_reason'] = 'soh_floor_55%'
-        data['sulfation_history'] = [{'timestamp': '2026-03-01T00:00:00Z', 'sulfation_score': 0.3}]
-        data['discharge_events'] = [{'timestamp': '2026-03-02T00:00:00Z', 'depth_of_discharge': 0.8}]
-        data['natural_blackout_events'] = []
-        with open(temporary_model_path, 'w') as f:
+        data["last_upscmd_type"] = "test.battery.start.deep"
+        data["last_upscmd_status"] = "OK"
+        data["scheduled_test_reason"] = "sulfation_0.65"
+        data["test_block_reason"] = "soh_floor_55%"
+        data["sulfation_history"] = [{"timestamp": "2026-03-01T00:00:00Z", "sulfation_score": 0.3}]
+        data["discharge_events"] = [
+            {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
+        ]
+        data["natural_blackout_events"] = []
+        with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger='ups-battery-monitor'):
+        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        clamped_records = [r for r in caplog.records if getattr(r, 'event_type', '') == 'model_field_clamped']
-        assert len(clamped_records) == 0, f"Expected no model_field_clamped warnings for valid data, got: {[r.message for r in clamped_records]}"
+        clamped_records = [
+            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
+        ]
+        assert len(clamped_records) == 0, (
+            f"Expected no model_field_clamped warnings for valid data, got: {[r.message for r in clamped_records]}"
+        )
         # Fields remain unchanged
-        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
-        assert model.state['last_upscmd_status'] == 'OK'
-        assert model.state['sulfation_history'] == [{'timestamp': '2026-03-01T00:00:00Z', 'sulfation_score': 0.3}]
-        assert model.state['discharge_events'] == [{'timestamp': '2026-03-02T00:00:00Z', 'depth_of_discharge': 0.8}]
-
+        assert model.state["last_upscmd_type"] == "test.battery.start.deep"
+        assert model.state["last_upscmd_status"] == "OK"
+        assert model.state["sulfation_history"] == [
+            {"timestamp": "2026-03-01T00:00:00Z", "sulfation_score": 0.3}
+        ]
+        assert model.state["discharge_events"] == [
+            {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
+        ]

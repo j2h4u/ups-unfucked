@@ -10,11 +10,11 @@ Tests cover:
 - Backward compatibility with v2.0 model.json
 """
 
-import pytest
-import tempfile
 import json
+import tempfile
 from pathlib import Path
-from datetime import datetime, timezone
+
+import pytest
 
 from src.model import BatteryModel
 
@@ -39,7 +39,7 @@ def sample_sulfation_entry():
         "ir_trend_rate": 0.008,
         "recovery_delta": 0.12,
         "temperature_celsius": 35.0,
-        "confidence_level": "high"
+        "confidence_level": "high",
     }
 
 
@@ -48,9 +48,9 @@ def test_append_sulfation_history_single_entry(battery_model_temp_file, sample_s
     """Verify append_sulfation_history() method exists and accepts dict parameter."""
     model = battery_model_temp_file
     model.append_sulfation_history(sample_sulfation_entry)
-    assert 'sulfation_history' in model.state
-    assert len(model.state['sulfation_history']) == 1
-    assert model.state['sulfation_history'][0] == sample_sulfation_entry
+    assert "sulfation_history" in model.state
+    assert len(model.state["sulfation_history"]) == 1
+    assert model.state["sulfation_history"][0] == sample_sulfation_entry
 
 
 @pytest.mark.integration
@@ -59,9 +59,9 @@ def test_append_sulfation_history_multiple_entries(battery_model_temp_file, samp
     model = battery_model_temp_file
     for i in range(5):
         entry = sample_sulfation_entry.copy()
-        entry['timestamp'] = f"2026-03-{17+i:02d}T10:30:00Z"
+        entry["timestamp"] = f"2026-03-{17 + i:02d}T10:30:00Z"
         model.append_sulfation_history(entry)
-    assert len(model.state['sulfation_history']) == 5
+    assert len(model.state["sulfation_history"]) == 5
 
 
 @pytest.mark.integration
@@ -73,9 +73,9 @@ def test_sulfation_history_saved_to_model_json(battery_model_temp_file, sample_s
 
     # Reload from disk
     reloaded = BatteryModel(model_path=model.model_path)
-    assert 'sulfation_history' in reloaded.state
-    assert len(reloaded.state['sulfation_history']) == 1
-    assert reloaded.state['sulfation_history'][0] == sample_sulfation_entry
+    assert "sulfation_history" in reloaded.state
+    assert len(reloaded.state["sulfation_history"]) == 1
+    assert reloaded.state["sulfation_history"][0] == sample_sulfation_entry
 
 
 @pytest.mark.integration
@@ -85,11 +85,11 @@ def test_prune_sulfation_history_keeps_last_30(battery_model_temp_file, sample_s
     # Append 50 entries
     for i in range(50):
         entry = sample_sulfation_entry.copy()
-        entry['timestamp'] = f"2026-03-{17+i:02d}T10:30:00Z"
+        entry["timestamp"] = f"2026-03-{17 + i:02d}T10:30:00Z"
         model.append_sulfation_history(entry)
 
-    model._cap_history_entries('sulfation_history', keep_count=30)
-    assert len(model.state['sulfation_history']) == 30
+    model._cap_history_entries("sulfation_history", keep_count=30)
+    assert len(model.state["sulfation_history"]) == 30
 
 
 @pytest.mark.integration
@@ -102,12 +102,12 @@ def test_append_discharge_event(battery_model_temp_file):
         "duration_seconds": 1200.0,
         "depth_of_discharge": 0.75,
         "measured_capacity_ah": 6.8,
-        "cycle_roi": 0.52
+        "cycle_roi": 0.52,
     }
     model.append_discharge_event(event)
-    assert 'discharge_events' in model.state
-    assert len(model.state['discharge_events']) == 1
-    assert model.state['discharge_events'][0] == event
+    assert "discharge_events" in model.state
+    assert len(model.state["discharge_events"]) == 1
+    assert model.state["discharge_events"][0] == event
 
 
 @pytest.mark.integration
@@ -129,12 +129,19 @@ def test_discharge_event_schema_correctness(battery_model_temp_file):
         "duration_seconds": 1200.0,
         "depth_of_discharge": 0.75,
         "measured_capacity_ah": 6.8,
-        "cycle_roi": 0.52
+        "cycle_roi": 0.52,
     }
     model.append_discharge_event(event)
-    stored_event = model.state['discharge_events'][0]
+    stored_event = model.state["discharge_events"][0]
 
-    required_fields = {'timestamp', 'event_reason', 'duration_seconds', 'depth_of_discharge', 'measured_capacity_ah', 'cycle_roi'}
+    required_fields = {
+        "timestamp",
+        "event_reason",
+        "duration_seconds",
+        "depth_of_discharge",
+        "measured_capacity_ah",
+        "cycle_roi",
+    }
     assert required_fields.issubset(set(stored_event.keys()))
 
 
@@ -144,19 +151,19 @@ def test_backward_compatibility_missing_keys(battery_model_temp_file):
     # Create v2.0 style model with only essential keys
     model_path = battery_model_temp_file.model_path
     v2_0_data = {
-        'lut': [{'v': 13.4, 'soc': 1.0, 'source': 'standard'}],
-        'soh': 1.0,
-        'physics': {'peukert_exponent': 1.2}
+        "lut": [{"v": 13.4, "soc": 1.0, "source": "standard"}],
+        "soh": 1.0,
+        "physics": {"peukert_exponent": 1.2},
     }
-    with open(model_path, 'w') as f:
+    with open(model_path, "w") as f:
         json.dump(v2_0_data, f)
 
     # Reload - should not raise error
     model = BatteryModel(model_path=model_path)
-    assert model.state['soh'] == 1.0
+    assert model.state["soh"] == 1.0
 
     # All history arrays should initialize to empty
-    assert model.state['sulfation_history'] == []
-    assert model.state['discharge_events'] == []
-    assert model.state['roi_history'] == []
-    assert model.state['natural_blackout_events'] == []
+    assert model.state["sulfation_history"] == []
+    assert model.state["discharge_events"] == []
+    assert model.state["roi_history"] == []
+    assert model.state["natural_blackout_events"] == []

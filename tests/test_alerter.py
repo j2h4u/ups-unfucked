@@ -1,7 +1,7 @@
 """Unit tests for journald alerting on health thresholds."""
 
-import pytest
 import logging
+
 from src import alerter
 
 

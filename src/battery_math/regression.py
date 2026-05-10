@@ -12,6 +12,7 @@ from typing import NamedTuple, Optional
 
 class LinearFit(NamedTuple):
     """Result of OLS linear regression."""
+
     slope: float
     intercept: float
     r_squared: float

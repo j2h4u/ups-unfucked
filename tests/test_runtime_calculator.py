@@ -1,6 +1,5 @@
 """Unit tests for runtime calculator module — physics-based Peukert formula."""
 
-import pytest
 from src.runtime_calculator import runtime_minutes
 
 
@@ -10,8 +9,13 @@ class TestPeukertFormula:
     def test_peukert_blackout_match_n115(self):
         """Validate: 17% load, n=1.15, 7.2Ah, 425W/12V → ~47 min (2026-03-12 blackout)."""
         result = runtime_minutes(
-            soc=1.0, load_percent=17.0, capacity_ah=7.2, soh=1.0,
-            peukert_exponent=1.15, nominal_voltage=12.0, nominal_power_watts=425.0
+            soc=1.0,
+            load_percent=17.0,
+            capacity_ah=7.2,
+            soh=1.0,
+            peukert_exponent=1.15,
+            nominal_voltage=12.0,
+            nominal_power_watts=425.0,
         )
         assert 45.0 < result < 49.0, f"Expected ~47 min, got {result:.1f} min"
 
@@ -94,8 +98,9 @@ class TestRuntimeEdgeCases:
     def test_no_const_parameter(self):
         """Verify old 'const' parameter is removed — only physics params accepted."""
         import inspect
+
         sig = inspect.signature(runtime_minutes)
-        assert 'const' not in sig.parameters
-        assert 'peukert_exponent' in sig.parameters
-        assert 'nominal_voltage' in sig.parameters
-        assert 'nominal_power_watts' in sig.parameters
+        assert "const" not in sig.parameters
+        assert "peukert_exponent" in sig.parameters
+        assert "nominal_voltage" in sig.parameters
+        assert "nominal_power_watts" in sig.parameters

@@ -2,13 +2,27 @@
 name = "ups-unfucked"
 version = "1.1.0"
 description = "Datacenter-grade battery telemetry for your $30 UPS. SoH, SoC, runtime prediction, self-calibration — everything the firmware gets wrong, unfucked."
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "python-systemd",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-timeout"]
+dev = ["pytest", "pytest-timeout", "ruff"]
 
 [project.scripts]
 ups-battery-monitor = "src.monitor:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# E4/E7/E9: essential pycodestyle; F: pyflakes (real bugs); I: import order
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = [
+    "E402",   # module-level imports not at top (monitor_config.py has intentional late imports)
+]
+
+[tool.ruff.format]
+quote-style = "double"

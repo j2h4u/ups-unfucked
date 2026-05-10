@@ -23,10 +23,11 @@ MODEL_FILE="${HOME}/.config/ups-battery-monitor/model.json"
 
 # Path to health endpoint (tmpfs, written every poll)
 HEALTH_FILE="/run/ups-battery-monitor/ups-health.json"
+UPS_NUT_ADDRESS="cyberpower-virtual@localhost"
 
-# Read virtual UPS metrics
-# Format: `upsc` returns key: value pairs
-ups_data=$(upsc cyberpower-virtual@localhost 2>/dev/null) || exit 0
+# Read virtual UPS metrics; exit silently if daemon or NUT is not running.
+# MOTD runs on every login — it must not print errors when the monitor is down.
+ups_data=$(upsc "$UPS_NUT_ADDRESS" 2>/dev/null) || exit 0
 
 # Parse fields
 ups_status=$(echo "$ups_data" | grep "^ups.status:" | cut -d' ' -f2-)

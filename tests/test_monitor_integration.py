@@ -12,18 +12,18 @@ Verifies:
 5. _poll_once full call chain: _classify_event → discharge_collector.track → _handle_event_transition
 """
 
+import tempfile
 import time
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import patch, MagicMock, Mock, call
-from pathlib import Path
-import tempfile
 
-from src.monitor import MonitorDaemon
-from src.monitor_config import Config, DischargeBuffer
+from src.battery_math.rls import ScalarRLS
 from src.event_classifier import EventType
 from src.model import BatteryModel
-from src.battery_math.rls import ScalarRLS
+from src.monitor import MonitorDaemon
+from src.monitor_config import Config, DischargeBuffer
 
 
 @pytest.fixture
@@ -37,27 +37,26 @@ def temp_dir():
 def test_config(temp_dir):
     """Test configuration with reasonable defaults."""
     return Config(
-        ups_name='cyberpower',
+        ups_name="cyberpower",
         polling_interval=10,
         reporting_interval=60,
-        nut_host='localhost',
+        nut_host="localhost",
         nut_port=3493,
         nut_timeout=2.0,
         shutdown_minutes=5,
         soh_alert_threshold=0.80,
         model_dir=temp_dir,
-
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,
-        capacity_ah=7.2
+        capacity_ah=7.2,
     )
 
 
 @pytest.fixture
 def mock_daemon(test_config):
     """Mock MonitorDaemon with test config, no NUT connection needed."""
-    with patch('src.monitor.NUTClient'):
+    with patch("src.monitor.NUTClient"):
         daemon = MonitorDaemon(config=test_config)
         # Initialize key attributes
         daemon.battery_model.set_peukert_exponent(1.2)
@@ -87,7 +86,7 @@ class TestOrchestratorWiring:
         # Config capacity (rated)
         assert mock_daemon.config.capacity_ah == 7.2
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_calibrate.return_value = 1.22
 
             # Call orchestrator method
@@ -101,8 +100,9 @@ class TestOrchestratorWiring:
             kwargs = call_args.kwargs if call_args.kwargs else {}
 
             actual_capacity = kwargs.get("capacity_ah")
-            assert actual_capacity == 7.2, \
+            assert actual_capacity == 7.2, (
                 f"Expected capacity_ah=7.2 (rated), got {actual_capacity}"
+            )
 
     def test_avg_load_from_discharge_buffer(self, mock_daemon):
         """Verify average load calculated from discharge buffer, not EMA.
@@ -118,7 +118,7 @@ class TestOrchestratorWiring:
         # Note: We don't set ema_filter.load (read-only property) because
         # the orchestrator explicitly uses discharge_buffer.loads instead
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_calibrate.return_value = 1.21
 
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -128,8 +128,9 @@ class TestOrchestratorWiring:
             kwargs = call_args.kwargs if call_args.kwargs else {}
 
             actual_load = kwargs.get("avg_load_percent")
-            assert actual_load == 25.0, \
+            assert actual_load == 25.0, (
                 f"Expected avg_load_percent=25.0 (mean of [20,30,25,30,20]), got {actual_load}"
+            )
 
     def test_soh_updated_before_peukert_uses_it(self, mock_daemon):
         """Verify SoH is set before Peukert calibration consumes it.
@@ -143,25 +144,28 @@ class TestOrchestratorWiring:
 
         soh_seen_by_peukert = []
 
-        with patch('src.discharge_handler.soh_calculator.calculate_soh_from_discharge') as mock_soh, \
-             patch('src.discharge_handler.calibrate_peukert') as mock_peukert:
+        with (
+            patch("src.discharge_handler.soh_calculator.calculate_soh_from_discharge") as mock_soh,
+            patch("src.discharge_handler.calibrate_peukert") as mock_peukert,
+        ):
             mock_soh.return_value = (0.95, 7.0)
 
             def capture_soh(**kw):
                 # Record the SoH that's already set in the model when Peukert runs
                 soh_seen_by_peukert.append(mock_daemon.battery_model.get_soh())
                 return 1.15
+
             mock_peukert.side_effect = capture_soh
 
             mock_daemon._update_battery_health()
 
         # SoH should be persisted in model
-        assert mock_daemon.battery_model.get_soh() == 0.95, \
-            "SoH not updated in model"
+        assert mock_daemon.battery_model.get_soh() == 0.95, "SoH not updated in model"
         # Peukert should have been called and seen the fresh SoH
         assert len(soh_seen_by_peukert) == 1, "Peukert calibration was not called"
-        assert soh_seen_by_peukert[0] == 0.95, \
+        assert soh_seen_by_peukert[0] == 0.95, (
             f"Peukert saw SoH={soh_seen_by_peukert[0]}, expected 0.95 (set by SoH step)"
+        )
         # Peukert exponent should be updated in model
         assert 1.0 <= mock_daemon.battery_model.get_peukert_exponent() <= 1.4
 
@@ -172,12 +176,11 @@ class TestOrchestratorWiring:
         mock_daemon.discharge_collector.discharge_buffer.loads = []
         mock_daemon.discharge_collector.discharge_buffer.voltages = []
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
 
             # Should NOT call kernel (guard clause blocks it)
-            assert not mock_calibrate.called, \
-                "Kernel should not be called with <2 samples"
+            assert not mock_calibrate.called, "Kernel should not be called with <2 samples"
 
     def test_guard_clause_discharge_duration(self, mock_daemon):
         """Guard clause 2: rejects if discharge < 60 seconds."""
@@ -186,12 +189,11 @@ class TestOrchestratorWiring:
         mock_daemon.discharge_collector.discharge_buffer.loads = [20, 20]
         mock_daemon.discharge_collector.discharge_buffer.voltages = [13.0, 12.5]
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
 
             # Should NOT call kernel
-            assert not mock_calibrate.called, \
-                "Kernel should not be called with discharge < 60s"
+            assert not mock_calibrate.called, "Kernel should not be called with discharge < 60s"
 
     def test_guard_clause_invalid_load(self, mock_daemon):
         """Guard clause 3: rejects if average load is invalid."""
@@ -202,12 +204,11 @@ class TestOrchestratorWiring:
         mock_daemon.reference_load_percent = 0.0  # Fallback is invalid
         mock_daemon.discharge_handler.reference_load_percent = 0.0
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
 
             # Should NOT call kernel
-            assert not mock_calibrate.called, \
-                "Kernel should not be called with invalid load"
+            assert not mock_calibrate.called, "Kernel should not be called with invalid load"
 
 
 class TestPeukertClampSkip:
@@ -221,7 +222,7 @@ class TestPeukertClampSkip:
 
         initial_sample_count = mock_daemon.rls_peukert.sample_count
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_calibrate.return_value = 1.4  # Hit upper clamp
 
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -237,7 +238,7 @@ class TestPeukertClampSkip:
 
         initial_sample_count = mock_daemon.rls_peukert.sample_count
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_calibrate.return_value = 1.0  # Hit lower clamp
 
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -252,7 +253,7 @@ class TestPeukertClampSkip:
 
         initial_sample_count = mock_daemon.rls_peukert.sample_count
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_calibrate.return_value = 1.15  # Valid, not clamped
 
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -275,20 +276,20 @@ class TestSoHRecalibrationFlow:
         from src import soh_calculator
 
         # Setup: Old SoH history with rated baseline (7.2Ah)
-        mock_daemon.battery_model.state['soh_history'] = [
-            {'date': '2026-01-01', 'soh': 1.0, 'capacity_ah_ref': 7.2},
-            {'date': '2026-02-01', 'soh': 0.98, 'capacity_ah_ref': 7.2},
-            {'date': '2026-03-01', 'soh': 0.96, 'capacity_ah_ref': 7.2},
+        mock_daemon.battery_model.state["soh_history"] = [
+            {"date": "2026-01-01", "soh": 1.0, "capacity_ah_ref": 7.2},
+            {"date": "2026-02-01", "soh": 0.98, "capacity_ah_ref": 7.2},
+            {"date": "2026-03-01", "soh": 0.96, "capacity_ah_ref": 7.2},
         ]
 
         # Setup: capacity has converged to 6.8Ah (3 samples, CoV < 10%)
-        mock_daemon.battery_model.state['capacity_estimates'] = [
-            {'timestamp': '2026-02-15', 'ah_estimate': 6.7, 'confidence': 0.65, 'metadata': {}},
-            {'timestamp': '2026-03-01', 'ah_estimate': 6.8, 'confidence': 0.78, 'metadata': {}},
-            {'timestamp': '2026-03-16', 'ah_estimate': 6.8, 'confidence': 0.82, 'metadata': {}},
+        mock_daemon.battery_model.state["capacity_estimates"] = [
+            {"timestamp": "2026-02-15", "ah_estimate": 6.7, "confidence": 0.65, "metadata": {}},
+            {"timestamp": "2026-03-01", "ah_estimate": 6.8, "confidence": 0.78, "metadata": {}},
+            {"timestamp": "2026-03-16", "ah_estimate": 6.8, "confidence": 0.82, "metadata": {}},
         ]
-        mock_daemon.battery_model.state['capacity_converged'] = True
-        mock_daemon.battery_model.state['capacity_ah_measured'] = 6.8
+        mock_daemon.battery_model.state["capacity_converged"] = True
+        mock_daemon.battery_model.state["capacity_ah_measured"] = 6.8
 
         # Simulate discharge event
         mock_daemon.discharge_collector.discharge_buffer.voltages = [12.0, 11.8, 11.5, 10.8, 10.5]
@@ -296,16 +297,16 @@ class TestSoHRecalibrationFlow:
         mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
         # Call _update_battery_health() (which calls soh_calculator)
-        with patch.object(soh_calculator, 'calculate_soh_from_discharge') as mock_kernel:
+        with patch.object(soh_calculator, "calculate_soh_from_discharge") as mock_kernel:
             mock_kernel.return_value = (0.92, 6.8)  # (soh_new, capacity_ah_used)
 
-            with patch('src.discharge_handler.safe_save'):
+            with patch("src.discharge_handler.safe_save"):
                 mock_daemon._update_battery_health()
 
         # Verify: New SoH entry tagged with measured baseline (6.8Ah)
-        new_entry = mock_daemon.battery_model.state['soh_history'][-1]
-        assert new_entry['soh'] == 0.92
-        assert new_entry['capacity_ah_ref'] == 6.8  # Tagged with measured, not rated
+        new_entry = mock_daemon.battery_model.state["soh_history"][-1]
+        assert new_entry["soh"] == 0.92
+        assert new_entry["capacity_ah_ref"] == 6.8  # Tagged with measured, not rated
 
 
 def test_journald_event_filtering():
@@ -319,7 +320,8 @@ def test_journald_event_filtering():
     Assert: baseline_lock events appear when convergence detected
     Assert: Events contain required structured fields (MESSAGE, CAPACITY_AH, SAMPLE_COUNT)
     """
-    from unittest.mock import patch, MagicMock, call
+    from unittest.mock import MagicMock, patch
+
     from src.monitor import MonitorDaemon
 
     # Mock journald.send() to capture events
@@ -329,51 +331,53 @@ def test_journald_event_filtering():
         captured_events.append(kwargs)
 
     # Create a test daemon with mocked components
-    with patch('src.monitor.NUTClient'), \
-         patch('src.monitor.EMAFilter'), \
-         patch('src.monitor.EventClassifier'), \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_and_repair_model'), \
-         patch.object(MonitorDaemon, '_reset_battery_baseline'):
-
+    with (
+        patch("src.monitor.NUTClient"),
+        patch("src.monitor.EMAFilter"),
+        patch("src.monitor.EventClassifier"),
+        patch.object(MonitorDaemon, "_check_nut_connectivity"),
+        patch.object(MonitorDaemon, "_validate_and_repair_model"),
+        patch.object(MonitorDaemon, "_reset_battery_baseline"),
+    ):
         # Create test config and daemon
-        from src.monitor_config import Config
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from src.monitor_config import Config
 
         with tempfile.TemporaryDirectory() as tmp_path:
             config = Config(
-                ups_name='cyberpower',
+                ups_name="cyberpower",
                 polling_interval=10,
                 reporting_interval=60,
-                nut_host='localhost',
+                nut_host="localhost",
                 nut_port=3493,
                 nut_timeout=2.0,
                 shutdown_minutes=5,
                 soh_alert_threshold=0.80,
                 model_dir=Path(tmp_path),
-
                 runtime_threshold_minutes=20,
                 reference_load_percent=20.0,
                 ema_window_sec=120,
-                capacity_ah=7.2
+                capacity_ah=7.2,
             )
 
             daemon = MonitorDaemon(config)
 
             # Mock battery_model methods since they're real
-            with patch.object(daemon.battery_model, 'get_capacity_ah', return_value=7.2), \
-                 patch.object(daemon.battery_model, 'get_convergence_status') as mock_convergence, \
-                 patch.object(daemon.battery_model, 'save'):
-
+            with (
+                patch.object(daemon.battery_model, "get_capacity_ah", return_value=7.2),
+                patch.object(daemon.battery_model, "get_convergence_status") as mock_convergence,
+                patch.object(daemon.battery_model, "save"),
+            ):
                 # Setup convergence status mock
                 mock_convergence.return_value = {
-                    'sample_count': 1,
-                    'confidence_percent': 88.0,
-                    'latest_ah': 6.95,
-                    'rated_ah': 7.2,
-                    'converged': False,
-                    'capacity_ah_ref': None
+                    "sample_count": 1,
+                    "confidence_percent": 88.0,
+                    "latest_ah": 6.95,
+                    "rated_ah": 7.2,
+                    "converged": False,
+                    "capacity_ah_ref": None,
                 }
 
                 # Setup mocks for capacity estimation
@@ -382,9 +386,9 @@ def test_journald_event_filtering():
                 ah_estimate = 6.95
                 confidence = 0.88
                 metadata = {
-                    'delta_soc_percent': 52.3,
-                    'duration_sec': 1234,
-                    'load_avg_percent': 25.5,
+                    "delta_soc_percent": 52.3,
+                    "duration_sec": 1234,
+                    "load_avg_percent": 25.5,
                 }
 
                 # CapacityEstimator mocked to control estimation output — not I/O, but
@@ -392,74 +396,93 @@ def test_journald_event_filtering():
                 # test_capacity_estimator.py with Monte Carlo validation.
                 daemon.capacity_estimator = MagicMock()
                 daemon.discharge_handler.capacity_estimator = daemon.capacity_estimator
-                daemon.capacity_estimator.estimate.return_value = (ah_estimate, confidence, metadata)
+                daemon.capacity_estimator.estimate.return_value = (
+                    ah_estimate,
+                    confidence,
+                    metadata,
+                )
                 daemon.capacity_estimator.has_converged.return_value = False
 
-                daemon.battery_model.state['capacity_estimates'] = [
-                    {'ah_estimate': ah_estimate}
-                ]
+                daemon.battery_model.state["capacity_estimates"] = [{"ah_estimate": ah_estimate}]
 
                 # Trigger discharge complete with mocked logger
                 discharge_data = {
-                    'voltage_series': [12.5, 12.0, 11.5, 11.0],
-                    'time_series': [0, 300, 600, 900],
-                    'load_series': [25.0, 25.0, 25.0, 25.0],
-                    'timestamp': '2026-03-16T12:00:00'
+                    "voltage_series": [12.5, 12.0, 11.5, 11.0],
+                    "time_series": [0, 300, 600, 900],
+                    "load_series": [25.0, 25.0, 25.0, 25.0],
+                    "timestamp": "2026-03-16T12:00:00",
                 }
 
-                with patch('src.discharge_handler.logger') as mock_logger:
+                with patch("src.discharge_handler.logger") as mock_logger:
                     daemon._handle_discharge_complete(discharge_data)
 
                     # Verify: capacity_measurement events were logged
-                    capacity_calls = [c for c in mock_logger.info.call_args_list
-                                     if 'capacity_measurement' in str(c)]
+                    capacity_calls = [
+                        c
+                        for c in mock_logger.info.call_args_list
+                        if "capacity_measurement" in str(c)
+                    ]
                     assert len(capacity_calls) >= 1, "No capacity_measurement events logged"
 
                     # Verify: capacity_measurement events have required fields
                     for call_obj in capacity_calls:
-                        if 'extra' in call_obj.kwargs:
-                            extra = call_obj.kwargs['extra']
-                            assert extra.get('event_type') == 'capacity_measurement'
-                            assert 'capacity_ah' in extra, "Missing CAPACITY_AH field"
-                            assert 'confidence_percent' in extra, "Missing CONFIDENCE_PERCENT field"
-                            assert 'sample_count' in extra, "Missing SAMPLE_COUNT field"
+                        if "extra" in call_obj.kwargs:
+                            extra = call_obj.kwargs["extra"]
+                            assert extra.get("event_type") == "capacity_measurement"
+                            assert "capacity_ah" in extra, "Missing CAPACITY_AH field"
+                            assert "confidence_percent" in extra, "Missing CONFIDENCE_PERCENT field"
+                            assert "sample_count" in extra, "Missing SAMPLE_COUNT field"
 
                     # Verify: baseline_lock events NOT present (convergence not reached)
-                    baseline_lock_calls = [c for c in mock_logger.info.call_args_list
-                                          if c.kwargs.get('extra', {}).get('event_type') == 'baseline_lock']
-                    assert len(baseline_lock_calls) == 0, "baseline_lock should not fire without convergence"
+                    baseline_lock_calls = [
+                        c
+                        for c in mock_logger.info.call_args_list
+                        if c.kwargs.get("extra", {}).get("event_type") == "baseline_lock"
+                    ]
+                    assert len(baseline_lock_calls) == 0, (
+                        "baseline_lock should not fire without convergence"
+                    )
 
                 # Now simulate convergence and verify baseline_lock
                 mock_convergence.return_value = {
-                    'sample_count': 3,
-                    'confidence_percent': 92.0,
-                    'latest_ah': 6.95,
-                    'rated_ah': 7.2,
-                    'converged': True,
-                    'capacity_ah_ref': None
+                    "sample_count": 3,
+                    "confidence_percent": 92.0,
+                    "latest_ah": 6.95,
+                    "rated_ah": 7.2,
+                    "converged": True,
+                    "capacity_ah_ref": None,
                 }
-                daemon.battery_model.state['capacity_estimates'] = [
-                    {'ah_estimate': 6.88},
-                    {'ah_estimate': 6.92},
-                    {'ah_estimate': 6.95}
+                daemon.battery_model.state["capacity_estimates"] = [
+                    {"ah_estimate": 6.88},
+                    {"ah_estimate": 6.92},
+                    {"ah_estimate": 6.95},
                 ]
                 daemon.capacity_estimator.has_converged.return_value = True
 
-                with patch('src.discharge_handler.logger') as mock_logger:
+                with patch("src.discharge_handler.logger") as mock_logger:
                     daemon._handle_discharge_complete(discharge_data)
 
                     # Verify: baseline_lock events present after convergence
-                    baseline_lock_calls = [c for c in mock_logger.info.call_args_list
-                                          if c.kwargs.get('extra', {}).get('event_type') == 'baseline_lock']
-                    assert len(baseline_lock_calls) >= 1, "No baseline_lock events after convergence"
+                    baseline_lock_calls = [
+                        c
+                        for c in mock_logger.info.call_args_list
+                        if c.kwargs.get("extra", {}).get("event_type") == "baseline_lock"
+                    ]
+                    assert len(baseline_lock_calls) >= 1, (
+                        "No baseline_lock events after convergence"
+                    )
 
                     # Verify: baseline_lock events have required fields
                     for call_obj in baseline_lock_calls:
-                        if 'extra' in call_obj.kwargs:
-                            extra = call_obj.kwargs['extra']
-                            assert extra.get('event_type') == 'baseline_lock'
-                            assert 'capacity_ah' in extra, "Missing CAPACITY_AH in baseline_lock event"
-                            assert 'sample_count' in extra, "Missing SAMPLE_COUNT in baseline_lock event"
+                        if "extra" in call_obj.kwargs:
+                            extra = call_obj.kwargs["extra"]
+                            assert extra.get("event_type") == "baseline_lock"
+                            assert "capacity_ah" in extra, (
+                                "Missing CAPACITY_AH in baseline_lock event"
+                            )
+                            assert "sample_count" in extra, (
+                                "Missing SAMPLE_COUNT in baseline_lock event"
+                            )
 
 
 def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
@@ -471,59 +494,61 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     """
     import json
     import logging
-    from unittest.mock import patch, MagicMock
     import sys
+    from unittest.mock import MagicMock, patch
 
     # Mock systemd before importing
-    sys.modules['systemd'] = MagicMock()
-    sys.modules['systemd.journal'] = MagicMock()
+    sys.modules["systemd"] = MagicMock()
+    sys.modules["systemd.journal"] = MagicMock()
 
     import src.monitor
-    from src.monitor import MonitorDaemon
-    from src.monitor_config import write_health_endpoint, HealthSnapshot
-    from src.model import BatteryModel
     import src.monitor_config
+    from src.model import BatteryModel
+    from src.monitor import MonitorDaemon
+    from src.monitor_config import HealthSnapshot, write_health_endpoint
 
     # Setup test paths
     model_path = tmp_path / "model.json"
     health_file = tmp_path / "ups-health.json"
-    monkeypatch.setattr(src.monitor_config, 'HEALTH_ENDPOINT_PATH', health_file)
+    monkeypatch.setattr(src.monitor_config, "HEALTH_ENDPOINT_PATH", health_file)
 
     # Create real battery model instance
     battery_model = BatteryModel(model_path)
-    battery_model.state['full_capacity_ah_ref'] = 7.2
-    battery_model.state['capacity_estimates'] = []
+    battery_model.state["full_capacity_ah_ref"] = 7.2
+    battery_model.state["capacity_estimates"] = []
     battery_model.save()
 
     # Test config
     from src.monitor_config import Config
+
     config = Config(
-        ups_name='cyberpower',
+        ups_name="cyberpower",
         polling_interval=10,
         reporting_interval=60,
-        nut_host='localhost',
+        nut_host="localhost",
         nut_port=3493,
         nut_timeout=2.0,
         shutdown_minutes=5,
         soh_alert_threshold=0.80,
         model_dir=tmp_path,
-
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,
-        capacity_ah=7.2
+        capacity_ah=7.2,
     )
 
     # Mock external dependencies to focus on health endpoint
-    with patch('src.monitor.NUTClient'), \
-         patch('src.monitor.EMAFilter'), \
-         patch('src.monitor.EventClassifier'), \
-         patch.object(MonitorDaemon, '_check_nut_connectivity'), \
-         patch.object(MonitorDaemon, '_validate_and_repair_model'), \
-         patch.object(MonitorDaemon, '_reset_battery_baseline'):
-
+    with (
+        patch("src.monitor.NUTClient"),
+        patch("src.monitor.EMAFilter"),
+        patch("src.monitor.EventClassifier"),
+        patch.object(MonitorDaemon, "_check_nut_connectivity"),
+        patch.object(MonitorDaemon, "_validate_and_repair_model"),
+        patch.object(MonitorDaemon, "_reset_battery_baseline"),
+    ):
         # Setup logger to avoid MagicMock issues
         from src.monitor_config import logger as monitor_logger
+
         monitor_logger.handlers.clear()
         monitor_logger.addHandler(logging.StreamHandler())
         monitor_logger.setLevel(logging.INFO)
@@ -532,53 +557,57 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
         daemon.battery_model = battery_model
 
     # Cycle 1: First discharge (0 samples, no convergence)
-    battery_model.state['capacity_estimates'] = []
+    battery_model.state["capacity_estimates"] = []
     battery_model.save()
 
-    write_health_endpoint(HealthSnapshot(
-        soc_percent=50.0,
-        is_online=False,
-        capacity_ah_measured=None,
-        capacity_ah_rated=7.2,
-        capacity_confidence=0.0,
-        capacity_samples_count=0,
-        capacity_converged=False
-    ))
+    write_health_endpoint(
+        HealthSnapshot(
+            soc_percent=50.0,
+            is_online=False,
+            capacity_ah_measured=None,
+            capacity_ah_rated=7.2,
+            capacity_confidence=0.0,
+            capacity_samples_count=0,
+            capacity_converged=False,
+        )
+    )
 
     # Verify health endpoint written with capacity fields
     data_cycle1 = json.loads(health_file.read_text())
-    assert data_cycle1['capacity_samples_count'] == 0, "Cycle 1: expected 0 samples"
-    assert data_cycle1['capacity_converged'] is False, "Cycle 1: expected not converged"
-    assert data_cycle1['capacity_ah_measured'] is None, "Cycle 1: expected None measured"
-    assert 'capacity_ah_rated' in data_cycle1, "Cycle 1: capacity_ah_rated missing"
+    assert data_cycle1["capacity_samples_count"] == 0, "Cycle 1: expected 0 samples"
+    assert data_cycle1["capacity_converged"] is False, "Cycle 1: expected not converged"
+    assert data_cycle1["capacity_ah_measured"] is None, "Cycle 1: expected None measured"
+    assert "capacity_ah_rated" in data_cycle1, "Cycle 1: capacity_ah_rated missing"
 
     # Cycle 2: Second discharge (1 sample collected)
-    battery_model.state['capacity_estimates'] = [
-        {'ah_estimate': 6.90, 'timestamp': '2026-03-16T12:00:00', 'metadata': {}}
+    battery_model.state["capacity_estimates"] = [
+        {"ah_estimate": 6.90, "timestamp": "2026-03-16T12:00:00", "metadata": {}}
     ]
     battery_model.save()
 
     # Simulate get_convergence_status return for 1 sample
-    write_health_endpoint(HealthSnapshot(
-        soc_percent=40.0,
-        is_online=False,
-        capacity_ah_measured=6.90,
-        capacity_ah_rated=7.2,
-        capacity_confidence=0.0,  # No confidence with < 3 samples
-        capacity_samples_count=1,
-        capacity_converged=False
-    ))
+    write_health_endpoint(
+        HealthSnapshot(
+            soc_percent=40.0,
+            is_online=False,
+            capacity_ah_measured=6.90,
+            capacity_ah_rated=7.2,
+            capacity_confidence=0.0,  # No confidence with < 3 samples
+            capacity_samples_count=1,
+            capacity_converged=False,
+        )
+    )
 
     data_cycle2 = json.loads(health_file.read_text())
-    assert data_cycle2['capacity_samples_count'] == 1, "Cycle 2: expected 1 sample"
-    assert data_cycle2['capacity_converged'] is False, "Cycle 2: expected not converged"
-    assert data_cycle2['capacity_ah_measured'] == 6.90, "Cycle 2: expected measured 6.90"
+    assert data_cycle2["capacity_samples_count"] == 1, "Cycle 2: expected 1 sample"
+    assert data_cycle2["capacity_converged"] is False, "Cycle 2: expected not converged"
+    assert data_cycle2["capacity_ah_measured"] == 6.90, "Cycle 2: expected measured 6.90"
 
     # Cycle 3: Third discharge (3 samples collected, convergence reached)
-    battery_model.state['capacity_estimates'] = [
-        {'ah_estimate': 6.88, 'timestamp': '2026-03-16T12:00:00', 'metadata': {}},
-        {'ah_estimate': 6.92, 'timestamp': '2026-03-16T14:00:00', 'metadata': {}},
-        {'ah_estimate': 6.95, 'timestamp': '2026-03-16T16:00:00', 'metadata': {}}
+    battery_model.state["capacity_estimates"] = [
+        {"ah_estimate": 6.88, "timestamp": "2026-03-16T12:00:00", "metadata": {}},
+        {"ah_estimate": 6.92, "timestamp": "2026-03-16T14:00:00", "metadata": {}},
+        {"ah_estimate": 6.95, "timestamp": "2026-03-16T16:00:00", "metadata": {}},
     ]
     battery_model.save()
 
@@ -590,29 +619,40 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     # cov = 0.0286 / 6.917 = 0.00413 < 0.10 → converged!
     # confidence = 1 - cov = 0.99587 * 100 = 99.587%
 
-    write_health_endpoint(HealthSnapshot(
-        soc_percent=30.0,
-        is_online=False,
-        capacity_ah_measured=6.95,
-        capacity_ah_rated=7.2,
-        capacity_confidence=0.996,  # ~99.6% (1 - 0.004 CoV)
-        capacity_samples_count=3,
-        capacity_converged=True
-    ))
+    write_health_endpoint(
+        HealthSnapshot(
+            soc_percent=30.0,
+            is_online=False,
+            capacity_ah_measured=6.95,
+            capacity_ah_rated=7.2,
+            capacity_confidence=0.996,  # ~99.6% (1 - 0.004 CoV)
+            capacity_samples_count=3,
+            capacity_converged=True,
+        )
+    )
 
     data_cycle3 = json.loads(health_file.read_text())
-    assert data_cycle3['capacity_samples_count'] == 3, "Cycle 3: expected 3 samples"
-    assert data_cycle3['capacity_converged'] is True, "Cycle 3: expected converged"
-    assert data_cycle3['capacity_ah_measured'] == 6.95, "Cycle 3: expected measured 6.95"
-    assert data_cycle3['capacity_confidence'] > 0.99, f"Cycle 3: expected high confidence, got {data_cycle3['capacity_confidence']}"
+    assert data_cycle3["capacity_samples_count"] == 3, "Cycle 3: expected 3 samples"
+    assert data_cycle3["capacity_converged"] is True, "Cycle 3: expected converged"
+    assert data_cycle3["capacity_ah_measured"] == 6.95, "Cycle 3: expected measured 6.95"
+    assert data_cycle3["capacity_confidence"] > 0.99, (
+        f"Cycle 3: expected high confidence, got {data_cycle3['capacity_confidence']}"
+    )
 
     # Verify JSON schema consistency across all 3 reads (no schema changes)
     for cycle_num, data in enumerate([data_cycle1, data_cycle2, data_cycle3], 1):
         required_fields = [
-            'last_poll', 'last_poll_unix', 'current_soc_percent', 'online',
-            'daemon_version', 'poll_latency_ms',
-            'capacity_ah_measured', 'capacity_ah_rated', 'capacity_confidence',
-            'capacity_samples_count', 'capacity_converged'
+            "last_poll",
+            "last_poll_unix",
+            "current_soc_percent",
+            "online",
+            "daemon_version",
+            "poll_latency_ms",
+            "capacity_ah_measured",
+            "capacity_ah_rated",
+            "capacity_confidence",
+            "capacity_samples_count",
+            "capacity_converged",
         ]
         for field in required_fields:
             assert field in data, f"Cycle {cycle_num}: missing field {field}"
@@ -637,29 +677,28 @@ class TestPollOnceCallChain:
     def daemon(self, tmp_path):
         """Daemon with real EventClassifier, EMAFilter, CurrentMetrics."""
         config = Config(
-            ups_name='cyberpower',
+            ups_name="cyberpower",
             polling_interval=10,
             reporting_interval=60,
-            nut_host='localhost',
+            nut_host="localhost",
             nut_port=3493,
             nut_timeout=2.0,
             shutdown_minutes=5,
             soh_alert_threshold=0.80,
             model_dir=tmp_path,
-    
             runtime_threshold_minutes=20,
             reference_load_percent=20.0,
             ema_window_sec=120,
             capacity_ah=7.2,
         )
 
-        with patch('src.monitor.NUTClient') as mock_nut_cls:
+        with patch("src.monitor.NUTClient") as mock_nut_cls:
             # NUTClient returns floats for numeric values, strings for status
             mock_nut_cls.return_value.get_ups_vars.return_value = {
-                'battery.voltage': 13.0,
-                'input.voltage': 230.0,
-                'ups.status': 'OL',
-                'ups.load': 20.0,
+                "battery.voltage": 13.0,
+                "input.voltage": 230.0,
+                "ups.status": "OL",
+                "ups.load": 20.0,
             }
             d = MonitorDaemon(config)
 
@@ -682,19 +721,21 @@ class TestPollOnceCallChain:
 
         return d
 
-    def _poll(self, daemon, status='OL', voltage=13.0, input_voltage=230.0, load=20.0):
+    def _poll(self, daemon, status="OL", voltage=13.0, input_voltage=230.0, load=20.0):
         """Execute one _poll_once with controlled UPS data, mocked external I/O."""
         daemon.nut_client.get_ups_vars.return_value = {
-            'battery.voltage': voltage,
-            'input.voltage': input_voltage,
-            'ups.status': status,
-            'ups.load': load,
+            "battery.voltage": voltage,
+            "input.voltage": input_voltage,
+            "ups.status": status,
+            "ups.load": load,
         }
-        with patch('src.monitor.sd_notify'), \
-             patch('time.sleep'), \
-             patch('src.monitor.write_health_endpoint'), \
-             patch('src.monitor.write_virtual_ups_dev'), \
-             patch('src.discharge_handler.safe_save'):
+        with (
+            patch("src.monitor.sd_notify"),
+            patch("time.sleep"),
+            patch("src.virtual_ups_exporter.write_health_endpoint"),
+            patch("src.virtual_ups_exporter.write_virtual_ups_dev"),
+            patch("src.discharge_handler.safe_save"),
+        ):
             daemon._poll_once()
 
     def test_previous_event_type_regression(self, daemon):
@@ -704,22 +745,22 @@ class TestPollOnceCallChain:
         (doesn't exist). Fixed to use current_metrics.previous_event_type.
         Full chain without mocking _track_discharge catches this.
         """
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
         # OL→OB: _track_discharge reads previous_event_type — original crash site
-        self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
+        self._poll(daemon, status="OB DISCHRG", voltage=12.0, input_voltage=0.0)
         # OB→OL: another transition through the same code path
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
         # Survived without AttributeError
         assert daemon.current_metrics.previous_event_type == EventType.ONLINE
 
     def test_previous_event_type_threads_across_transitions(self, daemon):
         """previous_event_type correctly tracks state across multiple transitions."""
         transitions = [
-            ('OL', 13.0, 230.0, EventType.ONLINE),
-            ('OB DISCHRG', 12.0, 0.0, EventType.BLACKOUT_REAL),
-            ('OL', 13.0, 230.0, EventType.ONLINE),
-            ('OB DISCHRG', 12.5, 220.0, EventType.BLACKOUT_TEST),
-            ('OL', 13.0, 230.0, EventType.ONLINE),
+            ("OL", 13.0, 230.0, EventType.ONLINE),
+            ("OB DISCHRG", 12.0, 0.0, EventType.BLACKOUT_REAL),
+            ("OL", 13.0, 230.0, EventType.ONLINE),
+            ("OB DISCHRG", 12.5, 220.0, EventType.BLACKOUT_TEST),
+            ("OL", 13.0, 230.0, EventType.ONLINE),
         ]
         for status, voltage, input_v, expected_type in transitions:
             self._poll(daemon, status=status, voltage=voltage, input_voltage=input_v)
@@ -730,7 +771,7 @@ class TestPollOnceCallChain:
     def test_ol_steady_state(self, daemon):
         """Steady OL: previous_event_type stays ONLINE, no discharge collection."""
         for _ in range(5):
-            self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+            self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
 
         assert daemon.current_metrics.event_type == EventType.ONLINE
         assert daemon.current_metrics.previous_event_type == EventType.ONLINE
@@ -739,10 +780,10 @@ class TestPollOnceCallChain:
 
     def test_ol_to_ob_starts_discharge(self, daemon):
         """OL→OB: discharge collection starts, cycle count increments."""
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
         initial_cycles = daemon.battery_model.get_cycle_count()
 
-        self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
+        self._poll(daemon, status="OB DISCHRG", voltage=12.0, input_voltage=0.0)
 
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
         assert daemon.discharge_collector.discharge_buffer.collecting
@@ -751,59 +792,63 @@ class TestPollOnceCallChain:
 
     def test_ob_accumulates_samples(self, daemon):
         """Multiple OB polls accumulate discharge voltage/time/load samples."""
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
 
         ob_voltages = [12.0, 11.8, 11.5, 11.2]
         for v in ob_voltages:
-            self._poll(daemon, status='OB DISCHRG', voltage=v, input_voltage=0.0)
+            self._poll(daemon, status="OB DISCHRG", voltage=v, input_voltage=0.0)
 
-        assert len(daemon.discharge_collector.discharge_buffer.voltages) == len(ob_voltages), \
+        assert len(daemon.discharge_collector.discharge_buffer.voltages) == len(ob_voltages), (
             f"Expected {len(ob_voltages)} voltage samples accumulated, got {len(daemon.discharge_collector.discharge_buffer.voltages)}"
+        )
         assert len(daemon.discharge_collector.discharge_buffer.times) == len(ob_voltages)
         assert len(daemon.discharge_collector.discharge_buffer.loads) == len(ob_voltages)
         assert daemon.discharge_collector.discharge_buffer.collecting
         # Calibration points are written to disk on each OB poll. Since _write_calibration_points
         # is mocked (disk I/O), verify discharge buffer has the expected samples instead.
-        assert len(daemon.discharge_collector.discharge_buffer.voltages) == len(ob_voltages), \
+        assert len(daemon.discharge_collector.discharge_buffer.voltages) == len(ob_voltages), (
             f"Expected {len(ob_voltages)} voltage samples in discharge buffer, got {len(daemon.discharge_collector.discharge_buffer.voltages)}"
+        )
 
     def test_full_blackout_cycle(self, daemon):
         """OL→OB→OL: transitions correct, EVT-05 fires _update_battery_health."""
         # OL baseline
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
         assert daemon.current_metrics.previous_event_type == EventType.ONLINE
 
         # OB phase (3 polls)
         for v in [12.0, 11.8, 11.5]:
-            self._poll(daemon, status='OB DISCHRG', voltage=v, input_voltage=0.0)
+            self._poll(daemon, status="OB DISCHRG", voltage=v, input_voltage=0.0)
 
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
         assert daemon.discharge_collector.discharge_buffer.collecting
 
         # Power restored (OB→OL)
         daemon._update_battery_health.reset_mock()
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
 
         assert daemon.current_metrics.event_type == EventType.ONLINE
         assert daemon.current_metrics.previous_event_type == EventType.ONLINE
         # EVT-05: _handle_event_transition triggers health update on OB→OL.
         # Verify the effect of _update_battery_health: side_effect clears the discharge buffer.
-        assert not daemon.discharge_collector.discharge_buffer.collecting, \
+        assert not daemon.discharge_collector.discharge_buffer.collecting, (
             "EVT-05: discharge buffer should be cleared after OB->OL health update"
-        assert len(daemon.discharge_collector.discharge_buffer.voltages) == 0, \
+        )
+        assert len(daemon.discharge_collector.discharge_buffer.voltages) == 0, (
             "EVT-05: discharge buffer voltages should be empty after health update"
+        )
 
     def test_ob_ol_ob_resumes_collection(self, daemon):
         """OB→OL→OB: new collection starts after brief power restoration."""
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
-        self._poll(daemon, status='OB DISCHRG', voltage=12.0, input_voltage=0.0)
-        self._poll(daemon, status='OB DISCHRG', voltage=11.8, input_voltage=0.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OB DISCHRG", voltage=12.0, input_voltage=0.0)
+        self._poll(daemon, status="OB DISCHRG", voltage=11.8, input_voltage=0.0)
 
         # OB→OL: EVT-05 fires, mock clears discharge state
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
 
         # OL→OB again
-        self._poll(daemon, status='OB DISCHRG', voltage=11.5, input_voltage=0.0)
+        self._poll(daemon, status="OB DISCHRG", voltage=11.5, input_voltage=0.0)
 
         assert daemon.discharge_collector._discharge_buffer_clear_countdown is None
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_REAL
@@ -811,9 +856,9 @@ class TestPollOnceCallChain:
 
     def test_battery_test_classified_correctly(self, daemon):
         """Battery test (OB with mains voltage) → BLACKOUT_TEST, no shutdown."""
-        self._poll(daemon, status='OL', voltage=13.0, input_voltage=230.0)
+        self._poll(daemon, status="OL", voltage=13.0, input_voltage=230.0)
         # Battery test: UPS goes OB but input voltage stays high (mains present)
-        self._poll(daemon, status='OB DISCHRG', voltage=12.5, input_voltage=220.0)
+        self._poll(daemon, status="OB DISCHRG", voltage=12.5, input_voltage=220.0)
 
         assert daemon.current_metrics.event_type == EventType.BLACKOUT_TEST
         # EVT-03: battery test suppresses shutdown
@@ -831,8 +876,10 @@ class TestRLSCalibrationIntegration:
 
         old_ir_k = mock_daemon.sag_tracker.ir_k
 
-        with patch('src.monitor_config.safe_save'):
-            mock_daemon.sag_tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
+        with patch("src.monitor_config.safe_save"):
+            mock_daemon.sag_tracker._record_voltage_sag(
+                v_sag=12.5, event_type=EventType.BLACKOUT_REAL
+            )
 
         # ir_k should have been updated
         assert mock_daemon.sag_tracker.ir_k != old_ir_k
@@ -849,7 +896,7 @@ class TestRLSCalibrationIntegration:
         mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 20.0, 40.0, 60.0, 80.0]
         mock_daemon.discharge_collector.discharge_buffer.loads = [20, 21, 19, 22, 20]
 
-        with patch('src.discharge_handler.calibrate_peukert') as mock_calibrate:
+        with patch("src.discharge_handler.calibrate_peukert") as mock_calibrate:
             mock_calibrate.return_value = 1.25  # Raw kernel result
 
             mock_daemon._auto_calibrate_peukert(current_soh=0.95)
@@ -866,18 +913,19 @@ class TestRLSCalibrationIntegration:
         mock_daemon.sag_tracker.rls_ir_k.update(0.018)
         mock_daemon.sag_tracker.rls_ir_k.update(0.017)
         mock_daemon.battery_model.set_rls_state(
-            'ir_k',
+            "ir_k",
             mock_daemon.sag_tracker.rls_ir_k.theta,
             mock_daemon.sag_tracker.rls_ir_k.P,
-            mock_daemon.sag_tracker.rls_ir_k.sample_count)
+            mock_daemon.sag_tracker.rls_ir_k.sample_count,
+        )
 
         # Save and reload
         mock_daemon.battery_model.save()
         reloaded = BatteryModel(mock_daemon.battery_model.model_path)
 
-        state = reloaded.get_rls_state('ir_k')
-        assert state['sample_count'] == 2
-        assert abs(state['theta'] - mock_daemon.sag_tracker.rls_ir_k.theta) < 1e-10
+        state = reloaded.get_rls_state("ir_k")
+        assert state["sample_count"] == 2
+        assert abs(state["theta"] - mock_daemon.sag_tracker.rls_ir_k.theta) < 1e-10
 
         # Restore RLS from saved state
         restored = ScalarRLS.from_dict(state)
@@ -905,29 +953,34 @@ class TestRLSCalibrationIntegration:
         assert mock_daemon.rls_peukert.sample_count == 0
 
         # Model state also reset
-        ir_k_state = mock_daemon.battery_model.get_rls_state('ir_k')
-        assert ir_k_state['P'] == 1.0
-        assert ir_k_state['sample_count'] == 0
+        ir_k_state = mock_daemon.battery_model.get_rls_state("ir_k")
+        assert ir_k_state["P"] == 1.0
+        assert ir_k_state["sample_count"] == 0
 
     def test_prediction_error_logged(self, mock_daemon):
         """OL→OB→OL cycle with sufficient duration → discharge_prediction event logged."""
         # Setup: simulate a discharge that already happened
-        mock_daemon.discharge_handler.discharge_predicted_runtime = 15.0  # Predicted 15 min at OB start
+        mock_daemon.discharge_handler.discharge_predicted_runtime = (
+            15.0  # Predicted 15 min at OB start
+        )
         mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
         mock_daemon.discharge_collector.discharge_buffer.loads = [20, 22, 21, 20, 19]
         mock_daemon.current_metrics.soc = 0.80
 
-        with patch('src.discharge_handler.logger') as mock_logger:
+        with patch("src.discharge_handler.logger") as mock_logger:
             mock_daemon._log_discharge_prediction()
 
             # Find the discharge_prediction event
-            prediction_calls = [c for c in mock_logger.info.call_args_list
-                                if c.kwargs.get('extra', {}).get('event_type') == 'discharge_prediction']
+            prediction_calls = [
+                c
+                for c in mock_logger.info.call_args_list
+                if c.kwargs.get("extra", {}).get("event_type") == "discharge_prediction"
+            ]
             assert len(prediction_calls) == 1
 
-            extra = prediction_calls[0].kwargs['extra']
-            assert extra['predicted_minutes'] == '15.0'
-            assert float(extra['actual_minutes']) == pytest.approx(400.0 / 60.0, abs=0.1)
+            extra = prediction_calls[0].kwargs["extra"]
+            assert extra["predicted_minutes"] == "15.0"
+            assert float(extra["actual_minutes"]) == pytest.approx(400.0 / 60.0, abs=0.1)
 
         # Prediction cleared after logging
         assert mock_daemon.discharge_handler.discharge_predicted_runtime is None
@@ -938,22 +991,30 @@ class TestRLSCalibrationIntegration:
         mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0]  # Only 100s
         mock_daemon.discharge_collector.discharge_buffer.loads = [20, 20]
 
-        with patch('src.monitor.logger') as mock_logger:
+        with patch("src.monitor.logger") as mock_logger:
             mock_daemon._log_discharge_prediction()
 
-            prediction_calls = [c for c in mock_logger.info.call_args_list
-                                if c.kwargs.get('extra', {}).get('event_type') == 'discharge_prediction']
+            prediction_calls = [
+                c
+                for c in mock_logger.info.call_args_list
+                if c.kwargs.get("extra", {}).get("event_type") == "discharge_prediction"
+            ]
             assert len(prediction_calls) == 0
 
     def test_prediction_error_gated_by_snapshot(self, mock_daemon):
         """No prediction snapshot → no prediction logged even with long discharge."""
-        mock_daemon.discharge_handler.discharge_predicted_runtime = None  # No snapshot (EMA not stabilized)
+        mock_daemon.discharge_handler.discharge_predicted_runtime = (
+            None  # No snapshot (EMA not stabilized)
+        )
         mock_daemon.discharge_collector.discharge_buffer.times = [0.0, 100.0, 200.0, 300.0, 400.0]
         mock_daemon.discharge_collector.discharge_buffer.loads = [20, 20, 20, 20, 20]
 
-        with patch('src.monitor.logger') as mock_logger:
+        with patch("src.monitor.logger") as mock_logger:
             mock_daemon._log_discharge_prediction()
 
-            prediction_calls = [c for c in mock_logger.info.call_args_list
-                                if c.kwargs.get('extra', {}).get('event_type') == 'discharge_prediction']
+            prediction_calls = [
+                c
+                for c in mock_logger.info.call_args_list
+                if c.kwargs.get("extra", {}).get("event_type") == "discharge_prediction"
+            ]
             assert len(prediction_calls) == 0

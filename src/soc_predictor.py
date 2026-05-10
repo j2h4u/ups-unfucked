@@ -2,9 +2,9 @@
 
 import bisect
 import logging
-from typing import List, Dict
+from typing import Dict, List
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 # Conservative middle estimate when LUT is empty — avoids false LB flag (0.0) or false "full" (1.0)
 SOC_FALLBACK = 0.5

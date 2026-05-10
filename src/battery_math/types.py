@@ -10,6 +10,7 @@ class BatteryState:
     Frozen dataclass makes circular dependencies structurally visible at type level.
     No mutation allowed — returns new state with updated fields.
     """
+
     soh: float
     """State of Health [0.0, 1.0] — capacity at given age / capacity when new"""
 

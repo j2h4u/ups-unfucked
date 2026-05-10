@@ -16,18 +16,18 @@ All timestamps use ISO8601 format in UTC.
 
 import logging
 from dataclasses import dataclass
-from typing import Literal, Optional
 from datetime import datetime, timedelta, timezone
+from typing import Literal, Optional
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 # Algorithmic constants — internal to scheduler, not user-configurable.
-SOH_FLOOR = 0.60                    # Below 60% SoH, testing accelerates degradation (IEEE-450 guidance)
-MIN_DAYS_BETWEEN_TESTS = 7.0        # 7 days: balance sulfation monitoring vs cycle wear
-ROI_THRESHOLD = 0.2                 # Minimum benefit/cost ratio to justify a test cycle
-CRITICAL_CYCLE_BUDGET = 5           # At ≤5 cycles remaining, every cycle counts — hard block
-DEEP_SULFATION_THRESHOLD = 0.65     # Score above 0.65 indicates crystal growth worth a deep test
-QUICK_SULFATION_THRESHOLD = 0.40    # Moderate sulfation: quick test suffices (less wear than deep)
+SOH_FLOOR = 0.60  # Below 60% SoH, testing accelerates degradation (IEEE-450 guidance)
+MIN_DAYS_BETWEEN_TESTS = 7.0  # 7 days: balance sulfation monitoring vs cycle wear
+ROI_THRESHOLD = 0.2  # Minimum benefit/cost ratio to justify a test cycle
+CRITICAL_CYCLE_BUDGET = 5  # At ≤5 cycles remaining, every cycle counts — hard block
+DEEP_SULFATION_THRESHOLD = 0.65  # Score above 0.65 indicates crystal growth worth a deep test
+QUICK_SULFATION_THRESHOLD = 0.40  # Moderate sulfation: quick test suffices (less wear than deep)
 
 
 @dataclass(frozen=True)
@@ -43,14 +43,16 @@ class SchedulerDecision:
             Safe for logs and model.json but NOT for metric labels.
         next_eligible_timestamp: ISO8601 timestamp when test becomes eligible (for defer/block)
     """
-    action: Literal['propose_test', 'defer_test', 'block_test']
-    test_type: Optional[Literal['deep', 'quick']] = None
+
+    action: Literal["propose_test", "defer_test", "block_test"]
+    test_type: Optional[Literal["deep", "quick"]] = None
     reason_code: str = ""
     reason_detail: str = ""
     next_eligible_timestamp: Optional[str] = None
 
 
 def evaluate_test_scheduling(
+    *,
     sulfation_score: float,
     cycle_roi: float,
     soh_fraction: float,
@@ -91,9 +93,9 @@ def evaluate_test_scheduling(
         floor_percent = int(soh_fraction * 100)
         next_eligible = (now + timedelta(days=30)).isoformat()
         return SchedulerDecision(
-            action='block_test',
-            reason_code='soh_floor',
-            reason_detail=f'soh={floor_percent}%, floor={int(SOH_FLOOR*100)}%',
+            action="block_test",
+            reason_code="soh_floor",
+            reason_detail=f"soh={floor_percent}%, floor={int(SOH_FLOOR * 100)}%",
             next_eligible_timestamp=next_eligible,
         )
 
@@ -102,31 +104,32 @@ def evaluate_test_scheduling(
         days_remaining = MIN_DAYS_BETWEEN_TESTS - days_since_last_test
         next_eligible = (now + timedelta(days=days_remaining)).isoformat()
         return SchedulerDecision(
-            action='defer_test',
-            reason_code='rate_limit',
-            reason_detail=f'{days_remaining:.1f}d remaining',
+            action="defer_test",
+            reason_code="rate_limit",
+            reason_detail=f"{days_remaining:.1f}d remaining",
             next_eligible_timestamp=next_eligible,
         )
 
     # Gate 3: Blackout credit (SCHED-03)
-    if active_blackout_credit and active_blackout_credit.get('active'):
+    if active_blackout_credit and active_blackout_credit.get("active"):
         try:
-            credit_expires_str = active_blackout_credit.get('credit_expires')
+            credit_expires_str = active_blackout_credit.get("credit_expires")
             if credit_expires_str:
                 credit_expires = datetime.fromisoformat(credit_expires_str)
                 if credit_expires > now:
                     # Credit still active
                     return SchedulerDecision(
-                        action='defer_test',
-                        reason_code='blackout_credit_active',
-                        reason_detail=f'expires {credit_expires_str}',
+                        action="defer_test",
+                        reason_code="blackout_credit_active",
+                        reason_detail=f"expires {credit_expires_str}",
                         next_eligible_timestamp=credit_expires_str,
                     )
         except (ValueError, TypeError):
-            logger.warning("Corrupted credit_expires timestamp %r — blackout credit gate skipped",
-                           credit_expires_str,
-                           extra={'event_type': 'corrupted_scheduling_timestamp',
-                                  'field': 'credit_expires'})
+            logger.warning(
+                "Corrupted credit_expires timestamp %r — blackout credit gate skipped",
+                credit_expires_str,
+                extra={"event_type": "corrupted_scheduling_timestamp", "field": "credit_expires"},
+            )
 
     # Gate 4: Grid stability (SCHED-06)
     if grid_stability_cooldown_hours > 0 and last_blackout_timestamp:
@@ -138,24 +141,28 @@ def evaluate_test_scheduling(
                 hours_remaining = grid_stability_cooldown_hours - time_since_blackout
                 next_eligible = (now + timedelta(hours=hours_remaining)).isoformat()
                 return SchedulerDecision(
-                    action='defer_test',
-                    reason_code='grid_unstable',
-                    reason_detail=f'blackout {time_since_blackout:.1f}h ago',
+                    action="defer_test",
+                    reason_code="grid_unstable",
+                    reason_detail=f"blackout {time_since_blackout:.1f}h ago",
                     next_eligible_timestamp=next_eligible,
                 )
         except (ValueError, TypeError):
-            logger.warning("Corrupted last_blackout_timestamp %r — grid stability gate skipped",
-                           last_blackout_timestamp,
-                           extra={'event_type': 'corrupted_scheduling_timestamp',
-                                  'field': 'last_blackout_timestamp'})
+            logger.warning(
+                "Corrupted last_blackout_timestamp %r — grid stability gate skipped",
+                last_blackout_timestamp,
+                extra={
+                    "event_type": "corrupted_scheduling_timestamp",
+                    "field": "last_blackout_timestamp",
+                },
+            )
 
     # Gate 5: Cycle budget
     if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:
         next_eligible = (now + timedelta(days=60)).isoformat()  # Very long deferral
         return SchedulerDecision(
-            action='block_test',
-            reason_code='critical_cycle_budget',
-            reason_detail=f'{cycle_budget_remaining} cycles remaining',
+            action="block_test",
+            reason_code="critical_cycle_budget",
+            reason_detail=f"{cycle_budget_remaining} cycles remaining",
             next_eligible_timestamp=next_eligible,
         )
 
@@ -164,9 +171,9 @@ def evaluate_test_scheduling(
     if cycle_roi < ROI_THRESHOLD and cycle_budget_remaining > 20:
         next_eligible = (now + timedelta(days=2)).isoformat()
         return SchedulerDecision(
-            action='defer_test',
-            reason_code='marginal_roi',
-            reason_detail=f'roi={cycle_roi:.2f}, threshold={ROI_THRESHOLD}',
+            action="defer_test",
+            reason_code="marginal_roi",
+            reason_detail=f"roi={cycle_roi:.2f}, threshold={ROI_THRESHOLD}",
             next_eligible_timestamp=next_eligible,
         )
 
@@ -175,25 +182,25 @@ def evaluate_test_scheduling(
     if sulfation_score > DEEP_SULFATION_THRESHOLD:
         # High sulfation: recommend deep test
         return SchedulerDecision(
-            action='propose_test',
-            test_type='deep',
-            reason_code='sulfation_high',
-            reason_detail=f'score={sulfation_score:.2f}, roi={cycle_roi:.2f}',
+            action="propose_test",
+            test_type="deep",
+            reason_code="sulfation_high",
+            reason_detail=f"score={sulfation_score:.2f}, roi={cycle_roi:.2f}",
         )
     elif sulfation_score > QUICK_SULFATION_THRESHOLD:
         # Medium sulfation: recommend quick test
         return SchedulerDecision(
-            action='propose_test',
-            test_type='quick',
-            reason_code='sulfation_moderate',
-            reason_detail=f'score={sulfation_score:.2f}',
+            action="propose_test",
+            test_type="quick",
+            reason_code="sulfation_moderate",
+            reason_detail=f"score={sulfation_score:.2f}",
         )
     else:
         # Low sulfation: no test needed
         next_eligible = (now + timedelta(days=2)).isoformat()
         return SchedulerDecision(
-            action='defer_test',
-            reason_code='low_sulfation',
-            reason_detail=f'score={sulfation_score:.2f}',
+            action="defer_test",
+            reason_code="low_sulfation",
+            reason_detail=f"score={sulfation_score:.2f}",
             next_eligible_timestamp=next_eligible,
         )

@@ -1,12 +1,9 @@
 """Tests for ScalarRLS kernel: convergence, forgetting, confidence, serialization."""
 
-import pytest
-
 from src.battery_math.rls import ScalarRLS
 
 
 class TestScalarRLS:
-
     def test_convergence(self):
         """50 identical measurements → theta converges to that value, P shrinks."""
         rls = ScalarRLS(theta=0.0, P=1.0, forgetting_factor=0.97)

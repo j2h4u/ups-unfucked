@@ -1,20 +1,23 @@
 """Capacity estimator: measures actual battery Ah from discharge events via coulomb counting."""
 
 import logging
-from typing import List, Dict, Optional, Tuple, NamedTuple
-from src.soc_predictor import soc_from_voltage
-from src.battery_math.constants import MIN_DISCHARGE_DURATION_SEC
+from typing import Dict, List, NamedTuple, Optional, Tuple
+
 from src.battery_math import integrate_current
+from src.battery_math.constants import MIN_DISCHARGE_DURATION_SEC
+from src.soc_predictor import soc_from_voltage
 
 
 class CapacityMeasurement(NamedTuple):
     """Single capacity measurement from a discharge event."""
+
     timestamp: str
     ah: float
     confidence: float
     metadata: Dict
 
-logger = logging.getLogger('ups-battery-monitor')
+
+logger = logging.getLogger("ups-battery-monitor")
 
 
 def compute_cov(values: list) -> float:
@@ -25,7 +28,7 @@ def compute_cov(values: list) -> float:
     if mean == 0:
         return 0.0
     variance = sum((x - mean) ** 2 for x in values) / len(values)
-    return variance ** 0.5 / mean
+    return variance**0.5 / mean
 
 
 class CapacityEstimator:
@@ -42,8 +45,13 @@ class CapacityEstimator:
     Expert panel approved: IEEE-450 backed, 2026-03-15 review.
     """
 
-    def __init__(self, peukert_exponent: float = 1.2, nominal_voltage: float = 12.0,
-                 nominal_power_watts: float = 425.0, capacity_ah: float = 7.2):
+    def __init__(
+        self,
+        peukert_exponent: float = 1.2,
+        nominal_voltage: float = 12.0,
+        nominal_power_watts: float = 425.0,
+        capacity_ah: float = 7.2,
+    ):
         """
         Initialize CapacityEstimator.
 
@@ -91,17 +99,25 @@ class CapacityEstimator:
         if not self._passes_quality_filter(voltage_series, time_series, load_series, lut):
             return None
 
-        ah_coulomb = integrate_current(load_series, time_series,
-                                      self.nominal_power_watts, self.nominal_voltage)
+        ah_coulomb = integrate_current(
+            load_series, time_series, self.nominal_power_watts, self.nominal_voltage
+        )
 
         soc_start, soc_end = self._get_soc_range(voltage_series, lut)
         delta_soc = soc_start - soc_end
 
-        ah_voltage_estimate = self._estimate_from_voltage_curve(voltage_series, time_series, delta_soc)
+        ah_voltage_estimate = self._estimate_from_voltage_curve(
+            voltage_series, time_series, delta_soc
+        )
 
-        if ah_voltage_estimate > 0 and abs(ah_coulomb - ah_voltage_estimate) / max(ah_coulomb, ah_voltage_estimate) > 0.75:
-            logger.warning(f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage_estimate:.2f}Ah "
-                          f"disagree >75%; rejecting measurement")
+        if (
+            ah_voltage_estimate > 0
+            and abs(ah_coulomb - ah_voltage_estimate) / max(ah_coulomb, ah_voltage_estimate) > 0.75
+        ):
+            logger.warning(
+                f"Coulomb {ah_coulomb:.2f}Ah vs voltage {ah_voltage_estimate:.2f}Ah "
+                f"disagree >75%; rejecting measurement"
+            )
             return None
 
         ah_estimate = ah_coulomb
@@ -110,12 +126,12 @@ class CapacityEstimator:
 
         # Assemble metadata
         metadata = {
-            'delta_soc_percent': delta_soc * 100,
-            'duration_sec': time_series[-1] - time_series[0],
-            'discharge_slope_mohm': discharge_slope_mohm,
-            'load_avg_percent': sum(load_series) / len(load_series) if load_series else 0,
-            'coulomb_ah': ah_coulomb,
-            'voltage_check_ah': ah_voltage_estimate
+            "delta_soc_percent": delta_soc * 100,
+            "duration_sec": time_series[-1] - time_series[0],
+            "discharge_slope_mohm": discharge_slope_mohm,
+            "load_avg_percent": sum(load_series) / len(load_series) if load_series else 0,
+            "coulomb_ah": ah_coulomb,
+            "voltage_check_ah": ah_voltage_estimate,
         }
 
         # Confidence: 0.0 for first measurement, increases as CoV decreases (with more samples)
@@ -123,8 +139,13 @@ class CapacityEstimator:
 
         return (ah_estimate, confidence, metadata)
 
-    def _passes_quality_filter(self, voltage_series: List[float], time_series: List[float],
-                              load_series: List[float], lut: List[Dict]) -> bool:
+    def _passes_quality_filter(
+        self,
+        voltage_series: List[float],
+        time_series: List[float],
+        load_series: List[float],
+        lut: List[Dict],
+    ) -> bool:
         """
         VAL-01: Reject micro and shallow discharges.
 
@@ -150,7 +171,7 @@ class CapacityEstimator:
         delta_soc = soc_start - soc_end
 
         if delta_soc < 0.15:
-            logger.debug(f"Discharge rejected: ΔSoC {delta_soc*100:.1f}% < 15% (shallow)")
+            logger.debug(f"Discharge rejected: ΔSoC {delta_soc * 100:.1f}% < 15% (shallow)")
             return False
 
         return True
@@ -170,8 +191,9 @@ class CapacityEstimator:
         soc_end = soc_from_voltage(voltage_series[-1], lut)
         return soc_start, soc_end
 
-    def _estimate_from_voltage_curve(self, voltage_series: List[float],
-                                     time_series: List[float], delta_soc: float) -> float:
+    def _estimate_from_voltage_curve(
+        self, voltage_series: List[float], time_series: List[float], delta_soc: float
+    ) -> float:
         """
         Cross-check coulomb estimate against voltage discharge curve.
 
@@ -198,11 +220,15 @@ class CapacityEstimator:
 
         # VRLA typical: 3.5V drop over full discharge (0.0 → 1.0 SoC)
         typical_full_discharge_voltage_drop = 3.5
-        ah_voltage_estimate = self.capacity_ah * (voltage_drop / typical_full_discharge_voltage_drop)
+        ah_voltage_estimate = self.capacity_ah * (
+            voltage_drop / typical_full_discharge_voltage_drop
+        )
 
         return ah_voltage_estimate
 
-    def _compute_discharge_slope(self, voltage_series: List[float], load_percent: List[float]) -> float:
+    def _compute_discharge_slope(
+        self, voltage_series: List[float], load_percent: List[float]
+    ) -> float:
         """
         Compute discharge slope (ΔV_total / I_avg) as metadata for trending.
 
@@ -224,7 +250,9 @@ class CapacityEstimator:
         voltage_drop = voltage_series[0] - voltage_series[-1]
 
         current_avg_percent = sum(load_percent) / len(load_percent)
-        current_avg_amps = (current_avg_percent / 100.0) * self.nominal_power_watts / self.nominal_voltage
+        current_avg_amps = (
+            (current_avg_percent / 100.0) * self.nominal_power_watts / self.nominal_voltage
+        )
 
         if current_avg_amps == 0:
             return 0.0
@@ -280,7 +308,9 @@ class CapacityEstimator:
         if not self.capacity_measurements:
             return 7.2  # Fallback to rated
 
-        total_delta_soc = sum(m.metadata.get('delta_soc_percent', 0) for m in self.capacity_measurements)
+        total_delta_soc = sum(
+            m.metadata.get("delta_soc_percent", 0) for m in self.capacity_measurements
+        )
 
         if total_delta_soc == 0:
             # Fallback: equal weight
@@ -289,7 +319,7 @@ class CapacityEstimator:
 
         weighted_ah = 0.0
         for timestamp, ah, confidence, metadata in self.capacity_measurements:
-            delta_soc_percent = metadata.get('delta_soc_percent', 0)
+            delta_soc_percent = metadata.get("delta_soc_percent", 0)
             weight = delta_soc_percent / total_delta_soc
             weighted_ah += weight * ah
 

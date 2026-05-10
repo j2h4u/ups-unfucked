@@ -15,17 +15,17 @@ from typing import Tuple
 import pytest
 
 from src.battery_math import BatteryState
-from tests.auc_soh_kernel import calculate_soh_from_discharge
 from src.battery_math.sulfation import (
     compute_sulfation_score,
     estimate_recovery_delta,
 )
-from tests.test_year_simulation import synthetic_discharge, VRLA_REFERENCE_LUT
-
+from tests.auc_soh_kernel import calculate_soh_from_discharge
+from tests.test_year_simulation import VRLA_REFERENCE_LUT, synthetic_discharge
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
 
 def _simulate_discharge_cycle(
     state: BatteryState,
@@ -122,6 +122,7 @@ def _compute_sulfation_for_scenario(
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def healthy_battery_state():
     """Create healthy battery state (SoH ~1.0) for testing."""
@@ -154,6 +155,7 @@ def degraded_battery_state():
 # Integration Test: Healthy Battery Scenario
 # ============================================================================
 
+
 def test_sulfation_with_year_simulation_healthy_battery(healthy_battery_state):
     """Integration test: healthy battery with regular discharges and idle periods.
 
@@ -173,7 +175,6 @@ def test_sulfation_with_year_simulation_healthy_battery(healthy_battery_state):
     """
     state = healthy_battery_state
     recovery_deltas = []
-    sulfation_scores = []
 
     # Phase 1: 30 days of operation with weekly deep discharges
     # 4-5 events per week, typically Sundays (deep) + weekday shallows
@@ -227,9 +228,7 @@ def test_sulfation_with_year_simulation_healthy_battery(healthy_battery_state):
     )
 
     # Healthy battery has low overall sulfation (good recovery signal)
-    assert score_idle < 0.5, (
-        f"Healthy battery should have score < 0.5, got {score_idle:.3f}"
-    )
+    assert score_idle < 0.5, f"Healthy battery should have score < 0.5, got {score_idle:.3f}"
 
     # Recovery deltas from healthy battery should be good (> 0.05)
     healthy_recoveries = [d for d in recovery_deltas if d >= 0.05]
@@ -246,6 +245,7 @@ def test_sulfation_with_year_simulation_healthy_battery(healthy_battery_state):
 # ============================================================================
 # Integration Test: Degraded Battery Scenario
 # ============================================================================
+
 
 def test_sulfation_with_year_simulation_degraded_battery(degraded_battery_state):
     """Integration test: degraded battery with poor recovery and high IR drift.
@@ -326,8 +326,7 @@ def test_sulfation_with_year_simulation_degraded_battery(degraded_battery_state)
     # IR signal alone contributes: min(1.0, 0.08/0.1) * 0.4 = 0.32 with 40% weight
     # Combined: baseline + IR + recovery gives ~0.33 (moderate sulfation risk)
     assert score_degraded > 0.25, (
-        f"Degraded battery with high IR + idle should have score > 0.25, "
-        f"got {score_degraded:.3f}"
+        f"Degraded battery with high IR + idle should have score > 0.25, got {score_degraded:.3f}"
     )
 
     # Degraded score significantly exceeds healthy score (IR signal dominates)
@@ -344,6 +343,7 @@ def test_sulfation_with_year_simulation_degraded_battery(degraded_battery_state)
 # ============================================================================
 # Additional Integration Tests: Edge Cases
 # ============================================================================
+
 
 def test_sulfation_score_dynamics_across_idle_periods(healthy_battery_state):
     """Test sulfation score behavior across varying idle periods.
@@ -367,13 +367,15 @@ def test_sulfation_score_dynamics_across_idle_periods(healthy_battery_state):
         )
         scores.append(score)
 
-    print(f"\nSulfation score vs idle time:\n  {list(zip(idle_periods, [f'{s:.3f}' for s in scores]))}")
+    print(
+        f"\nSulfation score vs idle time:\n  {list(zip(idle_periods, [f'{s:.3f}' for s in scores]))}"
+    )
 
     # Score should increase monotonically with idle time
     for i in range(len(scores) - 1):
         assert scores[i] <= scores[i + 1], (
             f"Score should not decrease with idle time: "
-            f"day {idle_periods[i]}→{idle_periods[i+1]}: {scores[i]:.3f}→{scores[i+1]:.3f}"
+            f"day {idle_periods[i]}→{idle_periods[i + 1]}: {scores[i]:.3f}→{scores[i + 1]:.3f}"
         )
 
     # Score at day 0 should be low (no idle time)
@@ -385,12 +387,13 @@ def test_sulfation_score_dynamics_across_idle_periods(healthy_battery_state):
 
     # Score at day 42 should be significantly higher
     assert scores[-1] > scores[0], (
-        f"42-day idle should have higher score than fresh: "
-        f"{scores[-1]:.3f} vs {scores[0]:.3f}"
+        f"42-day idle should have higher score than fresh: {scores[-1]:.3f} vs {scores[0]:.3f}"
     )
 
 
-def test_recovery_delta_discriminates_healthy_vs_degraded(healthy_battery_state, degraded_battery_state):
+def test_recovery_delta_discriminates_healthy_vs_degraded(
+    healthy_battery_state, degraded_battery_state
+):
     """Test that recovery_delta reliably discriminates battery health.
 
     Validates that healthy and degraded batteries produce different
@@ -427,7 +430,9 @@ def test_recovery_delta_discriminates_healthy_vs_degraded(healthy_battery_state,
 
     # Recovery deltas should be in valid range
     assert 0.0 <= recovery_healthy <= 1.0, f"Healthy recovery {recovery_healthy:.3f} out of range"
-    assert 0.0 <= recovery_degraded <= 1.0, f"Degraded recovery {recovery_degraded:.3f} out of range"
+    assert 0.0 <= recovery_degraded <= 1.0, (
+        f"Degraded recovery {recovery_degraded:.3f} out of range"
+    )
 
     # Degraded battery shows more desulfation evidence (recovery_delta) because
     # its SoH has room to rebound after discharge; healthy battery at SoH=1.0

@@ -4,13 +4,11 @@ import logging
 import logging.handlers
 from typing import Optional
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 
 def alert_soh_below_threshold(
-    current_soh: float,
-    threshold_soh: float,
-    days_to_replacement: Optional[float] = None
+    current_soh: float, threshold_soh: float, days_to_replacement: Optional[float] = None
 ):
     """
     Log SoH alert to journald.
@@ -28,18 +26,20 @@ def alert_soh_below_threshold(
     else:
         msg += "; replacement date unknown"
 
-    logger.warning(msg, extra={
-        'event_type': 'soh_alert',
-        'BATTERY_SOH': f'{current_soh:.4f}',
-        'THRESHOLD': f'{threshold_soh:.4f}',
-        'DAYS_TO_REPLACEMENT': f'{days_to_replacement:.0f}' if days_to_replacement else 'unknown',
-    })
+    logger.warning(
+        msg,
+        extra={
+            "event_type": "soh_alert",
+            "BATTERY_SOH": f"{current_soh:.4f}",
+            "THRESHOLD": f"{threshold_soh:.4f}",
+            "DAYS_TO_REPLACEMENT": f"{days_to_replacement:.0f}"
+            if days_to_replacement
+            else "unknown",
+        },
+    )
 
 
-def alert_runtime_below_threshold(
-    runtime_at_100_percent: float,
-    threshold_minutes: float
-):
+def alert_runtime_below_threshold(runtime_at_100_percent: float, threshold_minutes: float):
     """
     Log runtime alert to journald.
 
@@ -51,8 +51,11 @@ def alert_runtime_below_threshold(
     """
     msg = f"Battery runtime at 100%% charge: {runtime_at_100_percent:.0f} min (threshold: {threshold_minutes:.0f} min)"
 
-    logger.warning(msg, extra={
-        'event_type': 'runtime_alert',
-        'RUNTIME_AT_100_PCT': f'{runtime_at_100_percent:.1f}',
-        'THRESHOLD_MINUTES': f'{threshold_minutes:.1f}',
-    })
+    logger.warning(
+        msg,
+        extra={
+            "event_type": "runtime_alert",
+            "RUNTIME_AT_100_PCT": f"{runtime_at_100_percent:.1f}",
+            "THRESHOLD_MINUTES": f"{threshold_minutes:.1f}",
+        },
+    )

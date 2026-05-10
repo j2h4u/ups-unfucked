@@ -1,21 +1,20 @@
 """Unit tests for SchedulerManager and module-level dispatch functions."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import Mock, MagicMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, patch
 
+from src.battery_math.scheduler import SchedulerDecision
+from src.monitor_config import SchedulingConfig
 from src.scheduler_manager import (
     SchedulerManager,
-    validate_preconditions_before_upscmd,
     dispatch_test_with_audit,
+    validate_preconditions_before_upscmd,
 )
-from src.battery_math.scheduler import SchedulerDecision
-from src.monitor_config import SchedulingConfig, CurrentMetrics
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_scheduling_config(**kwargs):
     defaults = dict(
@@ -27,7 +26,9 @@ def _make_scheduling_config(**kwargs):
     return SchedulingConfig(**defaults)
 
 
-def _make_scheduler(battery_model=None, nut_client=None, scheduling_config=None, discharge_handler=None):
+def _make_scheduler(
+    battery_model=None, nut_client=None, scheduling_config=None, discharge_handler=None
+):
     battery_model = battery_model or Mock()
     nut_client = nut_client or Mock()
     scheduling_config = scheduling_config or _make_scheduling_config()
@@ -48,6 +49,7 @@ def _make_scheduler(battery_model=None, nut_client=None, scheduling_config=None,
 # TestSchedulerManager
 # ---------------------------------------------------------------------------
 
+
 class TestSchedulerManager:
     """Direct unit tests for SchedulerManager without constructing MonitorDaemon."""
 
@@ -60,7 +62,9 @@ class TestSchedulerManager:
         cfg = _make_scheduling_config()
         dh = Mock()
 
-        sm = SchedulerManager(battery_model=bm, nut_client=nc, scheduling_config=cfg, discharge_handler=dh)
+        sm = SchedulerManager(
+            battery_model=bm, nut_client=nc, scheduling_config=cfg, discharge_handler=dh
+        )
 
         assert sm.battery_model is bm
         assert sm.nut_client is nc
@@ -72,7 +76,7 @@ class TestSchedulerManager:
         sm = _make_scheduler()
 
         assert sm.scheduler_evaluated_today is False
-        assert sm.last_scheduling_reason == 'observing'
+        assert sm.last_scheduling_reason == "observing"
         assert sm.last_next_test_timestamp is None
 
     # --- Properties ---
@@ -80,13 +84,13 @@ class TestSchedulerManager:
     def test_last_scheduling_reason_default(self):
         """last_scheduling_reason defaults to 'observing'."""
         sm = _make_scheduler()
-        assert sm.last_scheduling_reason == 'observing'
+        assert sm.last_scheduling_reason == "observing"
 
     def test_last_scheduling_reason_settable(self):
         """last_scheduling_reason can be updated."""
         sm = _make_scheduler()
-        sm.last_scheduling_reason = 'soh_below_floor'
-        assert sm.last_scheduling_reason == 'soh_below_floor'
+        sm.last_scheduling_reason = "soh_below_floor"
+        assert sm.last_scheduling_reason == "soh_below_floor"
 
     def test_last_next_test_timestamp_default(self):
         """last_next_test_timestamp defaults to None."""
@@ -96,7 +100,7 @@ class TestSchedulerManager:
     def test_last_next_test_timestamp_settable(self):
         """last_next_test_timestamp can be set to an ISO timestamp string."""
         sm = _make_scheduler()
-        ts = '2026-03-20T10:00:00+00:00'
+        ts = "2026-03-20T10:00:00+00:00"
         sm.last_next_test_timestamp = ts
         assert sm.last_next_test_timestamp == ts
 
@@ -149,7 +153,7 @@ class TestSchedulerManager:
         bm.get_last_upscmd_timestamp.return_value = None
         sm = _make_scheduler(battery_model=bm)
         result = sm._calculate_days_since_last_test()
-        assert result == float('inf')
+        assert result == float("inf")
 
     def test_days_since_last_test_valid_timestamp(self):
         """Returns correct float days for a recent valid timestamp."""
@@ -167,14 +171,14 @@ class TestSchedulerManager:
         bm.get_last_upscmd_timestamp.return_value = "not-a-timestamp"
         sm = _make_scheduler(battery_model=bm)
         result = sm._calculate_days_since_last_test()
-        assert result == float('inf')
+        assert result == float("inf")
 
     # --- _get_last_natural_blackout ---
 
     def test_get_last_natural_blackout_no_events_returns_none(self):
         """Returns None when discharge_events list is empty."""
         bm = Mock()
-        bm.state = {'discharge_events': []}
+        bm.state = {"discharge_events": []}
         sm = _make_scheduler(battery_model=bm)
         assert sm._get_last_natural_blackout() is None
 
@@ -182,37 +186,57 @@ class TestSchedulerManager:
         """Returns the most recent natural event."""
         bm = Mock()
         bm.state = {
-            'discharge_events': [
-                {'event_reason': 'natural', 'timestamp': '2026-03-10T10:00:00Z', 'depth_of_discharge': 0.3},
-                {'event_reason': 'natural', 'timestamp': '2026-03-18T10:00:00Z', 'depth_of_discharge': 0.5},
+            "discharge_events": [
+                {
+                    "event_reason": "natural",
+                    "timestamp": "2026-03-10T10:00:00Z",
+                    "depth_of_discharge": 0.3,
+                },
+                {
+                    "event_reason": "natural",
+                    "timestamp": "2026-03-18T10:00:00Z",
+                    "depth_of_discharge": 0.5,
+                },
             ]
         }
         sm = _make_scheduler(battery_model=bm)
         result = sm._get_last_natural_blackout()
         assert result is not None
-        assert result['timestamp'] == '2026-03-18T10:00:00Z'
-        assert result['depth'] == 0.5
+        assert result["timestamp"] == "2026-03-18T10:00:00Z"
+        assert result["depth"] == 0.5
 
     def test_get_last_natural_blackout_skips_non_natural(self):
         """Skips test events; only returns natural blackout events."""
         bm = Mock()
         bm.state = {
-            'discharge_events': [
-                {'event_reason': 'natural', 'timestamp': '2026-03-10T10:00:00Z', 'depth_of_discharge': 0.3},
-                {'event_reason': 'test', 'timestamp': '2026-03-18T10:00:00Z', 'depth_of_discharge': 0.7},
+            "discharge_events": [
+                {
+                    "event_reason": "natural",
+                    "timestamp": "2026-03-10T10:00:00Z",
+                    "depth_of_discharge": 0.3,
+                },
+                {
+                    "event_reason": "test",
+                    "timestamp": "2026-03-18T10:00:00Z",
+                    "depth_of_discharge": 0.7,
+                },
             ]
         }
         sm = _make_scheduler(battery_model=bm)
         result = sm._get_last_natural_blackout()
         assert result is not None
-        assert result['timestamp'] == '2026-03-10T10:00:00Z'
+        assert result["timestamp"] == "2026-03-10T10:00:00Z"
 
     def test_get_last_natural_blackout_no_natural_events_returns_none(self):
         """Returns None when all events are tests (no natural blackouts)."""
         bm = Mock()
         bm.state = {
-            'discharge_events': [
-                {'event_reason': 'test', 'timestamp': '2026-03-18T10:00:00Z', 'depth_of_discharge': 0.7},
+            "discharge_events": [
+                {
+                    "event_reason": "test",
+                    "timestamp": "2026-03-18T10:00:00Z",
+                    "depth_of_discharge": 0.7,
+                },
             ]
         }
         sm = _make_scheduler(battery_model=bm)
@@ -223,7 +247,7 @@ class TestSchedulerManager:
     def test_gather_scheduler_inputs_returns_all_7_keys(self):
         """_gather_scheduler_inputs returns dict with all 7 required keys."""
         bm = Mock()
-        bm.state = {'discharge_events': []}
+        bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = None
@@ -236,17 +260,24 @@ class TestSchedulerManager:
         sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
         inputs = sm._gather_scheduler_inputs()
 
-        required_keys = {'sulfation_score', 'cycle_roi', 'soh_fraction',
-                         'days_since_last_test', 'last_blackout', 'active_credit', 'cycle_budget'}
+        required_keys = {
+            "sulfation_score",
+            "cycle_roi",
+            "soh_fraction",
+            "days_since_last_test",
+            "last_blackout",
+            "active_credit",
+            "cycle_budget",
+        }
         assert set(inputs.keys()) == required_keys
 
     def test_gather_scheduler_inputs_values(self):
         """_gather_scheduler_inputs returns correct values from dependencies."""
         bm = Mock()
-        bm.state = {'discharge_events': []}
+        bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.9
         bm.get_last_upscmd_timestamp.return_value = None
-        bm.get_blackout_credit.return_value = {'active': True}
+        bm.get_blackout_credit.return_value = {"active": True}
 
         dh = Mock()
         dh.last_sulfation_score = 0.3
@@ -256,13 +287,13 @@ class TestSchedulerManager:
         sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
         inputs = sm._gather_scheduler_inputs()
 
-        assert inputs['sulfation_score'] == 0.3
-        assert inputs['cycle_roi'] == 0.7
-        assert inputs['soh_fraction'] == 0.9
-        assert inputs['days_since_last_test'] == float('inf')
-        assert inputs['last_blackout'] is None
-        assert inputs['active_credit'] == {'active': True}
-        assert inputs['cycle_budget'] == 50
+        assert inputs["sulfation_score"] == 0.3
+        assert inputs["cycle_roi"] == 0.7
+        assert inputs["soh_fraction"] == 0.9
+        assert inputs["days_since_last_test"] == float("inf")
+        assert inputs["last_blackout"] is None
+        assert inputs["active_credit"] == {"active": True}
+        assert inputs["cycle_budget"] == 50
 
     # --- run_daily ---
 
@@ -271,7 +302,7 @@ class TestSchedulerManager:
         sm = _make_scheduler(scheduling_config=_make_scheduling_config(scheduler_eval_hour_utc=10))
         now = datetime(2026, 3, 20, 11, 5, 0, tzinfo=timezone.utc)
 
-        with patch.object(sm, '_gather_scheduler_inputs') as mock_gather:
+        with patch.object(sm, "_gather_scheduler_inputs") as mock_gather:
             sm.run_daily(now, Mock())
             mock_gather.assert_not_called()
 
@@ -281,7 +312,7 @@ class TestSchedulerManager:
         sm.scheduler_evaluated_today = True
         now = datetime(2026, 3, 20, 10, 5, 0, tzinfo=timezone.utc)
 
-        with patch.object(sm, '_gather_scheduler_inputs') as mock_gather:
+        with patch.object(sm, "_gather_scheduler_inputs") as mock_gather:
             sm.run_daily(now, Mock())
             mock_gather.assert_not_called()
 
@@ -290,14 +321,14 @@ class TestSchedulerManager:
         sm = _make_scheduler(scheduling_config=_make_scheduling_config(scheduler_eval_hour_utc=10))
         now = datetime(2026, 3, 20, 10, 15, 0, tzinfo=timezone.utc)
 
-        with patch.object(sm, '_gather_scheduler_inputs') as mock_gather:
+        with patch.object(sm, "_gather_scheduler_inputs") as mock_gather:
             sm.run_daily(now, Mock())
             mock_gather.assert_not_called()
 
     def test_run_daily_sets_evaluated_today_flag(self):
         """run_daily sets scheduler_evaluated_today=True after running."""
         bm = Mock()
-        bm.state = {'discharge_events': []}
+        bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = None
@@ -305,9 +336,9 @@ class TestSchedulerManager:
         sm = _make_scheduler(battery_model=bm)
         now = datetime(2026, 3, 20, 10, 5, 0, tzinfo=timezone.utc)
 
-        decision = SchedulerDecision(action='defer_test', test_type='deep', reason_code='soh_ok')
+        decision = SchedulerDecision(action="defer_test", test_type="deep", reason_code="soh_ok")
 
-        with patch('src.scheduler_manager.evaluate_test_scheduling', return_value=decision):
+        with patch("src.scheduler_manager.evaluate_test_scheduling", return_value=decision):
             sm.run_daily(now, Mock())
 
         assert sm.scheduler_evaluated_today is True
@@ -315,7 +346,7 @@ class TestSchedulerManager:
     def test_run_daily_updates_last_scheduling_reason(self):
         """run_daily updates last_scheduling_reason from decision."""
         bm = Mock()
-        bm.state = {'discharge_events': []}
+        bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
         bm.get_blackout_credit.return_value = None
@@ -323,17 +354,20 @@ class TestSchedulerManager:
         sm = _make_scheduler(battery_model=bm)
         now = datetime(2026, 3, 20, 10, 5, 0, tzinfo=timezone.utc)
 
-        decision = SchedulerDecision(action='defer_test', test_type='deep', reason_code='blackout_credit_active')
+        decision = SchedulerDecision(
+            action="defer_test", test_type="deep", reason_code="blackout_credit_active"
+        )
 
-        with patch('src.scheduler_manager.evaluate_test_scheduling', return_value=decision):
+        with patch("src.scheduler_manager.evaluate_test_scheduling", return_value=decision):
             sm.run_daily(now, Mock())
 
-        assert sm.last_scheduling_reason == 'blackout_credit_active'
+        assert sm.last_scheduling_reason == "blackout_credit_active"
 
 
 # ---------------------------------------------------------------------------
 # Module-level function tests (import path verification)
 # ---------------------------------------------------------------------------
+
 
 class TestValidatePreconditionsImport:
     """Verify validate_preconditions_before_upscmd is importable from scheduler_manager."""
@@ -377,12 +411,12 @@ class TestDispatchWithAuditImport:
         current_metrics.soc = 0.98
 
         decision = SchedulerDecision(
-            action='propose_test',
-            test_type='deep',
-            reason_code='sulfation_high',
+            action="propose_test",
+            test_type="deep",
+            reason_code="sulfation_high",
         )
 
-        with patch('src.scheduler_manager.logger'):
+        with patch("src.scheduler_manager.logger"):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -391,5 +425,5 @@ class TestDispatchWithAuditImport:
             )
 
         assert success is True
-        assert model.state.get('test_running') is True
-        assert model.state['last_upscmd_status'] == 'OK'
+        assert model.state.get("test_running") is True
+        assert model.state["last_upscmd_status"] == "OK"

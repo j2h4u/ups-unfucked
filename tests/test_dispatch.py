@@ -1,11 +1,10 @@
 """Tests for precondition validator and test dispatch functions."""
 
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import Mock, MagicMock, patch
-from src.scheduler_manager import validate_preconditions_before_upscmd, dispatch_test_with_audit
+from unittest.mock import Mock, patch
+
 from src.battery_math.scheduler import SchedulerDecision
 from src.model import BatteryModel
+from src.scheduler_manager import dispatch_test_with_audit, validate_preconditions_before_upscmd
 
 
 class TestPreconditionValidator:
@@ -116,13 +115,13 @@ class TestDispatchFunction:
         current_metrics.soc = 0.98
 
         decision = SchedulerDecision(
-            action='propose_test',
-            test_type='deep',
-            reason_code='sulfation_high',
+            action="propose_test",
+            test_type="deep",
+            reason_code="sulfation_high",
         )
 
         # Call dispatch
-        with patch('src.scheduler_manager.logger'):
+        with patch("src.scheduler_manager.logger"):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -131,10 +130,10 @@ class TestDispatchFunction:
             )
 
         assert success is True
-        assert model.state['last_upscmd_timestamp'] is not None
-        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
-        assert model.state['last_upscmd_status'] == 'OK'
-        assert model.state.get('test_running') is True
+        assert model.state["last_upscmd_timestamp"] is not None
+        assert model.state["last_upscmd_type"] == "test.battery.start.deep"
+        assert model.state["last_upscmd_status"] == "OK"
+        assert model.state.get("test_running") is True
 
     def test_dispatch_precondition_blocked(self, temporary_model_path):
         """Dispatch blocked by precondition (low SoC): returns False."""
@@ -148,13 +147,13 @@ class TestDispatchFunction:
         current_metrics.soc = 0.90  # Below 95%
 
         decision = SchedulerDecision(
-            action='propose_test',
-            test_type='deep',
-            reason_code='sulfation_high',
+            action="propose_test",
+            test_type="deep",
+            reason_code="sulfation_high",
         )
 
         # Call dispatch
-        with patch('src.scheduler_manager.logger'):
+        with patch("src.scheduler_manager.logger"):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -178,13 +177,13 @@ class TestDispatchFunction:
         current_metrics.soc = 0.98
 
         decision = SchedulerDecision(
-            action='propose_test',
-            test_type='quick',
-            reason_code='sulfation_moderate',
+            action="propose_test",
+            test_type="quick",
+            reason_code="sulfation_moderate",
         )
 
         # Call dispatch
-        with patch('src.scheduler_manager.logger'):
+        with patch("src.scheduler_manager.logger"):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -193,7 +192,7 @@ class TestDispatchFunction:
             )
 
         assert success is False
-        assert model.state['last_upscmd_status'] == 'ERR_CMD_NOT_SUPPORTED'
+        assert model.state["last_upscmd_status"] == "ERR_CMD_NOT_SUPPORTED"
 
     def test_dispatch_upscmd_result_persisted(self, temporary_model_path):
         """Upscmd result persisted to model.json via update_upscmd_result()."""
@@ -207,12 +206,12 @@ class TestDispatchFunction:
         current_metrics.soc = 0.98
 
         decision = SchedulerDecision(
-            action='propose_test',
-            test_type='deep',
-            reason_code='test_reason',
+            action="propose_test",
+            test_type="deep",
+            reason_code="test_reason",
         )
 
-        with patch('src.scheduler_manager.logger'):
+        with patch("src.scheduler_manager.logger"):
             dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,
@@ -222,7 +221,7 @@ class TestDispatchFunction:
 
         # Verify model methods were called
         assert model.get_last_upscmd_timestamp() is not None
-        assert model.state['last_upscmd_type'] == 'test.battery.start.deep'
+        assert model.state["last_upscmd_type"] == "test.battery.start.deep"
 
 
 class TestDispatchIntegration:
@@ -240,12 +239,12 @@ class TestDispatchIntegration:
         current_metrics.ups_status_override = "OL"
 
         decision = SchedulerDecision(
-            action='propose_test',
-            test_type='deep',
-            reason_code='test_reason',
+            action="propose_test",
+            test_type="deep",
+            reason_code="test_reason",
         )
 
-        with patch('src.scheduler_manager.logger'):
+        with patch("src.scheduler_manager.logger"):
             success = dispatch_test_with_audit(
                 nut_client=nut_client_mock,
                 battery_model=model,

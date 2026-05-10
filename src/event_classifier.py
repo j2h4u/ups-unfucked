@@ -3,7 +3,7 @@
 import logging
 from enum import Enum
 
-logger = logging.getLogger('ups-battery-monitor')
+logger = logging.getLogger("ups-battery-monitor")
 
 
 # During battery test, UPS switches to battery but mains voltage stays (CyberPower shows ~220V).
@@ -78,21 +78,21 @@ class EventClassifier:
                         f"Undefined voltage range {input_voltage}V during {ups_status}, "
                         f"treating as BLACKOUT_REAL",
                         extra={
-                            'event_type': 'undefined_voltage_range',
-                            'input_voltage': input_voltage,
-                            'ups_status': ups_status,
-                            'classified_as': 'BLACKOUT_REAL',
-                        }
+                            "event_type": "undefined_voltage_range",
+                            "input_voltage": input_voltage,
+                            "ups_status": ups_status,
+                            "classified_as": "BLACKOUT_REAL",
+                        },
                     )
                 new_state = EventType.BLACKOUT_REAL
         else:
             logger.warning(
                 f"Unknown UPS status: {ups_status}, keeping current state {self.state.name}",
                 extra={
-                    'event_type': 'unknown_ups_status',
-                    'ups_status': ups_status,
-                    'current_state': self.state.name,
-                }
+                    "event_type": "unknown_ups_status",
+                    "ups_status": ups_status,
+                    "current_state": self.state.name,
+                },
             )
             new_state = self.state
 
@@ -101,9 +101,9 @@ class EventClassifier:
             logger.info(
                 f"Event transition: {self.state.name} → {new_state.name}",
                 extra={
-                    'from_state': self.state.name,
-                    'to_state': new_state.name,
-                }
+                    "from_state": self.state.name,
+                    "to_state": new_state.name,
+                },
             )
 
         self.state = new_state
