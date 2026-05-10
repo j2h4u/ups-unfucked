@@ -851,12 +851,12 @@ class TestCapacityEstimates:
         model = BatteryModel(model_path=tmp_path / "model.json")
 
         status = model.get_convergence_status()
-        assert status["sample_count"] == 0
-        assert status["confidence_percent"] == 0.0
-        assert status["latest_ah"] is None
-        assert status["rated_ah"] == 7.2
-        assert status["converged"] is False
-        assert status["capacity_ah_measured"] is None
+        assert status.sample_count == 0
+        assert status.confidence_percent == 0.0
+        assert status.latest_ah is None
+        assert status.rated_ah == 7.2
+        assert status.converged is False
+        assert status.capacity_ah_measured is None
 
     def test_get_convergence_status_two_measurements(self, tmp_path):
         """Test: get_convergence_status() with 2 measurements (not converged)."""
@@ -876,11 +876,11 @@ class TestCapacityEstimates:
         )
 
         status = model.get_convergence_status()
-        assert status["sample_count"] == 2
-        assert status["confidence_percent"] == 0.0  # < 3 samples = 0% confidence
-        assert status["latest_ah"] == 7.2
-        assert status["rated_ah"] == 7.2
-        assert status["converged"] is False  # Need >= 3 samples
+        assert status.sample_count == 2
+        assert status.confidence_percent == 0.0  # < 3 samples = 0% confidence
+        assert status.latest_ah == 7.2
+        assert status.rated_ah == 7.2
+        assert status.converged is False  # Need >= 3 samples
 
     def test_get_convergence_status_three_consistent_measurements(self, tmp_path):
         """Test: get_convergence_status() with 3 consistent measurements (converged)."""
@@ -907,11 +907,20 @@ class TestCapacityEstimates:
         )
 
         status = model.get_convergence_status()
-        assert status["sample_count"] == 3
-        assert status["latest_ah"] == 7.1
-        assert status["rated_ah"] == 7.2
-        assert status["converged"] is True  # 3 samples + low CoV
-        assert status["confidence_percent"] > 80  # High confidence with consistent estimates
+        assert status.sample_count == 3
+        assert status.latest_ah == 7.1
+        assert status.rated_ah == 7.2
+        assert status.converged is True  # 3 samples + low CoV
+        assert status.confidence_percent > 80  # High confidence with consistent estimates
+
+    def test_get_convergence_status_is_immutable(self, tmp_path):
+        """Test: ConvergenceStatus is frozen — mutation raises FrozenInstanceError."""
+        import dataclasses
+
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        status = model.get_convergence_status()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            status.sample_count = 99  # type: ignore[misc]
 
 
 class TestSoHHistoryVersioning:

@@ -24,6 +24,20 @@ DEFAULT_IR_K_THETA = 0.015
 DEFAULT_PEUKERT_EXPONENT = 1.2
 
 
+@dataclass(frozen=True)
+class ConvergenceStatus:
+    """Immutable return type of BatteryModel.get_convergence_status()."""
+
+    sample_count: int
+    confidence_percent: float
+    latest_ah: Optional[float]
+    rated_ah: float
+    converged: bool
+    capacity_ah_measured: Optional[float]
+    cov: float
+    mean_ah: float
+
+
 @dataclass
 class IRCompensation:
     """IR voltage compensation parameters."""
@@ -733,38 +747,39 @@ class BatteryModel:
             return estimates[0]["ah_estimate"]
         return None
 
-    def get_convergence_status(self) -> Dict[str, Any]:
+    def get_convergence_status(self) -> ConvergenceStatus:
         """
         Return convergence status for MOTD + reporting.
 
         Computes coefficient of variation (CoV) from capacity estimates to track
-        measurement stability. Returns status dict for display and integration.
+        measurement stability. Returns a frozen ConvergenceStatus instance.
 
         Returns:
-            {
-                'sample_count': int,  # Number of capacity measurements
-                'confidence_percent': float,  # 0–100%
-                'latest_ah': float | None,  # Latest measured capacity
-                'rated_ah': float,  # Firmware rated capacity (7.2 for UT850)
-                'converged': bool,  # True if count >= 3 AND CoV < 0.10
-                'capacity_ah_measured': float | None  # Baseline stored on first convergence;
-                    # None until first convergence. Distinct from latest_ah — this is the
-                    # locked baseline used for new-battery detection, not the most recent measurement.
-            }
+            ConvergenceStatus with fields:
+                sample_count: Number of capacity measurements
+                confidence_percent: 0–100%
+                latest_ah: Latest measured capacity, or None if no samples
+                rated_ah: Firmware rated capacity (7.2 for UT850)
+                converged: True if count >= 3 AND CoV < 0.10
+                capacity_ah_measured: Baseline stored on first convergence;
+                    None until first convergence. Distinct from latest_ah —
+                    this is the locked baseline used for new-battery detection.
+                cov: Coefficient of variation (0.0 if no samples)
+                mean_ah: Mean of ah_estimates (0.0 if no samples)
         """
         estimates = self.state.get("capacity_estimates", [])
 
         if not estimates:
-            return {
-                "sample_count": 0,
-                "confidence_percent": 0.0,
-                "latest_ah": None,
-                "rated_ah": RATED_CAPACITY_AH,
-                "converged": False,
-                "capacity_ah_measured": None,
-                "cov": 0.0,
-                "mean_ah": 0.0,
-            }
+            return ConvergenceStatus(
+                sample_count=0,
+                confidence_percent=0.0,
+                latest_ah=None,
+                rated_ah=RATED_CAPACITY_AH,
+                converged=False,
+                capacity_ah_measured=None,
+                cov=0.0,
+                mean_ah=0.0,
+            )
 
         ah_values = [e["ah_estimate"] for e in estimates]
         cov = compute_cov(ah_values)
@@ -772,16 +787,16 @@ class BatteryModel:
         # 0.0 for n<3 per design (insufficient data to judge convergence)
         confidence = 0.0 if len(ah_values) < 3 else max(0.0, min(1.0, 1.0 - cov))
 
-        return {
-            "sample_count": len(estimates),
-            "confidence_percent": confidence * 100,
-            "latest_ah": ah_values[-1],
-            "rated_ah": RATED_CAPACITY_AH,
-            "converged": len(estimates) >= 3 and cov < 0.10,
-            "capacity_ah_measured": self.state.get("capacity_ah_measured", None),
-            "cov": cov,
-            "mean_ah": sum(ah_values) / len(ah_values),
-        }
+        return ConvergenceStatus(
+            sample_count=len(estimates),
+            confidence_percent=confidence * 100,
+            latest_ah=ah_values[-1],
+            rated_ah=RATED_CAPACITY_AH,
+            converged=len(estimates) >= 3 and cov < 0.10,
+            capacity_ah_measured=self.state.get("capacity_ah_measured", None),
+            cov=cov,
+            mean_ah=sum(ah_values) / len(ah_values),
+        )
 
     def get_anchor_voltage(self):
         """Return anchor point voltage (physical cutoff, should always be 10.5V)."""
