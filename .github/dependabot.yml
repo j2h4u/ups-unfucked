@@ -1,0 +1,38 @@
+# Dependabot configuration — version updates.
+# Security updates and vulnerability alerts are enabled at the repo level
+# (Settings → Code security), not here; this file drives scheduled version bumps.
+version: 2
+updates:
+  # Python dependencies — uv ecosystem reads pyproject.toml + uv.lock.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Asia/Almaty"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    # Bundle low-risk minor/patch bumps into one PR; majors get their own PR.
+    groups:
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions pinned in .github/workflows/*.yml (actions/checkout, setup-python, ...).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Asia/Almaty"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

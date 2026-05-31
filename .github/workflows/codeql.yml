@@ -1,0 +1,41 @@
+name: CodeQL
+
+# Static analysis for security vulnerabilities in our own Python code.
+# Complements Dependabot (which only scans dependencies). Results appear under
+# the repo's Security → Code scanning alerts tab.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan (Mon 07:27 UTC) so new CodeQL queries catch latent issues
+    # even without new commits. Off-:00 minute to avoid the scheduler rush.
+    - cron: "27 7 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze Python
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # security-extended pulls in the broader security query suite beyond
+          # the default set — more thorough exploit detection.
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
