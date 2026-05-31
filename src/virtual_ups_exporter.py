@@ -114,7 +114,15 @@ class VirtualUpsExporter:
         )
 
     def _compute_median_r_internal_mohm(self) -> float:
-        """Median of non-zero R_internal measurements in mΩ; requires ≥3 for noise rejection."""
+        """Median of non-zero R_internal measurements in mΩ; requires ≥3 for noise rejection.
+
+        NOT A BUG: returning 0 is the honest "insufficient calibration data" signal,
+        not a missing value. Zeros are filtered out (a 0 means the UPS returned to OL
+        before the sag developed — see SagTracker._record_voltage_sag), and we need
+        ≥3 valid samples before publishing a median. With <3 valid samples the exporter
+        intentionally reports 0 → battery.internal_resistance=0 in the .dev is expected
+        until enough real sag measurements accumulate.
+        """
         r_internal_history = self.battery_model.get_r_internal_history()
         valid = [e["r_ohm"] for e in r_internal_history if e["r_ohm"] > 0]
         if len(valid) >= 3:

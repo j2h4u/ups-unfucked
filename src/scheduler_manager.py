@@ -301,7 +301,11 @@ class SchedulerManager:
             return float("inf")
 
     def _get_last_natural_blackout(self) -> Optional[dict]:
-        """Return most recent natural blackout event (DoD, timestamp)."""
+        """Return most recent natural blackout event (DoD, timestamp).
+
+        Reads discharge_events (filtered by event_reason=="natural"), NOT the vestigial
+        state["natural_blackout_events"] list — that list is intentionally never written.
+        """
         events = self.battery_model.state.get("discharge_events", [])
         for event in reversed(events):  # Most recent first
             if event.get("event_reason") == "natural":
@@ -355,6 +359,12 @@ class SchedulerManager:
             },
         )
 
+        # NOT A BUG if health.json (next_test_timestamp) and model.json
+        # (scheduled_test_timestamp) ever show different values: both derive from the
+        # SAME decision.next_eligible_timestamp here, so they cannot drift within a run.
+        # health.json is rewritten every poll from the in-memory value below; model.json
+        # is only persisted when this scheduler path runs (~daily). Any observed mismatch
+        # is a snapshot-timing artifact (one file is staler), never a logic divergence.
         self.last_scheduling_reason = decision.reason_code
         self.last_next_test_timestamp = decision.next_eligible_timestamp
 

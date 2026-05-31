@@ -6,6 +6,8 @@ BatteryModel is mocked; ScalarRLS is used as a real object (pure math kernel).
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.battery_math.rls import ScalarRLS
 from src.event_classifier import EventType
 from src.monitor_config import SAG_SAMPLES_REQUIRED, SagState
@@ -229,6 +231,25 @@ def test_record_sag_skipped_when_load_is_zero():
     tracker._current_load = 0.0
     tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
     mock_model.add_r_internal_entry.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "v_before, v_sag",
+    [
+        (13.7, 13.7),  # delta_v == 0: UPS returned to OL before sag developed
+        (13.5, 13.7),  # delta_v < 0: measurement noise / voltage rose
+    ],
+)
+def test_record_sag_skipped_when_delta_v_not_positive(v_before, v_sag):
+    """_record_voltage_sag skips delta_v <= 0 — a zero/negative R_internal is
+    physically meaningless and must not pollute r_internal_history or the RLS estimator."""
+    tracker, mock_model = make_tracker()
+    tracker._v_before_sag = v_before
+    tracker._current_load = 20.0
+    tracker._record_voltage_sag(v_sag=v_sag, event_type=EventType.BLACKOUT_REAL)
+    mock_model.add_r_internal_entry.assert_not_called()
+    # RLS calibration must also be skipped — no ir_k write on a non-measurement.
+    mock_model.set_ir_k.assert_not_called()
 
 
 # ------------------------------------------------------------------

@@ -162,6 +162,18 @@ class SagTracker:
             return
 
         delta_v = self._v_before_sag - v_sag
+        # Guard: the UPS can return to OL before the sag fully develops, leaving
+        # v_sag == v_before (delta_v <= 0). A zero/negative R_internal is physically
+        # meaningless and poisons both r_internal_history and the RLS estimator —
+        # repeated zeros drag ir_k down toward IR_K_MIN, under-compensating real sag.
+        # Skip these non-measurements rather than record them. (Observed May 2026:
+        # 2 of 3 calibration tests returned delta_v=0 and corrupted ir_k.)
+        if delta_v <= 0:
+            logger.debug(
+                "Voltage sag skipped: delta_v=%.3fV <= 0 (UPS returned to OL before sag developed)",
+                delta_v,
+            )
+            return
         r_ohm = delta_v / I_actual
         today = datetime.now().strftime("%Y-%m-%d")
         self.battery_model.add_r_internal_entry(
@@ -169,6 +181,19 @@ class SagTracker:
         )
 
         # RLS auto-calibration of ir_k from measured sag data.
+        #
+        # KNOWN LIMITATION (why the clamp below is load-bearing, not paranoia):
+        # v_before is the EMA voltage captured at the OL->OB transition — i.e. the
+        # charger's FLOAT voltage (~13.7V), not the battery's resting OCV (~13.0V).
+        # When the charger drops out, the measured delta_v bundles surface-charge
+        # collapse (~0.7V) together with the true IR drop (I*R, ~0.1-0.2V). So
+        # r_ohm is systematically OVERESTIMATED (observed: 159mOhm vs a plausible
+        # ~30-50mOhm for this VRLA), and ir_k_measured saturates against IR_K_MAX.
+        # The clamp keeps a biased measurement from blowing up runtime prediction.
+        # A correct fix requires isolating IR from surface charge (e.g. dV/dI across
+        # a load step, or a settled-OCV reference) — tracked as future work, not
+        # patchable here. Do NOT widen IR_K_MAX to "let the real value through":
+        # the real value isn't in this measurement.
         if nominal_voltage > 0:
             ir_k_measured = r_ohm * nominal_power_watts / (nominal_voltage * 100.0)
             new_ir_k, new_P = self.rls_ir_k.update(ir_k_measured)
