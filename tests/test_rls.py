@@ -47,18 +47,15 @@ class TestScalarRLS:
         assert rls.confidence > initial_confidence
         assert rls.confidence > 0.5  # Should be reasonably confident after 10 samples
 
-    def test_serialization_roundtrip(self):
-        """to_dict/from_dict preserves full state."""
-        original = ScalarRLS(theta=0.018, P=0.25, forgetting_factor=0.95)
-        original.sample_count = 7
-
-        d = original.to_dict()
+    def test_from_dict_restores_full_state(self):
+        """from_dict restores full state from a serialized dict."""
+        d = {"theta": 0.018, "P": 0.25, "forgetting_factor": 0.95, "sample_count": 7}
         restored = ScalarRLS.from_dict(d)
 
-        assert restored.theta == original.theta
-        assert restored.P == original.P
-        assert restored.forgetting_factor == original.forgetting_factor
-        assert restored.sample_count == original.sample_count
+        assert restored.theta == 0.018
+        assert restored.P == 0.25
+        assert restored.forgetting_factor == 0.95
+        assert restored.sample_count == 7
 
     def test_first_measurement_high_weight(self):
         """P=1.0 initial → first observation dominates (high Kalman gain)."""

@@ -142,7 +142,7 @@ class MonitorDaemon:
             capacity_ah=self.battery_model.get_capacity_ah(),
         )
 
-        # Replay historical estimates so has_converged()/get_confidence() survive restarts
+        # Replay historical estimates so has_converged() survives restarts
         for estimate in self.battery_model.get_capacity_estimates():
             self.capacity_estimator.add_measurement(
                 ah=estimate["ah_estimate"],

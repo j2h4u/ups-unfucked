@@ -736,18 +736,6 @@ class BatteryModel:
         estimates = self.state.get("capacity_estimates", [])
         return sorted(estimates, key=lambda x: x.get("timestamp", ""), reverse=True)
 
-    def get_latest_capacity(self) -> Optional[float]:
-        """
-        Get the latest measured capacity value.
-
-        Returns:
-            Latest Ah estimate as float, or None if no estimates exist
-        """
-        estimates = self.get_capacity_estimates()
-        if estimates:
-            return estimates[0]["ah_estimate"]
-        return None
-
     def get_convergence_status(self) -> ConvergenceStatus:
         """
         Return convergence status for MOTD + reporting.

@@ -165,65 +165,6 @@ class TestPeukertParameter:
         assert estimator.peukert_exponent == 1.2
 
 
-class TestConvergenceScore:
-    """Test convergence score = 1 - CoV (CAP-03)."""
-
-    def test_convergence_score_single_measurement(self):
-        """Convergence score = 0.0 for fewer than 3 measurements."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        # Add one measurement
-        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {})
-
-        # Confidence should be 0.0 (< 3 measurements)
-        assert estimator.get_confidence() == 0.0
-
-    def test_convergence_score_two_measurements(self):
-        """Convergence score = 0.0 for 2 measurements (need 3+ for meaningful CoV)."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {})
-        estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {})
-
-        # Confidence should still be 0.0 (< 3 measurements)
-        assert estimator.get_confidence() == 0.0
-
-    def test_convergence_score_three_consistent_measurements(self):
-        """Convergence score >= 0.90 for 3 measurements with CoV < 0.10."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        # Add 3 consistent measurements (7.0, 7.1, 7.2)
-        estimator.add_measurement(7.0, "2026-03-16T10:00:00Z", {})
-        estimator.add_measurement(7.1, "2026-03-16T10:30:00Z", {})
-        estimator.add_measurement(7.2, "2026-03-16T11:00:00Z", {})
-
-        confidence = estimator.get_confidence()
-        # CoV = std / mean ≈ 0.082 → confidence ≈ 0.918 >= 0.90
-        assert confidence >= 0.90, f"Expected confidence >= 0.90, got {confidence}"
-
-    def test_convergence_score_may_fluctuate(self):
-        """Convergence score may decrease when noisy sample is added."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        # Add consistent measurements
-        estimator.add_measurement(7.1, "2026-03-16T10:00:00Z", {})
-        estimator.add_measurement(7.2, "2026-03-16T10:30:00Z", {})
-        estimator.add_measurement(7.0, "2026-03-16T11:00:00Z", {})
-
-        confidence_before = estimator.get_confidence()
-
-        # Add a noisy outlier
-        estimator.add_measurement(6.5, "2026-03-16T11:30:00Z", {})
-
-        confidence_after = estimator.get_confidence()
-
-        # Confidence may fluctuate (not monotonic) — both values should be between 0 and 1
-        assert 0.0 <= confidence_before <= 1.0
-        assert 0.0 <= confidence_after <= 1.0
-        # After noisy sample, confidence may be lower (test that it handles this)
-        assert confidence_after >= 0.0
-
-
 class TestConvergenceDetection:
     """Test has_converged() method."""
 
@@ -248,47 +189,6 @@ class TestConvergenceDetection:
 
         # Should converge (CoV < 0.10)
         assert estimator.has_converged(), "Expected convergence with consistent measurements"
-
-
-class TestMeasurementAccumulation:
-    """Test add_measurement() and getter methods (CAP-02, CAP-03)."""
-
-    def test_add_measurement_accumulates(self):
-        """add_measurement() appends to internal measurements list."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        assert estimator.get_measurement_count() == 0
-
-        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {"key": "value"})
-        assert estimator.get_measurement_count() == 1
-
-        estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {"key": "value2"})
-        assert estimator.get_measurement_count() == 2
-
-    def test_get_measurements_returns_all(self):
-        """get_measurements() returns list of all accumulated measurements."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {})
-        estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {})
-
-        measurements = estimator.get_measurements()
-        assert len(measurements) == 2
-
-    def test_get_confidence_after_measurements(self):
-        """get_confidence() returns current confidence based on accumulated measurements."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        assert estimator.get_confidence() == 0.0  # No measurements yet
-
-        estimator.add_measurement(7.2, "2026-03-16T10:00:00Z", {})
-        assert estimator.get_confidence() == 0.0  # < 3 measurements
-
-        estimator.add_measurement(7.3, "2026-03-16T10:30:00Z", {})
-        estimator.add_measurement(7.1, "2026-03-16T11:00:00Z", {})
-
-        confidence = estimator.get_confidence()
-        assert confidence > 0.0  # 3 measurements with low variance
 
 
 class TestWeightedAveraging:
@@ -407,8 +307,8 @@ class TestValidationGates:
                     estimator.add_measurement(ah, f"2026-03-15T{discharge_num:02d}:00:00Z", meta)
 
             # Check convergence at sample 3
-            if estimator.get_measurement_count() >= 3:
-                score = estimator.get_confidence()
+            if len(estimator.capacity_measurements) >= 3:
+                score = estimator._compute_confidence()
                 if score >= 0.90:
                     converged_count += 1
 

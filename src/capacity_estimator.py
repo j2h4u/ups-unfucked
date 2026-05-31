@@ -276,7 +276,7 @@ class CapacityEstimator:
         Accumulate a new capacity measurement for confidence/convergence tracking.
 
         Must be called after estimate() to populate the in-memory accumulator that
-        get_confidence() and has_converged() read from. estimate() does not call
+        has_converged() reads from. estimate() does not call
         this automatically — the two-step contract allows callers to decide
         persistence (model.json) independently of in-memory tracking.
 
@@ -326,15 +326,3 @@ class CapacityEstimator:
             weighted_ah += weight * m.ah
 
         return weighted_ah
-
-    def get_confidence(self) -> float:
-        """Current confidence metric [0.0, 1.0] based on accumulated measurements."""
-        return self._compute_confidence()
-
-    def get_measurement_count(self) -> int:
-        """Count of accumulated capacity measurements."""
-        return len(self.capacity_measurements)
-
-    def get_measurements(self) -> List[CapacityMeasurement]:
-        """All accumulated measurements."""
-        return self.capacity_measurements

@@ -137,12 +137,6 @@ class TestFlagBasedMatching:
         result = classifier.classify(ups_status="CAL DISCHRG", input_voltage=220)
         assert result == EventType.BLACKOUT_TEST
 
-    def test_last_raw_status_tracked(self):
-        """F36a: last_raw_status is set for fallback use."""
-        classifier = EventClassifier()
-        classifier.classify(ups_status="OB LB DISCHRG", input_voltage=0)
-        assert classifier.last_raw_status == "OB LB DISCHRG"
-
 
 class TestEventInitialization:
     """Tests for EventClassifier initialization."""

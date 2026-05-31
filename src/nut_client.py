@@ -121,34 +121,6 @@ class NUTClient:
         response = self.sock.recv(4096).decode().strip()
         return response
 
-    def get_ups_var(self, var_name):
-        """
-        Fetch single UPS variable (e.g., 'battery.voltage').
-
-        Args:
-            var_name: Variable name in NUT format (e.g., 'battery.voltage', 'ups.load')
-
-        Returns:
-            Float value if successful, None if parsing failed
-
-        Raises:
-            socket.timeout: If connection times out
-            socket.error: If socket communication fails
-        """
-        with self._socket_session():
-            _validate_nut_identifier(var_name, "var_name")
-            response = self.send_command(f"GET VAR {self.ups_name} {var_name}")
-            parsed = self._parse_var_line(response)
-            if parsed is not None:
-                return parsed[1]
-            logger.error(
-                "Unexpected NUT response for %s: %.200s",
-                var_name,
-                response,
-                extra={"event_type": "nut_unexpected_response", "var_name": var_name},
-            )
-            return None
-
     _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB
 
     def _recv_until(self, delimiter):

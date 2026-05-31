@@ -54,7 +54,7 @@ class TestNUTClientCommunication:
 
         client = NUTClient(timeout=2.0)
         with pytest.raises(socket.timeout):
-            client.get_ups_var("battery.voltage")
+            client.get_ups_vars()
 
     def test_connection_refused(self, mock_nut_socket):
         """Socket errors are raised, not silently ignored."""
@@ -62,7 +62,7 @@ class TestNUTClientCommunication:
 
         client = NUTClient()
         with pytest.raises(socket.error):
-            client.get_ups_var("battery.voltage")
+            client.get_ups_vars()
 
 
 class TestListVar:
@@ -276,21 +276,6 @@ class TestNUTProtocolValidation:
         """NUTClient rejects ups_name with injection characters."""
         with pytest.raises(ValueError, match="Invalid NUT"):
             NUTClient(ups_name=bad_name)
-
-    @pytest.mark.parametrize(
-        "bad_var",
-        [
-            "battery voltage",  # space
-            "ups.status\n",  # newline
-            "var;DROP",  # semicolon
-            "",  # empty
-        ],
-    )
-    def test_invalid_var_name_rejected(self, mock_nut_socket, bad_var):
-        """get_ups_var rejects variable names with injection characters."""
-        client = NUTClient()
-        with pytest.raises(ValueError):
-            client.get_ups_var(bad_var)
 
     @pytest.mark.parametrize(
         "bad_cmd",

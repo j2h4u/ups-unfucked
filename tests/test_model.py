@@ -652,20 +652,6 @@ class TestCapacityEstimates:
         assert estimates[0]["timestamp"] == "2026-03-15T11:00:00Z"
         assert estimates[1]["timestamp"] == "2026-03-15T10:00:00Z"
 
-    def test_get_latest_capacity_returns_float_or_none(self, tmp_path):
-        """Test 3: model.get_latest_capacity() returns float (latest Ah) or None."""
-        model = BatteryModel(model_path=tmp_path / "model.json")
-
-        # Empty case
-        latest = model.get_latest_capacity()
-        assert latest is None
-
-        # After adding estimate
-        model.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 50.0}, "2026-03-15T12:34:56Z")
-        latest = model.get_latest_capacity()
-        assert isinstance(latest, float)
-        assert latest == 7.5
-
     def test_prune_capacity_estimates_keeps_30(self, tmp_path):
         """Test 4: capacity_estimates pruned to last 30 entries (no unbounded growth)."""
         model = BatteryModel(model_path=tmp_path / "model.json")

@@ -47,15 +47,6 @@ class ScalarRLS:
         """Confidence metric: 0.0 (no data) → 1.0 (converged). Derived from P."""
         return 1.0 / (1.0 + self.P)
 
-    def to_dict(self) -> dict:
-        """Serialize state for model.json persistence."""
-        return {
-            "theta": self.theta,
-            "P": self.P,
-            "sample_count": self.sample_count,
-            "forgetting_factor": self.forgetting_factor,
-        }
-
     @classmethod
     def from_dict(cls, d: dict, forgetting_factor: float = 0.97) -> ScalarRLS:
         """Restore from serialized dict. Missing keys → sensible defaults."""

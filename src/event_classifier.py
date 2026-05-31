@@ -34,7 +34,6 @@ class EventClassifier:
     def __init__(self):
         self.state = EventType.ONLINE
         self.transition_occurred = False
-        self.last_raw_status = ""
 
     def classify(self, ups_status: str, input_voltage: int) -> EventType:
         """Classify UPS event from status string and input voltage.
@@ -50,8 +49,6 @@ class EventClassifier:
         Returns:
             EventType: Classified event (ONLINE, BLACKOUT_REAL, or BLACKOUT_TEST)
         """
-        self.last_raw_status = ups_status
-
         # Flag-based matching: NUT status is space-separated flags (F36)
         # "OB LB DISCHRG", "OB DISCHRG", "CAL DISCHRG" all contain OB or CAL
         flags = ups_status.split()
