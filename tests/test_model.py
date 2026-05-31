@@ -245,23 +245,6 @@ class TestBatteryModelMethods:
         assert history[-1] == {"date": "2026-03-14", "soh": 0.90}
         assert model.get_soh() == 0.90
 
-    def test_has_measured_data_false_by_default(self, tmp_path):
-        """Verify has_measured_data() returns False for default LUT."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        assert model.has_measured_data() is False
-
-    def test_has_measured_data_true_with_measured_entries(self, tmp_path):
-        """Verify has_measured_data() detects measured entries."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        # Add a measured entry
-        model.state["lut"].append({"v": 12.5, "soc": 0.70, "source": "measured"})
-
-        assert model.has_measured_data() is True
-
     def test_get_capacity_ah_default(self, tmp_path):
         """Verify default capacity is 7.2 Ah."""
         model_file = tmp_path / "model.json"
@@ -444,94 +427,6 @@ class TestCalibrationWrite:
         assert 13.0 in voltages
         assert 12.5 in voltages
         assert 11.5 in voltages
-
-
-class TestUpdateLutFromCalibration:
-    """Test BatteryModel.update_lut_from_calibration() method."""
-
-    def test_update_lut_from_calibration_replaces(self, tmp_path):
-        """Verify update_lut_from_calibration() replaces LUT in memory."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        # Create new LUT (interpolated)
-        new_lut = [
-            {"v": 13.4, "soc": 1.00, "source": "standard"},
-            {"v": 11.0, "soc": 0.50, "source": "measured"},
-            {"v": 10.8, "soc": 0.40, "source": "interpolated"},
-            {"v": 10.6, "soc": 0.20, "source": "interpolated"},
-            {"v": 10.5, "soc": 0.00, "source": "measured"},
-        ]
-
-        # Update
-        model.update_lut_from_calibration(new_lut)
-
-        # Verify replacement
-        assert model.get_lut() == new_lut
-        assert len(model.get_lut()) == 5
-
-    def test_update_lut_from_calibration_persists(self, tmp_path):
-        """Verify update_lut_from_calibration() persists to disk."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        # New LUT
-        new_lut = [
-            {"v": 13.4, "soc": 1.00, "source": "standard"},
-            {"v": 11.0, "soc": 0.50, "source": "measured"},
-            {"v": 10.5, "soc": 0.00, "source": "measured"},
-        ]
-
-        # Update
-        model.update_lut_from_calibration(new_lut)
-
-        # Reload from disk
-        model2 = BatteryModel(model_path=model_file)
-        assert model2.get_lut() == new_lut
-
-    def test_update_lut_from_calibration_logging(self, tmp_path, caplog):
-        """Verify update_lut_from_calibration() logs with entry count."""
-        import logging
-
-        caplog.set_level(logging.INFO)
-
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        new_lut = [
-            {"v": 13.4, "soc": 1.00, "source": "standard"},
-            {"v": 11.0, "soc": 0.50, "source": "measured"},
-            {"v": 10.5, "soc": 0.00, "source": "measured"},
-        ]
-
-        model.update_lut_from_calibration(new_lut)
-
-        # Check log message
-        assert "LUT updated from calibration" in caplog.text
-        assert "3 entries" in caplog.text
-        assert "cliff region interpolated" in caplog.text
-
-    def test_update_lut_from_calibration_with_mixed_sources(self, tmp_path):
-        """Verify update preserves source field values (measured, interpolated, standard)."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        new_lut = [
-            {"v": 13.4, "soc": 1.00, "source": "standard"},
-            {"v": 11.0, "soc": 0.50, "source": "measured"},
-            {"v": 10.8, "soc": 0.40, "source": "interpolated"},
-            {"v": 10.6, "soc": 0.20, "source": "interpolated"},
-            {"v": 10.5, "soc": 0.00, "source": "measured"},
-        ]
-
-        model.update_lut_from_calibration(new_lut)
-
-        lut = model.get_lut()
-        assert lut[0]["source"] == "standard"
-        assert lut[1]["source"] == "measured"
-        assert lut[2]["source"] == "interpolated"
-        assert lut[3]["source"] == "interpolated"
-        assert lut[4]["source"] == "measured"
 
 
 class TestHistoryPruning:

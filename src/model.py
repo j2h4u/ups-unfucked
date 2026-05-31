@@ -299,6 +299,11 @@ class BatteryModel:
         self.state.setdefault("sulfation_history", [])
         self.state.setdefault("discharge_events", [])
         self.state.setdefault("roi_history", [])
+        # NOT A BUG that natural_blackout_events stays empty: it is vestigial. Natural
+        # blackouts are recorded in discharge_events with event_reason="natural", which
+        # is what SchedulerManager._get_last_natural_blackout() actually reads. This list
+        # has no writer by design; the setdefault + list-type validation below only keep
+        # legacy model.json files well-formed. Do not "fix" it by wiring up a writer.
         self.state.setdefault("natural_blackout_events", [])
         self.state.setdefault("last_upscmd_timestamp", None)
         self.state.setdefault("last_upscmd_type", None)
@@ -623,7 +628,8 @@ class BatteryModel:
         self.state["soh"] = value
 
     def get_capacity_ah(self):
-        """Rated reference capacity in Ah (default 7.2 for UT850). Not measured — see get_latest_capacity()."""
+        """Rated reference capacity in Ah (default 7.2 for UT850). Not measured — the
+        measured/converged capacity is tracked separately via get_convergence_status()."""
         return self.state.get("full_capacity_ah_ref", RATED_CAPACITY_AH)
 
     def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
@@ -801,11 +807,6 @@ class BatteryModel:
                 return entry["v"]
         return None
 
-    def has_measured_data(self):
-        """True if LUT contains any 'measured' source entries."""
-        lut = self.get_lut()
-        return any(entry["source"] == "measured" for entry in lut)
-
     def calibration_write(self, voltage: float, soc: float, timestamp: float):
         """
         Accumulate calibration datapoint in memory without persisting to disk.
@@ -847,22 +848,6 @@ class BatteryModel:
             - Writes model.json to disk (atomic rename)
         """
         self.save()
-
-    def update_lut_from_calibration(self, new_lut: List[Dict]):
-        """Replace LUT with calibration result and persist to disk.
-
-        Args:
-            new_lut: Updated LUT entries
-        """
-        old_count = len(self.state["lut"])
-        self.state["lut"] = new_lut
-        self.save()
-        logger.info(
-            "LUT updated from calibration: %d entries, cliff region interpolated (was %d entries)",
-            len(new_lut),
-            old_count,
-            extra={"event_type": "lut_calibration_updated"},
-        )
 
     # --- Scheduling State Management ---
 
