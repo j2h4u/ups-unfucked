@@ -17,7 +17,11 @@ from src import alerter, replacement_predictor, soh_calculator
 from src.battery_math import ScalarRLS, calibrate_peukert
 from src.battery_math.cycle_roi import compute_cycle_roi
 from src.battery_math.regression import linear_regression_slope
-from src.battery_math.sulfation import SulfationState, compute_sulfation_score
+from src.battery_math.sulfation import (
+    SulfationState,
+    compute_sulfation_score,
+    estimate_recovery_delta,
+)
 from src.capacity_estimator import CapacityEstimator
 from src.model import BatteryModel, ConvergenceStatus
 from src.monitor_config import MIN_DISCHARGE_DURATION_SEC, DischargeBuffer, safe_save
@@ -314,11 +318,22 @@ class DischargeHandler:
         depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
         cycle_budget = self._estimate_cycle_budget()
 
+        # compute_sulfation_score expects recovery_delta as a [0,1] desulfation signal
+        # (SoH rebound across the rest period), NOT the raw signed soh_delta. soh_before
+        # is the SoH carried into this discharge (= previous discharge's result plus any
+        # recovery since); soh_new is this discharge's fresh measurement, so
+        # estimate_recovery_delta(soh_before, soh_new) captures the rebound on the scale
+        # the score formula expects. Passing raw soh_delta previously pinned the recovery
+        # signal near its maximum on every discharge, inflating sulfation_score by up to
+        # the full recovery weight (0.3) regardless of actual battery recovery.
+        soh_before = soh_new - soh_delta
+        recovery_delta = estimate_recovery_delta(soh_before, soh_new)
+
         try:
             sulfation_state = compute_sulfation_score(
                 days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
                 ir_trend_rate=ir_trend_rate,
-                recovery_delta=soh_delta,
+                recovery_delta=recovery_delta,
                 temperature_celsius=35.0,
             )
 
@@ -345,7 +360,7 @@ class DischargeHandler:
         )
         self.last_days_since_deep = days_since_deep
         self.last_ir_trend_rate = ir_trend_rate
-        self.last_recovery_delta = soh_delta
+        self.last_recovery_delta = recovery_delta
         self.last_cycle_roi = roi
         self.last_cycle_budget_remaining = cycle_budget
         self.last_discharge_timestamp = now_iso
@@ -354,7 +369,7 @@ class DischargeHandler:
         sulfation_score_r = round(sulfation_state.score, 3) if sulfation_state else None
         days_since_deep_r = round(days_since_deep, 1) if days_since_deep is not None else None
         ir_trend_r = round(ir_trend_rate, 6)
-        recovery_delta_r = round(soh_delta, 3)
+        recovery_delta_r = round(recovery_delta, 3)
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
         dod_r = round(depth_of_discharge, 2)
         roi_r = round(roi, 3) if roi is not None else None

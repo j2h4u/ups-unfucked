@@ -281,6 +281,50 @@ class TestBlackoutCreditEventLogging:
         assert model.get_blackout_credit()["active"] is True
 
 
+class TestRecoveryDeltaScaling:
+    """The sulfation recovery signal must be the [0,1] desulfation delta, not raw soh_delta."""
+
+    def _make_handler(self, model):
+        config = Mock()
+        config.capacity_ah = 7.2
+        return DischargeHandler(
+            battery_model=model,
+            config=config,
+            capacity_estimator=Mock(),
+            rls_peukert=Mock(),
+            reference_load_percent=20.0,
+            soh_threshold=0.80,
+        )
+
+    def test_recovery_delta_uses_estimate_not_raw_soh_delta(self, temporary_model_path):
+        """recovery_delta must come from estimate_recovery_delta(soh_before, soh_new),
+        not the raw signed soh_delta. Passing soh_delta previously pinned the recovery
+        signal near max on every discharge, inflating sulfation_score."""
+        from src.battery_math.sulfation import estimate_recovery_delta
+
+        model = BatteryModel(temporary_model_path)
+        handler = self._make_handler(model)
+
+        buf = DischargeBuffer()
+        buf.voltages = [13.0, 12.5, 12.0, 11.5]
+        buf.times = [0.0, 300.0, 600.0, 900.0]
+        buf.loads = [25.0, 25.0, 25.0, 25.0]
+
+        soh_new, soh_delta = 0.94, -0.01  # 1% drop → soh_before = 0.95
+        with patch("src.discharge_handler.logger"):
+            handler._compute_sulfation_metrics(
+                soh_new=soh_new,
+                soh_delta=soh_delta,
+                discharge_buffer=buf,
+                discharge_trigger="natural",
+            )
+
+        # Computed with identical float ops so equality is exact.
+        expected = estimate_recovery_delta(soh_new - soh_delta, soh_new)
+        assert handler.last_recovery_delta == expected
+        assert handler.last_recovery_delta != soh_delta
+
+
 class TestSulfationMethodSplit:
     """Tests for the three-way split of _score_and_persist_sulfation.
 
