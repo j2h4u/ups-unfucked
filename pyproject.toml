@@ -8,7 +8,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-timeout", "pyright", "ruff"]
+dev = ["pytest", "pytest-timeout", "pyright", "ruff", "vulture"]
 
 [project.scripts]
 ups-battery-monitor = "src.monitor:main"
@@ -31,3 +31,9 @@ typeCheckingMode = "basic"
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.vulture]
+paths = ["src"]
+min_confidence = 60
+# Signature-required params flagged as unused (e.g. signal-handler `frame`).
+ignore_names = ["frame"]
