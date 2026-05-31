@@ -591,7 +591,11 @@ def test_ol_ob_ol_discharge_lifecycle_complete(make_daemon):
                 {"v": 10.5, "soc": 0.0, "source": "anchor"},
             ]
         }
-        daemon.battery_model.update_lut_from_calibration = Mock()
+
+        # Capacity measurement is now wired into discharge completion (DC-001).
+        # This test asserts SoH/buffer/persistence, not capacity, so stub the
+        # estimator to a clean rejection for determinism over the mock battery_model.
+        daemon.discharge_handler.capacity_estimator.estimate = Mock(return_value=None)
 
         # Simulate voltage/load from NUT
         daemon.nut_client = Mock()
@@ -1340,6 +1344,39 @@ class TestCapacityEstimatorIntegration:
         # Verify model.add_capacity_estimate was NOT called
         daemon.battery_model.add_capacity_estimate.assert_not_called()
 
+    def test_update_battery_health_wires_capacity_path(self, make_daemon):
+        """Regression for DC-001: the production OB->OL entry (_update_battery_health)
+        must reach the capacity-measurement path. The capability was orphaned —
+        _handle_discharge_complete had no production caller, only tests — so
+        capacity never populated at runtime. This guards the wiring itself, not
+        just the wrapper (which test_handle_discharge_complete_calls_estimator covers)."""
+        from unittest.mock import MagicMock
+
+        from src.monitor_config import DischargeBuffer
+
+        daemon = make_daemon()
+
+        buffer = DischargeBuffer()
+        buffer.voltages = [13.0, 12.5, 12.0, 11.5]
+        buffer.times = [0.0, 300.0, 600.0, 900.0]
+        buffer.loads = [25.0, 25.0, 25.0, 25.0]
+        daemon.discharge_collector.discharge_buffer = buffer
+
+        # Isolate the wiring: stub the SoH path, spy the capacity wrapper and reset.
+        daemon.discharge_handler.update_battery_health = MagicMock()
+        daemon._handle_discharge_complete = MagicMock()
+        daemon.discharge_collector.reset_buffer = MagicMock()
+
+        daemon._update_battery_health()
+
+        daemon._handle_discharge_complete.assert_called_once()
+        passed = daemon._handle_discharge_complete.call_args[0][0]
+        assert passed["voltage_series"] == buffer.voltages
+        assert passed["time_series"] == buffer.times
+        assert passed["load_series"] == buffer.loads
+        # Capacity must be measured BEFORE the buffer is reset.
+        daemon.discharge_collector.reset_buffer.assert_called_once()
+
     def test_estimate_success_calls_model_add(self, make_daemon):
         """Test 4: estimate() returns tuple → model.add_capacity_estimate() called."""
         from unittest.mock import MagicMock
@@ -1613,6 +1650,54 @@ def test_battery_replaced_true(tmp_path):
         # Baseline reset sets SoH to 1.0 and clears capacity estimates
         assert daemon.battery_model.state.get("soh") == 1.0
         assert daemon.battery_model.state.get("capacity_estimates") == []
+
+
+def test_battery_replaced_clears_blackout_credit(tmp_path):
+    """_reset_battery_baseline() must clear the old battery's desulfation credit.
+
+    A new battery should not inherit blackout credit tied to the replaced cell's
+    sulfation state (it otherwise lingers up to 7 days and skews test scheduling).
+    """
+    import sys
+    from unittest.mock import MagicMock, patch
+
+    from src.monitor import MonitorDaemon
+    from src.monitor_config import Config
+
+    sys.modules["systemd"] = MagicMock()
+    sys.modules["systemd.journal"] = MagicMock()
+
+    with (
+        patch("src.monitor.NUTClient"),
+        patch("src.monitor.EMAFilter"),
+        patch("src.monitor.EventClassifier"),
+        patch("src.monitor.logger"),
+        patch.object(MonitorDaemon, "_check_nut_connectivity"),
+        patch.object(MonitorDaemon, "_validate_and_repair_model"),
+    ):
+        config = Config(
+            ups_name="test-cyberpower",
+            polling_interval=10,
+            reporting_interval=60,
+            nut_host="localhost",
+            nut_port=3493,
+            nut_timeout=2.0,
+            shutdown_minutes=5,
+            soh_alert_threshold=0.80,
+            model_dir=tmp_path / "test_model",
+            runtime_threshold_minutes=20,
+            reference_load_percent=20.0,
+            ema_window_sec=120,
+            capacity_ah=7.2,
+        )
+
+        daemon = MonitorDaemon(config)
+        # Grant an active credit, as a deep natural discharge would.
+        daemon.battery_model.set_blackout_credit({"active": True, "desulfation_credit": 0.15})
+
+        daemon._reset_battery_baseline()
+
+        assert daemon.battery_model.get_blackout_credit()["active"] is False
 
 
 def test_battery_replaced_persistence(tmp_path):

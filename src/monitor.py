@@ -320,7 +320,22 @@ class MonitorDaemon:
 
     def _update_battery_health(self):
         """Delegate to DischargeHandler; resets discharge buffer after processing."""
-        self.discharge_handler.update_battery_health(self.discharge_collector.buffer)
+        buffer = self.discharge_collector.buffer
+        self.discharge_handler.update_battery_health(buffer)
+        # Measure actual capacity from the completed discharge BEFORE the buffer is
+        # reset. This path was orphaned (DC-001): _handle_discharge_complete had no
+        # production caller — only tests — so capacity_ah_measured / convergence
+        # never populated at runtime regardless of discharge depth. The estimator
+        # self-gates on discharge quality (rejects shallow/short), so calling it on
+        # every OB->OL is safe.
+        self._handle_discharge_complete(
+            {
+                "voltage_series": buffer.voltages,
+                "time_series": buffer.times,
+                "load_series": buffer.loads,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         self.discharge_collector.reset_buffer()
 
     def _handle_discharge_complete(self, discharge_data: dict) -> None:
@@ -357,6 +372,11 @@ class MonitorDaemon:
         )
 
         self.battery_model.state["cycle_count"] = 0
+
+        # A new battery must not inherit the old battery's desulfation credit, which is
+        # tied to the replaced cell's sulfation state. Without this the stale credit
+        # would linger up to 7 days (it only expires passively) and skew test scheduling.
+        self.battery_model.clear_blackout_credit()
 
         self.battery_model.reset_rls_state()
         self.sag_tracker.reset_rls(theta=0.015, P=1.0)
