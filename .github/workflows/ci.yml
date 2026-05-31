@@ -7,32 +7,39 @@ on:
     branches: [main]
 
 jobs:
-  lint:
+  # Format, lint, type-check, dead-code — single Python version (these don't vary by runtime).
+  analysis:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check src/ tests/
-      - run: ruff format --check src/ tests/
+          python-version: "3.13"
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Format check
+        run: uv run ruff format --check src tests
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Type check
+        run: uv run pyright src
+      - name: Dead-code (vulture, whitelist-gated)
+        run: uv run vulture
 
+  # Tests + coverage gate, across supported Python versions.
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.13", "3.14"]
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-
       - name: Install dependencies
-        run: pip install pytest
-
-      - name: Run tests
-        run: python -m pytest tests/ -v
+        run: uv sync --extra dev
+      - name: Tests with coverage
+        run: uv run pytest --cov=src --cov-fail-under=80
