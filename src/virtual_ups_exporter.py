@@ -61,6 +61,7 @@ class VirtualUpsExporter:
             next_test_timestamp=self.scheduler_manager.last_next_test_timestamp,
             last_discharge_timestamp=dh.last_discharge_timestamp,
             consecutive_errors=consecutive_errors,
+            shutdown_imminent=current_metrics.shutdown_imminent,
         )
         write_health_endpoint(snapshot)
 

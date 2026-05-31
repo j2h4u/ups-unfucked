@@ -58,6 +58,20 @@ def test_write_health_endpoint_creates_file(health_endpoint_temp_file, baseline_
 
 
 @pytest.mark.integration
+def test_health_endpoint_includes_shutdown_imminent(
+    health_endpoint_temp_file, baseline_health_params
+):
+    """shutdown_imminent flag is serialized to health.json for operator visibility."""
+    with patch("src.monitor_config.HEALTH_ENDPOINT_PATH", health_endpoint_temp_file):
+        write_health_endpoint(
+            HealthSnapshot(**{**baseline_health_params, "shutdown_imminent": True})
+        )
+        with open(health_endpoint_temp_file) as f:
+            data = json.load(f)
+        assert data["shutdown_imminent"] is True
+
+
+@pytest.mark.integration
 def test_health_endpoint_includes_v16_sulfation_fields(
     health_endpoint_temp_file, baseline_health_params
 ):

@@ -311,6 +311,7 @@ class HealthSnapshot:
     next_test_timestamp: Optional[str] = None
     last_discharge_timestamp: Optional[str] = None
     consecutive_errors: int = 0
+    shutdown_imminent: bool = False  # runtime < shutdown threshold (operator visibility)
 
 
 def _opt_round(v: Optional[float], n: int) -> Optional[float]:
@@ -332,6 +333,7 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
         "last_poll_unix": int(time.time()),
         "current_soc_percent": round(snapshot.soc_percent, 1),
         "online": snapshot.is_online,
+        "shutdown_imminent": snapshot.shutdown_imminent,
         "daemon_version": DAEMON_VERSION,
         "poll_latency_ms": _opt_round(snapshot.poll_latency_ms, 1),
         "capacity_ah_measured": _opt_round(snapshot.capacity_ah_measured, 2),
