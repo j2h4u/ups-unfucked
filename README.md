@@ -122,7 +122,7 @@ Everything else is either hardcoded or stored in `model.json` and auto-calibrate
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.13+
 - NUT 2.8+ with `usbhid-ups` driver
 - systemd (Type=notify, WatchdogSec=120)
 - `python3-systemd` package
