@@ -686,6 +686,14 @@ class DischargeHandler:
             )
             self.has_logged_baseline_lock = True
 
+        # Baseline = latest_ah (most recent measurement), deliberately NOT a mean or
+        # depth-weighted average. Capacity drifts DOWN as the cell ages; averaging older
+        # readings in biases the baseline high → overestimated runtime → unsafe late
+        # shutdown. The convergence gate (n>=3, CoV<0.10) already bounds per-measurement
+        # noise, and a >10% jump trips new-battery reset below. The old CAP-02 depth-
+        # weighted estimator was removed: for this cell's narrow deep-discharge ΔSoC band
+        # it collapsed to a plain mean (<33 mAh difference) and addressed neither noise
+        # nor drift — it was never wired to production.
         current_measured = convergence_status.latest_ah
         stored_baseline = self.battery_model.state.get("capacity_ah_measured", None)
 

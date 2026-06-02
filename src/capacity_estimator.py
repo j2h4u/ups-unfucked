@@ -293,36 +293,3 @@ class CapacityEstimator:
         if len(self.capacity_measurements) < 3:
             return False
         return compute_cov([m.ah for m in self.capacity_measurements]) < 0.10
-
-    def get_weighted_estimate(self) -> float:
-        """
-        Compute depth-weighted average of all measurements (CAP-02).
-
-        Formula:
-            weight_i = ΔSoC_i / sum(ΔSoC_all)
-            Ah_weighted = sum(weight_i × Ah_i)
-
-        If all ΔSoC = 0 (degenerate case), fall back to arithmetic mean.
-
-        Returns:
-            float: Weighted capacity estimate (Ah). Returns 7.2 (rated) if no measurements exist.
-        """
-        if not self.capacity_measurements:
-            return 7.2  # Fallback to rated
-
-        total_delta_soc = sum(
-            m.metadata.get("delta_soc_percent", 0) for m in self.capacity_measurements
-        )
-
-        if total_delta_soc == 0:
-            # Fallback: equal weight
-            ah_sum = sum(m.ah for m in self.capacity_measurements)
-            return ah_sum / len(self.capacity_measurements)
-
-        weighted_ah = 0.0
-        for m in self.capacity_measurements:
-            delta_soc_percent = m.metadata.get("delta_soc_percent", 0)
-            weight = delta_soc_percent / total_delta_soc
-            weighted_ah += weight * m.ah
-
-        return weighted_ah

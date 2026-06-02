@@ -191,51 +191,6 @@ class TestConvergenceDetection:
         assert estimator.has_converged(), "Expected convergence with consistent measurements"
 
 
-class TestWeightedAveraging:
-    """Test depth-weighted averaging (CAP-02)."""
-
-    def test_weighted_average_three_measurements(self):
-        """get_weighted_estimate() computes depth-weighted average."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        # Simulate 3 measurements with different depths
-        # Measurement 1: Ah=7.0, ΔSoC=30%
-        # Measurement 2: Ah=7.2, ΔSoC=50%
-        # Measurement 3: Ah=7.1, ΔSoC=40%
-        # Total ΔSoC = 120% (normalized to weights)
-        # Weight 1 = 30/120 = 0.25 → 7.0 * 0.25 = 1.75
-        # Weight 2 = 50/120 = 0.417 → 7.2 * 0.417 = 3.002
-        # Weight 3 = 40/120 = 0.333 → 7.1 * 0.333 = 2.364
-        # Weighted sum ≈ 7.116
-
-        metadata1 = {"delta_soc_percent": 30}
-        metadata2 = {"delta_soc_percent": 50}
-        metadata3 = {"delta_soc_percent": 40}
-
-        estimator.add_measurement(7.0, "2026-03-16T10:00:00Z", metadata1)
-        estimator.add_measurement(7.2, "2026-03-16T10:30:00Z", metadata2)
-        estimator.add_measurement(7.1, "2026-03-16T11:00:00Z", metadata3)
-
-        weighted_ah = estimator.get_weighted_estimate()
-        expected_ah = 7.116
-        assert abs(weighted_ah - expected_ah) < 0.1, (
-            f"Weighted estimate {weighted_ah} not close to expected {expected_ah}"
-        )
-
-    def test_weighted_average_fallback_equal_depth(self):
-        """get_weighted_estimate() falls back to arithmetic mean if all ΔSoC = 0."""
-        estimator = CapacityEstimator(peukert_exponent=1.2)
-
-        # All measurements with delta_soc = 0
-        estimator.add_measurement(7.0, "2026-03-16T10:00:00Z", {"delta_soc_percent": 0})
-        estimator.add_measurement(7.1, "2026-03-16T10:30:00Z", {"delta_soc_percent": 0})
-        estimator.add_measurement(7.2, "2026-03-16T11:00:00Z", {"delta_soc_percent": 0})
-
-        weighted_ah = estimator.get_weighted_estimate()
-        arithmetic_mean = (7.0 + 7.1 + 7.2) / 3
-        assert abs(weighted_ah - arithmetic_mean) < 0.001
-
-
 class TestValidationGates:
     """Expert panel validation gates."""
 

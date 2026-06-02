@@ -34,7 +34,7 @@ All four phases in the v2.0 milestone are properly integrated at the system leve
 ### Phase 12 (Deep Discharge Capacity Estimation)
 **Provides:**
 - `CapacityEstimator` class (coulomb counting, quality filters, convergence detection)
-- Methods: `estimate()`, `add_measurement()`, `has_converged()`, `get_confidence()`, `get_weighted_estimate()`
+- Methods: `estimate()`, `add_measurement()`, `has_converged()`, `get_confidence()`
 - Model extensions: `add_capacity_estimate()`, `get_capacity_estimates()`, `get_convergence_status()`
 
 **Consumed by:**
@@ -208,7 +208,7 @@ All four phases in the v2.0 milestone are properly integrated at the system leve
 | Req ID | Description | Phase | Integration Path | Status |
 |--------|-------------|-------|------------------|--------|
 | **CAP-01** | Daemon measures battery capacity from deep discharge | 12 | Discharge → CapacityEstimator.estimate() → model.add_capacity_estimate() | ✓ WIRED |
-| **CAP-02** | Depth-weighted averaging of capacity estimates | 12 | model.get_capacity_estimates() → CapacityEstimator.get_weighted_estimate() | ✓ WIRED |
+| **CAP-02** | Accumulate capacity estimates across discharges | 12 | model.get_capacity_estimates() → convergence gate (n≥3, CoV<0.10) → baseline = ConvergenceStatus.latest_ah | ⚠️ CORRECTED 2026-06-02 — see note |
 | **CAP-03** | Confidence tracking (CoV-based) | 12 | CapacityEstimator._compute_confidence() → model.get_convergence_status() | ✓ WIRED |
 | **CAP-04** | Atomic persistence of capacity estimates | 12 | model.add_capacity_estimate() → model.save() (fdatasync + rename) | ✓ WIRED |
 | **CAP-05** | User signal for new battery via CLI flag | 12 | parse_args(--new-battery) → MonitorDaemon.__init__() → model.data['new_battery_requested'] | ✓ WIRED |
@@ -223,6 +223,15 @@ All four phases in the v2.0 milestone are properly integrated at the system leve
 
 **All 13 Requirements:** SATISFIED — No gaps, all connections verified.
 
+> **CORRECTION 2026-06-02 (CAP-02):** This report originally claimed CAP-02 was wired via
+> `CapacityEstimator.get_weighted_estimate()`. That was false — the method had no production
+> caller. The converged capacity baseline has always come from `ConvergenceStatus.latest_ah`.
+> Depth-weighted averaging was descoped (for this cell's narrow deep-discharge ΔSoC band it
+> collapses to a plain mean, <33 mAh difference; it addresses neither measurement noise nor
+> capacity drift). `get_weighted_estimate()` and its tests were removed. CAP-02's real intent —
+> accumulating capacity estimates and locking a measured baseline — remains satisfied via the
+> convergence gate; only the averaging method changed.
+
 ---
 
 ## Orphaned Code Assessment
@@ -231,7 +240,7 @@ All four phases in the v2.0 milestone are properly integrated at the system leve
 
 **Result:** NO ORPHANED CODE FOUND
 
-- ✓ All CapacityEstimator methods used (estimate, add_measurement, has_converged, get_confidence, get_weighted_estimate)
+- ✓ All CapacityEstimator methods used (estimate, add_measurement, has_converged, get_confidence)
 - ✓ All BatteryModel capacity extensions used (add_capacity_estimate, get_capacity_estimates, get_convergence_status)
 - ✓ All soh_calculator functions used (calculate_soh_from_discharge)
 - ✓ All model extensions used (add_soh_history_entry with capacity_ah_ref)
