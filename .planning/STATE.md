@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: Honest Monitoring & Diagnostic Verification
 status: executing
-last_updated: "2026-06-03T20:12:42.046Z"
+last_updated: "2026-06-03T20:51:13.954Z"
 last_activity: 2026-06-03 -- Phase 25 execution started
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State — UPS Battery Monitor
@@ -23,10 +23,10 @@ progress:
 
 ## Current Position
 
-Phase: 25 (desulfation-retraction-diagnostic-only-capacity-verification) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 25
-Last activity: 2026-06-03 -- Phase 25 execution started
+Phase: 25 (desulfation-retraction-diagnostic-only-capacity-verification) — COMPLETE
+Plan: 3 of 3 (all plans complete)
+Status: Phase 25 complete — v3.2 milestone complete
+Last activity: 2026-06-03 -- Phase 25 Plan 03 complete (docs, ADR 0001, battery-health maintenance section)
 
 ## Project Reference
 
@@ -61,6 +61,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 23 P04 | 5 | 1 tasks | 2 files |
 | Phase 24-temperature-security-hardening P01 | 2 min | 2 tasks | 2 files |
 | Phase 24-temperature-security-hardening P02 | 410 | 2 tasks | 4 files |
+| Phase 25 P03 | 5 min | 3 tasks | 5 files |
 
 ### Execution History
 
@@ -100,11 +101,19 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 24. (Phase 24-02) TestTemperatureProbe uses dedicated helper bypassing make_daemon fixture — fixture patches _probe_temperature_sensor on the class which suppresses the method under test
 25. (Phase 24-02) Assert on mock_logger.info call_args extra.event_type, not caplog.text — monitor logger clears handlers and adds stderr handler in fixture, bypassing root logger that caplog intercepts
 
+### Key Decisions (v3.2)
+
+1. (Phase 25-01) Scheduler reframed: `evaluate_test_scheduling` uses persistent `last_upscmd_timestamp` + ≈365-day cadence as proposal driver; bootstrap deadlock fixed (inf days → propose on first start)
+2. (Phase 25-02) Sulfation/cycle-ROI machinery fully removed: `sulfation.py`, `cycle_roi.py`, all callers, health/model/MOTD/journald fields, and exercising tests deleted
+3. (Phase 25-03) ADR 0001 records premise reversal, evidence (BU-804b/Vertiv BattCon/IEEE-1188), no-charge-control fact, deploy action (rm model.json)
+4. (Phase 25-03) battery-health.py UPS_MODEL_PATH/UPS_HEALTH_PATH env overrides mirror motd_status.py — fixture-friendly without sudo
+5. (Phase 25-03) IR comment tokens: "sulfation, grid corrosion" → "plate corrosion / electrolyte loss" — factually correct, drops literal sulfation token for clean repo-wide grep
+
 ### Key Decisions (v3.0, carried forward)
 
 1. No systemd timer masking in code — manual deployment step
 2. Grid stability gate configurable (grid_stability_cooldown_hours=0 disables)
-3. Conservative deep test bias: natural blackouts provide free desulfation
+3. ~~Conservative deep test bias: natural blackouts provide free desulfation~~ — RETRACTED v3.2 (premise disproven; see ADR 0001)
 
 ### Open Questions (v3.1)
 

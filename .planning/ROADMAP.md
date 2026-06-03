@@ -70,7 +70,7 @@
 
 **Milestone goal:** Retract the v3.0 "active desulfation via scheduled deep discharges" mechanism (premise disproven — discharge *forms* sulfate, charging reverses it, and the daemon has no charge control on CyberPower), reframe the scheduler to rare diagnostic capacity verification, fix the scheduler bootstrap deadlock, and correct the docs. Single-host, fail-fast, no backward-compat (state regenerates).
 
-- [ ] **Phase 25: Desulfation Retraction → Diagnostic-Only Capacity Verification** — reframe scheduler + fix Catch-22, remove sulfation/cycle_roi machinery, correct docs/ADR + battery-health report (SCH-01..03, RET-01..04, DOC-01..02, RPT-01)
+- [x] **Phase 25: Desulfation Retraction → Diagnostic-Only Capacity Verification** — reframe scheduler + fix Catch-22, remove sulfation/cycle_roi machinery, correct docs/ADR + battery-health report (SCH-01..03, RET-01..04, DOC-01..02, RPT-01)
 
 #### Phase 25: Desulfation Retraction → Diagnostic-Only Capacity Verification
 
@@ -95,7 +95,7 @@
 
 - [x] 25-01-PLAN.md — Wave 1: reframe `evaluate_test_scheduling` to diagnostic ~365d cadence + fix bootstrap deadlock (SCH-01..03)
 - [x] 25-02-PLAN.md — Wave 2: delete sulfation.py/cycle_roi.py, strip fields (health/model/MOTD/journald), remove blackout credit + dead tests (RET-01..04)
-- [ ] 25-03-PLAN.md — Wave 3: correct README/ROADMAP/MILESTONES, write ADR 0001, add "Maintenance & schedule" to battery-health.py (DOC-01..02, RPT-01)
+- [x] 25-03-PLAN.md — Wave 3: correct README/ROADMAP/MILESTONES, write ADR 0001, add "Maintenance & schedule" to battery-health.py (DOC-01..02, RPT-01)
 
 ## Progress
 
@@ -126,7 +126,7 @@
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete | 2026-03-20 |
 | 23. Test Quality Rewrite | v3.1 | 4/4 | Complete | 2026-03-20 |
 | 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete | 2026-03-21 |
-| 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 2/3 | In Progress|  |
+| 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 3/3 | Complete   | 2026-06-03 |
 
 ---
 
