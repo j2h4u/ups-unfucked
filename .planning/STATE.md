@@ -115,6 +115,10 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 2. Grid stability gate configurable (grid_stability_cooldown_hours=0 disables)
 3. ~~Conservative deep test bias: natural blackouts provide free desulfation~~ — RETRACTED v3.2 (premise disproven; see ADR 0001)
 
+### Roadmap Evolution
+
+- Phase 26 added (post-25): model.json learned-state hygiene — move config/spec (`full_capacity_ah_ref`, `physics.nominal_*`) and derived caches (`scheduled_test_*`, `test_block_reason`, `capacity_converged`, `replacement_due`) out of the persisted state file; keep only learned per-battery state. Evidence + gotchas captured in the ROADMAP Phase 26 entry. Surfaced during the Phase 25 wrap-up.
+
 ### Open Questions (v3.1)
 
 1. Temperature sensor: does NUT expose a variable for UT850EG temperature? (resolved in Phase 24)

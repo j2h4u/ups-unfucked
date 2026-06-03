@@ -128,6 +128,33 @@
 | 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete | 2026-03-21 |
 | 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 3/3 | Complete    | 2026-06-03 |
 
+### Phase 26: model.json learned-state hygiene: move config/spec and derived caches out of persisted battery state
+
+**Goal:** `model.json` persists ONLY learned per-battery state (category ③). Configuration/spec (category ①) is read from `config.toml`/`constants.py` at runtime and not persisted; derived caches (category ②) are recomputed and not persisted. The `ModelState` schema shrinks to learned-state-only, and the strict loader still passes against a real on-disk file after a one-time key strip.
+
+**Requirements**: TBD (derive at plan time)
+**Depends on:** Phase 25 (ModelState schema + strict load validation must exist first)
+**Plans:** 0 plans
+
+**Scope (evidence-based classification from the Phase 25 wrap-up discussion):**
+
+- **① Config/spec to REMOVE from model.json** (read from config/constants instead):
+  - `full_capacity_ah_ref` — already overwritten from `config.capacity_ah` on every start (`monitor.py:129`); the persisted copy is never authoritative → pure redundancy.
+  - `physics.nominal_voltage` (12.0), `physics.nominal_power_watts` (`NOMINAL_POWER_WATTS`) — fixed spec, never learned. NOTE: `physics` is a MIXED blob — `peukert_exponent` / `ir_compensation.k_volts_per_percent` / `rls_state` ARE learned (category ③) and MUST stay. Split the blob, don't drop it.
+- **② Derived caches to STOP persisting** (recompute at runtime; they feed the health endpoint, never gate decisions):
+  - `scheduled_test_timestamp`, `scheduled_test_reason`, `test_block_reason` — scheduler OUTPUT; gates key off `last_upscmd_timestamp`/`last_upscmd_status`, not these.
+  - `capacity_converged` — derived from `capacity_estimates` CoV.
+  - `replacement_due` — derived from `soh_history` regression.
+
+**Known gotchas:**
+- The health endpoint (`monitor_config.py` `HealthSnapshot` / `write_health_endpoint`) currently reads ②'s values from `model.json`; after this change it must populate them from the live in-memory computation each poll (and on the first poll after restart). Touches `tests/test_health_endpoint_v16.py`.
+- Changing `ModelState` to drop these keys means the strict loader will reject the existing on-disk `model.json` (which still has them) → deploy needs the same stop → strip keys → start sequence used in Phase 25, OR a one-time strip. Backup at `~/.config/ups-battery-monitor/model.json.pre-v3.2-cleanup.bak`.
+- `capacity_ah_measured` (learned SoH baseline, category ③) is distinct from `full_capacity_ah_ref` (config) — do not conflate them.
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 26 to break down)
+
 ---
 
 *Roadmap updated: 2026-06-03 — v3.2 Honest Monitoring & Diagnostic Verification milestone started (Phase 25, active; reframe→delete→docs as internal waves)*
