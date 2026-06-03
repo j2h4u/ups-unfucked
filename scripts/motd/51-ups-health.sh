@@ -23,7 +23,9 @@ else
 fi
 
 UPS_PKG_DIR="${UPS_PKG_DIR:-@INSTALL_DIR@}"
-UPS_NUT_ADDRESS="cyberpower-virtual@localhost"
+# Virtual UPS NUT address; @UPS_NUT_ADDRESS@ is filled in by scripts/install.sh
+# (from UPS_VIRTUAL_NAME). Override with UPS_NUT_ADDRESS for local testing.
+UPS_NUT_ADDRESS="${UPS_NUT_ADDRESS:-@UPS_NUT_ADDRESS@}"
 
 # Read virtual UPS metrics; exit silently if daemon or NUT is not running.
 # MOTD runs on every login — it must not print errors when the monitor is down.

@@ -243,7 +243,9 @@ if [[ -d "$MOTD_DIR" ]]; then
         if [[ "$DRY_RUN" == "yes" ]]; then
             echo "[DRY-RUN] Would install (templated) $motd_src -> $motd_dst"
         else
-            sed "s|@INSTALL_DIR@|$REPO_ROOT|g" "$motd_src" > "$motd_dst"
+            sed -e "s|@INSTALL_DIR@|$REPO_ROOT|g" \
+                -e "s|@UPS_NUT_ADDRESS@|${UPS_VIRTUAL_NAME}@localhost|g" \
+                "$motd_src" > "$motd_dst"
             chmod +x "$motd_dst"
             log_ok "MOTD script installed to $motd_dst"
         fi
