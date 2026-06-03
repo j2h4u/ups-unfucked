@@ -166,4 +166,3 @@ def test_backward_compatibility_missing_keys(battery_model_temp_file):
     assert model.state["sulfation_history"] == []
     assert model.state["discharge_events"] == []
     assert model.state["roi_history"] == []
-    assert model.state["natural_blackout_events"] == []

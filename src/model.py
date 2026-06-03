@@ -299,12 +299,6 @@ class BatteryModel:
         self.state.setdefault("sulfation_history", [])
         self.state.setdefault("discharge_events", [])
         self.state.setdefault("roi_history", [])
-        # NOT A BUG that natural_blackout_events stays empty: it is vestigial. Natural
-        # blackouts are recorded in discharge_events with event_reason="natural", which
-        # is what SchedulerManager._get_last_natural_blackout() actually reads. This list
-        # has no writer by design; the setdefault + list-type validation below only keep
-        # legacy model.json files well-formed. Do not "fix" it by wiring up a writer.
-        self.state.setdefault("natural_blackout_events", [])
         self.state.setdefault("last_upscmd_timestamp", None)
         self.state.setdefault("last_upscmd_type", None)
         self.state.setdefault("last_upscmd_status", None)
@@ -359,7 +353,6 @@ class BatteryModel:
             "sulfation_history",
             "discharge_events",
             "roi_history",
-            "natural_blackout_events",
         ):
             val = self.state.get(key)
             if val is not None and not isinstance(val, list):

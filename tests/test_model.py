@@ -1159,26 +1159,6 @@ class TestFieldLevelValidation:
         ]
         assert len(clamped_records) >= 1
 
-    def test_validate_list_field_natural_blackout_events_non_list(
-        self, temporary_model_path, caplog
-    ):
-        """natural_blackout_events={'bad': True} (dict) → reset to [], warning logged."""
-        import logging
-
-        data = self._base_model_data()
-        data["natural_blackout_events"] = {"bad": True}
-        with open(temporary_model_path, "w") as f:
-            json.dump(data, f)
-
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
-
-        assert model.state["natural_blackout_events"] == []
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1
-
     def test_validate_valid_fields_no_warnings(self, temporary_model_path, caplog):
         """Valid string and list fields → no model_field_clamped warnings, fields unchanged."""
         import logging
@@ -1192,7 +1172,6 @@ class TestFieldLevelValidation:
         data["discharge_events"] = [
             {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
         ]
-        data["natural_blackout_events"] = []
         with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 

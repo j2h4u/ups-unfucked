@@ -303,8 +303,7 @@ class SchedulerManager:
     def _get_last_natural_blackout(self) -> Optional[dict]:
         """Return most recent natural blackout event (DoD, timestamp).
 
-        Reads discharge_events (filtered by event_reason=="natural"), NOT the vestigial
-        state["natural_blackout_events"] list — that list is intentionally never written.
+        Reads discharge_events filtered by event_reason=="natural".
         """
         events = self.battery_model.state.get("discharge_events", [])
         for event in reversed(events):  # Most recent first
