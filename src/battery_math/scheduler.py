@@ -51,6 +51,23 @@ class SchedulerDecision:
     next_eligible_timestamp: Optional[str] = None
 
 
+def _parse_iso_or_warn(raw: str, field: str) -> Optional[datetime]:
+    """Parse an ISO8601 timestamp; on corruption log a structured warning and return None.
+
+    Lets a safety gate skip itself on a malformed model.json value instead of crashing.
+    """
+    try:
+        return datetime.fromisoformat(raw)
+    except (ValueError, TypeError):
+        logger.warning(
+            "Corrupted %s timestamp %r — scheduling gate skipped",
+            field,
+            raw,
+            extra={"event_type": "corrupted_scheduling_timestamp", "field": field},
+        )
+        return None
+
+
 def evaluate_test_scheduling(
     *,
     sulfation_score: float,
@@ -138,31 +155,23 @@ def evaluate_test_scheduling(
 
     # Gate 3: Blackout credit (SCHED-03)
     if active_blackout_credit and active_blackout_credit.get("active"):
-        try:
-            credit_expires_str = active_blackout_credit.get("credit_expires")
-            if credit_expires_str:
-                credit_expires = datetime.fromisoformat(credit_expires_str)
-                if credit_expires > now:
-                    # Credit still active
-                    return _decision(
-                        "defer_test",
-                        "blackout_credit_active",
-                        f"expires {credit_expires_str}",
-                        eligible_at=credit_expires_str,
-                    )
-        except (ValueError, TypeError):
-            logger.warning(
-                "Corrupted credit_expires timestamp %r — blackout credit gate skipped",
-                credit_expires_str,
-                extra={"event_type": "corrupted_scheduling_timestamp", "field": "credit_expires"},
-            )
+        credit_expires_str = active_blackout_credit.get("credit_expires")
+        if credit_expires_str:
+            credit_expires = _parse_iso_or_warn(credit_expires_str, "credit_expires")
+            if credit_expires and credit_expires > now:
+                # Credit still active
+                return _decision(
+                    "defer_test",
+                    "blackout_credit_active",
+                    f"expires {credit_expires_str}",
+                    eligible_at=credit_expires_str,
+                )
 
     # Gate 4: Grid stability (SCHED-06)
     if grid_stability_cooldown_hours > 0 and last_blackout_timestamp:
-        try:
-            last_blackout_dt = datetime.fromisoformat(last_blackout_timestamp)
+        last_blackout_dt = _parse_iso_or_warn(last_blackout_timestamp, "last_blackout_timestamp")
+        if last_blackout_dt:
             time_since_blackout = (now - last_blackout_dt).total_seconds() / 3600.0  # Hours
-
             if time_since_blackout < grid_stability_cooldown_hours:
                 hours_remaining = grid_stability_cooldown_hours - time_since_blackout
                 return _decision(
@@ -171,15 +180,6 @@ def evaluate_test_scheduling(
                     f"blackout {time_since_blackout:.1f}h ago",
                     eligible_in=timedelta(hours=hours_remaining),
                 )
-        except (ValueError, TypeError):
-            logger.warning(
-                "Corrupted last_blackout_timestamp %r — grid stability gate skipped",
-                last_blackout_timestamp,
-                extra={
-                    "event_type": "corrupted_scheduling_timestamp",
-                    "field": "last_blackout_timestamp",
-                },
-            )
 
     # Gate 5: Cycle budget
     if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:
