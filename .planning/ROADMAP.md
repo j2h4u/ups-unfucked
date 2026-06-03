@@ -86,7 +86,10 @@
   3. `sulfation.py`, `cycle_roi.py` and all callers are gone; grep for `sulfation`/`cycle_roi` is clean across src/tests/scripts; `sulfation_score`/`cycle_roi` fields absent from health endpoint, model.json, MOTD, journald.
   4. Tests covering deleted code removed; full pytest green; ruff/pyright/vulture clean.
   5. README/ROADMAP/MILESTONES carry no active-desulfation claims; an ADR records the premise reversal + evidence (BU-804b, Vertiv BattCon, IEEE-1188) + no-charge-control fact; `battery-health.py` shows a "Maintenance & schedule" section.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 25-01-PLAN.md — Wave 1: reframe `evaluate_test_scheduling` to diagnostic ~365d cadence + fix bootstrap deadlock (SCH-01..03)
+- [ ] 25-02-PLAN.md — Wave 2: delete sulfation.py/cycle_roi.py, strip fields (health/model/MOTD/journald), remove blackout credit + dead tests (RET-01..04)
+- [ ] 25-03-PLAN.md — Wave 3: correct README/ROADMAP/MILESTONES, write ADR 0001, add "Maintenance & schedule" to battery-health.py (DOC-01..02, RPT-01)
 
 
 ## Progress
