@@ -117,7 +117,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action="propose_test",
             test_type="deep",
-            reason_code="sulfation_high",
+            reason_code="diagnostic_cadence",
         )
 
         # Call dispatch
@@ -149,7 +149,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action="propose_test",
             test_type="deep",
-            reason_code="sulfation_high",
+            reason_code="diagnostic_cadence",
         )
 
         # Call dispatch
@@ -179,7 +179,7 @@ class TestDispatchFunction:
         decision = SchedulerDecision(
             action="propose_test",
             test_type="quick",
-            reason_code="sulfation_moderate",
+            reason_code="diagnostic_cadence",
         )
 
         # Call dispatch

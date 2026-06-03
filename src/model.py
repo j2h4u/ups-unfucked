@@ -562,8 +562,8 @@ class BatteryModel:
         Atomically write model to disk with history pruning.
 
         Prunes soh_history, r_internal_history, capacity_estimates,
-        sulfation_history, discharge_events (each capped at 30 entries),
-        and LUT (deduplicates measured entries within ±0.1V, keeps most
+        discharge_events (each capped at 30 entries), and LUT
+        (deduplicates measured entries within ±0.1V, keeps most
         recent 200) to prevent unbounded growth.
         """
         self._sync_physics_to_state()
@@ -805,7 +805,7 @@ class BatteryModel:
 
         Args:
             scheduled_timestamp: ISO8601 timestamp of next proposed/eligible test
-            reason: Stored as scheduled_test_reason (e.g., 'sulfation_0.65_roi_0.34')
+            reason: Stored as scheduled_test_reason (e.g., 'diagnostic_cadence')
             block_reason: If test is blocked, reason code (e.g., 'soh_floor_55%'), else None
         """
         self.state["scheduled_test_timestamp"] = scheduled_timestamp

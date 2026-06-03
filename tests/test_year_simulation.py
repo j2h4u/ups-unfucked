@@ -902,11 +902,11 @@ def test_cliff_edge_degradation(initial_battery_state):
     assert 0.0 <= state.soh <= 1.0, f"SoH {state.soh} outside physics bounds [0, 1]"
 
 
-def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
+def test_shallow_discharge_rest_period_does_not_degrade_soh(initial_battery_state):
     """Rest period after shallow discharges does not significantly degrade SoH.
 
-    VRLA can recover capacity via sulfation reversal. Model should handle
-    SoH stability or increase gracefully (no clamping guards triggered).
+    Model should handle SoH stability or minor drift gracefully
+    (no clamping guards triggered by shallow cycling).
     """
     random.seed(42)
     state = initial_battery_state
@@ -940,9 +940,9 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
             state = replace(state, cycle_count=state.cycle_count + 1)
 
     mid_soh = state.soh
-    print(f"\nSulfation recovery: after 3 weeks, SoH={mid_soh:.4f} (from {initial_soh:.4f})")
+    print(f"\nShallow discharge rest: after 3 weeks, SoH={mid_soh:.4f} (from {initial_soh:.4f})")
 
-    # Week 4: recovery event (shallower discharge to simulate calibration)
+    # Week 4: follow-up shallow discharge (simulates calibration event)
     recovery_depth = 0.20
     recovery_discharge = synthetic_discharge(1.0, 1.0 - recovery_depth, 900, 18.0, state.lut, 12)
     v_series, t_series, _ = recovery_discharge
@@ -960,15 +960,15 @@ def test_sulfation_rest_period_does_not_degrade_soh(initial_battery_state):
     if new_soh is not None:
         state = replace(state, soh=new_soh)
 
-    recovery_delta = state.soh - mid_soh
-    print(f"Sulfation recovery: after rest, SoH={state.soh:.4f}, delta={recovery_delta:+.4f}")
+    soh_delta = state.soh - mid_soh
+    print(f"Shallow discharge rest: after rest, SoH={state.soh:.4f}, delta={soh_delta:+.4f}")
 
     # Should recover gracefully (increase allowed, no clamping guards)
-    # or stay stable (if recovery effect not detected in shallow discharge)
+    # or stay stable (if effect not detected in shallow discharge)
     assert state.soh <= 1.0, "SoH should not exceed 1.0"
-    # Accept either recovery (delta > 0) or stability (delta ~0, within measurement noise)
-    assert recovery_delta > -0.05, (
-        f"Recovery should not degrade further (delta={recovery_delta:.4f})"
+    # Accept either improvement (delta > 0) or stability (delta ~0, within measurement noise)
+    assert soh_delta > -0.05, (
+        f"SoH should not degrade further after rest (delta={soh_delta:.4f})"
     )
 
 

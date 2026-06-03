@@ -40,7 +40,6 @@ def sample_discharge_event():
         "duration_seconds": 1200,
         "depth_of_discharge": 0.75,
         "measured_capacity_ah": 6.8,
-        "cycle_roi": 0.52,
     }
 
 
@@ -68,7 +67,6 @@ def test_discharge_event_schema_required_fields(
     - duration_seconds (int)
     - depth_of_discharge (float 0-1)
     - measured_capacity_ah (float or null)
-    - cycle_roi (float)
     """
     model = battery_model_with_discharge_events
     event = sample_discharge_event.copy()
@@ -81,7 +79,6 @@ def test_discharge_event_schema_required_fields(
         "duration_seconds",
         "depth_of_discharge",
         "measured_capacity_ah",
-        "cycle_roi",
     }
     assert required_fields.issubset(set(stored_event.keys()))
 

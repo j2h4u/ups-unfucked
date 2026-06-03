@@ -85,23 +85,20 @@ class DischargeHandler:
         as 'test_initiated' rather than 'natural' (see _classify_discharge_trigger).
 
         Surviving pipeline (in order):
-          1. get soh_before
-          2. _compute_soh — early-return on None
-          3. unpack soh_after, capacity_ah_ref
+          1. _compute_soh — early-return on None
+          2. unpack soh_after, capacity_ah_ref
           4. _avg_load
           5. _predict_replacement
           6. _check_alerts
           7. _auto_calibrate_peukert
           8. _classify_discharge_trigger
-          9. soh_delta = soh_after - soh_before
-         10. compute now_iso, discharge_duration, dod inline
+          9. compute now_iso, discharge_duration, dod inline
          11. update surviving last_* fields
-         12. append_discharge_event (no cycle_roi)
+         12. append_discharge_event (measured_capacity_ah preserved)
          13. emit discharge_complete journald log
          14. _log_discharge_prediction
          15. safe_save
         """
-        soh_before = self.battery_model.get_soh()
         soh_result = self._compute_soh(discharge_buffer)
         if soh_result is None:
             return
@@ -114,14 +111,13 @@ class DischargeHandler:
         self._auto_calibrate_peukert(soh_after, discharge_buffer)
 
         discharge_trigger = self._classify_discharge_trigger(discharge_buffer)
-        soh_delta = soh_after - soh_before
 
-        # Inline the non-sulfation values previously computed in _compute_sulfation_metrics
+        # Inline discharge metrics (previously computed inside deleted compute step)
         now_iso = datetime.now(timezone.utc).isoformat()
         discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
         depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
 
-        # Update surviving last_* fields (drop last_sulfation_*/last_cycle_roi/last_recovery_delta)
+        # Update last_* tracking fields
         self.last_days_since_deep = self._calculate_days_since_deep()
         self.last_ir_trend_rate = self._estimate_ir_trend()
         self.last_cycle_budget_remaining = self._estimate_cycle_budget()

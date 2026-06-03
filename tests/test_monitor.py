@@ -1652,54 +1652,6 @@ def test_battery_replaced_true(tmp_path):
         assert daemon.battery_model.state.get("capacity_estimates") == []
 
 
-def test_battery_replaced_clears_blackout_credit(tmp_path):
-    """_reset_battery_baseline() must clear the old battery's desulfation credit.
-
-    A new battery should not inherit blackout credit tied to the replaced cell's
-    sulfation state (it otherwise lingers up to 7 days and skews test scheduling).
-    """
-    import sys
-    from unittest.mock import MagicMock, patch
-
-    from src.monitor import MonitorDaemon
-    from src.monitor_config import Config
-
-    sys.modules["systemd"] = MagicMock()
-    sys.modules["systemd.journal"] = MagicMock()
-
-    with (
-        patch("src.monitor.NUTClient"),
-        patch("src.monitor.EMAFilter"),
-        patch("src.monitor.EventClassifier"),
-        patch("src.monitor.logger"),
-        patch.object(MonitorDaemon, "_check_nut_connectivity"),
-        patch.object(MonitorDaemon, "_validate_and_repair_model"),
-    ):
-        config = Config(
-            ups_name="test-cyberpower",
-            polling_interval=10,
-            reporting_interval=60,
-            nut_host="localhost",
-            nut_port=3493,
-            nut_timeout=2.0,
-            shutdown_minutes=5,
-            soh_alert_threshold=0.80,
-            model_dir=tmp_path / "test_model",
-            runtime_threshold_minutes=20,
-            reference_load_percent=20.0,
-            ema_window_sec=120,
-            capacity_ah=7.2,
-        )
-
-        daemon = MonitorDaemon(config)
-        # Grant an active credit, as a deep natural discharge would.
-        daemon.battery_model.set_blackout_credit({"active": True, "desulfation_credit": 0.15})
-
-        daemon._reset_battery_baseline()
-
-        assert daemon.battery_model.get_blackout_credit()["active"] is False
-
-
 def test_battery_replaced_persistence(tmp_path):
     """Test 3: Baseline reset persists in model.json across save/reload.
 

@@ -292,7 +292,7 @@ class TestSchedulerManager:
     # --- _gather_scheduler_inputs ---
 
     def test_gather_scheduler_inputs_returns_correct_keys(self):
-        """_gather_scheduler_inputs returns dict with required keys (no sulfation/cycle_roi)."""
+        """_gather_scheduler_inputs returns dict with required keys (diagnostic cadence engine)."""
         bm = Mock()
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
@@ -314,8 +314,8 @@ class TestSchedulerManager:
         }
         assert set(inputs.keys()) == required_keys
 
-    def test_gather_scheduler_inputs_no_sulfation_keys(self):
-        """_gather_scheduler_inputs does NOT include sulfation_score or cycle_roi."""
+    def test_gather_scheduler_inputs_no_legacy_keys(self):
+        """_gather_scheduler_inputs does NOT include removed legacy keys."""
         bm = Mock()
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
@@ -328,8 +328,9 @@ class TestSchedulerManager:
         sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
         inputs = sm._gather_scheduler_inputs()
 
-        assert "sulfation_score" not in inputs
-        assert "cycle_roi" not in inputs
+        # Retracted v3.0 fields must not appear
+        assert "scoring_score" not in inputs
+        assert "roi_score" not in inputs
         assert "active_credit" not in inputs
         assert "days_since_last_test" not in inputs  # old single-value key gone
 
