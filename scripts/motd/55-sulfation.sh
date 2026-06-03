@@ -20,7 +20,8 @@ if [[ "$sulfation" == "null" || "$sulfation" == "" ]]; then
 fi
 
 # Convert sulfation score [0-1.0] to percentage [0-100]
-score_pct=$(printf "%.0f" "$(echo "$sulfation * 100" | bc -l)")
+# awk (base system) instead of bc — drops the only bc dependency; -v avoids shell injection.
+score_pct=$(awk -v s="$sulfation" 'BEGIN { printf "%.0f", s * 100 }')
 
 # Calculate days until next test
 if [[ "$next_test" != "null" && "$next_test" != "" ]]; then
