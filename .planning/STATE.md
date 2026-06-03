@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: Honest Monitoring & Diagnostic Verification
 status: executing
-last_updated: "2026-06-03T16:25:13.464Z"
-last_activity: 2026-06-03 — Milestone v3.2 started
+last_updated: "2026-06-03T20:12:42.046Z"
+last_activity: 2026-06-03 -- Phase 25 execution started
 progress:
-  total_phases: 0
+  total_phases: 1
   completed_phases: 0
-  total_plans: 0
+  total_plans: 3
   completed_plans: 0
   percent: 0
 ---
@@ -23,17 +23,17 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-06-03 — Milestone v3.2 started
+Phase: 25 (desulfation-retraction-diagnostic-only-capacity-verification) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 25
+Last activity: 2026-06-03 -- Phase 25 execution started
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Phase 24 — temperature-security-hardening
+**Current focus:** Phase 25 — desulfation-retraction-diagnostic-only-capacity-verification
 
 **Milestones shipped:**
 

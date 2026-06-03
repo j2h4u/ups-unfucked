@@ -73,24 +73,29 @@
 - [ ] **Phase 25: Desulfation Retraction → Diagnostic-Only Capacity Verification** — reframe scheduler + fix Catch-22, remove sulfation/cycle_roi machinery, correct docs/ADR + battery-health report (SCH-01..03, RET-01..04, DOC-01..02, RPT-01)
 
 #### Phase 25: Desulfation Retraction → Diagnostic-Only Capacity Verification
+
 **Goal**: The daemon no longer self-initiates discharges for "desulfation": the scheduler proposes only a rare diagnostic capacity/SoH test on a persistent time cadence (bootstrap deadlock gone), all disproven-premise sulfation/cycle_roi machinery is removed, and the docs reflect honest monitoring.
 **Depends on**: Nothing (first phase of v3.2)
 **Requirements**: SCH-01, SCH-02, SCH-03, RET-01, RET-02, RET-03, RET-04, DOC-01, DOC-02, RPT-01
 **Plans** (waves — one phase, ordered reframe→delete→docs to avoid cross-phase edits to the same files):
+
   - Wave 1 — Scheduler reframe + Catch-22 fix (SCH-01..03): `evaluate_test_scheduling` → diagnostic time-based cadence; persistent `last_upscmd_timestamp` trigger; safety gates intact; first test `quick`.
   - Wave 2 — Desulfation retraction (RET-01..04): delete `sulfation.py`, `cycle_roi.py`, wiring, `sulfation_score`/`cycle_roi` fields (health/model/MOTD/journald), and their tests.
   - Wave 3 — Docs, ADR & operator report (DOC-01..02, RPT-01): correct README/premise claims, write ADR, add "Maintenance & schedule" to `battery-health.py`.
+
 **Success Criteria** (what must be TRUE):
+
   1. The scheduler proposes tests on a simple ≈365-day IEEE-1188-style cadence with zero dependency on sulfation/cycle-ROI; with only short blackouts and no prior test it still schedules a first diagnostic test (deadlock gone); a daemon restart does not re-trigger.
   2. Safety gates hold (SoH floor ≥60%, grid-stability cooldown, rate-limit); default/first test is `quick`.
   3. `sulfation.py`, `cycle_roi.py` and all callers are gone; grep for `sulfation`/`cycle_roi` is clean across src/tests/scripts; `sulfation_score`/`cycle_roi` fields absent from health endpoint, model.json, MOTD, journald.
   4. Tests covering deleted code removed; full pytest green; ruff/pyright/vulture clean.
   5. README/ROADMAP/MILESTONES carry no active-desulfation claims; an ADR records the premise reversal + evidence (BU-804b, Vertiv BattCon, IEEE-1188) + no-charge-control fact; `battery-health.py` shows a "Maintenance & schedule" section.
+
 **Plans**: 3 plans
-- [ ] 25-01-PLAN.md — Wave 1: reframe `evaluate_test_scheduling` to diagnostic ~365d cadence + fix bootstrap deadlock (SCH-01..03)
+
+- [x] 25-01-PLAN.md — Wave 1: reframe `evaluate_test_scheduling` to diagnostic ~365d cadence + fix bootstrap deadlock (SCH-01..03)
 - [ ] 25-02-PLAN.md — Wave 2: delete sulfation.py/cycle_roi.py, strip fields (health/model/MOTD/journald), remove blackout credit + dead tests (RET-01..04)
 - [ ] 25-03-PLAN.md — Wave 3: correct README/ROADMAP/MILESTONES, write ADR 0001, add "Maintenance & schedule" to battery-health.py (DOC-01..02, RPT-01)
-
 
 ## Progress
 
@@ -121,7 +126,7 @@
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete | 2026-03-20 |
 | 23. Test Quality Rewrite | v3.1 | 4/4 | Complete | 2026-03-20 |
 | 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete | 2026-03-21 |
-| 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 0/? | Not started | - |
+| 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 1/3 | In Progress|  |
 
 ---
 
