@@ -88,26 +88,52 @@ def evaluate_test_scheduling(
     """
     now = datetime.now(timezone.utc)
 
+    def _decision(
+        action: Literal["propose_test", "defer_test", "block_test"],
+        reason_code: str,
+        reason_detail: str,
+        *,
+        eligible_in: Optional[timedelta] = None,
+        eligible_at: Optional[str] = None,
+        test_type: Optional[Literal["deep", "quick"]] = None,
+    ) -> SchedulerDecision:
+        """Build a decision, resolving next-eligible from a delta-from-now or a literal timestamp.
+
+        Exactly one of eligible_in / eligible_at is set for defer/block gates; propose
+        gates pass neither (next_eligible_timestamp stays None).
+        """
+        if eligible_at is not None:
+            next_eligible = eligible_at
+        elif eligible_in is not None:
+            next_eligible = (now + eligible_in).isoformat()
+        else:
+            next_eligible = None
+        return SchedulerDecision(
+            action=action,
+            test_type=test_type,
+            reason_code=reason_code,
+            reason_detail=reason_detail,
+            next_eligible_timestamp=next_eligible,
+        )
+
     # Gate 1: SoH floor (SCHED-05)
     if soh_fraction < SOH_FLOOR:
         floor_percent = int(soh_fraction * 100)
-        next_eligible = (now + timedelta(days=30)).isoformat()
-        return SchedulerDecision(
-            action="block_test",
-            reason_code="soh_floor",
-            reason_detail=f"soh={floor_percent}%, floor={int(SOH_FLOOR * 100)}%",
-            next_eligible_timestamp=next_eligible,
+        return _decision(
+            "block_test",
+            "soh_floor",
+            f"soh={floor_percent}%, floor={int(SOH_FLOOR * 100)}%",
+            eligible_in=timedelta(days=30),
         )
 
     # Gate 2: Rate limiting (SCHED-01)
     if days_since_last_test < MIN_DAYS_BETWEEN_TESTS:
         days_remaining = MIN_DAYS_BETWEEN_TESTS - days_since_last_test
-        next_eligible = (now + timedelta(days=days_remaining)).isoformat()
-        return SchedulerDecision(
-            action="defer_test",
-            reason_code="rate_limit",
-            reason_detail=f"{days_remaining:.1f}d remaining",
-            next_eligible_timestamp=next_eligible,
+        return _decision(
+            "defer_test",
+            "rate_limit",
+            f"{days_remaining:.1f}d remaining",
+            eligible_in=timedelta(days=days_remaining),
         )
 
     # Gate 3: Blackout credit (SCHED-03)
@@ -118,11 +144,11 @@ def evaluate_test_scheduling(
                 credit_expires = datetime.fromisoformat(credit_expires_str)
                 if credit_expires > now:
                     # Credit still active
-                    return SchedulerDecision(
-                        action="defer_test",
-                        reason_code="blackout_credit_active",
-                        reason_detail=f"expires {credit_expires_str}",
-                        next_eligible_timestamp=credit_expires_str,
+                    return _decision(
+                        "defer_test",
+                        "blackout_credit_active",
+                        f"expires {credit_expires_str}",
+                        eligible_at=credit_expires_str,
                     )
         except (ValueError, TypeError):
             logger.warning(
@@ -139,12 +165,11 @@ def evaluate_test_scheduling(
 
             if time_since_blackout < grid_stability_cooldown_hours:
                 hours_remaining = grid_stability_cooldown_hours - time_since_blackout
-                next_eligible = (now + timedelta(hours=hours_remaining)).isoformat()
-                return SchedulerDecision(
-                    action="defer_test",
-                    reason_code="grid_unstable",
-                    reason_detail=f"blackout {time_since_blackout:.1f}h ago",
-                    next_eligible_timestamp=next_eligible,
+                return _decision(
+                    "defer_test",
+                    "grid_unstable",
+                    f"blackout {time_since_blackout:.1f}h ago",
+                    eligible_in=timedelta(hours=hours_remaining),
                 )
         except (ValueError, TypeError):
             logger.warning(
@@ -158,49 +183,45 @@ def evaluate_test_scheduling(
 
     # Gate 5: Cycle budget
     if cycle_budget_remaining < CRITICAL_CYCLE_BUDGET:
-        next_eligible = (now + timedelta(days=60)).isoformat()  # Very long deferral
-        return SchedulerDecision(
-            action="block_test",
-            reason_code="critical_cycle_budget",
-            reason_detail=f"{cycle_budget_remaining} cycles remaining",
-            next_eligible_timestamp=next_eligible,
+        return _decision(
+            "block_test",
+            "critical_cycle_budget",
+            f"{cycle_budget_remaining} cycles remaining",
+            eligible_in=timedelta(days=60),  # Very long deferral
         )
 
     # Gate 6: ROI threshold
     # Only defer if ROI is low AND we have plenty of cycles (conservative approach)
     if cycle_roi < ROI_THRESHOLD and cycle_budget_remaining > 20:
-        next_eligible = (now + timedelta(days=2)).isoformat()
-        return SchedulerDecision(
-            action="defer_test",
-            reason_code="marginal_roi",
-            reason_detail=f"roi={cycle_roi:.2f}, threshold={ROI_THRESHOLD}",
-            next_eligible_timestamp=next_eligible,
+        return _decision(
+            "defer_test",
+            "marginal_roi",
+            f"roi={cycle_roi:.2f}, threshold={ROI_THRESHOLD}",
+            eligible_in=timedelta(days=2),
         )
 
     # Gate 7: Sulfation threshold — all gates passed, decide test type
-    # All gates passed; now decide test type based on sulfation
     if sulfation_score > DEEP_SULFATION_THRESHOLD:
         # High sulfation: recommend deep test
-        return SchedulerDecision(
-            action="propose_test",
+        return _decision(
+            "propose_test",
+            "sulfation_high",
+            f"score={sulfation_score:.2f}, roi={cycle_roi:.2f}",
             test_type="deep",
-            reason_code="sulfation_high",
-            reason_detail=f"score={sulfation_score:.2f}, roi={cycle_roi:.2f}",
         )
     elif sulfation_score > QUICK_SULFATION_THRESHOLD:
         # Medium sulfation: recommend quick test
-        return SchedulerDecision(
-            action="propose_test",
+        return _decision(
+            "propose_test",
+            "sulfation_moderate",
+            f"score={sulfation_score:.2f}",
             test_type="quick",
-            reason_code="sulfation_moderate",
-            reason_detail=f"score={sulfation_score:.2f}",
         )
     else:
         # Low sulfation: no test needed
-        next_eligible = (now + timedelta(days=2)).isoformat()
-        return SchedulerDecision(
-            action="defer_test",
-            reason_code="low_sulfation",
-            reason_detail=f"score={sulfation_score:.2f}",
-            next_eligible_timestamp=next_eligible,
+        return _decision(
+            "defer_test",
+            "low_sulfation",
+            f"score={sulfation_score:.2f}",
+            eligible_in=timedelta(days=2),
         )
