@@ -1,225 +1,288 @@
 ---
 phase: 25
+cycle: 2
 reviewers: [codex, opencode]
-reviewed_at: 2026-06-03T21:40:00+05:00
+reviewed_at: 2026-06-04T00:37:46+05:00
 plans_reviewed: [25-01-PLAN.md, 25-02-PLAN.md, 25-03-PLAN.md]
+prior_cycle_high_count: 5
+current_high_count: 1
 ---
 
-# Cross-AI Plan Review — Phase 25: Desulfation Retraction → Diagnostic-Only Capacity Verification
+# Cross-AI Plan Review — Phase 25 (Convergence Cycle 2)
+
+Cycle 1 raised 5 HIGH concerns. The plans were revised in commit `7c57fc1` to close them. This
+cycle verifies each claimed fix actually landed in the current PLAN.md files and asks the external
+reviewers whether any HIGH remains unresolved or was newly introduced.
+
+## Pre-review fix verification (against current PLAN.md text)
+
+| Cycle-1 HIGH | Claimed fix | Landed? | Evidence (plan file:line) |
+|--------------|-------------|---------|---------------------------|
+| 1. install.sh installs deleted 55-sulfation.sh | Drop it from the MOTD `for`-loop | YES | 25-02-PLAN.md:206-210 (loop → `51-ups.sh 51-ups-health.sh`), must-have :37, verify :283 |
+| 2. grep-clean gate cannot pass; broken `grep -qv` | ripgrep `rg -v` exclusion + reword comment; replace broken check | YES | 25-02-PLAN.md:245,250 (`rg -v "...aging \(sulfation"`); 25-03-PLAN.md:179-181 reword; no `grep -qv` remains |
+| 3. update_battery_health/DischargeMetrics under-specified | 15-step checklist; eliminate dataclass; KEEP capacity_ah_ref as measured_capacity_ah; REMOVE confidence_level; mandate append_discharge_event survives | YES | 25-02-PLAN.md:114 ELIMINATE, :119-123 capacity_ah_ref/confidence_level decision, :125-149 enumerated 15 steps, :142 KEEP append_discharge_event |
+| 4. tail-piped verify masks failures | `set -o pipefail` in every `<automated>`; remove `| tail` | YES | pipefail in 25-01 (×2 blocks), 25-02 (×3 blocks), 25-03 (line 145 block); `grep "\| tail"` across all plans → NONE |
+| 5. stale model.json keys persist; no operator action | Deploy-time `rm ~/.config/ups-battery-monitor/model.json` in Plan 02 + mandatory ADR Consequences bullet | YES (see note) | 25-02-PLAN.md:162-173 deploy note; 25-03-PLAN.md:91-99 MANDATORY Consequences bullet w/ concrete `rm` step |
+
+All five claimed fixes are present in the live plan text. Fix 5 is verified present but one
+reviewer (Codex) flags the chosen disposition (delete the whole file) as operationally blunt —
+tracked below as a MEDIUM, not a reopened HIGH.
+
+---
 
 ## Codex Review
 
-## Summary
+### Summary
 
-The three-plan sequence is directionally sound and mostly matches the live checkout: Wave 1 correctly removes the scheduler's dependency on `sulfation_score` / `cycle_roi`, Wave 2 targets the right production surfaces, and Wave 3 covers the public narrative and operator report. The main gaps are execution-quality issues: a deleted MOTD script is still installed by `scripts/install.sh`, stale fields in an existing `model.json` will not disappear just because defaults/validators are removed, and several verification commands can hide failing tests because they pipe through `tail` without `pipefail`.
+The revised plans resolve the original convergence blockers well: the deleted MOTD script is
+removed from install, grep gates are mostly corrected, the discharge persistence path is now
+explicitly preserved, verification commands use `pipefail`, and stale `model.json` state has an
+operator disposition. However, Cycle 2 introduces **one new HIGH** in Plan 25-01: the proposed
+failed-dispatch handling cannot simultaneously make annual cadence ignore failed attempts AND keep
+the 7-day rate limit on any attempt while using only one `days_since_last_test` value. As written, a
+failed dispatch can be retried on the next daily scheduler run, bypassing `MIN_DAYS_BETWEEN_TESTS`.
 
-## Strengths
+### Prior HIGH Concerns
 
-- Wave ordering is good: scheduler reframe first, deletion second, docs last.
-- The bootstrap deadlock is correctly identified in `src/scheduler_manager.py:244` and `src/battery_math/scheduler.py:193`.
-- The persistent timestamp path is real: `get_last_upscmd_timestamp()` and `update_upscmd_result()` exist in `src/model.py:870`.
-- The deletion inventory is mostly accurate for `discharge_handler`, `model`, `monitor_config`, exporter, MOTD, and tests.
-- Keeping SoH floor, rate limit, grid cooldown, and cycle budget ahead of any test proposal is the right safety posture.
-- The ADR requirement is well scoped and valuable; it prevents re-litigating the battery-chemistry reversal.
+1. `install.sh` still installs deleted `55-sulfation.sh`: **FULLY RESOLVED** — Plan 25-02 deletes
+   the script, removes it from the install loop, and verifies `scripts/install.sh`.
+2. Grep-clean gate cannot pass / broken `grep -qv`: **FULLY RESOLVED** — broken gate replaced with
+   `set -o pipefail` plus an explicit filtered `rg` check; Plan 25-03 removes the final token.
+3. `update_battery_health` / `DischargeMetrics` slim path under-specified: **FULLY RESOLVED** —
+   ordered surviving pipeline; `append_discharge_event` preserved with
+   `measured_capacity_ah=capacity_ah_ref`; `confidence_level` explicitly removed.
+4. Tail-piped verify commands mask failures: **FULLY RESOLVED** — `set -o pipefail` / non-piped logic.
+5. Stale `model.json` keys persist with no operator action: **PARTIALLY RESOLVED** — an operator
+   action and ADR consequence are now documented. It does resolve stale keys, but deleting the whole
+   model file is operationally blunt and loses learned SoH/capacity/LUT state; a targeted purge would
+   be safer while still avoiding migration code. (Codex treats this as MEDIUM, not a reopened HIGH.)
 
-## Concerns
+### Strengths
 
-- **HIGH:** Wave 2 deletes `scripts/motd/55-sulfation.sh`, but `scripts/install.sh:240` still installs it. With `set -euo pipefail`, install will fail when the file is gone.
-- **HIGH:** Existing `model.json` stale keys will persist. Removing `setdefault()` / validation does not remove loaded `sulfation_history`, `roi_history`, `blackout_credit`, or old `cycle_roi` entries from `discharge_events`; `save()` writes `self.state` back as-is. See `src/model.py:299` and `src/model.py:593`.
-- **HIGH:** Verification commands like `uv run pytest ... | tail -20` and `uvx vulture ... | tail -10` can return success even when pytest/vulture failed. Use `set -o pipefail` or avoid piping.
-- **HIGH:** `grep -rn "sulfation\|cycle_roi" src tests scripts` cannot pass in Wave 2 as written because `scripts/battery-health.py:109` still contains `sulfation`, and `scripts/install.sh` still contains `55-sulfation.sh`.
-- **MEDIUM:** Failed `upscmd` attempts count as `last_upscmd_timestamp`. After one transient error, the cadence logic may defer the next diagnostic for ~365 days even though no test actually ran.
-- **MEDIUM:** Wave 3 misses active anti-sulfation claims in `docs/internal/CONTEXT.md:117` and the README tagline at `README.md:3`.
-- **MEDIUM:** The `DischargeMetrics` rewrite should explicitly keep `capacity_ah_ref`; otherwise discharge event persistence/logging can lose measured-capacity context.
-- **MEDIUM:** `battery-health.py` has no fixture-friendly path override. Testing "against a fixture model.json + health.json" will be awkward unless you add env overrides or function parameters.
-- **LOW:** `days_since_last_test = inf` will produce awkward `infd since last test` text unless special-cased as `never tested`.
-- **LOW:** ADR evidence is named but not linked. Acceptable for internal docs, but source URLs would make the decision record stronger.
+- Strong dependency ordering: scheduler is detached from sulfation/ROI before deletion.
+- The installer breakage is now handled at the exact failure point.
+- The discharge rewrite has a clear preservation checklist for SoH, Peukert, alerts, measured
+  capacity, journald, and `safe_save`.
+- Plan 25-03 moves next-test visibility from the deleted MOTD sulfation UI to `battery-health.py`.
+- ADR requirement is concrete and includes the no-charge-control fact plus evidence basis.
+- Verification is much more failure-sensitive than Cycle 1.
 
-## Suggestions
+### Concerns
 
-- Add `scripts/install.sh` to Wave 2 and remove `55-sulfation.sh` from the MOTD install loop and comments.
-- In `BatteryModel` load/default handling, explicitly purge retired keys with `pop()` and remove `cycle_roi` from existing `discharge_events`, or explicitly require deleting/regenerating the local model file as part of deployment.
-- Replace verification with commands that fail correctly: `uv run pytest`, `uv run ruff check src tests`, `uv run pyright src`, `uv run vulture`, and `! rg -n "sulfation|cycle_roi" src tests scripts`.
-- Fix the incorrect Wave 3 check `grep -qv "sulfation"`; use `! grep -q "sulfation\|cycle_roi" scripts/battery-health.py`.
-- Add `docs/internal/CONTEXT.md` to Wave 3 or narrow the acceptance wording to public docs only.
-- Add a test for the "failed dispatch timestamp" behavior, or split cadence from rate limiting: rate-limit all attempts, but compute annual diagnostic cadence from the last successful test.
-- Add `UPS_MODEL_PATH` / `UPS_HEALTH_PATH` env overrides to `scripts/battery-health.py`, mirroring `src.motd_status`, then test the new maintenance section with temp files.
+- **HIGH: Plan 25-01 failed-dispatch rate limiting is internally inconsistent.**
+  `_calculate_days_since_last_test` is changed to return `inf` when `last_upscmd_status != "OK"` so
+  annual cadence is not reset. But `evaluate_test_scheduling` uses that SAME `days_since_last_test`
+  value for the 7-day rate-limit gate (gate 2). If the value is `inf`, the rate-limit gate
+  (`inf < MIN_DAYS_BETWEEN_TESTS` → False) cannot apply to the recent failed attempt. This
+  contradicts the plan's own must-have (line 20: "rate-limiting still applies to any attempt") and
+  its verification (line 190: "while the rate-limit gate still sees the recent attempt"). With a
+  single value the two requirements are unsatisfiable; a failed dispatch could be retried on the next
+  daily run, hammering the UPS.
 
-## Risk Assessment
+- **MEDIUM: Delete-whole-`model.json` deploy action may regress safety data.** It removes stale keys
+  but also drops learned capacity, SoH, LUT, RLS state, and history. Prefer a targeted purge of only
+  `sulfation_history`, `roi_history`, `blackout_credit`, and nested `cycle_roi` fields.
 
-**MEDIUM**, with a few **HIGH-severity plan gaps**. The architecture and phase split are sound, and the intended behavior aligns with v3.2. The risk comes from acceptance drift: installer breakage, stale runtime state, and weak verification could let the implementation look complete while still failing on the real host. Fixing those items before execution should bring the phase down to low-to-medium risk.
+- **MEDIUM: Annual cadence probably should distinguish last successful diagnostic from last command
+  success.** `last_upscmd_status="OK"` means command accepted, not that a diagnostic discharge
+  completed. Existing `discharge_events` with a test `event_reason` may be a stronger source.
+
+- **LOW: Docs grep checks focus mostly on README.** MILESTONES preserves history under a banner
+  (acceptable), but verification should assert the banner is adjacent to the preserved v3.0 block.
+
+### Suggestions
+
+- Split scheduler timing inputs: `days_since_last_test_success` for annual cadence,
+  `days_since_last_test_attempt` for `MIN_DAYS_BETWEEN_TESTS`. This resolves the new HIGH cleanly.
+- Add explicit tests: failed attempt 1d ago / no success ever → `defer_test/rate_limit`; failed
+  attempt 8d ago / no success ever → `propose_test/diagnostic_cadence`; success 30d ago →
+  `defer_test/within_cadence`.
+- Replace `rm ~/.config/.../model.json` with a targeted operator command that deletes only obsolete
+  keys and strips `cycle_roi` from `discharge_events`, preserving learned battery state.
+- Keep the `battery-health.py` env-override requirement.
+
+### Risk Assessment
+
+**MEDIUM overall.** The convergence work is substantially improved; the original HIGHs are resolved
+or explicitly addressed. The remaining blocker is narrow but safety-relevant: failed-dispatch retry
+semantics can bypass the intended rate limit unless the plan separates "last successful diagnostic"
+from "last command attempt." No other new HIGH concern is introduced.
 
 ---
 
 ## OpenCode Review
 
-# Cross-AI Plan Review — Phase 25: Desulfation Retraction
+### Overall Assessment
 
-## Summary
+The three plans are substantially improved over Cycle 1. OpenCode rates all 5 prior HIGH concerns
+**FULLY RESOLVED** and identifies **no new HIGH**. The plans form a coherent, dependency-ordered
+sequence (01→02→03). Two MEDIUM concerns remain (a `DischargeMetrics`/DischargeCollector scoping
+question and `inf` formatting), plus minor LOWs.
 
-The three plans form a well-ordered refactor sequence (reframe → delete → docs) that correctly diagnoses a real bootstrap deadlock, defines a sound diagnostic cadence engine, and comprehensively inventories every sulfation/cycle_roi reference across a 5,000+ LOC codebase. All cited symbols and line numbers are **accurate** against the live source. The plans will achieve the phase goals. The primary risk is in Plan 02 where the discharge pipeline (`update_battery_health`) must be restructured without breaking critical discharge event persistence — the plan correctly identifies this but provides less implementation detail than the other tasks.
+### Resolution of Cycle-1 HIGH Concerns
 
-## Plan 25-01: Scheduler Reframe + Catch-22 Fix
+| # | Concern | Verdict | Evidence |
+|---|---------|---------|----------|
+| 1 | install.sh installs deleted `55-sulfation.sh` | FULLY RESOLVED | Plan 02 Task 2: explicit removal, loop leaves `51-ups.sh 51-ups-health.sh`. |
+| 2 | grep-clean gate cannot pass | FULLY RESOLVED | Plan 02 Task 3 `rg -v` exemption; Plan 03 Task 3 rewrites the comment to drop the token. |
+| 3 | update_battery_health / DischargeMetrics under-specified | FULLY RESOLVED | Plan 02 Task 1: 15-step checklist; `capacity_ah_ref`→KEPT as `measured_capacity_ah`; `confidence_level`→REMOVED; dataclass→ELIMINATED. |
+| 4 | tail-piped verify masks failures | FULLY RESOLVED | Every verify block leads with `set -o pipefail`. |
+| 5 | stale model.json keys persist | FULLY RESOLVED | Plan 02 + Plan 03 ADR: explicit `rm ~/.config/.../model.json` deploy step; no migration code per policy. |
 
-### Strengths
+### Strengths (per plan)
 
-- **Deadlock diagnosis is precise:** `_gather_scheduler_inputs` (line 317–331) sources `last_sulfation_score`/`last_cycle_roi` from `DischargeHandler`, which are `None`/`0.0` until a discharge completes — and no discharge happens without a proposed test. Root cause correctly traced through gates 6/7.
-- **Persistent trigger reuse:** `last_upscmd_timestamp` (written by `update_upscmd_result` at `model.py:870`) already provides restart-safe state. `_calculate_days_since_last_test` already returns `inf` for "never tested", and `float("inf") >= 365.0` is `True`, killing the deadlock with zero new infrastructure.
-- **Gate ordering is sound:** SoH floor → rate limit → grid stability → cycle budget → cadence propose. Rate limit runs before cadence, preventing a restart just-under-interval from re-triggering.
-- **TDD coverage specified:** Seven explicit test scenarios cover all code paths.
-
-### Concerns
-
-- **MEDIUM — DischargeMetrics field list incomplete in "keep" enumeration.** The plan lists 9 fields to keep but the actual dataclass has 16. Two fields (`capacity_ah_ref: Optional[float]`, `confidence_level: str`) are omitted from both the "remove" and "keep" lists. Ambiguous whether to retain a slimmed `DischargeMetrics` or eliminate it. Doesn't block but costs implementation time.
-- **MEDIUM — `_execute_scheduler_decision` reads `scheduler_inputs['sulfation_score']` (line 355).** After removing keys from the dict, this raises `KeyError`. The plan instructs updating these log lines, but the executor must find ALL references, not just the cited lines.
-- **LOW — `test_type` Literal retains `"deep"`.** Engine emits only `"quick"`; vulture may flag `"deep"` as dead. Cosmetic.
-- **LOW — `_parse_iso_or_warn` retention.** Still used by grid stability after blackout-credit gate removal; correctly kept.
-
-### Suggestions
-
-- Clarify whether `DischargeMetrics` is retained slimmed or removed entirely; move a clear decision to 25-02-PLAN.md.
-- Add a verification: `python -c 'from src.battery_math.scheduler import evaluate_test_scheduling; help(...)'` to confirm the new signature.
-
-## Plan 25-02: Delete Sulfation/Cycle-ROI Machinery
-
-### Strengths
-
-- **Inventory is exhaustive:** Every file, field, method, import correctly cited (100% accurate across 22 files).
-- **Kernel deletion unblocks naturally:** Wave 1 already removed scheduler dependency, so `git rm` is safe.
-- **Discharge event persistence identified as critical:** `append_discharge_event` must still be called without `cycle_roi` — the single most important correctness gate.
-- **Test cleanup scoped correctly:** Four files deleted wholesale; eight surgically edited.
+- **25-01**: deadlock fix is crisp (`inf` days → propose on cold start); failed-dispatch cadence
+  safety praised as defense-in-depth; gate ordering logical; signature cleaned; constants reorganized.
+- **25-02**: 15-step enumerated pipeline removes ambiguity; explicit `DischargeMetrics` elimination;
+  explicit `install.sh` fix; concrete stale-state operator action; rigorous grep gate with documented
+  exemption; vulture integration; sound test strategy (4 wholesale delete, 8 surgical).
+- **25-03**: comprehensive ADR (IEEE-1188/BU-804b/Vertiv, no-charge-control, deploy step); retraction
+  banner preserves history; env overrides for testability; graceful degradation with sudo hint.
 
 ### Concerns
 
-- **HIGH — `update_battery_health` restructuring under-specified.** At `discharge_handler.py:119-150`, this calls `_score_and_persist_sulfation` which orchestrates metrics → `append_sulfation_history` + `append_discharge_event` + `_grant_blackout_credit` → logging. The plan says "replace with a slim persist path" but doesn't detail which helpers survive, whether the slim path constructs a new `DischargeMetrics`, or the new `_log_discharge_complete` signature. **If the executor removes `_score_and_persist_sulfation` without re-adding `append_discharge_event`, discharge events stop being persisted, breaking SoH/capacity/replacement prediction.** Recommendation: add an explicit checklist of surviving pipeline steps.
-- **MEDIUM — `_execute_scheduler_decision` log keys accessed after dict key removal** (lines 355-356). Handled in Plan 01 Task 2; grep gate catches misses but adds round-trip friction.
-- **MEDIUM — `save()` cap list has `sulfation_history` but not `roi_history`.** Plan says remove both; only `sulfation_history` is capped at line 607. Removing a nonexistent `roi_history` cap is a no-op; note the asymmetry.
-- **LOW — `active_credit` vs `active_blackout_credit` naming** inconsistency between dict key and param.
-- **LOW — `scripts/battery-health.py` already has no sulfation reads** (only a factual comment at line 109).
-- **LOW — vulture may produce false positives** after dataclass field removal; results must be triaged.
+- **MEDIUM** — `DischargeMetrics` elimination may also require touching `src/discharge_collector.py`
+  (Phase 21 extraction) if it constructs/returns/stores instances; Plan 02 `files_modified` doesn't
+  list it. *(Adjudicated below: VERIFIED FALSE — DischargeMetrics is referenced only in
+  discharge_handler.py.)*
+- **MEDIUM** — Plan 01 only verifies scheduler tests; full pytest deferred to Plan 02, so
+  `test_dispatch.py` (old signature) could break silently between waves. Non-blocking (Plan 02 catches).
+- **LOW** — `inf` formatted as `infd` in reason strings; cosmetic.
+- **LOW** — `test_year_simulation.py` strip guidance is thin (executor inspects).
+- **LOW** — line-109 reword changes the named aging mechanisms; verify factual accuracy.
+- **LOW** — sudo hint doesn't mention the env overrides as an alternative.
 
 ### Suggestions
 
-- Add explicit pseudo-code for the slimmed `update_battery_health` path enumerating: compute days_since_deep/ir_trend/cycle_budget/dod → update last_* fields → `append_discharge_event({...})` WITHOUT cycle_roi → log WITHOUT sulfation keys.
-- Confirm `_log_discharge_complete` is the only consumer of `DischargeMetrics.sulfation_*` fields after restructuring.
+- Add `src/discharge_collector.py` as a check-and-clean item in Plan 02 Task 1.
+- Add `tests/test_dispatch.py` to Plan 01's verify, or document that Plan 02 surfaces signature breakage.
+- Special-case `inf` → "never tested" in `reason_detail` to avoid `infd`.
+- Mention `UPS_MODEL_PATH`/`UPS_HEALTH_PATH` in the sudo hint text.
 
-## Plan 25-03: Docs, ADR, and Operator Report
+### Risk Assessment: **LOW**
 
-### Strengths
-
-- **ADR format correctly chosen** (Nygard Context/Decision/Consequences).
-- **Evidence citations specific and verifiable** (BU-804b, Sibex, Vertiv BattCon, Schneider/APC, Lifeline, IEEE-1188).
-- **MILESTONES history preservation:** annotate not erase.
-- **`battery-health.py` patterns reused** (`json.loads(path.read_text())` with graceful degradation).
-- **GLOSSARY line preserved** (factual physics note, not a product claim).
-
-### Concerns
-
-- **MEDIUM — `/run/ups-battery-monitor/ups-health.json` may be root-only.** `battery-health.py` currently reads user-owned `~/.config/...`; the health endpoint is in `/run/` (typically root-owned). Non-root run gets `PermissionError`. Graceful degradation prints "unavailable" (acceptable), but the user should be warned `sudo` may be needed.
-- **LOW — MILESTONES.md v3.0 block has ~12 lines of active-desulfation claims;** "soften wording" is subjective. A concrete retraction template would help.
-- **LOW — `battery-health.py` flat key access** for `last_upscmd_*` is correct (written directly to `state`).
-- **LOW — `battery-health.py:109`** factual sulfation comment should be explicitly exempted from grep-clean, mirroring the GLOSSARY exemption.
-
-### Suggestions
-
-- Add `sudo` note to the maintenance section graceful-degradation message.
-- Concrete MILESTONES template: prepend `[RETRACTED in v3.2 — see ADR 0001]` to the v3.0 block, keeping original text.
-- Explicitly exempt `scripts/battery-health.py:109` from the grep-clean requirement.
-
-## Risk Assessment
-
-**Overall: MEDIUM.** Correctness HIGH confidence (all symbols verified, deadlock diagnosis precise, gate ordering sound). Completeness MEDIUM — Plan 02's discharge pipeline restructuring is under-specified (the most critical data-integrity path). Safety HIGH. Testability HIGH. Scope discipline HIGH. The phase goals will be achieved if Plan 02's discharge pipeline receives careful implementation attention; primary remediation is an enumerated checklist of surviving persist/log steps in 25-02 Task 1.
+All 5 Cycle-1 HIGH concerns fully resolved; no new HIGH identified. The two MEDIUMs are within what a
+competent executor handles inline. The plans are ready for execution.
 
 ---
 
 ## Consensus Summary
 
-Both reviewers independently rate the phase **MEDIUM overall** with HIGH-severity execution gaps, agree the wave ordering (reframe → delete → docs) is correct, and confirm the deadlock diagnosis and all cited line references are accurate against live source. The plans will achieve the goals once the gaps below are closed.
+Both reviewers agree the cycle-2 revisions **fully resolve cycle-1 HIGH concerns #1–#4**, and both
+praise the wave ordering, the 15-step discharge-pipeline checklist, and the more failure-sensitive
+verification. They diverge on two points:
+
+1. **The failed-dispatch rate-limit split (cycle-1 MEDIUM that the revision attempted to close).**
+   Codex raises this as a **NEW HIGH**: the plan funnels a single `days_since_last_test` value into
+   both the rate-limit gate (gate 2) and the cadence-propose gate (gate 5), then asks
+   `_calculate_days_since_last_test` to return `inf` on a failed status — which makes the rate-limit
+   gate blind to the recent failed attempt, directly contradicting the plan's own must-have and
+   verification text. OpenCode praised the same split as sound defense-in-depth and did **not** notice
+   the single-value contradiction.
+
+2. **Cycle-1 HIGH #5 (stale model.json).** OpenCode: FULLY RESOLVED. Codex: PARTIALLY RESOLVED at the
+   disposition level (delete-whole-file is blunt), but Codex still scores it MEDIUM, not a reopened
+   HIGH.
+
+### Adjudication (grep authority)
+
+- **Codex's new HIGH is CONFIRMED against the plan text.** 25-01-PLAN.md:89-90 defines a single
+  `days_since_last_test` keyword param; lines 97 (gate 2) and 99 (gate 5) both consume it; lines
+  143-152 instruct `_calculate_days_since_last_test` to return `inf` on non-OK status; yet line 20
+  (must-have) and line 190 (verification) require "rate-limiting still applies to any attempt" /
+  "the rate-limit gate still sees the recent attempt." These are mutually unsatisfiable with one
+  value. The contradiction is internal to the plan and is safety-relevant (rate-limit bypass on
+  repeated failed dispatches). **This is the one unresolved HIGH for cycle 2.** The clean fix is
+  Codex's suggested two-input split (`days_since_last_test_success` for cadence;
+  `days_since_last_attempt` for rate-limit).
+- **OpenCode's DischargeCollector MEDIUM is DISMISSED.** `grep -rln "DischargeMetrics" src/` returns
+  only `src/discharge_handler.py`; `src/discharge_collector.py` contains no `DischargeMetrics`
+  reference. Eliminating the dataclass touches only the file Plan 02 already lists. No action needed,
+  though adding a one-line "no other module references DischargeMetrics" note would preempt the worry.
 
 ### Agreed Strengths
 
-- Wave ordering (reframe → delete → docs) prevents dangling callers mid-phase — both reviewers.
-- Deadlock root cause correctly traced; `last_upscmd_timestamp` persistent trigger is restart-safe and reused with zero new infrastructure — both.
-- Safety gate posture (SoH floor / rate limit / grid cooldown / cycle budget ahead of propose; first test `quick`) is sound — both.
-- Deletion inventory is accurate/exhaustive across the codebase — both.
-- ADR is well-scoped and prevents re-litigating the chemistry reversal — both.
+- Wave ordering (reframe → delete → docs) prevents dangling callers — both.
+- 15-step discharge-pipeline checklist resolves the cycle-1 data-integrity ambiguity — both.
+- `set -o pipefail` verification hardening across all plans — both.
+- ADR is concrete, evidence-backed, and records the no-charge-control fact — both.
 
 ### Agreed Concerns (highest priority)
 
-- **HIGH — `DischargeMetrics` keep/remove list is incomplete.** `capacity_ah_ref` and `confidence_level` (verified at `discharge_handler.py:66-67`) appear in neither list. Codex flags `capacity_ah_ref` loss as MEDIUM; OpenCode flags the omission as MEDIUM. Combined with the `update_battery_health` restructuring HIGH (OpenCode), this is the central data-integrity risk: a careless slim-path rewrite can drop `append_discharge_event` or measured-capacity context, breaking SoH/capacity/replacement prediction. **Remediation: 25-02 must enumerate the surviving persist/log steps and the exact slimmed `DischargeMetrics`/`_log_discharge_complete` shape.**
-- **HIGH — grep-clean gate cannot pass as written.** Both flag that `scripts/battery-health.py:109` (factual comment, verified) is caught by `grep -rn "sulfation\|cycle_roi" src tests scripts`. Codex additionally finds `scripts/install.sh` references `55-sulfation.sh`. **Remediation: scope the grep to exclude the factual comment (or reword it), fix the install.sh reference, and replace Plan 03's broken `grep -qv "sulfation"` check.**
+- **HIGH — Failed-dispatch rate-limit vs cadence cannot both hold with one `days_since_last_test`
+  value** (Codex HIGH; the mechanism OpenCode endorsed without catching the contradiction).
+  Remediation: split into two scheduler inputs — cadence keys off last *successful* test;
+  rate-limit keys off *any* attempt — and add the three boundary tests Codex listed.
 
-### Divergent / Unique Views
+### Divergent Views
 
-- **Codex-only HIGH — `scripts/install.sh:240` installs the deleted `55-sulfation.sh`** (verified). Under `set -euo pipefail`, install breaks. Neither plan touches install.sh. This is the single most actionable un-covered gap and should be added to Wave 2. (OpenCode did not inspect install.sh.)
-- **Codex-only HIGH — stale `model.json` keys persist** (no `pop()` on load; `save()` round-trips `self.state`). Per project no-backward-compat policy (REQUIREMENTS Out of Scope: "state regenerates"), this is **accept** — but the plan/ADR should state the operator action (delete or regenerate the local model.json) rather than leaving stale `sulfation_history`/`blackout_credit`/`cycle_roi` silently resident.
-- **Codex-only HIGH — `tail`-piped verify commands mask failures** (no `set -o pipefail`). Real CI-hygiene gap across all three plans' `<automated>` blocks.
-- **Codex-only MEDIUM — failed `upscmd` writes `last_upscmd_timestamp`,** so a transient dispatch error could defer the next diagnostic ~365 days. Worth a test or splitting cadence (last *successful* test) from rate-limit (any attempt).
-- **Codex-only MEDIUM — README:3 tagline ("active care") and `docs/internal/CONTEXT.md:120-125`** carry active-desulfation claims Plan 03 does not enumerate (verified). Plan 03 cites README lines 13/48-52/66/82/160 but not line 3.
-- **OpenCode-only MEDIUM — `/run/.../ups-health.json` is root-owned;** non-root `battery-health.py` hits `PermissionError`. Graceful degradation covers it but a `sudo` hint helps.
+- Codex flags the whole-file `model.json` delete as a MEDIUM regression risk (loses learned state)
+  and prefers a targeted key purge; OpenCode considers the deploy step fully sufficient.
+- OpenCode flags a DischargeCollector scoping risk that grep proves is a non-issue.
 
 ---
 
 ## Verification coverage (source-grounding pass)
 
-Every symbol the plans cite that should already exist (excluding artifacts the plans declare they produce) was resolved against live source via ripgrep/Read. Verdicts:
+Every symbol the plans cite that should already exist (excluding artifacts the plans declare they
+produce — ADR 0001, the new `print_maintenance`/`HEALTH_PATH`, the `DIAGNOSTIC_TEST_INTERVAL_DAYS`
+constant, the reframed engine, env overrides in battery-health.py) was resolved against live source
+via ripgrep/Read.
 
 ### VERIFIED
 
-| Symbol | Verdict | Evidence |
-|--------|---------|----------|
-| `evaluate_test_scheduling` (function) | VERIFIED | `src/battery_math/scheduler.py:71` |
-| `SchedulerDecision` (dataclass) | VERIFIED | `src/battery_math/scheduler.py:34`; `test_type: Optional[Literal["deep","quick"]]` at :48 |
-| `_decision` helper | VERIFIED | `src/battery_math/scheduler.py:108` |
-| `_parse_iso_or_warn` helper | VERIFIED | `src/battery_math/scheduler.py:54` |
-| `SOH_FLOOR` | VERIFIED | `src/battery_math/scheduler.py:25` |
-| `MIN_DAYS_BETWEEN_TESTS` | VERIFIED | `src/battery_math/scheduler.py:26` |
-| `CRITICAL_CYCLE_BUDGET` | VERIFIED | `src/battery_math/scheduler.py:28` |
-| `ROI_THRESHOLD` (to remove) | VERIFIED | `src/battery_math/scheduler.py:27` |
-| `DEEP_SULFATION_THRESHOLD` (to remove) | VERIFIED | `src/battery_math/scheduler.py:29` |
-| `QUICK_SULFATION_THRESHOLD` (to remove) | VERIFIED | `src/battery_math/scheduler.py:30` |
-| `compute_sulfation_score` | VERIFIED | `src/battery_math/sulfation.py:42` |
-| `estimate_recovery_delta` | VERIFIED | `src/battery_math/sulfation.py:115` |
-| `SulfationState` | VERIFIED | `src/battery_math/sulfation.py:19` |
-| `compute_cycle_roi` | VERIFIED | `src/battery_math/cycle_roi.py:16` |
-| battery_math `__init__` exports of above | VERIFIED | `src/battery_math/__init__.py:2,7,16-19` |
-| `DischargeMetrics` (dataclass) | VERIFIED | `src/discharge_handler.py:44`; includes `capacity_ah_ref` (:66), `confidence_level` (:67) — NOT in plan keep/remove list |
-| `update_battery_health` | VERIFIED | `src/discharge_handler.py:119` |
-| `_score_and_persist_sulfation` | VERIFIED | `src/discharge_handler.py:273` |
-| `_compute_sulfation_metrics` | VERIFIED | `src/discharge_handler.py:293` |
-| `_persist_sulfation_and_discharge` | VERIFIED | `src/discharge_handler.py:397` |
-| `_grant_blackout_credit` | VERIFIED | referenced at `src/discharge_handler.py:431` |
-| `last_sulfation_score` / `last_cycle_roi` / `last_cycle_budget_remaining` | VERIFIED | `src/discharge_handler.py:110,115,116` |
-| `append_sulfation_history` | VERIFIED | `src/model.py:561` |
-| `append_discharge_event` | VERIFIED | `src/model.py:578` |
-| `set_blackout_credit` / `clear_blackout_credit` / `get_blackout_credit` | VERIFIED | `src/model.py:835,849,889` |
-| `get_last_upscmd_timestamp` | VERIFIED | `src/model.py:885` |
-| `update_upscmd_result` | VERIFIED | `src/model.py:870` |
-| `setdefault("sulfation_history"/"roi_history")` | VERIFIED | `src/model.py:299,301` |
-| `_cap_history_entries("sulfation_history")` | VERIFIED | `src/model.py:607` (no `roi_history` cap — confirms OpenCode asymmetry note) |
-| `clear_blackout_credit` call + "desulfation credit" comment | VERIFIED | `src/monitor.py:376,379` |
-| `HealthSnapshot` fields `sulfation_score`/`sulfation_confidence`/`recovery_delta`/`cycle_roi` | VERIFIED | `src/monitor_config.py:303,304,307,308` + health_data at :344,345,348,349 |
-| `HEALTH_ENDPOINT_PATH = /run/ups-battery-monitor/ups-health.json` | VERIFIED | `src/monitor_config.py:53` (confirms OpenCode root-owned concern) |
-| exporter HealthSnapshot kwargs `sulfation_score=`/`cycle_roi=` etc. | VERIFIED | `src/virtual_ups_exporter.py:53,54,57,58` |
-| `motd_status.py` `sulfation_pct` mapping + docstring | VERIFIED | `src/motd_status.py:82,12` |
-| `scripts/motd/55-sulfation.sh` | VERIFIED (exists) | file present |
-| `_gather_scheduler_inputs` keys + call site + log lines | VERIFIED | `src/scheduler_manager.py:317,324-329,235-236,244-250,355-356` |
-| `evaluate_test_scheduling` import in scheduler_manager | VERIFIED | `src/scheduler_manager.py:14` |
-| `scripts/install.sh` installs `55-sulfation.sh` | VERIFIED | `scripts/install.sh:240` (confirms Codex HIGH — NOT covered by any plan) |
-| `scripts/battery-health.py:109` "sulfation" comment | VERIFIED | factual aging comment (confirms grep-gate conflict) |
-| `docs/internal/CONTEXT.md` active-desulfation claims | VERIFIED | `docs/internal/CONTEXT.md:120-125` (not enumerated by Plan 03) |
-| `README.md:3` "active care" tagline | VERIFIED | `README.md:3` (not enumerated by Plan 03) |
+| Symbol | Evidence |
+|--------|----------|
+| `evaluate_test_scheduling` | `src/battery_math/scheduler.py:71` |
+| `SchedulerDecision` (dataclass) | `src/battery_math/scheduler.py:34` |
+| `_decision` helper | `src/battery_math/scheduler.py:108` |
+| `_parse_iso_or_warn` helper | `src/battery_math/scheduler.py:54` |
+| `SOH_FLOOR` / `MIN_DAYS_BETWEEN_TESTS` / `CRITICAL_CYCLE_BUDGET` (keep) | `scheduler.py:25,26,28` |
+| `ROI_THRESHOLD` / `DEEP_SULFATION_THRESHOLD` / `QUICK_SULFATION_THRESHOLD` (remove) | `scheduler.py:27,29,30` |
+| `compute_sulfation_score` / `estimate_recovery_delta` / `SulfationState` | `src/battery_math/sulfation.py:42,115,19` |
+| `compute_cycle_roi` | `src/battery_math/cycle_roi.py:16` |
+| battery_math `__init__` exports of the above | `src/battery_math/__init__.py:2,7,16-19` |
+| `DischargeMetrics` (16 fields incl. `capacity_ah_ref`, `confidence_level`) | `src/discharge_handler.py:44,66,67` |
+| `DischargeMetrics` referenced ONLY in discharge_handler.py (NOT discharge_collector.py) | `grep -rln "DischargeMetrics" src/` → single file; dismisses OpenCode MEDIUM |
+| `update_battery_health` | `src/discharge_handler.py:119` |
+| `_compute_soh` returns `(soh_after, capacity_ah_ref)` | `src/discharge_handler.py:152,206` |
+| `_predict_replacement` / `_avg_load` / `_check_alerts` / `_auto_calibrate_peukert` / `_classify_discharge_trigger` / `_log_discharge_prediction` | `discharge_handler.py:208,267,232,485,800,557` |
+| `_score_and_persist_sulfation` / `_compute_sulfation_metrics` / `_persist_sulfation_and_discharge` / `_assess_sulfation_confidence` / `_grant_blackout_credit` | `discharge_handler.py:273,293,397,872,461` |
+| `last_sulfation_*` / `last_cycle_roi` instance fields | `discharge_handler.py:110-117` |
+| `append_sulfation_history` / `append_discharge_event` (cycle_roi in docstring) | `src/model.py:561,578,588` |
+| `set_/clear_/get_blackout_credit` | `src/model.py:835,849,889` |
+| `get_last_upscmd_timestamp` / `update_upscmd_result` (writes ts+status on OK *and* error) | `src/model.py:885,870` |
+| `setdefault("sulfation_history"/"roi_history"/"blackout_credit")` | `src/model.py:299,301,308` |
+| `_cap_history_entries("sulfation_history")` (no roi_history cap — asymmetry confirmed) | `src/model.py:607` |
+| blackout_credit validation block | `src/model.py:367` |
+| `clear_blackout_credit` call + "desulfation credit" comment | `src/monitor.py:376,379` |
+| `HealthSnapshot` sulfation/cycle_roi fields + health_data keys | `src/monitor_config.py:303,304,307,308,344,345,348,349` |
+| `HEALTH_ENDPOINT_PATH = /run/ups-battery-monitor/ups-health.json` | `src/monitor_config.py:53` |
+| exporter HealthSnapshot kwargs `sulfation_score=`/`cycle_roi=` etc. | `src/virtual_ups_exporter.py:53,54,57,58` |
+| `motd_status.py` `sulfation_pct` mapping (:82) + `UPS_MODEL_PATH`/`UPS_HEALTH_PATH` env pattern (:94,95) | `src/motd_status.py:82,94,95` |
+| `scripts/motd/55-sulfation.sh` (exists, to delete) | file present |
+| `scheduler_manager` inputs/call-site/log-lines/calc-days | `src/scheduler_manager.py:235-236,244-246,289,303,317,324-329,355-356` |
+| `_calculate_days_since_last_test` current body reads only `last_upscmd_timestamp` (status read is the planned MOD) | `src/scheduler_manager.py:289-301` |
+| `evaluate_test_scheduling` import in scheduler_manager | `src/scheduler_manager.py:14` |
+| `scripts/install.sh:240` installs `55-sulfation.sh` (the loop the plan edits) | `scripts/install.sh:240` |
+| `scripts/battery-health.py:109` factual "sulfation" comment; MODEL_PATH json.loads(read_text) | `scripts/battery-health.py:109,14,25` |
+| `docs/internal/CONTEXT.md` active-desulfation claims (now enumerated by Plan 03) | `docs/internal/CONTEXT.md:120-125` |
+| `README.md:3` "active care" tagline + line 13 pitch (now enumerated by Plan 03) | `README.md:3,13` |
 
 ### MISSING
 
-- None. Every cited pre-existing symbol resolved. (Note: `scripts/install.sh:240` and `docs/internal/CONTEXT.md` are present-but-uncovered by the plans, not missing — they are gaps in plan scope, surfaced as concerns above.)
+- None. Every cited pre-existing symbol resolved at grep authority.
 
 ### AMBIGUOUS
 
-- `DischargeMetrics.capacity_ah_ref` / `confidence_level` — exist in source but the plans neither keep nor remove them explicitly. Resolution deferred to replan (must be enumerated).
+- None blocking. The cycle-1 AMBIGUOUS items (`capacity_ah_ref` / `confidence_level` keep-or-remove)
+  are now explicitly resolved in 25-02-PLAN.md:119-123.
 
 ### UNCHECKABLE / skipped
 
-- Exact internal line numbers cited in some `<read_first>` blocks (e.g. "lines 448-451", "lines 110-117") drift by a few lines from current source after recent refactors (e.g. `evaluate_test_scheduling` is at :71, research narrative implies a "7-gate" layout). The *symbols* all resolve; only some line offsets are stale. Non-blocking — executors locate by symbol.
-- IEEE-1188 / BU-804b / Vertiv BattCon evidence citations — external sources, not verifiable against this repo; treated as the planners' asserted domain basis (to live in the ADR they produce).
-- Runtime behavior of `float("inf") >= 365.0` deadlock fix — logically sound and asserted by both reviewers; not executed here (no test run in a review pass).
+- Some `<read_first>` line offsets drift a few lines from current source after refactors; all
+  *symbols* resolve, so executors locate by symbol. Non-blocking.
+- IEEE-1188 / BU-804b / Vertiv BattCon evidence citations — external, not verifiable against this
+  repo; to live in the ADR the plan produces.
+- Runtime truth of the `inf >= 365.0` deadlock fix and the `inf < 7` rate-limit-bypass — reasoned
+  about statically (no test executed in a review pass); the bypass is the basis for the cycle-2 HIGH.
