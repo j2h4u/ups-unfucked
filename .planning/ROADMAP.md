@@ -132,7 +132,7 @@
 
 **Goal:** `model.json` persists ONLY learned per-battery state (category ③). Configuration/spec (category ①) is read from `config.toml`/`constants.py` at runtime and not persisted; derived caches (category ②) are recomputed and not persisted. The `ModelState` schema shrinks to learned-state-only, and the strict loader still passes against a real on-disk file after a one-time key strip.
 
-**Requirements**: TBD (derive at plan time)
+**Requirements**: HYG-01, HYG-02, HYG-03, HYG-04, HYG-05
 **Depends on:** Phase 25 (ModelState schema + strict load validation must exist first)
 **Plans:** 0 plans
 
