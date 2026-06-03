@@ -21,7 +21,7 @@ This script:
 2. Installs systemd service unit
 3. Configures NUT dummy-ups (idempotent)
 4. Switches upsmon to virtual UPS (idempotent)
-5. Installs MOTD health script, patches existing 51-ups.sh
+5. Installs MOTD scripts (install dir templated in for the bundled CLI)
 6. Enables and starts the service
 7. Verifies virtual UPS is readable by NUT
 
@@ -230,45 +230,24 @@ else
 fi
 
 # === MOTD SCRIPTS ===
+# All three modules read prepared data from `python3 -m src.motd_status`, so the
+# install dir (REPO_ROOT) is templated into each via @INSTALL_DIR@ at deploy time —
+# the same mechanism used for the systemd unit above. No jq dependency.
 
 MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 
-# Install new health script
-HEALTH_SRC="$REPO_ROOT/scripts/motd/51-ups-health.sh"
-HEALTH_DST="$MOTD_DIR/51-ups-health.sh"
-
-# Install sulfation status script
-SULFATION_SRC="$REPO_ROOT/scripts/motd/55-sulfation.sh"
-SULFATION_DST="$MOTD_DIR/55-sulfation.sh"
-
 if [[ -d "$MOTD_DIR" ]]; then
-    if [[ "$DRY_RUN" == "yes" ]]; then
-        echo "[DRY-RUN] Would copy $HEALTH_SRC -> $HEALTH_DST"
-        echo "[DRY-RUN] Would copy $SULFATION_SRC -> $SULFATION_DST"
-    else
-        cp "$HEALTH_SRC" "$HEALTH_DST"
-        chmod +x "$HEALTH_DST"
-        log_ok "MOTD health script installed to $HEALTH_DST"
-
-        cp "$SULFATION_SRC" "$SULFATION_DST"
-        chmod +x "$SULFATION_DST"
-        log_ok "MOTD sulfation script installed to $SULFATION_DST"
-    fi
-
-    # Patch existing 51-ups.sh to use virtual UPS
-    UPS_MOTD="$MOTD_DIR/51-ups.sh"
-    if [[ -f "$UPS_MOTD" ]]; then
-        if grep -q "cyberpower-virtual@localhost" "$UPS_MOTD" 2>/dev/null; then
-            log_ok "51-ups.sh already uses cyberpower-virtual (skipped)"
-        elif grep -q "cyberpower@localhost" "$UPS_MOTD" 2>/dev/null; then
-            if [[ "$DRY_RUN" == "yes" ]]; then
-                echo "[DRY-RUN] Would patch 51-ups.sh: cyberpower → cyberpower-virtual"
-            else
-                sed -i 's/cyberpower@localhost/cyberpower-virtual@localhost/' "$UPS_MOTD"
-                log_ok "51-ups.sh patched: cyberpower → cyberpower-virtual"
-            fi
+    for motd_name in 51-ups.sh 51-ups-health.sh 55-sulfation.sh; do
+        motd_src="$REPO_ROOT/scripts/motd/$motd_name"
+        motd_dst="$MOTD_DIR/$motd_name"
+        if [[ "$DRY_RUN" == "yes" ]]; then
+            echo "[DRY-RUN] Would install (templated) $motd_src -> $motd_dst"
+        else
+            sed "s|@INSTALL_DIR@|$REPO_ROOT|g" "$motd_src" > "$motd_dst"
+            chmod +x "$motd_dst"
+            log_ok "MOTD script installed to $motd_dst"
         fi
-    fi
+    done
 else
     log_info "MOTD directory $MOTD_DIR not found (skipping MOTD installation)"
 fi

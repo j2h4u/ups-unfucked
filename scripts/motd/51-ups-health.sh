@@ -2,6 +2,10 @@
 # MOTD module: UPS battery health status
 # Displays: status icon, charge%, runtime, load%, SoH%, replacement date
 # Colors: green (healthy), yellow (warning), red (critical)
+#
+# Live UPS metrics come from NUT (upsc); SoH and replacement date come from the
+# bundled CLI (python3 -m src.motd_status) — no jq. @INSTALL_DIR@ is filled in by
+# scripts/install.sh; override with UPS_PKG_DIR for local testing.
 
 set -o pipefail
 
@@ -18,35 +22,29 @@ else
     NC='\033[0m'  # No color
 fi
 
-# Path to model.json (same as monitor.py)
-MODEL_FILE="${HOME}/.config/ups-battery-monitor/model.json"
-
-# Path to health endpoint (tmpfs, written every poll)
-HEALTH_FILE="/run/ups-battery-monitor/ups-health.json"
+UPS_PKG_DIR="${UPS_PKG_DIR:-@INSTALL_DIR@}"
 UPS_NUT_ADDRESS="cyberpower-virtual@localhost"
 
 # Read virtual UPS metrics; exit silently if daemon or NUT is not running.
 # MOTD runs on every login — it must not print errors when the monitor is down.
 ups_data=$(upsc "$UPS_NUT_ADDRESS" 2>/dev/null) || exit 0
 
-# Parse fields
+# Parse live fields from NUT
 ups_status=$(echo "$ups_data" | grep "^ups.status:" | cut -d' ' -f2-)
 charge=$(echo "$ups_data" | grep "^battery.charge:" | cut -d' ' -f2 | cut -d'.' -f1)
 runtime=$(echo "$ups_data" | grep "^battery.runtime:" | cut -d' ' -f2)
 load=$(echo "$ups_data" | grep "^ups.load:" | cut -d' ' -f2 | cut -d'.' -f1)
 
-# Read SoH and replacement date from model.json (using jq)
-soh="?"
+# SoH (already as integer percent) and replacement date from the bundled CLI
+soh_pct=""
 replacement_date=""
-
-if [[ -f "$MODEL_FILE" ]]; then
-    soh=$(jq -r '.soh // empty' "$MODEL_FILE" 2>/dev/null)
-
-    # Try to read replacement_date from soh_history last entry's prediction
-    # (This would be stored by monitor.py; for now, compute from history)
-    if [[ -n "$soh" && "$soh" != "?" ]]; then
-        replacement_date=$(jq -r '.replacement_due // empty' "$MODEL_FILE" 2>/dev/null)
-    fi
+if motd=$(PYTHONPATH="$UPS_PKG_DIR" python3 -m src.motd_status 2>/dev/null); then
+    while IFS='=' read -r key value; do
+        case "$key" in
+            soh_pct) soh_pct="$value" ;;
+            replacement_due) replacement_date="$value" ;;
+        esac
+    done <<< "$motd"
 fi
 
 # Format runtime: convert seconds to minutes/hours
@@ -63,11 +61,8 @@ else
 fi
 
 # Format and color SoH as percentage
-if [[ -n "$soh" && "$soh" != "?" && "$soh" =~ ^[0-9]*\.?[0-9]+$ ]]; then
-    soh_pct=$(printf "%.0f" "$(awk -v soh="$soh" 'BEGIN {printf "%.0f\n", soh * 100}')")
+if [[ -n "$soh_pct" ]]; then
     soh_fmt="${soh_pct}%"
-
-    # Color based on health
     if [[ "$soh_pct" -ge 80 ]]; then
         soh_color="$GREEN"
     elif [[ "$soh_pct" -ge 60 ]]; then
@@ -103,7 +98,7 @@ if [[ -n "$replacement_date" ]]; then
     if [[ "$replacement_date" =~ ^[0-9]{4}-[0-9]{2} ]]; then
         current_date=$(date +%s)
         repl_date_sec=$(date -d "$replacement_date" +%s 2>/dev/null || echo "$current_date")
-        days_diff=$(( ($repl_date_sec - $current_date) / 86400 ))
+        days_diff=$(( (repl_date_sec - current_date) / 86400 ))
         if [[ $days_diff -le 90 ]]; then
             repl_color="$RED"
         fi

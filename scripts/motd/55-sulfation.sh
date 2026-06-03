@@ -1,30 +1,28 @@
 #!/bin/bash
 # MOTD module: Display sulfation status and next test countdown
-# Reads from health.json updated by daemon every 10s
+# Data comes from the bundled CLI (python3 -m src.motd_status) — no jq, no embedded
+# JSON parsing. @INSTALL_DIR@ is filled in by scripts/install.sh; override with
+# UPS_PKG_DIR for local testing from a repo checkout.
 
-# Path to health.json (matches daemon's write location)
-# Can be overridden via HEALTH_FILE environment variable for testing
-HEALTH_FILE="${HEALTH_FILE:-/run/ups-battery-monitor/ups-health.json}"
+UPS_PKG_DIR="${UPS_PKG_DIR:-@INSTALL_DIR@}"
 
-# Exit cleanly if health.json not found or invalid
-if [[ ! -f "$HEALTH_FILE" ]]; then
-    exit 0
-fi
+# Fetch prepared MOTD fields; exit silently if the package/data isn't available
+# (MOTD runs on every login — it must never print errors when the monitor is down).
+motd=$(PYTHONPATH="$UPS_PKG_DIR" python3 -m src.motd_status 2>/dev/null) || exit 0
 
-# Parse JSON safely with jq
-sulfation=$(jq -r '.sulfation_score // "null"' "$HEALTH_FILE" 2>/dev/null)
-next_test=$(jq -r '.next_test_timestamp // null' "$HEALTH_FILE" 2>/dev/null)
-# Exit if jq failed or sulfation not available
-if [[ "$sulfation" == "null" || "$sulfation" == "" ]]; then
-    exit 0
-fi
+declare -A M
+while IFS='=' read -r key value; do
+    M["$key"]="$value"
+done <<< "$motd"
 
-# Convert sulfation score [0-1.0] to percentage [0-100]
-# awk (base system) instead of bc — drops the only bc dependency; -v avoids shell injection.
-score_pct=$(awk -v s="$sulfation" 'BEGIN { printf "%.0f", s * 100 }')
+# No sulfation data yet → nothing to show
+[[ -z "${M[sulfation_pct]}" ]] && exit 0
+
+score_pct="${M[sulfation_pct]}"
+next_test="${M[next_test_timestamp]}"
 
 # Calculate days until next test
-if [[ "$next_test" != "null" && "$next_test" != "" ]]; then
+if [[ -n "$next_test" ]]; then
     now=$(date +%s)
     next_epoch=$(date -d "$next_test" +%s 2>/dev/null) || next_epoch=""
     if [[ -z "$next_epoch" ]]; then
@@ -40,8 +38,5 @@ else
     test_str="none scheduled"
 fi
 
-# Format output
-output="Battery health: Sulfation ${score_pct}% · Next test ${test_str}"
-
-echo "$output"
+echo "Battery health: Sulfation ${score_pct}% · Next test ${test_str}"
 exit 0
