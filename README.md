@@ -127,6 +127,28 @@ Everything else is either hardcoded or stored in `model.json` and auto-calibrate
 - systemd (Type=notify, WatchdogSec=120)
 - `python3-systemd` package
 
+## Development
+
+Dev tooling uses [`uv`](https://docs.astral.sh/uv/) (environment + dependencies) and,
+optionally, [`just`](https://github.com/casey/just) (task runner).
+
+```bash
+uv sync --extra dev    # create venv + install dev deps from uv.lock
+just check             # format-check + lint + typecheck + tests
+just fix               # auto-fix formatting and lint
+just --list            # list all recipes
+```
+
+Without `just`, run the underlying commands directly:
+
+```bash
+uv run ruff format --check src tests   # format check
+uv run ruff check src tests            # lint
+uv run pyright src                     # type check
+uv run pytest                          # tests
+uv run vulture                         # dead-code sieve (advisory)
+```
+
 ## Roadmap
 
 - [x] **v1.0 — Physics model & safe shutdown.** The daemon replaces firmware guesswork with real electrochemistry: voltage-to-SoC lookup tables, Peukert's law for runtime prediction, IR compensation for load-independent readings, State of Health tracking via discharge curve analysis, and automatic model calibration from every power event. Every blackout makes the model smarter. 212 tests, zero external dependencies beyond stdlib.
