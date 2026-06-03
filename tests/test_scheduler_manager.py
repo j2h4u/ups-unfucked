@@ -362,8 +362,6 @@ class TestSchedulerManager:
         days_since_last_attempt ~= 1 (<7) → rate_limit
         days_since_last_test_success = inf (status ERR, cadence NOT deferred ~365d)
         """
-        from src.model import BatteryModel
-
         bm = Mock()
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.9
@@ -469,8 +467,6 @@ class TestSchedulerManager:
 
         This is the end-to-end proof that the bootstrap deadlock is resolved.
         """
-        from src.model import BatteryModel
-
         bm = Mock()
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.9
@@ -578,7 +574,6 @@ class TestValidatePreconditionsImport:
             ups_status="OL",
             soc=0.98,
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is True
         assert reason == ""
@@ -589,7 +584,6 @@ class TestValidatePreconditionsImport:
             ups_status="OB DISCHRG",
             soc=0.98,
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is False
         assert "online" in reason.lower()
@@ -625,5 +619,6 @@ class TestDispatchWithAuditImport:
             )
 
         assert success is True
-        assert model.state.get("test_running") is True
+        # CR-01 regression: no un-clearable `test_running` flag is persisted.
+        assert "test_running" not in model.state
         assert model.state["last_upscmd_status"] == "OK"

@@ -16,7 +16,6 @@ class TestPreconditionValidator:
             ups_status="OL",
             soc=0.98,
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is True
         assert reason == ""
@@ -27,7 +26,6 @@ class TestPreconditionValidator:
             ups_status="OL",
             soc=0.92,  # Below 95%
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is False
         assert "soc" in reason
@@ -38,7 +36,6 @@ class TestPreconditionValidator:
             ups_status="OB DISCHRG",  # On battery
             soc=0.98,
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is False
         assert "online" in reason.lower()
@@ -49,7 +46,6 @@ class TestPreconditionValidator:
             ups_status="OL CAL",  # Calibration mode
             soc=0.98,
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is False
         assert "online" in reason.lower()
@@ -60,21 +56,9 @@ class TestPreconditionValidator:
             ups_status="OL",
             soc=0.97,
             recent_power_glitches=3,  # >2 glitches
-            test_already_running=False,
         )
         assert can_proceed is False
         assert reason == "grid_unstable"
-
-    def test_precondition_blocks_test_running(self):
-        """Test already running blocks dispatch."""
-        can_proceed, reason = validate_preconditions_before_upscmd(
-            ups_status="OL",
-            soc=0.97,
-            recent_power_glitches=0,
-            test_already_running=True,
-        )
-        assert can_proceed is False
-        assert "already_running" in reason.lower()
 
     def test_precondition_at_soc_boundary(self):
         """SoC at exactly 95%: passes (boundary)."""
@@ -82,7 +66,6 @@ class TestPreconditionValidator:
             ups_status="OL",
             soc=0.95,
             recent_power_glitches=0,
-            test_already_running=False,
         )
         assert can_proceed is True
         assert reason == ""
@@ -93,7 +76,6 @@ class TestPreconditionValidator:
             ups_status="OL",
             soc=0.97,
             recent_power_glitches=2,
-            test_already_running=False,
         )
         assert can_proceed is True
         assert reason == ""
@@ -133,7 +115,11 @@ class TestDispatchFunction:
         assert model.state["last_upscmd_timestamp"] is not None
         assert model.state["last_upscmd_type"] == "test.battery.start.deep"
         assert model.state["last_upscmd_status"] == "OK"
-        assert model.state.get("test_running") is True
+        # CR-01 regression: dispatch must NOT persist an in-flight `test_running`
+        # flag. Nothing clears it (no completion signal), so a True here would
+        # block every future diagnostic test forever. Overlap is prevented by the
+        # rate-limit gate instead.
+        assert "test_running" not in model.state
 
     def test_dispatch_precondition_blocked(self, temporary_model_path):
         """Dispatch blocked by precondition (low SoC): returns False."""

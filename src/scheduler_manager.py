@@ -22,7 +22,6 @@ def validate_preconditions_before_upscmd(
     ups_status: str,
     soc: float,
     recent_power_glitches: int,
-    test_already_running: bool,
 ) -> tuple[bool, str]:
     """Validate preconditions before dispatching test command.
 
@@ -30,13 +29,16 @@ def validate_preconditions_before_upscmd(
     - UPS is online: 'OL' in ups_status and 'OB' not in ups_status and 'CAL' not in ups_status
     - SoC ≥95%: soc >= 0.95
     - Grid stable: recent_power_glitches ≤ 2 (not yet implemented — caller passes 0)
-    - No test running: test_already_running == False
+
+    Overlapping dispatches are prevented by the scheduler's rate-limit gate
+    (MIN_DAYS_BETWEEN_TESTS, keyed off last_upscmd_timestamp written on every
+    attempt) — far more robust than a persisted in-flight flag, which has no
+    completion signal to clear it and would block all future tests forever.
 
     Args:
         ups_status: UPS status string (e.g., "OL", "OB DISCHRG", "CAL")
         soc: State of charge [0.0, 1.0]
         recent_power_glitches: Count of grid state changes in last 4h
-        test_already_running: Whether a test is currently running
 
     Returns:
         tuple[bool, str]: (can_proceed, reason_if_blocked)
@@ -49,9 +51,6 @@ def validate_preconditions_before_upscmd(
 
     if recent_power_glitches > 2:
         return False, "grid_unstable"
-
-    if test_already_running:
-        return False, "test_already_running"
 
     return True, ""
 
@@ -78,13 +77,11 @@ def dispatch_test_with_audit(
         logger.debug("ups_status_override is None (before first poll); defaulting to OL")
     soc = current_metrics.soc if current_metrics.soc is not None else 1.0
     recent_power_glitches = 0
-    test_already_running = battery_model.state.get("test_running", False)
 
     preconditions_ok, block_reason = validate_preconditions_before_upscmd(
         ups_status=ups_status,
         soc=soc,
         recent_power_glitches=recent_power_glitches,
-        test_already_running=test_already_running,
     )
 
     if not preconditions_ok:
@@ -114,7 +111,6 @@ def dispatch_test_with_audit(
 
     if success:
         upscmd_status = "OK"
-        battery_model.state["test_running"] = True
     else:
         upscmd_status = result_msg or "ERR_UNKNOWN"
 
