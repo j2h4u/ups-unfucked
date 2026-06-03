@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from src.battery_math.constants import NOMINAL_POWER_WATTS, RATED_CAPACITY_AH
 from src.capacity_estimator import compute_cov
@@ -17,6 +17,51 @@ from src.capacity_estimator import compute_cov
 
 class ModelLoadError(Exception):
     """Raised when model.json cannot be loaded or backed up."""
+
+
+class ModelState(TypedDict, total=False):
+    """Typed schema for the persisted model.json state dict.
+
+    Single source of truth for the set of legitimate top-level keys. `total=False`
+    because keys are populated incrementally — defaults at load(), capacity/new-battery
+    keys only after the first qualifying discharge. load() rejects any key NOT declared
+    here (see _reject_unknown_state_keys): this is a single-host, no-backward-compat
+    project, so an unknown key means stale/retired state (e.g. the v3.0 sulfation_history,
+    roi_history, blackout_credit) that must be removed, not silently round-tripped.
+    """
+
+    # Capacity & SoH
+    full_capacity_ah_ref: float
+    soh: float
+    soh_history: List[Dict[str, Any]]
+    capacity_estimates: List[Dict[str, Any]]
+    capacity_ah_measured: Optional[float]
+    capacity_converged: bool
+    # Physics / LUT
+    physics: Dict[str, Any]
+    lut: List[Dict[str, Any]]
+    r_internal_history: List[Dict[str, Any]]
+    # Lifecycle
+    battery_install_date: Optional[str]
+    cycle_count: int
+    cumulative_on_battery_sec: float
+    replacement_due: Optional[str]
+    new_battery_detected: bool
+    new_battery_detected_timestamp: Optional[str]
+    # Discharge log
+    discharge_events: List[Dict[str, Any]]
+    # Diagnostic test scheduling
+    last_upscmd_timestamp: Optional[str]
+    last_upscmd_type: Optional[str]
+    last_upscmd_status: Optional[str]
+    scheduled_test_timestamp: Optional[str]
+    scheduled_test_reason: Optional[str]
+    test_block_reason: Optional[str]
+
+
+# Derived from the schema so the two never drift. Used by load() to fail-fast on
+# unknown keys instead of letting them silently survive save()'s round-trip.
+KNOWN_STATE_KEYS = frozenset(ModelState.__annotations__)
 
 
 # RLS estimator defaults — single source of truth for _sync_physics_from_state,
@@ -202,6 +247,7 @@ class BatteryModel:
             )
             self.state = self._default_vrla_lut()
 
+        self._reject_unknown_state_keys()
         self._apply_defaults()
         self._sync_physics_from_state()
         self._validate_and_clamp_fields()
@@ -284,6 +330,24 @@ class BatteryModel:
                 name: dataclasses.asdict(rls) for name, rls in self.physics.rls_state.items()
             },
         }
+
+    def _reject_unknown_state_keys(self) -> None:
+        """Fail-fast if model.json carries keys outside the ModelState schema.
+
+        No-backward-compat policy: a key not in KNOWN_STATE_KEYS is retired/garbage
+        state (e.g. v3.0 sulfation_history/roi_history/blackout_credit). Rather than
+        silently round-tripping it through save(), refuse to load so the operator
+        removes it. KNOWN_STATE_KEYS is derived from ModelState, so the schema is the
+        single source of truth.
+        """
+        unknown = set(self.state) - KNOWN_STATE_KEYS
+        if unknown:
+            raise ModelLoadError(
+                f"{self.model_path} contains unknown state key(s): "
+                f"{', '.join(sorted(unknown))}. This single-host project keeps no "
+                f"backward-compat shims — remove these key(s) from the file (or delete "
+                f"it to regenerate) and restart."
+            )
 
     def _apply_defaults(self):
         """Set default values for optional fields not present in loaded data."""

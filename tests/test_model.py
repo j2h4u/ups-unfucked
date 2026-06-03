@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from src.model import BatteryModel, atomic_write_json
+from src.model import (
+    KNOWN_STATE_KEYS,
+    BatteryModel,
+    ModelLoadError,
+    atomic_write_json,
+)
 
 
 class TestAtomicWriteJson:
@@ -1128,3 +1133,88 @@ class TestFieldLevelValidation:
         assert model.state["discharge_events"] == [
             {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
         ]
+
+
+class TestStateSchemaValidation:
+    """load() enforces the ModelState schema — no silent round-trip of stale keys."""
+
+    def _write_state(self, path, extra):
+        """Write a minimal valid default model, merge `extra`, return the file path."""
+        base = BatteryModel(path)  # default VRLA model on disk
+        base.state.update(extra)
+        base.save()
+        return path
+
+    @pytest.mark.parametrize(
+        "retired_key",
+        ["sulfation_history", "roi_history", "blackout_credit"],
+    )
+    def test_rejects_retired_v3_keys(self, temporary_model_path, retired_key):
+        """A leftover v3.0 desulfation key must fail-fast, not round-trip silently."""
+        self._write_state(temporary_model_path, {retired_key: []})
+
+        with pytest.raises(ModelLoadError, match=retired_key):
+            BatteryModel(temporary_model_path)
+
+    def test_rejects_arbitrary_unknown_key(self, temporary_model_path):
+        """Any key outside the schema is rejected — typed state, no garbage tolerated."""
+        self._write_state(temporary_model_path, {"totally_made_up_key": 1})
+
+        with pytest.raises(ModelLoadError, match="totally_made_up_key"):
+            BatteryModel(temporary_model_path)
+
+    def test_lists_all_unknown_keys_in_error(self, temporary_model_path):
+        """The error names every offending key so the operator can remove them in one pass."""
+        self._write_state(
+            temporary_model_path,
+            {"sulfation_history": [], "roi_history": [], "blackout_credit": None},
+        )
+
+        with pytest.raises(ModelLoadError) as exc_info:
+            BatteryModel(temporary_model_path)
+        message = str(exc_info.value)
+        assert "blackout_credit" in message
+        assert "roi_history" in message
+        assert "sulfation_history" in message
+
+    def test_accepts_every_schema_key(self, temporary_model_path):
+        """A file populated with all KNOWN_STATE_KEYS loads cleanly (schema is self-consistent).
+
+        Only fills keys absent from the default model so the valid lut/physics/soh
+        structures are preserved; the conditional keys get type-appropriate benign values.
+        """
+        base = BatteryModel(temporary_model_path)
+        list_keys = {"soh_history", "capacity_estimates", "r_internal_history", "discharge_events"}
+        bool_keys = {"capacity_converged", "new_battery_detected"}
+        for key in KNOWN_STATE_KEYS:
+            if key in base.state:
+                continue
+            base.state[key] = [] if key in list_keys else False if key in bool_keys else None
+        base.save()
+
+        model = BatteryModel(temporary_model_path)  # must not raise
+
+        assert KNOWN_STATE_KEYS <= set(model.state)  # every schema key accepted
+        assert set(model.state) <= KNOWN_STATE_KEYS  # and nothing extra crept in
+
+    def test_lifecycle_round_trip_stays_within_schema(self, temporary_model_path):
+        """Drift guard: exercising the public mutators then reloading must never produce
+        a key outside the schema — otherwise the strict loader would brick the daemon."""
+        model = BatteryModel(temporary_model_path)
+        model.increment_cycle_count()
+        model.add_on_battery_time(42.0)
+        model.set_replacement_due("2027-01-01")
+        model.add_soh_history_entry("2026-06-04", 0.88, capacity_ah_ref=8.5)
+        model.append_discharge_event(
+            {"timestamp": "2026-06-04T00:00:00+00:00", "depth_of_discharge": 0.8}
+        )
+        model.update_upscmd_result(
+            upscmd_timestamp="2026-06-04T03:00:00+00:00",
+            upscmd_type="test.battery.start.quick",
+            upscmd_status="OK",
+        )
+        model.save()
+
+        reloaded = BatteryModel(temporary_model_path)  # must not raise
+
+        assert set(reloaded.state) <= KNOWN_STATE_KEYS
