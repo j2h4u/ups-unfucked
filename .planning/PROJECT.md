@@ -59,6 +59,7 @@
 - ✓ Naming + docs sweep: BatteryModel.data→state, category→power_source, docstrings — v3.1
 - ✓ Test quality rewrite: outcome assertions, DI, real collaborators, pytest markers — v3.1
 - ✓ Temperature + security hardening: NUT probe, model.json validation, PASSWORD docs — v3.1
+- ✓ Desulfation retraction → diagnostic-only capacity verification: sulfation/cycle_roi machinery removed, scheduler reframed to IEEE-1188 annual cadence (bootstrap deadlock fixed), ADR 0001 + honest docs + operator maintenance view (SCH-01–03, RET-01–04, DOC-01–02, RPT-01) — v3.2
 
 ### Active
 
@@ -126,4 +127,4 @@ Known future candidates: Peukert auto-calibration, cliff-edge degradation detect
 | v3.0 desulfation premise retracted | Cross-check (BU-804b, Vertiv BattCon, IEEE-1188): discharge forms sulfate, charge reverses it; daemon has no charge control on CyberPower. Deep-discharge-for-desulfation = wear, not therapy. Scheduler reframed to diagnostic-only capacity verification | ✓ Corrected — v3.2 |
 
 ---
-*Last updated: 2026-06-03 — milestone v3.2 started (Honest Monitoring & Diagnostic Verification)*
+*Last updated: 2026-06-03 — Phase 25 complete: v3.2 Honest Monitoring & Diagnostic Verification delivered (desulfation retracted, scheduler reframed, docs corrected)*
