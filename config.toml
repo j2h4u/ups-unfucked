@@ -24,9 +24,8 @@ soh_alert = 0.80
 #   SoH floor: 60% (no test below this)
 #   Rate limit: 7 days between tests
 #   Cycle budget critical: 5 cycles remaining → block
-#   Blackout credit: natural discharge ≥90% DoD → skip next test for 7 days
 #   Min discharge for model update: 300 seconds (shorter events track cycles only)
-#   Deep discharge threshold: >70% DoD (for sulfation days_since_deep)
+#   Deep discharge threshold: >70% DoD (sets the days_since_deep metric)
 
 # Grid stability cooldown (hours)
 # Software default: 4.0 (skip test if blackout in last 4h)

@@ -82,7 +82,7 @@ def test_health_endpoint_includes_diagnostic_fields(
     - ir_trend_rate (float or null)
     - cycle_budget_remaining (int or null)
     - scheduling_reason (string)
-    - next_test_timestamp (int or null)
+    - next_test_timestamp (ISO8601 string or null)
     """
     with patch("src.monitor_config.HEALTH_ENDPOINT_PATH", health_endpoint_temp_file):
         write_health_endpoint(
@@ -92,7 +92,7 @@ def test_health_endpoint_includes_diagnostic_fields(
                 ir_trend_rate=0.000008,
                 cycle_budget_remaining=150,
                 scheduling_reason="observing",
-                next_test_timestamp=1710845400,
+                next_test_timestamp="2024-03-19T11:30:00+00:00",
             )
         )
 
@@ -112,7 +112,7 @@ def test_health_endpoint_includes_diagnostic_fields(
         assert data["scheduling_reason"] == "observing"
 
         assert "next_test_timestamp" in data, "Missing next_test_timestamp field"
-        assert data["next_test_timestamp"] == 1710845400
+        assert data["next_test_timestamp"] == "2024-03-19T11:30:00+00:00"
 
 
 @pytest.mark.integration
