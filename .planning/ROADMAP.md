@@ -134,7 +134,19 @@
 
 **Requirements**: HYG-01, HYG-02, HYG-03, HYG-04, HYG-05
 **Depends on:** Phase 25 (ModelState schema + strict load validation must exist first)
-**Plans:** 0 plans
+**Status:** Planned (2026-06-04)
+**Plans:** 2 plans (waves — sequential; both edit model.py, so wave 2 depends on wave 1)
+
+  - Wave 1 — Category ① config/spec (HYG-01, HYG-02): add `NOMINAL_VOLTAGE` constant; source
+    nominal voltage/power from `constants.py`; inject `capacity_ah` into `BatteryModel` from config;
+    drop `full_capacity_ah_ref` + `physics.nominal_voltage`/`nominal_power_watts` from the schema,
+    validation, default seed; point `battery-health.py` rated-capacity at config.toml.
+  - Wave 2 — Category ② derived caches (HYG-03, HYG-04, HYG-05): stop persisting
+    `scheduled_test_*`/`test_block_reason` (delete `update_scheduling_state`; scheduler keeps live
+    `last_*`), `capacity_converged` (health reads live convergence), and `replacement_due` (new
+    `compute_replacement_due()` live regression, threshold 0.80 to preserve equivalence); remove dead
+    persistence tests, add a replacement_due-equivalence test + strict-loader regen/old-file-reject
+    gates; document the one-time stop→strip-keys→start deploy.
 
 **Scope (evidence-based classification from the Phase 25 wrap-up discussion):**
 
@@ -153,7 +165,10 @@
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 26 to break down)
+- [ ] 26-01-PLAN.md — Wave 1: category ① config/spec out of model.json — NOMINAL_VOLTAGE constant,
+  capacity_ah injection, split physics blob, drop full_capacity_ah_ref/nominal_voltage/nominal_power_watts (HYG-01, HYG-02)
+- [ ] 26-02-PLAN.md — Wave 2: category ② derived caches out of model.json — drop scheduled_test_*/test_block_reason/capacity_converged,
+  live compute_replacement_due, strict-loader gates + deploy strip note (HYG-03, HYG-04, HYG-05)
 
 ---
 

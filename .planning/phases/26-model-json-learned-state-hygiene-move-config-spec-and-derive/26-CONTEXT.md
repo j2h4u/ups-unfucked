@@ -140,7 +140,8 @@ the SUMMARY's deployment note. No migration code is written.
 ### Tests
 - `tests/test_model.py` (persistence/round-trip assertions for removed keys),
   `tests/test_health_endpoint_v16.py` (capacity_converged), `tests/test_motd_status.py`,
-  `tests/test_monitor.py`, `tests/test_discharge_handler.py`.
+  `tests/test_monitor.py`, `tests/test_monitor_integration.py` (no standalone test_discharge_handler.py
+  exists — discharge/convergence logic is exercised via the monitor integration suite).
 
 ### Policy / format
 - `.planning/REQUIREMENTS.md` (v3.2 milestone, no-backward-compat / state-regenerates policy).
