@@ -43,7 +43,9 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
             reason_str = f"  ({reason})" if reason else ""
             print(f"  Next diagnostic test: {next_ts[:10]}"
                   f"  ({days_away:+d} days){reason_str}")
-        except ValueError:
+        except (ValueError, TypeError):
+            # ValueError: unparseable ISO string. TypeError: a corrupt JSON file
+            # stored a non-string (e.g. numeric epoch) — degrade, don't crash (T-25-07).
             print(f"  Next diagnostic test: {next_ts}  ({reason})")
     else:
         print("  Next diagnostic test: not yet scheduled")
@@ -60,7 +62,8 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
             status_str = f"  status={last_status}" if last_status else ""
             print(f"  Last test run:        {last_ts[:10]}"
                   f"  ({days_ago} days ago){type_str}{status_str}")
-        except ValueError:
+        except (ValueError, TypeError):
+            # See T-25-07 note above: tolerate a corrupt non-string timestamp.
             print(f"  Last test run:        {last_ts}{' ' + last_type if last_type else ''}")
     else:
         print("  Last test run:        never tested")
