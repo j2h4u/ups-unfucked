@@ -2,11 +2,24 @@
 
 ## What This Is
 
-Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Измеряет реальную ёмкость батареи из глубоких разрядов (coulomb counting + voltage anchor), заменяет номинальное значение измеренным, и рекалибрует SoH на основе фактической ёмкости. Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Автоматически планирует десульфатационные тесты с 7 уровнями безопасности. Один systemd-сервис, zero manual intervention после установки.
+Программный слой поверх CyberPower UT850EG с ненадёжной прошивкой. Демон читает физические данные с реального UPS через NUT, вычисляет честные значения `battery.runtime`, `battery.charge` и `ups.status` по собственной модели батареи (LUT + IR compensation + Peukert), и публикует их через dummy-ups — прозрачно для всех потребителей (NUT, upsmon, Grafana). Измеряет реальную ёмкость батареи из глубоких разрядов (coulomb counting + voltage anchor), заменяет номинальное значение измеренным, и рекалибрует SoH на основе фактической ёмкости. Отслеживает деградацию батареи (SoH), предсказывает дату замены, алертит через MOTD и journald. Изредка запускает диагностические тесты ёмкости (IEEE-1188-каденция) с safety-гейтами — чтобы **измерить** SoH/ёмкость, а не «лечить» батарею (см. v3.2: премиса активной десульфатации разрядами опровергнута). Один systemd-сервис, zero manual intervention после установки.
 
 ## Core Value
 
 Сервер должен выключаться чисто и вовремя при блекауте, используя каждую доступную минуту — не полагаясь на ненадёжные показания прошивки CyberPower.
+
+## Current Milestone: v3.2 Honest Monitoring & Diagnostic Verification
+
+**Goal:** Убрать из v3.0 механизм «активной десульфатации разрядами» (премиса опровергнута кросс-чеком: у VRLA разряд *образует* сульфат, обращает его *заряд*, которым демон не управляет) и свести батарейную логику к честному мониторингу + редкой диагностике ёмкости; попутно починить bootstrap-дедлок планировщика.
+
+**Target work:**
+- Удалить `sulfation.py`, `cycle_roi.py`, sulfation/ROI как драйвер планирования, blackout-credit-как-десульфатация, recovery_delta-доказательство и поля `sulfation_score`/`cycle_roi` (health/model/MOTD/journald) + их тесты
+- Переосмыслить `evaluate_test_scheduling` → диагностическая capacity-проверка по простому персистентному time-триггеру (~12 мес, IEEE-1188); safety-гейты сохранить; первый тест — quick; чинит Catch-22
+- Сохранить: capacity estimation, SoH, IR-тренд, прогноз замены, телеметрию, dispatch `test.battery.start.*`, `motd_status.py`
+- Доки: убрать заявления про «активную борьбу с сульфатацией»; ADR с опровержением премисы + факт об отсутствии charge-control
+- Секция «Maintenance & schedule» в `battery-health.py`
+
+**Key context:** single-host fail-fast, no backward-compat; демон умеет только **измерять** (диагностический разряд) или **изнашивать** (глубокий разряд) — реальный рычаг ухода (float voltage) внутри прошивки CyberPower, недоступен через NUT.
 
 ## Requirements
 
@@ -34,12 +47,12 @@
 - ✓ MOTD capacity display + journald structured events + health endpoint metrics (RPT-01–03) — v2.0
 - ✓ Discharge quality filters: micro-discharge rejection + Peukert fixed at 1.2 (VAL-01–02) — v2.0
 - ✓ Math kernel extraction to src/battery_math/ with year-long simulation harness — v2.0
-- ✓ Sulfation model: physics-based scoring + data-driven detection (IR trend, recovery delta) — v3.0
-- ✓ Smart test scheduling: daemon calls upscmd with 7 safety gates, replaces static systemd timers — v3.0
-- ✓ Cycle ROI metric: desulfation benefit vs wear cost, exported to health.json — v3.0
-- ✓ Natural blackout credit: skip scheduled deep tests when recent blackouts already desulfated — v3.0
-- ✓ Safety constraints: SoH floor, rate limiting, grid stability, cycle budget gates — v3.0
-- ✓ Reporting: sulfation score + scheduling decisions in health.json, journald, MOTD — v3.0
+- ⚠️ Sulfation model: physics-based scoring + data-driven detection (IR trend, recovery delta) — v3.0 → **RETRACTED v3.2** (premise disproven: discharge forms sulfate, charge reverses it; see ADR)
+- ✓ Smart test scheduling: daemon calls upscmd with safety gates, replaces static systemd timers — v3.0 (**reframed v3.2**: diagnostic capacity verification, not desulfation)
+- ⚠️ Cycle ROI metric: desulfation benefit vs wear cost, exported to health.json — v3.0 → **RETRACTED v3.2** (no real desulfation benefit from discharge)
+- ⚠️ Natural blackout credit: skip scheduled deep tests when recent blackouts already desulfated — v3.0 → **RETRACTED v3.2** (desulfation-by-discharge premise disproven)
+- ✓ Safety constraints: SoH floor, rate limiting, grid stability, cycle budget gates — v3.0 (kept; apply to diagnostic tests)
+- ✓ Reporting: scheduling decisions in health.json, journald, MOTD — v3.0 (**v3.2**: sulfation_score/cycle_roi fields removed)
 - ✓ 53-fix kaizen pass: naming, error handling, observability, security, complexity — v3.0
 - ✓ Unified coulomb counting: single integrate_current() with IEEE-1106 trapezoidal rule — v3.1
 - ✓ MonitorDaemon decomposition: SagTracker, SchedulerManager, DischargeCollector extracted — v3.1
@@ -60,6 +73,9 @@
 - Изменение конфигурации NUT — встаём поверх, не трогаем
 - Temperature compensation — indoor ±3°C, negligible variation; NUT confirms no sensor available
 - Offline mode / multi-UPS — single CyberPower UT850EG only
+- **Активная десульфатация разрядами (v3.0)** — премиса опровергнута (v3.2): у VRLA разряд *образует* сульфат, обращает его *заряд*; «десульфатация-разрядом» — миф (BU-804b, Vertiv BattCon, IEEE-1188). Глубокий разряд = износ, не терапия
+- **Управление зарядом / float voltage** — недоступно: CyberPower через NUT отдаёт только beeper/driver/load/shutdown/test.battery.* (нет settable-переменных заряда). Реальный рычаг ухода вне досягаемости демона
+- **sulfation_score / cycle_roi / blackout-credit-desulfation** — удалены в v3.2 (следствие опровергнутой премисы)
 
 ## Context
 
@@ -107,6 +123,7 @@ Known future candidates: Peukert auto-calibration, cliff-edge degradation detect
 | Outcome-based test assertions | Mock sequence replay is brittle; observable state is the contract | ✓ Good — v3.1 |
 | Temperature: probe at startup, keep 35°C hardcode | UT850EG has no sensor; document absence rather than pretend | ✓ Good — v3.1 |
 | model.json warn+reset, never raise | Daemon must survive corrupt persistence; warn-and-heal is safer than crash | ✓ Good — v3.1 |
+| v3.0 desulfation premise retracted | Cross-check (BU-804b, Vertiv BattCon, IEEE-1188): discharge forms sulfate, charge reverses it; daemon has no charge control on CyberPower. Deep-discharge-for-desulfation = wear, not therapy. Scheduler reframed to diagnostic-only capacity verification | ✓ Corrected — v3.2 |
 
 ---
-*Last updated: 2026-03-21 after v3.1 milestone completion*
+*Last updated: 2026-06-03 — milestone v3.2 started (Honest Monitoring & Diagnostic Verification)*
