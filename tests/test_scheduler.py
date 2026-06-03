@@ -1,4 +1,15 @@
-"""Unit tests for scheduler decision engine (pure function tests)."""
+"""Unit tests for scheduler decision engine (pure function tests).
+
+Tests cover the diagnostic time-cadence engine (Phase 25):
+- First test from cold start (deadlock fix)
+- Annual cadence propose
+- Within-cadence defer (restart no-retrigger)
+- Rate-limit via days_since_last_attempt (independent of cadence)
+- Failed-attempt boundary cases (two-input timing split)
+- SoH floor block
+- Grid cooldown defer
+- Cycle budget block
+"""
 
 from datetime import datetime, timedelta, timezone
 
@@ -14,498 +25,425 @@ class TestSchedulerDecision:
         """SchedulerDecision is frozen (immutable)."""
         decision = SchedulerDecision(
             action="propose_test",
-            test_type="deep",
-            reason_code="test_reason",
+            test_type="quick",
+            reason_code="diagnostic_cadence",
         )
         with pytest.raises(AttributeError):
             decision.action = "block_test"
 
 
-class TestSoHFloorGate:
-    """SoH floor gate (SCHED-05): blocks test if SoH < SOH_FLOOR (0.60)."""
+class TestFirstTestDeadlockFix:
+    """First test from cold start: deadlock fix (SCH-01).
 
-    def test_soh_floor_blocks_below_threshold(self):
-        """SoH below 60%: blocks (hard block)."""
+    With days_since_last_test_success=inf and days_since_last_attempt=inf,
+    the cadence gate sees overdue and proposes a quick test.
+    """
+
+    def test_first_test_proposes_quick(self):
+        """Cold start (never tested): proposes quick test via diagnostic cadence."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.72,
-            cycle_roi=0.4,
-            soh_fraction=0.59,  # Below 60% constant
-            days_since_last_test=10.0,
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
             last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        assert decision.action == "block_test"
-        assert "soh_floor" in decision.reason_code
-        assert decision.next_eligible_timestamp is not None
-
-    def test_soh_floor_at_boundary(self):
-        """SoH at exactly 60%: passes (boundary condition)."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.60,  # Exactly at threshold
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        # Should pass SoH floor gate and evaluate other gates
-        assert decision.action in ["propose_test", "defer_test", "block_test"]
-        assert "soh_floor" not in decision.reason_code
-
-
-class TestRateLimitGate:
-    """Rate limiting gate (SCHED-01): enforces ≤1 test per week (MIN_DAYS_BETWEEN_TESTS=7)."""
-
-    def test_rate_limit_defers_recent_test(self):
-        """Test <7 days since last: deferred."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=3.0,  # 3 days, less than 7
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        assert decision.action == "defer_test"
-        assert "rate_limit" in decision.reason_code
-        assert decision.next_eligible_timestamp is not None
-
-    def test_rate_limit_at_boundary(self):
-        """Test at exactly 7 days: passes rate limit gate."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=7.0,  # Exactly at threshold
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        # Should pass rate limit gate
-        assert "rate_limit" not in decision.reason_code
-
-    def test_rate_limit_never_tested(self):
-        """Test with infinite days since last: passes rate limit."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=float("inf"),  # Never tested
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        assert "rate_limit" not in decision.reason_code
-
-
-class TestBlackoutCreditGate:
-    """Blackout credit gate (SCHED-03): defer test when credit is active."""
-
-    def test_blackout_credit_active_defers(self):
-        """Active blackout credit defers test."""
-        credit_expires = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit={
-                "active": True,
-                "credit_expires": credit_expires,
-            },
-            cycle_budget_remaining=50,
-        )
-        assert decision.action == "defer_test"
-        assert "blackout_credit" in decision.reason_code
-
-    def test_blackout_credit_expired_passes(self):
-        """Expired blackout credit: passes gate."""
-        credit_expires = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit={
-                "active": True,
-                "credit_expires": credit_expires,
-            },
-            cycle_budget_remaining=50,
-        )
-        assert "blackout_credit" not in decision.reason_code
-
-    def test_blackout_credit_inactive_passes(self):
-        """Inactive blackout credit (active=False): passes gate."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit={
-                "active": False,
-                "credit_expires": None,
-            },
-            cycle_budget_remaining=50,
-        )
-        assert "blackout_credit" not in decision.reason_code
-
-    def test_blackout_credit_none_passes(self):
-        """No blackout credit: passes gate."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        assert "blackout_credit" not in decision.reason_code
-
-    def test_blackout_credit_invalid_timestamp(self):
-        """Invalid credit_expires timestamp: treated as expired, passes."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit={
-                "active": True,
-                "credit_expires": "INVALID_TIMESTAMP",
-            },
-            cycle_budget_remaining=50,
-        )
-        # Invalid timestamp ignored, continues to next gate
-        assert "blackout_credit" not in decision.reason_code
-
-
-class TestGridStabilityGate:
-    """Grid stability gate (SCHED-06): configurable, can be disabled."""
-
-    def test_grid_instability_defers_when_enabled(self):
-        """Recent blackout with cooldown enabled: defers test."""
-        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=last_blackout,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            grid_stability_cooldown_hours=4.0,  # 4h cooldown enabled
-        )
-        assert decision.action == "defer_test"
-        assert "grid_unstable" in decision.reason_code or "blackout" in decision.reason_code
-
-    def test_grid_stability_disabled_ignores_blackout(self):
-        """Cooldown hours = 0: gate disabled, recent blackout is ignored."""
-        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=last_blackout,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            grid_stability_cooldown_hours=0.0,  # DISABLED
-        )
-        # Should NOT defer due to recent blackout
-        assert "grid_unstable" not in decision.reason_code
-        # Should evaluate other gates and propose test
-        assert decision.action in ["propose_test", "defer_test", "block_test"]
-
-    def test_grid_stability_old_blackout_passes(self):
-        """Blackout older than cooldown window: passes gate."""
-        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=last_blackout,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            grid_stability_cooldown_hours=4.0,  # 4h cooldown
-        )
-        assert "grid_unstable" not in decision.reason_code
-
-    def test_grid_stability_no_blackout_passes(self):
-        """No blackout timestamp: passes gate."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            grid_stability_cooldown_hours=4.0,
-        )
-        assert "grid_unstable" not in decision.reason_code
-
-    def test_grid_stability_invalid_timestamp(self):
-        """Invalid blackout timestamp: treated as unavailable, passes."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp="INVALID_TIMESTAMP",
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-            grid_stability_cooldown_hours=4.0,
-        )
-        assert "grid_unstable" not in decision.reason_code
-
-
-class TestCycleBudgetGate:
-    """Cycle budget gate: blocks test when cycles critical (< CRITICAL_CYCLE_BUDGET=5)."""
-
-    def test_critical_cycle_budget_blocks(self):
-        """Cycle budget < 5: blocks test."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=3,  # Critical: only 3 cycles left
-        )
-        assert decision.action == "block_test"
-        assert "critical_cycle_budget" in decision.reason_code
-
-    def test_cycle_budget_at_boundary(self):
-        """Cycle budget = 5: passes gate (boundary)."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=5,  # At threshold
-        )
-        # Should pass cycle budget gate
-        assert "critical_cycle_budget" not in decision.reason_code
-
-
-class TestROIGate:
-    """ROI threshold gate: defers low ROI (marginal benefit)."""
-
-    def test_low_roi_defers_with_plenty_cycles(self):
-        """ROI < ROI_THRESHOLD (0.2) with >20 cycles remaining: defers."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.1,  # Low ROI
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,  # Plenty of cycles
-        )
-        assert decision.action == "defer_test"
-        assert "marginal_roi" in decision.reason_code
-
-    def test_low_roi_ignores_gate_when_cycles_critical(self):
-        """ROI < threshold but cycles < 20: gate doesn't apply (other gates take priority)."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.1,  # Low ROI
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=15,  # < 20, so ROI gate doesn't apply
-        )
-        # Should evaluate sulfation gate instead
-        assert "marginal_roi" not in decision.reason_code
-
-    def test_positive_roi_passes_gate(self):
-        """ROI >= threshold: passes gate."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.25,  # Above 0.2 threshold
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        assert "marginal_roi" not in decision.reason_code
-
-
-class TestSulfationThreshold:
-    """Sulfation threshold gate: proposes deep/quick or defers low sulfation."""
-
-    def test_propose_deep_test_high_sulfation(self):
-        """Sulfation > DEEP_SULFATION_THRESHOLD (0.65): proposes deep test."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.72,
-            cycle_roi=0.35,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        assert decision.action == "propose_test"
-        assert decision.test_type == "deep"
-        assert "sulfation" in decision.reason_code
-
-    def test_propose_quick_test_medium_sulfation(self):
-        """Sulfation 0.40-0.65: proposes quick test."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.52,
-            cycle_roi=0.25,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
         )
         assert decision.action == "propose_test"
         assert decision.test_type == "quick"
-        assert "sulfation" in decision.reason_code
+        assert decision.reason_code == "diagnostic_cadence"
 
-    def test_defer_low_sulfation(self):
-        """Sulfation < QUICK_SULFATION_THRESHOLD (0.40): defers (no test needed)."""
+    def test_first_test_has_no_next_eligible(self):
+        """Proposed test has no next_eligible_timestamp (it's being proposed now)."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.32,
-            cycle_roi=0.25,  # Good ROI so ROI gate doesn't interfere
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
             last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
+        )
+        assert decision.next_eligible_timestamp is None
+
+    def test_first_test_reason_detail_mentions_days(self):
+        """Reason detail includes days since last successful test."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert "inf" in decision.reason_detail.lower() or "since last" in decision.reason_detail.lower()
+
+
+class TestAnnualCadence:
+    """Annual cadence: propose when days_since_last_test_success >= 365."""
+
+    def test_propose_on_cadence_overdue(self):
+        """400 days since last successful test (>= 365): proposes."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.action == "propose_test"
+        assert decision.test_type == "quick"
+        assert decision.reason_code == "diagnostic_cadence"
+
+    def test_propose_at_exactly_365(self):
+        """Exactly 365 days: boundary — propose (>= 365 threshold)."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=365.0,
+            days_since_last_attempt=365.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.action == "propose_test"
+        assert decision.reason_code == "diagnostic_cadence"
+
+    def test_defer_just_under_cadence(self):
+        """364 days since last success (< 365): defers within_cadence."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=364.0,
+            days_since_last_attempt=364.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
         )
         assert decision.action == "defer_test"
-        assert "low_sulfation" in decision.reason_code
+        assert decision.reason_code == "within_cadence"
         assert decision.next_eligible_timestamp is not None
 
-    def test_sulfation_boundary_0_65(self):
-        """Sulfation = 0.65: boundary between quick and deep."""
+    def test_within_cadence_next_eligible_approx(self):
+        """within_cadence: next_eligible is approx 365-30 = 335 days from now."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
+            soh_fraction=0.9,
+            days_since_last_test_success=30.0,
+            days_since_last_attempt=30.0,
             last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
         )
-        assert decision.action == "propose_test"
-        # At boundary 0.65: if sulfation_score > 0.65 is False, elif sulfation_score > 0.40 is True
-        assert decision.test_type == "quick"  # Boundary: <= 0.65 → quick
-
-    def test_sulfation_boundary_0_40(self):
-        """Sulfation = 0.40: boundary between medium and low."""
-        decision = evaluate_test_scheduling(
-            sulfation_score=0.40,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
-            last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
-        )
-        # At boundary 0.40: elif sulfation_score > 0.40 is False, so goes to else (low sulfation)
         assert decision.action == "defer_test"
-        assert "low_sulfation" in decision.reason_code
+        assert decision.reason_code == "within_cadence"
+        # next_eligible should be ~335 days out
+        from datetime import datetime, timezone
+        next_eligible_dt = datetime.fromisoformat(decision.next_eligible_timestamp)
+        now = datetime.now(timezone.utc)
+        days_until = (next_eligible_dt - now).total_seconds() / 86400.0
+        assert 334 < days_until < 336, f"Expected ~335d, got {days_until:.1f}d"
 
 
-class TestGateOrdering:
-    """Test that gates enforce in correct order (SoH first, then rate limit, etc.)."""
+class TestRestartNoRetrigger:
+    """Restart-safety: days_since_last_test_success just under interval defers, not proposes (SCH-02)."""
 
-    def test_soh_floor_before_rate_limit(self):
-        """SoH floor gate evaluated before rate limit."""
+    def test_restart_no_retrigger_30d(self):
+        """30 days since success, 30 since attempt: defers within_cadence (not re-triggered)."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.55,  # Below floor
-            days_since_last_test=2.0,  # Also below rate limit
+            soh_fraction=0.9,
+            days_since_last_test_success=30.0,
+            days_since_last_attempt=30.0,
             last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
         )
-        # SoH floor should be the reason (evaluated first)
-        assert "soh_floor" in decision.reason_code
-        assert "rate_limit" not in decision.reason_code
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "within_cadence"
 
-    def test_rate_limit_before_blackout_credit(self):
-        """Rate limit evaluated before blackout credit."""
-        credit_expires = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    def test_restart_no_retrigger_180d(self):
+        """180 days since success (< 365): defers within_cadence."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=2.0,  # Below rate limit
+            soh_fraction=0.9,
+            days_since_last_test_success=180.0,
+            days_since_last_attempt=180.0,
             last_blackout_timestamp=None,
-            active_blackout_credit={
-                "active": True,
-                "credit_expires": credit_expires,
-            },
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
         )
-        # Rate limit should be the reason (evaluated first)
-        assert "rate_limit" in decision.reason_code
-        assert "blackout_credit" not in decision.reason_code
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "within_cadence"
 
 
-class TestRealWorldScenarios:
-    """Integration-like scenarios with multiple gates."""
+class TestRateLimitGate:
+    """Rate-limit gate keys off days_since_last_attempt (ANY attempt, OK or ERR).
 
-    def test_typical_good_condition(self):
-        """Typical battery in good condition: proposes deep test."""
+    Gate 2 runs BEFORE cadence gate 5, so a recent attempt is rate-limited even if
+    days_since_last_test_success = inf (never succeeded).
+    """
+
+    def test_rate_limit_recent_attempt_defers(self):
+        """3 days since attempt (< 7): rate-limited, even if success=inf."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.72,  # > 0.65 for deep test
-            cycle_roi=0.34,
-            soh_fraction=0.85,
-            days_since_last_test=10.0,
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=3.0,
             last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
+        )
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "rate_limit"
+        assert decision.next_eligible_timestamp is not None
+
+    def test_rate_limit_at_boundary_7d(self):
+        """Exactly 7 days since attempt: passes rate-limit gate."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=7.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.reason_code != "rate_limit"
+
+    def test_rate_limit_never_attempted_passes(self):
+        """inf days since attempt: passes rate-limit gate."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.reason_code != "rate_limit"
+
+
+class TestFailedAttemptBoundaries:
+    """Two-input timing split boundary cases (resolves cycle-2 HIGH).
+
+    Failed attempt 1d ago: rate-limited (days_since_last_attempt=1 < 7).
+    Failed attempt 8d ago: cadence overdue (days_since_last_attempt=8 >= 7, success=inf >= 365).
+    """
+
+    def test_failed_attempt_1d_ago_is_rate_limited(self):
+        """Failed dispatch 1d ago: rate-limited, NOT retried next daily run.
+
+        days_since_last_attempt=1 (<7) → rate_limit
+        days_since_last_test_success=inf → cadence overdue, but rate-limit fires first
+        """
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=1.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "rate_limit"
+
+    def test_failed_attempt_8d_ago_proposes(self):
+        """Failed dispatch 8d ago: rate-limit cleared, cadence overdue → proposes.
+
+        days_since_last_attempt=8 (>=7, rate-limit cleared)
+        days_since_last_test_success=inf (>=365, cadence overdue)
+        Transient error did NOT defer cadence ~365 days — two-input split holds.
+        """
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=8.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
         )
         assert decision.action == "propose_test"
-        assert decision.test_type == "deep"
+        assert decision.reason_code == "diagnostic_cadence"
 
-    def test_battery_approaching_eol(self):
-        """Battery SoH low: test is blocked."""
+    def test_successful_test_30d_ago_defers_within_cadence(self):
+        """Successful test 30d ago: days_since_last_test_success=30 < 365 → within_cadence."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.8,  # High sulfation, would propose
-            cycle_roi=0.5,  # Good ROI
-            soh_fraction=0.55,  # Below 60% floor
-            days_since_last_test=30.0,  # Long time since test
+            soh_fraction=0.9,
+            days_since_last_test_success=30.0,
+            days_since_last_attempt=30.0,
             last_blackout_timestamp=None,
-            active_blackout_credit=None,
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
+        )
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "within_cadence"
+
+
+class TestSoHFloorGate:
+    """SoH floor gate: blocks test if soh_fraction < SOH_FLOOR (0.60)."""
+
+    def test_soh_floor_blocks_below_threshold(self):
+        """SoH 0.55 < 60%: hard block regardless of cadence."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.55,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
         )
         assert decision.action == "block_test"
-        assert "soh_floor" in decision.reason_code
+        assert decision.reason_code == "soh_floor"
+        assert decision.next_eligible_timestamp is not None
 
-    def test_recent_natural_blackout(self):
-        """Battery recently had natural deep discharge: blackout credit defers test."""
-        credit_expires = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+    def test_soh_floor_at_boundary_passes(self):
+        """SoH exactly 60%: passes floor gate."""
         decision = evaluate_test_scheduling(
-            sulfation_score=0.65,
-            cycle_roi=0.3,
-            soh_fraction=0.85,
-            days_since_last_test=15.0,  # Long enough for rate limit
+            soh_fraction=0.60,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
             last_blackout_timestamp=None,
-            active_blackout_credit={
-                "active": True,
-                "credit_expires": credit_expires,
-            },
-            cycle_budget_remaining=50,
+            cycle_budget_remaining=100,
+        )
+        assert decision.reason_code != "soh_floor"
+
+    def test_soh_floor_before_rate_limit(self):
+        """SoH floor (gate 1) fires before rate-limit (gate 2)."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.55,  # Below floor
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=3.0,  # Also rate-limited
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.reason_code == "soh_floor"
+
+
+class TestGridCooldownGate:
+    """Grid stability gate: defers test after recent blackout."""
+
+    def test_recent_blackout_defers(self):
+        """Blackout 1h ago with 4h cooldown: defers grid_unstable."""
+        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=last_blackout,
+            cycle_budget_remaining=100,
+            grid_stability_cooldown_hours=4.0,
         )
         assert decision.action == "defer_test"
-        assert "blackout_credit" in decision.reason_code
+        assert decision.reason_code == "grid_unstable"
+
+    def test_old_blackout_passes(self):
+        """Blackout 5h ago with 4h cooldown: passes grid gate."""
+        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=last_blackout,
+            cycle_budget_remaining=100,
+            grid_stability_cooldown_hours=4.0,
+        )
+        assert decision.reason_code != "grid_unstable"
+
+    def test_no_blackout_passes(self):
+        """No blackout timestamp: passes grid gate."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+            grid_stability_cooldown_hours=4.0,
+        )
+        assert decision.reason_code != "grid_unstable"
+
+    def test_cooldown_disabled_ignores_blackout(self):
+        """cooldown_hours=0: gate disabled; recent blackout ignored."""
+        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=last_blackout,
+            cycle_budget_remaining=100,
+            grid_stability_cooldown_hours=0.0,
+        )
+        assert decision.reason_code != "grid_unstable"
+
+    def test_invalid_blackout_timestamp_passes(self):
+        """Invalid blackout timestamp: treated as unavailable, passes."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp="INVALID_TIMESTAMP",
+            cycle_budget_remaining=100,
+            grid_stability_cooldown_hours=4.0,
+        )
+        assert decision.reason_code != "grid_unstable"
+
+
+class TestCycleBudgetGate:
+    """Cycle budget gate: blocks test when < CRITICAL_CYCLE_BUDGET (5)."""
+
+    def test_critical_budget_blocks(self):
+        """Cycle budget 3 < 5: hard block."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=3,
+        )
+        assert decision.action == "block_test"
+        assert decision.reason_code == "critical_cycle_budget"
+
+    def test_budget_at_boundary_passes(self):
+        """Cycle budget exactly 5: passes (boundary)."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=400.0,
+            days_since_last_attempt=400.0,
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=5,
+        )
+        assert decision.reason_code != "critical_cycle_budget"
+
+
+class TestGateOrderIntegration:
+    """Verify gate ordering: SoH → rate-limit → grid → cycle-budget → cadence."""
+
+    def test_all_gates_pass_proposes_quick(self):
+        """All gates pass: proposes quick test via diagnostic_cadence."""
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=100,
+        )
+        assert decision.action == "propose_test"
+        assert decision.test_type == "quick"
+
+    def test_never_proposes_deep(self):
+        """Engine only autonomously proposes quick (not deep) per SCH-03."""
+        # Run many scenarios that would have been "deep" in the old engine
+        for soh in [0.65, 0.85, 0.95]:
+            decision = evaluate_test_scheduling(
+                soh_fraction=soh,
+                days_since_last_test_success=400.0,
+                days_since_last_attempt=400.0,
+                last_blackout_timestamp=None,
+                cycle_budget_remaining=100,
+            )
+            if decision.action == "propose_test":
+                assert decision.test_type == "quick", f"Expected quick, got deep for soh={soh}"
+
+    def test_rate_limit_before_grid_cooldown(self):
+        """Rate-limit (gate 2) fires before grid cooldown (gate 3)."""
+        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=2.0,  # Rate-limited
+            last_blackout_timestamp=last_blackout,  # Also grid unstable
+            cycle_budget_remaining=100,
+            grid_stability_cooldown_hours=4.0,
+        )
+        assert decision.reason_code == "rate_limit"
+
+    def test_grid_before_cycle_budget(self):
+        """Grid stability (gate 3) fires before cycle budget (gate 4)."""
+        last_blackout = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        decision = evaluate_test_scheduling(
+            soh_fraction=0.9,
+            days_since_last_test_success=float("inf"),
+            days_since_last_attempt=float("inf"),
+            last_blackout_timestamp=last_blackout,
+            cycle_budget_remaining=3,  # Also critical budget
+            grid_stability_cooldown_hours=4.0,
+        )
+        assert decision.reason_code == "grid_unstable"
