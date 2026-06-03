@@ -90,7 +90,10 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
     # --- Capacity / SoH ---
     soh = model_data.get("soh", 1.0)
     capacity_ah = model_data.get("capacity_ah") or model_data.get("full_capacity_ah_ref")
-    measured_cap = model_data.get("measured_capacity_ah")
+    # Baseline measured capacity is persisted top-level as `capacity_ah_measured`
+    # (model.py / discharge_handler.py). `measured_capacity_ah` only exists inside
+    # discharge_events[] entries, never top-level — reading it here printed nothing.
+    measured_cap = model_data.get("capacity_ah_measured")
     soh_str = f"{soh:.0%}"
     if capacity_ah:
         rated_str = f"rated {capacity_ah} Ah"
