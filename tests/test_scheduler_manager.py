@@ -33,8 +33,6 @@ def _make_scheduler(
     nut_client = nut_client or Mock()
     scheduling_config = scheduling_config or _make_scheduling_config()
     discharge_handler = discharge_handler or Mock(
-        last_sulfation_score=0.1,
-        last_cycle_roi=0.5,
         last_cycle_budget_remaining=100,
     )
     return SchedulerManager(
@@ -145,32 +143,81 @@ class TestSchedulerManager:
         now = datetime(2026, 3, 20, 10, 9, 0, tzinfo=timezone.utc)
         assert sm._should_run_scheduler(now) is True
 
-    # --- _calculate_days_since_last_test ---
+    # --- _calculate_days_since_last_attempt ---
 
-    def test_days_since_last_test_no_timestamp_returns_inf(self):
+    def test_days_since_last_attempt_no_timestamp_returns_inf(self):
         """Returns inf when no upscmd timestamp in model."""
         bm = Mock()
         bm.get_last_upscmd_timestamp.return_value = None
         sm = _make_scheduler(battery_model=bm)
-        result = sm._calculate_days_since_last_test()
+        result = sm._calculate_days_since_last_attempt()
         assert result == float("inf")
 
-    def test_days_since_last_test_valid_timestamp(self):
+    def test_days_since_last_attempt_valid_timestamp(self):
         """Returns correct float days for a recent valid timestamp."""
         bm = Mock()
-        # 2 days ago
         two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
         bm.get_last_upscmd_timestamp.return_value = two_days_ago
         sm = _make_scheduler(battery_model=bm)
-        result = sm._calculate_days_since_last_test()
+        result = sm._calculate_days_since_last_attempt()
         assert 1.9 < result < 2.1
 
-    def test_days_since_last_test_invalid_timestamp_returns_inf(self):
+    def test_days_since_last_attempt_invalid_timestamp_returns_inf(self):
         """Returns inf for unparseable timestamp string."""
         bm = Mock()
         bm.get_last_upscmd_timestamp.return_value = "not-a-timestamp"
         sm = _make_scheduler(battery_model=bm)
-        result = sm._calculate_days_since_last_test()
+        result = sm._calculate_days_since_last_attempt()
+        assert result == float("inf")
+
+    def test_days_since_last_attempt_status_agnostic(self):
+        """_calculate_days_since_last_attempt returns a value regardless of upscmd status."""
+        bm = Mock()
+        one_day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        bm.get_last_upscmd_timestamp.return_value = one_day_ago
+        # Should return ~1 even for error status — status is NOT checked
+        sm = _make_scheduler(battery_model=bm)
+        result = sm._calculate_days_since_last_attempt()
+        assert 0.9 < result < 1.1
+
+    # --- _calculate_days_since_last_test_success ---
+
+    def test_days_since_last_test_success_never_attempted_returns_inf(self):
+        """Returns inf when no upscmd status (never attempted)."""
+        bm = Mock()
+        bm.get_last_upscmd_status.return_value = None
+        bm.get_last_upscmd_timestamp.return_value = None
+        sm = _make_scheduler(battery_model=bm)
+        result = sm._calculate_days_since_last_test_success()
+        assert result == float("inf")
+
+    def test_days_since_last_test_success_ok_returns_age(self):
+        """Returns correct age when last status is OK."""
+        bm = Mock()
+        bm.get_last_upscmd_status.return_value = "OK"
+        thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        bm.get_last_upscmd_timestamp.return_value = thirty_days_ago
+        sm = _make_scheduler(battery_model=bm)
+        result = sm._calculate_days_since_last_test_success()
+        assert 29.9 < result < 30.1
+
+    def test_days_since_last_test_success_err_returns_inf(self):
+        """Returns inf when last status is an error (not OK)."""
+        bm = Mock()
+        bm.get_last_upscmd_status.return_value = "ERR_SOCKET: connection refused"
+        one_day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        bm.get_last_upscmd_timestamp.return_value = one_day_ago
+        sm = _make_scheduler(battery_model=bm)
+        result = sm._calculate_days_since_last_test_success()
+        assert result == float("inf")
+
+    def test_days_since_last_test_success_invalid_timestamp_returns_inf(self):
+        """Returns inf when status is OK but timestamp is unparseable."""
+        bm = Mock()
+        bm.get_last_upscmd_status.return_value = "OK"
+        bm.get_last_upscmd_timestamp.return_value = "not-a-timestamp"
+        sm = _make_scheduler(battery_model=bm)
+        result = sm._calculate_days_since_last_test_success()
         assert result == float("inf")
 
     # --- _get_last_natural_blackout ---
@@ -244,32 +291,47 @@ class TestSchedulerManager:
 
     # --- _gather_scheduler_inputs ---
 
-    def test_gather_scheduler_inputs_returns_all_7_keys(self):
-        """_gather_scheduler_inputs returns dict with all 7 required keys."""
+    def test_gather_scheduler_inputs_returns_correct_keys(self):
+        """_gather_scheduler_inputs returns dict with required keys (no sulfation/cycle_roi)."""
         bm = Mock()
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
-        bm.get_blackout_credit.return_value = None
+        bm.get_last_upscmd_status.return_value = None
 
         dh = Mock()
-        dh.last_sulfation_score = 0.2
-        dh.last_cycle_roi = 0.6
         dh.last_cycle_budget_remaining = 80
 
         sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
         inputs = sm._gather_scheduler_inputs()
 
         required_keys = {
-            "sulfation_score",
-            "cycle_roi",
             "soh_fraction",
-            "days_since_last_test",
+            "days_since_last_test_success",
+            "days_since_last_attempt",
             "last_blackout",
-            "active_credit",
             "cycle_budget",
         }
         assert set(inputs.keys()) == required_keys
+
+    def test_gather_scheduler_inputs_no_sulfation_keys(self):
+        """_gather_scheduler_inputs does NOT include sulfation_score or cycle_roi."""
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 0.85
+        bm.get_last_upscmd_timestamp.return_value = None
+        bm.get_last_upscmd_status.return_value = None
+
+        dh = Mock()
+        dh.last_cycle_budget_remaining = 80
+
+        sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
+        inputs = sm._gather_scheduler_inputs()
+
+        assert "sulfation_score" not in inputs
+        assert "cycle_roi" not in inputs
+        assert "active_credit" not in inputs
+        assert "days_since_last_test" not in inputs  # old single-value key gone
 
     def test_gather_scheduler_inputs_values(self):
         """_gather_scheduler_inputs returns correct values from dependencies."""
@@ -277,23 +339,160 @@ class TestSchedulerManager:
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.9
         bm.get_last_upscmd_timestamp.return_value = None
-        bm.get_blackout_credit.return_value = {"active": True}
+        bm.get_last_upscmd_status.return_value = None
 
         dh = Mock()
-        dh.last_sulfation_score = 0.3
-        dh.last_cycle_roi = 0.7
         dh.last_cycle_budget_remaining = 50
 
         sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
         inputs = sm._gather_scheduler_inputs()
 
-        assert inputs["sulfation_score"] == 0.3
-        assert inputs["cycle_roi"] == 0.7
         assert inputs["soh_fraction"] == 0.9
-        assert inputs["days_since_last_test"] == float("inf")
+        assert inputs["days_since_last_test_success"] == float("inf")
+        assert inputs["days_since_last_attempt"] == float("inf")
         assert inputs["last_blackout"] is None
-        assert inputs["active_credit"] == {"active": True}
         assert inputs["cycle_budget"] == 50
+
+    # --- Two-input timing split boundary tests (resolves cycle-2 HIGH) ---
+
+    def test_recent_failed_attempt_is_rate_limited(self):
+        """Recent failed dispatch (1d ago) is rate-limited, NOT retried next daily run.
+
+        days_since_last_attempt ~= 1 (<7) → rate_limit
+        days_since_last_test_success = inf (status ERR, cadence NOT deferred ~365d)
+        """
+        from src.model import BatteryModel
+
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 0.9
+        one_day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        bm.get_last_upscmd_timestamp.return_value = one_day_ago
+        bm.get_last_upscmd_status.return_value = "ERR_SOCKET: connection refused"
+
+        dh = Mock()
+        dh.last_cycle_budget_remaining = 100
+
+        sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
+
+        # Verify individual timing inputs
+        attempt_age = sm._calculate_days_since_last_attempt()
+        success_age = sm._calculate_days_since_last_test_success()
+        assert 0.9 < attempt_age < 1.1, f"Expected ~1d attempt age, got {attempt_age}"
+        assert success_age == float("inf"), f"Expected inf success age, got {success_age}"
+
+        # Verify gathered inputs produce rate_limit decision
+        inputs = sm._gather_scheduler_inputs()
+        from src.battery_math.scheduler import evaluate_test_scheduling
+        decision = evaluate_test_scheduling(
+            soh_fraction=inputs["soh_fraction"],
+            days_since_last_test_success=inputs["days_since_last_test_success"],
+            days_since_last_attempt=inputs["days_since_last_attempt"],
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=int(inputs["cycle_budget"]),
+        )
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "rate_limit"
+
+    def test_old_failed_attempt_does_not_defer_cadence(self):
+        """Failed dispatch 8d ago: rate-limit cleared; cadence overdue → proposes.
+
+        days_since_last_attempt ~= 8 (>=7, rate-limit cleared)
+        days_since_last_test_success = inf (status ERR, so cadence was not reset ~365d)
+        Result: propose_test/diagnostic_cadence
+        """
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 0.9
+        eight_days_ago = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        bm.get_last_upscmd_timestamp.return_value = eight_days_ago
+        bm.get_last_upscmd_status.return_value = "ERR_SOCKET: connection refused"
+
+        dh = Mock()
+        dh.last_cycle_budget_remaining = 100
+
+        sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
+
+        attempt_age = sm._calculate_days_since_last_attempt()
+        success_age = sm._calculate_days_since_last_test_success()
+        assert 7.9 < attempt_age < 8.1, f"Expected ~8d attempt age, got {attempt_age}"
+        assert success_age == float("inf"), f"Expected inf success age, got {success_age}"
+
+        inputs = sm._gather_scheduler_inputs()
+        from src.battery_math.scheduler import evaluate_test_scheduling
+        decision = evaluate_test_scheduling(
+            soh_fraction=inputs["soh_fraction"],
+            days_since_last_test_success=inputs["days_since_last_test_success"],
+            days_since_last_attempt=inputs["days_since_last_attempt"],
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=int(inputs["cycle_budget"]),
+        )
+        assert decision.action == "propose_test"
+        assert decision.reason_code == "diagnostic_cadence"
+
+    def test_successful_test_resets_cadence_clock(self):
+        """Successful test 30d ago: days_since_last_test_success=30 → within_cadence."""
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 0.9
+        thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        bm.get_last_upscmd_timestamp.return_value = thirty_days_ago
+        bm.get_last_upscmd_status.return_value = "OK"
+
+        dh = Mock()
+        dh.last_cycle_budget_remaining = 100
+
+        sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
+
+        attempt_age = sm._calculate_days_since_last_attempt()
+        success_age = sm._calculate_days_since_last_test_success()
+        assert 29.9 < attempt_age < 30.1, f"Expected ~30d attempt age, got {attempt_age}"
+        assert 29.9 < success_age < 30.1, f"Expected ~30d success age, got {success_age}"
+
+        inputs = sm._gather_scheduler_inputs()
+        from src.battery_math.scheduler import evaluate_test_scheduling
+        decision = evaluate_test_scheduling(
+            soh_fraction=inputs["soh_fraction"],
+            days_since_last_test_success=inputs["days_since_last_test_success"],
+            days_since_last_attempt=inputs["days_since_last_attempt"],
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=int(inputs["cycle_budget"]),
+        )
+        assert decision.action == "defer_test"
+        assert decision.reason_code == "within_cadence"
+
+    # --- Deadlock proof: fresh model proposes test ---
+
+    def test_fresh_model_proposes_quick_test(self):
+        """Deadlock fix: fresh model (no upscmd history) with soh 0.9 → propose quick.
+
+        This is the end-to-end proof that the bootstrap deadlock is resolved.
+        """
+        from src.model import BatteryModel
+
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 0.9
+        bm.get_last_upscmd_timestamp.return_value = None
+        bm.get_last_upscmd_status.return_value = None
+
+        dh = Mock()
+        dh.last_cycle_budget_remaining = 100
+
+        sm = _make_scheduler(battery_model=bm, discharge_handler=dh)
+        inputs = sm._gather_scheduler_inputs()
+
+        from src.battery_math.scheduler import evaluate_test_scheduling
+        decision = evaluate_test_scheduling(
+            soh_fraction=inputs["soh_fraction"],
+            days_since_last_test_success=inputs["days_since_last_test_success"],
+            days_since_last_attempt=inputs["days_since_last_attempt"],
+            last_blackout_timestamp=None,
+            cycle_budget_remaining=int(inputs["cycle_budget"]),
+        )
+        assert decision.action == "propose_test"
+        assert decision.test_type == "quick"
+        assert decision.reason_code == "diagnostic_cadence"
 
     # --- run_daily ---
 
@@ -331,12 +530,12 @@ class TestSchedulerManager:
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
-        bm.get_blackout_credit.return_value = None
+        bm.get_last_upscmd_status.return_value = None
 
         sm = _make_scheduler(battery_model=bm)
         now = datetime(2026, 3, 20, 10, 5, 0, tzinfo=timezone.utc)
 
-        decision = SchedulerDecision(action="defer_test", test_type="deep", reason_code="soh_ok")
+        decision = SchedulerDecision(action="defer_test", test_type=None, reason_code="within_cadence")
 
         with patch("src.scheduler_manager.evaluate_test_scheduling", return_value=decision):
             sm.run_daily(now, Mock())
@@ -349,19 +548,19 @@ class TestSchedulerManager:
         bm.state = {"discharge_events": []}
         bm.get_soh.return_value = 0.85
         bm.get_last_upscmd_timestamp.return_value = None
-        bm.get_blackout_credit.return_value = None
+        bm.get_last_upscmd_status.return_value = None
 
         sm = _make_scheduler(battery_model=bm)
         now = datetime(2026, 3, 20, 10, 5, 0, tzinfo=timezone.utc)
 
         decision = SchedulerDecision(
-            action="defer_test", test_type="deep", reason_code="blackout_credit_active"
+            action="defer_test", test_type=None, reason_code="grid_unstable"
         )
 
         with patch("src.scheduler_manager.evaluate_test_scheduling", return_value=decision):
             sm.run_daily(now, Mock())
 
-        assert sm.last_scheduling_reason == "blackout_credit_active"
+        assert sm.last_scheduling_reason == "grid_unstable"
 
 
 # ---------------------------------------------------------------------------
@@ -412,8 +611,8 @@ class TestDispatchWithAuditImport:
 
         decision = SchedulerDecision(
             action="propose_test",
-            test_type="deep",
-            reason_code="sulfation_high",
+            test_type="quick",
+            reason_code="diagnostic_cadence",
         )
 
         with patch("src.scheduler_manager.logger"):

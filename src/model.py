@@ -886,6 +886,16 @@ class BatteryModel:
         """Get ISO8601 timestamp of last upscmd attempt, or None."""
         return self.state.get("last_upscmd_timestamp")
 
+    def get_last_upscmd_status(self) -> Optional[str]:
+        """Get status of last upscmd attempt ('OK', error string, or None if never attempted).
+
+        Symmetric public getter for last_upscmd_status, matching get_last_upscmd_timestamp().
+        Used by _calculate_days_since_last_test_success in SchedulerManager to distinguish
+        successful diagnostics (status='OK') from failed dispatches — so a transient error
+        cannot defer the next annual cadence ~365 days.
+        """
+        return self.state.get("last_upscmd_status")
+
     def get_blackout_credit(self) -> Optional[dict]:
         """Get current blackout credit dict, or None if inactive/expired."""
         return self.state.get("blackout_credit")

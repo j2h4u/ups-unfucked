@@ -175,10 +175,10 @@ class SchedulerManager:
 
         Args:
             battery_model: Persistent battery model — used for scheduling state,
-                upscmd result persistence, and blackout credit queries.
+                upscmd result persistence, and grid-stability blackout queries.
             nut_client: NUTClient instance for sending test commands.
             scheduling_config: SchedulingConfig with eval_hour_utc, cooldown, verbose flag.
-            discharge_handler: DischargeHandler for sulfation score, cycle ROI, cycle budget.
+            discharge_handler: DischargeHandler for cycle budget remaining.
         """
         self.battery_model = battery_model
         self.nut_client = nut_client
@@ -232,22 +232,19 @@ class SchedulerManager:
                     "Scheduler inputs",
                     extra={
                         "event_type": "scheduler_inputs",
-                        "sulfation_score": f"{scheduler_inputs['sulfation_score']:.3f}",
-                        "cycle_roi": f"{scheduler_inputs['cycle_roi']:.3f}",
                         "soh_fraction": f"{scheduler_inputs['soh_fraction']:.1%}",
-                        "days_since_last_test": f"{scheduler_inputs['days_since_last_test']:.1f}",
+                        "days_since_last_test_success": f"{scheduler_inputs['days_since_last_test_success']:.1f}",
+                        "days_since_last_attempt": f"{scheduler_inputs['days_since_last_attempt']:.1f}",
                         "cycle_budget": int(scheduler_inputs["cycle_budget"]),
                     },
                 )
 
             last_blackout = scheduler_inputs["last_blackout"]
             decision = evaluate_test_scheduling(
-                sulfation_score=scheduler_inputs["sulfation_score"],
-                cycle_roi=scheduler_inputs["cycle_roi"],
                 soh_fraction=scheduler_inputs["soh_fraction"],
-                days_since_last_test=scheduler_inputs["days_since_last_test"],
+                days_since_last_test_success=scheduler_inputs["days_since_last_test_success"],
+                days_since_last_attempt=scheduler_inputs["days_since_last_attempt"],
                 last_blackout_timestamp=last_blackout.get("timestamp") if last_blackout else None,
-                active_blackout_credit=scheduler_inputs["active_credit"],
                 cycle_budget_remaining=int(scheduler_inputs["cycle_budget"]),
                 grid_stability_cooldown_hours=self.scheduling_config.grid_stability_cooldown_hours,
             )
@@ -286,8 +283,15 @@ class SchedulerManager:
 
         return True
 
-    def _calculate_days_since_last_test(self) -> float:
-        """Calculate days since last upscmd, or inf if never tested."""
+    def _calculate_days_since_last_attempt(self) -> float:
+        """Calculate days since last upscmd attempt regardless of status, or inf if never.
+
+        Reads ONLY last_upscmd_timestamp via the public getter — status-agnostic.
+        Any dispatch (OK or ERR) sets last_upscmd_timestamp via update_upscmd_result,
+        so this value is small after a failed dispatch and large (or inf) after no attempt.
+        Feeds the rate-limit gate only; keying off any attempt prevents a failed dispatch
+        from being retried on the next daily run.
+        """
         last_ts = self.battery_model.get_last_upscmd_timestamp()
         if not last_ts:
             return float("inf")
@@ -296,7 +300,42 @@ class SchedulerManager:
             return (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400.0
         except (ValueError, TypeError) as e:
             logger.debug(
-                f"Invalid last_upscmd_timestamp '{last_ts}': {e}; treating as never tested"
+                f"Invalid last_upscmd_timestamp '{last_ts}': {e}; treating as never attempted"
+            )
+            return float("inf")
+
+    def _calculate_days_since_last_test_success(self) -> float:
+        """Calculate days since last SUCCESSFUL upscmd (status='OK'), or inf if never succeeded.
+
+        Reads last_upscmd_timestamp via get_last_upscmd_timestamp() AND
+        last_upscmd_status via get_last_upscmd_status() — both through public getters,
+        never reaching into battery_model.state[...] directly for upscmd status.
+
+        Returns inf when:
+        - last_upscmd_status is absent (never attempted)
+        - last_upscmd_status != 'OK' (transient error: ERR_SOCKET, ERR_UNKNOWN, etc.)
+        - last_upscmd_timestamp is absent or unparseable (corrupt state)
+
+        This ensures a failed dispatch cannot defer the next annual diagnostic ~365 days:
+        update_upscmd_result writes timestamp+status together on every attempt, so a
+        failed dispatch (status='ERR_SOCKET: ...') yields days_since_last_test_success=inf
+        while days_since_last_attempt is small — the two-input split holds simultaneously.
+
+        Feeds the annual cadence gate only.
+        """
+        status = self.battery_model.get_last_upscmd_status()
+        if status != "OK":
+            # Never succeeded, or last dispatch failed — cadence clock not reset
+            return float("inf")
+        last_ts = self.battery_model.get_last_upscmd_timestamp()
+        if not last_ts:
+            return float("inf")
+        try:
+            last_dt = datetime.fromisoformat(last_ts)
+            return (datetime.now(timezone.utc) - last_dt).total_seconds() / 86400.0
+        except (ValueError, TypeError) as e:
+            logger.debug(
+                f"Invalid last_upscmd_timestamp '{last_ts}': {e}; treating as never succeeded"
             )
             return float("inf")
 
@@ -317,16 +356,20 @@ class SchedulerManager:
     def _gather_scheduler_inputs(self) -> dict:
         """Collect all inputs needed for scheduler evaluation.
 
-        Returns dict with keys: sulfation_score, cycle_roi, soh_fraction,
-        days_since_last_test, last_blackout, active_credit, cycle_budget.
+        Returns dict with keys: soh_fraction, days_since_last_test_success,
+        days_since_last_attempt, last_blackout, cycle_budget.
+
+        Two separate timing inputs — never collapsed into one value:
+        - days_since_last_test_success: age of last OK diagnostic (inf if never OK)
+          → feeds cadence gate
+        - days_since_last_attempt: age of last dispatch regardless of status (inf if never)
+          → feeds rate-limit gate
         """
         return {
-            "sulfation_score": self.discharge_handler.last_sulfation_score or 0.0,
-            "cycle_roi": self.discharge_handler.last_cycle_roi or 0.0,
             "soh_fraction": self.battery_model.get_soh(),
-            "days_since_last_test": self._calculate_days_since_last_test(),
+            "days_since_last_test_success": self._calculate_days_since_last_test_success(),
+            "days_since_last_attempt": self._calculate_days_since_last_attempt(),
             "last_blackout": self._get_last_natural_blackout(),
-            "active_credit": self.battery_model.get_blackout_credit(),
             "cycle_budget": self.discharge_handler.last_cycle_budget_remaining or 100,
         }
 
@@ -352,8 +395,6 @@ class SchedulerManager:
                 "action": decision.action,
                 "reason_code": decision.reason_code,
                 "reason_detail": decision.reason_detail,
-                "sulfation_score": f"{scheduler_inputs['sulfation_score']:.3f}",
-                "roi": f"{scheduler_inputs['cycle_roi']:.3f}",
                 "soh_fraction": f"{scheduler_inputs['soh_fraction']:.1%}",
             },
         )
