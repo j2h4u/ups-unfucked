@@ -9,8 +9,8 @@ Field sources are split by where the data lives:
   - model.json (via BatteryModel): SoH, replacement date, new-battery flags, and
     capacity convergence (computed canonically by ``get_convergence_status`` — the
     bash modules used to reimplement this).
-  - the daemon's runtime health endpoint: sulfation score and next-test timestamp,
-    which are per-poll scheduler outputs not persisted in model.json.
+  - the daemon's runtime health endpoint: next-test timestamp,
+    which is a per-poll scheduler output not persisted in model.json.
 
 Invoke: ``python3 -m src.motd_status`` → one ``key=value`` line per field on stdout.
 Absent values render as an empty string so the bash side can skip lines cleanly.
@@ -78,8 +78,7 @@ def render_motd(model_path: Path | None = None, health_path: Path | None = None)
         "capacity_samples": str(convergence.sample_count),
         "capacity_status": _capacity_status(convergence.sample_count, convergence.converged),
         "capacity_confidence_pct": str(round(convergence.confidence_percent)),
-        # --- Sulfation / scheduling (runtime health endpoint) ---
-        "sulfation_pct": _fraction_to_pct(health.get("sulfation_score")),
+        # --- Scheduling (runtime health endpoint) ---
         "next_test_timestamp": health.get("next_test_timestamp") or "",
     }
     return "\n".join(f"{key}={value}" for key, value in fields.items())

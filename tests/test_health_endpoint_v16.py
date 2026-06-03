@@ -1,11 +1,11 @@
-"""Tests for health.json export with sulfation/ROI extensions (RPT-01).
+"""Tests for health.json export (RPT-01).
 
 Integration test scaffold for health endpoint export layer.
 Tests cover:
 - File creation and basic structure
-- Sulfation fields (sulfation_score, score_confidence, days_since_deep, ir_trend, recovery_delta)
-- ROI fields (cycle_roi, cycle_budget_remaining, scheduling_reason, next_test_timestamp)
-- Discharge fields (last_discharge_timestamp, natural_blackout_credit)
+- Diagnostic fields (days_since_deep, ir_trend_rate, cycle_budget_remaining)
+- Scheduling fields (scheduling_reason, next_test_timestamp)
+- Discharge fields (last_discharge_timestamp)
 - Null handling for optional fields
 - Backward compatibility with v2.0 fields
 - ISO8601 and unix timestamp formats
@@ -72,55 +72,14 @@ def test_health_endpoint_includes_shutdown_imminent(
 
 
 @pytest.mark.integration
-def test_health_endpoint_includes_v16_sulfation_fields(
+def test_health_endpoint_includes_diagnostic_fields(
     health_endpoint_temp_file, baseline_health_params
 ):
-    """Verify health.json contains sulfation fields.
+    """Verify health.json contains diagnostic and scheduling fields.
 
     Required fields:
-    - sulfation_score (float or null)
-    - sulfation_score_confidence (string)
     - days_since_deep (float or null)
     - ir_trend_rate (float or null)
-    - recovery_delta (float or null)
-    """
-    with patch("src.monitor_config.HEALTH_ENDPOINT_PATH", health_endpoint_temp_file):
-        write_health_endpoint(
-            HealthSnapshot(
-                **baseline_health_params,
-                sulfation_score=0.45,
-                sulfation_confidence="high",
-                days_since_deep=7.2,
-                ir_trend_rate=0.000008,
-                recovery_delta=0.12,
-            )
-        )
-
-        with open(health_endpoint_temp_file) as f:
-            data = json.load(f)
-
-        assert "sulfation_score" in data, "Missing sulfation_score field"
-        assert data["sulfation_score"] == 0.45, f"Expected 0.45, got {data['sulfation_score']}"
-
-        assert "sulfation_score_confidence" in data, "Missing sulfation_score_confidence field"
-        assert data["sulfation_score_confidence"] == "high"
-
-        assert "days_since_deep" in data, "Missing days_since_deep field"
-        assert data["days_since_deep"] == 7.2, f"Expected 7.2, got {data['days_since_deep']}"
-
-        assert "ir_trend_rate" in data, "Missing ir_trend_rate field"
-        assert abs(data["ir_trend_rate"] - 0.000008) < 1e-9, "ir_trend_rate precision incorrect"
-
-        assert "recovery_delta" in data, "Missing recovery_delta field"
-        assert data["recovery_delta"] == 0.12, f"Expected 0.12, got {data['recovery_delta']}"
-
-
-@pytest.mark.integration
-def test_health_endpoint_includes_v16_roi_fields(health_endpoint_temp_file, baseline_health_params):
-    """Verify health.json contains ROI fields.
-
-    Required fields:
-    - cycle_roi (float or null)
     - cycle_budget_remaining (int or null)
     - scheduling_reason (string)
     - next_test_timestamp (int or null)
@@ -129,7 +88,8 @@ def test_health_endpoint_includes_v16_roi_fields(health_endpoint_temp_file, base
         write_health_endpoint(
             HealthSnapshot(
                 **baseline_health_params,
-                cycle_roi=0.52,
+                days_since_deep=7.2,
+                ir_trend_rate=0.000008,
                 cycle_budget_remaining=150,
                 scheduling_reason="observing",
                 next_test_timestamp=1710845400,
@@ -139,8 +99,11 @@ def test_health_endpoint_includes_v16_roi_fields(health_endpoint_temp_file, base
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
 
-        assert "cycle_roi" in data, "Missing cycle_roi field"
-        assert data["cycle_roi"] == 0.52, f"Expected 0.52, got {data['cycle_roi']}"
+        assert "days_since_deep" in data, "Missing days_since_deep field"
+        assert data["days_since_deep"] == 7.2, f"Expected 7.2, got {data['days_since_deep']}"
+
+        assert "ir_trend_rate" in data, "Missing ir_trend_rate field"
+        assert abs(data["ir_trend_rate"] - 0.000008) < 1e-9, "ir_trend_rate precision incorrect"
 
         assert "cycle_budget_remaining" in data, "Missing cycle_budget_remaining field"
         assert data["cycle_budget_remaining"] == 150
@@ -177,32 +140,23 @@ def test_health_endpoint_includes_v16_discharge_fields(
 
 
 @pytest.mark.integration
-def test_health_endpoint_nulls_when_sulfation_not_provided(
+def test_health_endpoint_nulls_when_optional_fields_not_provided(
     health_endpoint_temp_file, baseline_health_params
 ):
-    """Verify health.json allows sulfation_score=None without error."""
+    """Verify health.json serializes None optional fields without error."""
     with patch("src.monitor_config.HEALTH_ENDPOINT_PATH", health_endpoint_temp_file):
-        # Call without sulfation parameters (all default to None)
+        # Call without optional parameters (all default to None)
         write_health_endpoint(HealthSnapshot(**baseline_health_params))
 
         with open(health_endpoint_temp_file) as f:
             data = json.load(f)
 
-        # Verify sulfation/ROI fields exist but are null
-        assert "sulfation_score" in data, "sulfation_score field missing"
-        assert data["sulfation_score"] is None, f"Expected None, got {data['sulfation_score']}"
-
+        # Verify diagnostic fields exist but are null when not provided
         assert "days_since_deep" in data, "days_since_deep field missing"
         assert data["days_since_deep"] is None
 
         assert "ir_trend_rate" in data, "ir_trend_rate field missing"
         assert data["ir_trend_rate"] is None
-
-        assert "recovery_delta" in data, "recovery_delta field missing"
-        assert data["recovery_delta"] is None
-
-        assert "cycle_roi" in data, "cycle_roi field missing"
-        assert data["cycle_roi"] is None
 
         assert "last_discharge_timestamp" in data, "last_discharge_timestamp field missing"
         assert data["last_discharge_timestamp"] is None

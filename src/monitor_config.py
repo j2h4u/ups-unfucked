@@ -72,8 +72,7 @@ ERROR_LOG_BURST = (
 class SchedulingConfig:
     """User-configurable scheduling knobs.
 
-    Algorithmic constants (SoH floor, rate limit, ROI threshold, sulfation
-    thresholds, cycle budget, blackout credit window) live as named constants
+    Algorithmic constants (SoH floor, rate limit, cycle budget) live as named constants
     in their respective modules (scheduler.py constants, discharge_handler.py inline constants).
     """
 
@@ -300,12 +299,8 @@ class HealthSnapshot:
     capacity_confidence: float = 0.0  # [0.0, 1.0] — derived from 1-CoV
     capacity_samples_count: int = 0
     capacity_converged: bool = False  # count >= 3 AND CoV < 0.10
-    sulfation_score: Optional[float] = None  # [0.0, 1.0]
-    sulfation_confidence: Optional[str] = None  # 'high' | 'medium' | 'low'
     days_since_deep: Optional[float] = None  # Days since last >70% DoD discharge
     ir_trend_rate: Optional[float] = None  # Ω/day (positive = degrading)
-    recovery_delta: Optional[float] = None  # SoH change this discharge [0, 1]
-    cycle_roi: Optional[float] = None  # [0.0, 1.0]
     cycle_budget_remaining: Optional[int] = None  # Estimated remaining cycles
     scheduling_reason: str = "observing"
     next_test_timestamp: Optional[str] = None
@@ -341,12 +336,8 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
         "capacity_confidence": round(snapshot.capacity_confidence, 3),
         "capacity_samples_count": snapshot.capacity_samples_count,
         "capacity_converged": snapshot.capacity_converged,
-        "sulfation_score": _opt_round(snapshot.sulfation_score, 3),
-        "sulfation_score_confidence": snapshot.sulfation_confidence,
         "days_since_deep": _opt_round(snapshot.days_since_deep, 1),
         "ir_trend_rate": _opt_round(snapshot.ir_trend_rate, 6),
-        "recovery_delta": _opt_round(snapshot.recovery_delta, 3),
-        "cycle_roi": _opt_round(snapshot.cycle_roi, 3),
         "cycle_budget_remaining": snapshot.cycle_budget_remaining,
         "scheduling_reason": snapshot.scheduling_reason,
         "next_test_timestamp": snapshot.next_test_timestamp,

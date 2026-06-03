@@ -237,7 +237,7 @@ fi
 MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 
 if [[ -d "$MOTD_DIR" ]]; then
-    for motd_name in 51-ups.sh 51-ups-health.sh 55-sulfation.sh; do
+    for motd_name in 51-ups.sh 51-ups-health.sh; do
         motd_src="$REPO_ROOT/scripts/motd/$motd_name"
         motd_dst="$MOTD_DIR/$motd_name"
         if [[ "$DRY_RUN" == "yes" ]]; then

@@ -30,13 +30,12 @@ def _write_health(path: Path, data: dict) -> None:
 
 
 def test_missing_files_yield_empty_unknown_state(tmp_path):
-    """No model.json and no health file → unknown capacity, no samples, no sulfation."""
+    """No model.json and no health file → unknown capacity, no samples, no next test."""
     fields = _render(tmp_path / "absent-model.json", tmp_path / "absent-health.json")
 
     assert fields["capacity_status"] == "unknown"
     assert fields["capacity_samples"] == "0"
     assert fields["capacity_measured_ah"] == ""
-    assert fields["sulfation_pct"] == ""
     assert fields["next_test_timestamp"] == ""
     assert fields["new_battery_detected"] == "false"
 
@@ -104,30 +103,28 @@ def test_new_battery_flag_surfaces(tmp_path):
     assert fields["new_battery_timestamp"] == "2026-06-03T10:00:00+00:00"
 
 
-def test_sulfation_and_next_test_come_from_health(tmp_path):
-    """Sulfation score (fraction→percent) and next-test timestamp read from health file."""
+def test_next_test_comes_from_health(tmp_path):
+    """Next-test timestamp is read from the health endpoint file."""
     model_path = tmp_path / "model.json"
     _write_model(model_path, {})
     health_path = tmp_path / "health.json"
     _write_health(
         health_path,
-        {"sulfation_score": 0.65, "next_test_timestamp": "2026-07-01T00:00:00+00:00"},
+        {"next_test_timestamp": "2026-07-01T00:00:00+00:00"},
     )
 
     fields = _render(model_path, health_path)
 
-    assert fields["sulfation_pct"] == "65"
     assert fields["next_test_timestamp"] == "2026-07-01T00:00:00+00:00"
 
 
-def test_null_sulfation_in_health_renders_empty(tmp_path):
-    """A health file with null sulfation_score → empty sulfation_pct (no banner line)."""
+def test_null_next_test_in_health_renders_empty(tmp_path):
+    """A health file with null next_test_timestamp → empty string (no banner line)."""
     model_path = tmp_path / "model.json"
     _write_model(model_path, {})
     health_path = tmp_path / "health.json"
-    _write_health(health_path, {"sulfation_score": None, "next_test_timestamp": None})
+    _write_health(health_path, {"next_test_timestamp": None})
 
     fields = _render(model_path, health_path)
 
-    assert fields["sulfation_pct"] == ""
     assert fields["next_test_timestamp"] == ""
