@@ -47,7 +47,7 @@
 <details>
 <summary>✅ v3.0 Active Battery Care (Phases 15-17) — SHIPPED 2026-03-20</summary>
 
-- [x] Phase 15: Foundation — Sulfation model, cycle ROI, NUT INSTCMD (5/5 plans) — completed 2026-03-17
+- [x] Phase 15: Foundation — NUT INSTCMD + test scheduler (5/5 plans) — completed 2026-03-17 *(sulfation model, cycle ROI — retracted v3.2, see [ADR 0001](../docs/adr/0001-desulfation-premise-reversal.md))*
 - [x] Phase 16: Persistence & Observability — health.json, journald, MOTD (6/6 plans) — completed 2026-03-17
 - [x] Phase 17: Scheduling Intelligence — daemon-controlled test scheduling (2/2 plans) — completed 2026-03-17
 

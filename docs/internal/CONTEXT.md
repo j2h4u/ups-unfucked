@@ -114,12 +114,21 @@ Documented inline in code as "Known limitations (audit 2026-03-17)" blocks. Key 
 - `docs/GLOSSARY.md` — Term definitions for all domain concepts
 - `docs/archive/` — Completed work: 10 module audits, 7 expert panels, research docs, incident report
 
-## Next: v3.0 — Active Battery Care (Anti-Sulfation)
+## v3.0 — Active Battery Care (Anti-Sulfation) — RETRACTED in v3.2
 
-The daemon currently watches the battery degrade and reports on it. v3.0 makes it fight back:
-- **Sulfation model**: temperature-dependent crystal growth rate, desulfation from deep discharges
-- **Smart scheduling**: replace fixed monthly deep test timer with daemon-driven decisions based on days since last deep discharge, sulfation score, SoH trend, and natural blackout frequency
-- **Cycle ROI metric**: net benefit per discharge (sulfation reversal vs cycle wear)
-- **Integration with existing systemd timers**: daemon overrides or skips scheduled deep tests based on battery state
+> **Superseded — see [ADR 0001](../adr/0001-desulfation-premise-reversal.md)**
+> The sulfation model, cycle ROI metric, and desulfation-by-discharge premise were all
+> removed in v3.2. The scheduler was reframed to diagnostic-only capacity verification
+> (IEEE-1188 annual cadence). The bullets below describe what was built in v3.0; they
+> are no longer the current design.
 
-Design captured in GSD todo: "Anti-sulfation deep discharge scheduling for battery longevity"
+~~The daemon currently watches the battery degrade and reports on it. v3.0 makes it fight back:~~
+- ~~**Sulfation model**: temperature-dependent crystal growth rate, desulfation from deep discharges~~
+- ~~**Smart scheduling**: replace fixed monthly deep test timer with daemon-driven decisions based on days since last deep discharge, sulfation score, SoH trend, and natural blackout frequency~~
+- ~~**Cycle ROI metric**: net benefit per discharge (sulfation reversal vs cycle wear)~~
+- ~~**Integration with existing systemd timers**: daemon overrides or skips scheduled deep tests based on battery state~~
+
+**Current design (v3.2):** The scheduler proposes a single safety-gated diagnostic capacity/SoH
+verification test on an ~365-day cadence (IEEE-1188). Trigger is the persistent
+`last_upscmd_timestamp` from model.json (restart-safe). Safety gates: SoH floor ≥60%,
+rate limit, grid-stability cooldown, cycle budget. First/default test type: `quick`.

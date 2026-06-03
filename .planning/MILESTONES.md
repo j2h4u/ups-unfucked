@@ -22,6 +22,13 @@
 
 ## v3.0 Active Battery Care (Shipped: 2026-03-20)
 
+> **[RETRACTED in v3.2 — premise reversed, see ADR 0001](../docs/adr/0001-desulfation-premise-reversal.md)**
+> The "active desulfation via scheduled deep discharges" mechanism shipped in v3.0 rested on a
+> disproven premise: discharge forms lead sulfate, charging reverses it — a discharge-only
+> actuator cannot desulfate. The daemon also has no charge-side control on CyberPower hardware.
+> The sulfation model and cycle ROI machinery were removed in v3.2; the scheduler was reframed
+> to diagnostic-only capacity verification. Original v3.0 delivery text preserved below.
+
 **Delivered:** Transforms daemon from passive observer to active battery manager — models sulfation physics, schedules desulfation intelligently with 7 safety gates, and quantifies each discharge's net impact on battery life.
 
 **Phases completed:** 3 phases, 13 plans, 32 tasks
