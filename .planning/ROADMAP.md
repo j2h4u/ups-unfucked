@@ -126,7 +126,7 @@
 | 22. Naming + Docs Sweep | v3.1 | 2/2 | Complete | 2026-03-20 |
 | 23. Test Quality Rewrite | v3.1 | 4/4 | Complete | 2026-03-20 |
 | 24. Temperature + Security Hardening | v3.1 | 2/2 | Complete | 2026-03-21 |
-| 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 3/3 | Complete   | 2026-06-03 |
+| 25. Desulfation Retraction → Diagnostic-Only Capacity Verification | v3.2 | 3/3 | Complete    | 2026-06-03 |
 
 ---
 
