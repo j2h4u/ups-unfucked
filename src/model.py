@@ -296,16 +296,13 @@ class BatteryModel:
                 extra={"event_type": "model_missing_keys"},
             )
 
-        self.state.setdefault("sulfation_history", [])
         self.state.setdefault("discharge_events", [])
-        self.state.setdefault("roi_history", [])
         self.state.setdefault("last_upscmd_timestamp", None)
         self.state.setdefault("last_upscmd_type", None)
         self.state.setdefault("last_upscmd_status", None)
         self.state.setdefault("scheduled_test_timestamp", None)
         self.state.setdefault("scheduled_test_reason", None)
         self.state.setdefault("test_block_reason", None)
-        self.state.setdefault("blackout_credit", None)
 
     def _validate_and_clamp_fields(self):
         """Clamp physics values and validate scheduling field types."""
@@ -349,11 +346,7 @@ class BatteryModel:
                 )
                 self.state[key] = None
 
-        for key in (
-            "sulfation_history",
-            "discharge_events",
-            "roi_history",
-        ):
+        for key in ("discharge_events",):
             val = self.state.get(key)
             if val is not None and not isinstance(val, list):
                 logger.warning(
@@ -363,14 +356,6 @@ class BatteryModel:
                     extra={"event_type": "model_field_clamped"},
                 )
                 self.state[key] = []
-
-        credit = self.state.get("blackout_credit")
-        if credit is not None and not isinstance(credit, dict):
-            logger.warning(
-                "model.json blackout_credit is not a dict, clearing",
-                extra={"event_type": "model_field_clamped"},
-            )
-            self.state["blackout_credit"] = None
 
     def _validate_lut(self):
         """Drop LUT entries with missing or non-numeric v/soc values."""
@@ -558,23 +543,6 @@ class BatteryModel:
             measured = measured[-keep_count:]
         self.state["lut"] = sorted(non_measured + measured, key=lambda x: x["v"], reverse=True)
 
-    def append_sulfation_history(self, entry: dict) -> None:
-        """Append sulfation measurement to history.
-
-        Args:
-            entry: {
-                'timestamp': ISO8601 string,
-                'event_type': 'natural' | 'test_initiated',
-                'sulfation_score': float [0, 1],
-                'days_since_deep': float,
-                'ir_trend_rate': float,
-                'recovery_delta': float,
-                'temperature_celsius': float,
-                'confidence_level': 'high' | 'medium' | 'low'
-            }
-        """
-        self.state.setdefault("sulfation_history", []).append(entry)
-
     def append_discharge_event(self, event: dict) -> None:
         """Append discharge completion to history.
 
@@ -584,8 +552,7 @@ class BatteryModel:
                 'event_reason': 'natural' | 'test_initiated',
                 'duration_seconds': float,
                 'depth_of_discharge': float,
-                'measured_capacity_ah': float | None,
-                'cycle_roi': float
+                'measured_capacity_ah': float | None
             }
         """
         self.state.setdefault("discharge_events", []).append(event)
@@ -604,7 +571,6 @@ class BatteryModel:
         self._cap_history_entries("r_internal_history")
         self._prune_lut()
         self._cap_history_entries("capacity_estimates")
-        self._cap_history_entries("sulfation_history")
         self._cap_history_entries("discharge_events")
         atomic_write_json(self.model_path, self.state)
 
@@ -832,26 +798,6 @@ class BatteryModel:
 
     # --- Scheduling State Management ---
 
-    def set_blackout_credit(self, credit_dict: dict) -> None:
-        """Grant blackout credit after natural deep discharge.
-
-        Args:
-            credit_dict: {
-                'active': bool,
-                'credited_event_timestamp': str (ISO8601),
-                'credit_expires': str (ISO8601),
-                'desulfation_credit': float (0.0–1.0)
-            }
-        """
-        self.state["blackout_credit"] = credit_dict
-        logger.debug(f"Blackout credit set: expires {credit_dict.get('credit_expires')}")
-
-    def clear_blackout_credit(self) -> None:
-        """Expire or clear blackout credit."""
-        if self.state.get("blackout_credit"):
-            self.state["blackout_credit"]["active"] = False
-            logger.debug("Blackout credit cleared")
-
     def update_scheduling_state(
         self, scheduled_timestamp: Optional[str], reason: str, block_reason: Optional[str] = None
     ) -> None:
@@ -896,6 +842,3 @@ class BatteryModel:
         """
         return self.state.get("last_upscmd_status")
 
-    def get_blackout_credit(self) -> Optional[dict]:
-        """Get current blackout credit dict, or None if inactive/expired."""
-        return self.state.get("blackout_credit")

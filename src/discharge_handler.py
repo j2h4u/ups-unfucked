@@ -3,25 +3,16 @@
 Contains the discharge event processing pipeline that runs on OB→OL transition.
 
 Methods here run on OB→OL transition (discharge complete) and during
-capacity estimation. Errors propagate to MonitorDaemon.run() except
-sulfation scoring, which catches ValueError/TypeError to allow the
-rest of the discharge pipeline to complete.
+capacity estimation. Errors propagate to MonitorDaemon.run().
 """
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from src import alerter, replacement_predictor, soh_calculator
 from src.battery_math import ScalarRLS, calibrate_peukert
-from src.battery_math.cycle_roi import compute_cycle_roi
 from src.battery_math.regression import linear_regression_slope
-from src.battery_math.sulfation import (
-    SulfationState,
-    compute_sulfation_score,
-    estimate_recovery_delta,
-)
 from src.capacity_estimator import CapacityEstimator
 from src.model import BatteryModel, ConvergenceStatus
 from src.monitor_config import MIN_DISCHARGE_DURATION_SEC, DischargeBuffer, safe_save
@@ -29,42 +20,12 @@ from src.runtime_calculator import runtime_minutes
 
 logger = logging.getLogger("ups-battery-monitor")
 
-BLACKOUT_CREDIT_DAYS = 7
+RATED_CYCLE_LIFE = 300  # CyberPower UT850EG datasheet: 300 cycles @ 100% DoD, 25°C
 
 
 def _parse_iso_utc(s: str) -> datetime:
     """Parse ISO8601 timestamp, normalizing 'Z' suffix to '+00:00' for fromisoformat."""
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
-
-
-RATED_CYCLE_LIFE = 300  # CyberPower UT850EG datasheet: 300 cycles @ 100% DoD, 25°C
-
-
-@dataclass(frozen=True)
-class DischargeMetrics:
-    """Per-discharge metrics computed once, consumed by persist + log steps.
-
-    Produced by DischargeHandler._compute_sulfation_metrics(); consumed by
-    _persist_sulfation_and_discharge() and _log_discharge_complete().
-    Frozen to enforce single-write semantics across the discharge pipeline.
-    """
-
-    now_iso: str
-    sulfation_state: Optional[SulfationState]
-    roi: Optional[float]
-    sulfation_score_r: Optional[float]
-    days_since_deep_r: Optional[float]
-    ir_trend_r: float
-    recovery_delta_r: float
-    discharge_duration: float
-    dod_r: float
-    depth_of_discharge: float
-    roi_r: Optional[float]
-    soh_new: float
-    soh_delta: float
-    discharge_trigger: str
-    capacity_ah_ref: Optional[float]
-    confidence_level: str
 
 
 class DischargeHandler:
@@ -107,17 +68,13 @@ class DischargeHandler:
 
         self.has_logged_baseline_lock = False
 
-        self.last_sulfation_score: Optional[float] = None
-        self.last_sulfation_confidence: Optional[str] = None
         self.last_days_since_deep: Optional[float] = None
         self.last_ir_trend_rate: float = 0.0
-        self.last_recovery_delta: float = 0.0
-        self.last_cycle_roi: float | None = None
         self.last_cycle_budget_remaining: int = 0
         self.last_discharge_timestamp: Optional[str] = None
 
     def update_battery_health(self, discharge_buffer: DischargeBuffer) -> None:
-        """Process completed discharge: SoH, Peukert, replacement prediction, alerts, sulfation.
+        """Process completed discharge: SoH, Peukert, replacement prediction, alerts.
 
         Returns early (skipping all steps) if discharge is too short (<300s)
         or has insufficient samples (<2 voltages). Only discharges that pass
@@ -126,6 +83,23 @@ class DischargeHandler:
         Discharge trigger classification uses a 60-second window: if the buffer
         starts within 60s of the last upscmd timestamp, the discharge is classified
         as 'test_initiated' rather than 'natural' (see _classify_discharge_trigger).
+
+        Surviving pipeline (in order):
+          1. get soh_before
+          2. _compute_soh — early-return on None
+          3. unpack soh_after, capacity_ah_ref
+          4. _avg_load
+          5. _predict_replacement
+          6. _check_alerts
+          7. _auto_calibrate_peukert
+          8. _classify_discharge_trigger
+          9. soh_delta = soh_after - soh_before
+         10. compute now_iso, discharge_duration, dod inline
+         11. update surviving last_* fields
+         12. append_discharge_event (no cycle_roi)
+         13. emit discharge_complete journald log
+         14. _log_discharge_prediction
+         15. safe_save
         """
         soh_before = self.battery_model.get_soh()
         soh_result = self._compute_soh(discharge_buffer)
@@ -141,8 +115,42 @@ class DischargeHandler:
 
         discharge_trigger = self._classify_discharge_trigger(discharge_buffer)
         soh_delta = soh_after - soh_before
-        self._score_and_persist_sulfation(
-            soh_after, soh_delta, discharge_buffer, discharge_trigger, capacity_ah_ref
+
+        # Inline the non-sulfation values previously computed in _compute_sulfation_metrics
+        now_iso = datetime.now(timezone.utc).isoformat()
+        discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
+        depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
+
+        # Update surviving last_* fields (drop last_sulfation_*/last_cycle_roi/last_recovery_delta)
+        self.last_days_since_deep = self._calculate_days_since_deep()
+        self.last_ir_trend_rate = self._estimate_ir_trend()
+        self.last_cycle_budget_remaining = self._estimate_cycle_budget()
+        self.last_discharge_timestamp = now_iso
+
+        self.battery_model.append_discharge_event(
+            {
+                "timestamp": now_iso,
+                "event_reason": discharge_trigger,
+                "duration_seconds": discharge_duration,
+                "depth_of_discharge": round(depth_of_discharge, 2),
+                "measured_capacity_ah": capacity_ah_ref,
+            }
+        )
+
+        logger.info(
+            "Discharge complete",
+            extra={
+                "event_type": "discharge_complete",
+                "discharge_trigger": discharge_trigger,
+                "duration_seconds": int(discharge_duration),
+                "depth_of_discharge": round(depth_of_discharge, 2),
+                "measured_capacity_ah": round(capacity_ah_ref, 2)
+                if capacity_ah_ref is not None
+                else None,
+                "temperature_celsius": 35.0,
+                "temperature_source": "assumed_constant",
+                "timestamp": now_iso,
+            },
         )
 
         self._log_discharge_prediction(discharge_buffer)
@@ -270,218 +278,6 @@ class DischargeHandler:
             return sum(discharge_buffer.loads) / len(discharge_buffer.loads)
         return self.reference_load_percent
 
-    def _score_and_persist_sulfation(
-        self,
-        soh_new: float,
-        soh_delta: float,
-        discharge_buffer: DischargeBuffer,
-        discharge_trigger: str,
-        capacity_ah_ref: Optional[float] = None,
-    ) -> None:
-        """Orchestrate compute -> persist -> log for a completed discharge.
-
-        Updates in-memory last_* state, appends sulfation_history and discharge_event
-        entries, logs the discharge complete event, and grants blackout credit for
-        natural deep discharges (>=90% DoD).
-        """
-        data = self._compute_sulfation_metrics(
-            soh_new, soh_delta, discharge_buffer, discharge_trigger, capacity_ah_ref
-        )
-        self._persist_sulfation_and_discharge(data)
-        self._log_discharge_complete(data)
-
-    def _compute_sulfation_metrics(
-        self,
-        soh_new: float,
-        soh_delta: float,
-        discharge_buffer: DischargeBuffer,
-        discharge_trigger: str,
-        capacity_ah_ref: Optional[float] = None,
-    ) -> "DischargeMetrics":
-        """Compute sulfation score and pre-compute all shared values.
-
-        Calls compute_sulfation_score() and compute_cycle_roi(), updates
-        in-memory last_* state fields, and returns a DischargeMetrics instance
-        needed by persist and log steps. On scoring failure (ValueError/TypeError),
-        returns a DischargeMetrics with sulfation_state=None and roi=None but all
-        other fields populated.
-
-        Returns:
-            DischargeMetrics with fields: now_iso, sulfation_state, roi,
-            sulfation_score_r, days_since_deep_r, ir_trend_r, recovery_delta_r,
-            discharge_duration, dod_r, roi_r, soh_new, soh_delta, discharge_trigger,
-            capacity_ah_ref, confidence_level, depth_of_discharge.
-        """
-        now_iso = datetime.now(timezone.utc).isoformat()
-        days_since_deep = self._calculate_days_since_deep()
-        ir_trend_rate = self._estimate_ir_trend()
-        depth_of_discharge = self._estimate_dod_from_buffer(discharge_buffer)
-        cycle_budget = self._estimate_cycle_budget()
-
-        # compute_sulfation_score expects recovery_delta as a [0,1] desulfation signal
-        # (SoH rebound across the rest period), NOT the raw signed soh_delta. soh_before
-        # is the SoH carried into this discharge (= previous discharge's result plus any
-        # recovery since); soh_new is this discharge's fresh measurement, so
-        # estimate_recovery_delta(soh_before, soh_new) captures the rebound on the scale
-        # the score formula expects. Passing raw soh_delta previously pinned the recovery
-        # signal near its maximum on every discharge, inflating sulfation_score by up to
-        # the full recovery weight (0.3) regardless of actual battery recovery.
-        soh_before = soh_new - soh_delta
-        recovery_delta = estimate_recovery_delta(soh_before, soh_new)
-
-        try:
-            sulfation_state = compute_sulfation_score(
-                days_since_deep=days_since_deep if days_since_deep is not None else 0.0,
-                ir_trend_rate=ir_trend_rate,
-                recovery_delta=recovery_delta,
-                temperature_celsius=35.0,
-            )
-
-            roi = compute_cycle_roi(
-                depth_of_discharge=depth_of_discharge,
-                cycle_budget_remaining=cycle_budget,
-                ir_trend_rate=ir_trend_rate,
-                sulfation_score=sulfation_state.score,
-            )
-        except (ValueError, TypeError) as e:
-            logger.warning(
-                f"Sulfation scoring failed: {e}",
-                exc_info=True,
-                extra={"event_type": "sulfation_scoring_failed", "error_class": type(e).__name__},
-            )
-            sulfation_state = None
-            roi = None
-
-        self.last_sulfation_score = sulfation_state.score if sulfation_state else None
-        self.last_sulfation_confidence = (
-            self._assess_sulfation_confidence(days_since_deep, ir_trend_rate)
-            if sulfation_state
-            else None
-        )
-        self.last_days_since_deep = days_since_deep
-        self.last_ir_trend_rate = ir_trend_rate
-        self.last_recovery_delta = recovery_delta
-        self.last_cycle_roi = roi
-        self.last_cycle_budget_remaining = cycle_budget
-        self.last_discharge_timestamp = now_iso
-
-        # Pre-compute rounded values shared across persistence and logging
-        sulfation_score_r = round(sulfation_state.score, 3) if sulfation_state else None
-        days_since_deep_r = round(days_since_deep, 1) if days_since_deep is not None else None
-        ir_trend_r = round(ir_trend_rate, 6)
-        recovery_delta_r = round(recovery_delta, 3)
-        discharge_duration = discharge_buffer.times[-1] - discharge_buffer.times[0]
-        dod_r = round(depth_of_discharge, 2)
-        roi_r = round(roi, 3) if roi is not None else None
-        confidence_level = self.last_sulfation_confidence or "low"
-
-        return DischargeMetrics(
-            now_iso=now_iso,
-            sulfation_state=sulfation_state,
-            roi=roi,
-            sulfation_score_r=sulfation_score_r,
-            days_since_deep_r=days_since_deep_r,
-            ir_trend_r=ir_trend_r,
-            recovery_delta_r=recovery_delta_r,
-            discharge_duration=discharge_duration,
-            dod_r=dod_r,
-            depth_of_discharge=depth_of_discharge,
-            roi_r=roi_r,
-            soh_new=soh_new,
-            soh_delta=soh_delta,
-            discharge_trigger=discharge_trigger,
-            capacity_ah_ref=capacity_ah_ref,
-            confidence_level=confidence_level,
-        )
-
-    def _persist_sulfation_and_discharge(self, data: "DischargeMetrics") -> None:
-        """Write sulfation_history and discharge_event entries, grant blackout credit.
-
-        Appends one entry to each model list and calls _grant_blackout_credit
-        using the unrounded depth_of_discharge for the >=0.90 threshold check.
-
-        Args:
-            data: DischargeMetrics returned by _compute_sulfation_metrics.
-        """
-        self.battery_model.append_sulfation_history(
-            {
-                "timestamp": data.now_iso,
-                "event_type": data.discharge_trigger,
-                "sulfation_score": data.sulfation_score_r,
-                "days_since_deep": data.days_since_deep_r,
-                "ir_trend_rate": data.ir_trend_r,
-                "recovery_delta": data.recovery_delta_r,
-                "temperature_celsius": 35.0,
-                "temperature_source": "assumed_constant",
-                "confidence_level": data.confidence_level,
-            }
-        )
-
-        self.battery_model.append_discharge_event(
-            {
-                "timestamp": data.now_iso,
-                "event_reason": data.discharge_trigger,
-                "duration_seconds": data.discharge_duration,
-                "depth_of_discharge": data.dod_r,
-                "measured_capacity_ah": data.capacity_ah_ref,
-                "cycle_roi": data.roi_r,
-            }
-        )
-
-        self._grant_blackout_credit(data.discharge_trigger, data.depth_of_discharge)
-
-    def _log_discharge_complete(self, data: "DischargeMetrics") -> None:
-        """Emit the structured journald discharge_complete event.
-
-        Logs None sulfation_score and roi values without raising.
-
-        Args:
-            data: DischargeMetrics returned by _compute_sulfation_metrics.
-        """
-        logger.info(
-            "Discharge complete",
-            extra={
-                "event_type": "discharge_complete",
-                "discharge_trigger": data.discharge_trigger,
-                "duration_seconds": int(data.discharge_duration),
-                "depth_of_discharge": data.dod_r,
-                "sulfation_score": data.sulfation_score_r,
-                "sulfation_confidence": self.last_sulfation_confidence,
-                "recovery_delta": data.recovery_delta_r,
-                "cycle_roi": data.roi_r,
-                "measured_capacity_ah": round(data.capacity_ah_ref, 2)
-                if data.capacity_ah_ref is not None
-                else None,
-                "temperature_celsius": 35.0,
-                "temperature_source": "assumed_constant",
-                "timestamp": data.now_iso,
-            },
-        )
-
-    def _grant_blackout_credit(self, discharge_trigger: str, depth_of_discharge: float) -> None:
-        """Grant blackout credit for natural deep discharges (>=90% DoD)."""
-        if discharge_trigger != "natural" or depth_of_discharge < 0.90:
-            return
-
-        credit_expires = datetime.now(timezone.utc) + timedelta(days=BLACKOUT_CREDIT_DAYS)
-        logger.info(
-            f"Natural blackout desulfation credit: DoD={depth_of_discharge:.0%}",
-            extra={
-                "event_type": "blackout_credit_granted",
-                "dod": round(depth_of_discharge, 2),
-                "credit_expires": credit_expires.isoformat(),
-            },
-        )
-
-        self.battery_model.set_blackout_credit(
-            {
-                "active": True,
-                "credited_event_timestamp": datetime.now(timezone.utc).isoformat(),
-                "credit_expires": credit_expires.isoformat(),
-                "desulfation_credit": 0.15,  # Approximate desulfation benefit for ~90% DoD
-            }
-        )
-
     def _auto_calibrate_peukert(
         self, current_soh: float, discharge_buffer: DischargeBuffer
     ) -> None:
@@ -535,7 +331,7 @@ class DischargeHandler:
                 "peukert", smoothed, new_P, self.rls_peukert.sample_count
             )
             logger.info(
-                f"Peukert calibrated: {old_exponent:.3f} \u2192 {smoothed:.3f} "
+                f"Peukert calibrated: {old_exponent:.3f} → {smoothed:.3f} "
                 f"(single-point={new_exponent:.3f}), "
                 f"confidence={self.rls_peukert.confidence:.0%}",
                 extra={
@@ -550,7 +346,7 @@ class DischargeHandler:
             )
         else:
             logger.warning(
-                "Peukert calibration returned None (unexpected \u2014 math undefined?)",
+                "Peukert calibration returned None (unexpected — math undefined?)",
                 extra={"event_type": "peukert_calibration_failed"},
             )
 
@@ -649,7 +445,7 @@ class DischargeHandler:
         load_avg_percent = metadata.get("load_avg_percent", 0.0)
 
         logger.info(
-            f"capacity_measurement: {ah_estimate:.2f}Ah (\u00b1{std_ah:.2f}), CoV={cov:.3f} "
+            f"capacity_measurement: {ah_estimate:.2f}Ah (±{std_ah:.2f}), CoV={cov:.3f} "
             f"({sample_count} samples, {confidence_pct}% confidence)",
             extra={
                 "event_type": "capacity_measurement",
@@ -868,17 +664,3 @@ class DischargeHandler:
         """Estimate remaining cycle budget: RATED_CYCLE_LIFE * current SoH."""
         soh = self.battery_model.state.get("soh", 1.0)
         return int(RATED_CYCLE_LIFE * soh)
-
-    def _assess_sulfation_confidence(
-        self, days_since_deep: Optional[float], ir_trend_rate: float
-    ) -> str:
-        """Assess sulfation signal quality based on input data availability.
-
-        Returns: 'high', 'medium', or 'low'
-        """
-        r_history = self.battery_model.state.get("r_internal_history", [])
-        if days_since_deep is not None and len(r_history) >= 3:
-            return "high"
-        elif days_since_deep is not None or len(r_history) >= 2:
-            return "medium"
-        return "low"

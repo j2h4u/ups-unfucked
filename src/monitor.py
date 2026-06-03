@@ -373,11 +373,6 @@ class MonitorDaemon:
 
         self.battery_model.state["cycle_count"] = 0
 
-        # A new battery must not inherit the old battery's desulfation credit, which is
-        # tied to the replaced cell's sulfation state. Without this the stale credit
-        # would linger up to 7 days (it only expires passively) and skew test scheduling.
-        self.battery_model.clear_blackout_credit()
-
         self.battery_model.reset_rls_state()
         self.sag_tracker.reset_rls(theta=0.015, P=1.0)
         self.rls_peukert = ScalarRLS(theta=1.2, P=1.0)

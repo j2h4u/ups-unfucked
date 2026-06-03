@@ -871,7 +871,6 @@ class TestSchedulingSchema:
         assert model.state.get("scheduled_test_timestamp") is None
         assert model.state.get("scheduled_test_reason") is None
         assert model.state.get("test_block_reason") is None
-        assert model.state.get("blackout_credit") is None
 
     def test_scheduling_fields_persist_after_save(self, temporary_model_path):
         """Scheduling fields persist correctly through save/reload cycle."""
@@ -889,41 +888,16 @@ class TestSchedulingSchema:
         assert model2.state.get("last_upscmd_type") == "test.battery.start.deep"
         assert model2.state.get("last_upscmd_status") == "OK"
 
-    def test_set_blackout_credit_method(self, temporary_model_path):
-        """set_blackout_credit() sets credit dict correctly."""
-        model = BatteryModel(temporary_model_path)
-        credit = {
-            "active": True,
-            "credited_event_timestamp": "2026-03-16T15:30:00Z",
-            "credit_expires": "2026-03-23T15:30:00Z",
-            "desulfation_credit": 0.18,
-        }
-        model.set_blackout_credit(credit)
-        assert model.state["blackout_credit"] == credit
-        assert model.get_blackout_credit() == credit
-
-    def test_clear_blackout_credit_method(self, temporary_model_path):
-        """clear_blackout_credit() sets active=False."""
-        model = BatteryModel(temporary_model_path)
-        credit = {
-            "active": True,
-            "credited_event_timestamp": "2026-03-16T15:30:00Z",
-            "credit_expires": "2026-03-23T15:30:00Z",
-        }
-        model.set_blackout_credit(credit)
-        model.clear_blackout_credit()
-        assert model.state["blackout_credit"]["active"] is False
-
     def test_update_scheduling_state_method(self, temporary_model_path):
         """update_scheduling_state() updates scheduled test info."""
         model = BatteryModel(temporary_model_path)
         model.update_scheduling_state(
             scheduled_timestamp="2026-03-24T08:00:00Z",
-            reason="sulfation_0.65_roi_0.34",
+            reason="diagnostic_cadence",
             block_reason=None,
         )
         assert model.state["scheduled_test_timestamp"] == "2026-03-24T08:00:00Z"
-        assert model.state["scheduled_test_reason"] == "sulfation_0.65_roi_0.34"
+        assert model.state["scheduled_test_reason"] == "diagnostic_cadence"
         assert model.state["test_block_reason"] is None
 
     def test_update_upscmd_result_method(self, temporary_model_path):
@@ -952,7 +926,6 @@ class TestSchedulingSchema:
                 {"v": 10.5, "soc": 0.0, "source": "anchor"},
             ],
             "soh_history": [],
-            "sulfation_history": [],
             "discharge_events": [],
         }
         with open(temporary_model_path, "w") as f:
@@ -963,7 +936,6 @@ class TestSchedulingSchema:
 
         # Verify scheduling fields are initialized
         assert model.state.get("last_upscmd_timestamp") is None
-        assert model.state.get("blackout_credit") is None
         assert model.get_soh() == 0.95  # Legacy data still intact
 
     def test_scheduling_fields_not_stripped_on_save(self, temporary_model_path):
@@ -972,10 +944,7 @@ class TestSchedulingSchema:
 
         # Set scheduling fields
         model.state["last_upscmd_timestamp"] = "2026-03-17T10:30:00Z"
-        model.state["blackout_credit"] = {
-            "active": True,
-            "credit_expires": "2026-03-24T00:00:00Z",
-        }
+        model.state["scheduled_test_reason"] = "diagnostic_cadence"
 
         # Save and reload
         model.save()
@@ -983,7 +952,7 @@ class TestSchedulingSchema:
 
         # Verify fields persist
         assert model2.state.get("last_upscmd_timestamp") == "2026-03-17T10:30:00Z"
-        assert model2.state.get("blackout_credit")["active"] is True
+        assert model2.state.get("scheduled_test_reason") == "diagnostic_cadence"
 
     def test_get_last_upscmd_timestamp_method(self, temporary_model_path):
         """get_last_upscmd_timestamp() returns correct value or None."""
@@ -996,18 +965,6 @@ class TestSchedulingSchema:
             upscmd_status="OK",
         )
         assert model.get_last_upscmd_timestamp() == "2026-03-17T10:30:00Z"
-
-    def test_get_blackout_credit_method(self, temporary_model_path):
-        """get_blackout_credit() returns credit dict or None."""
-        model = BatteryModel(temporary_model_path)
-        assert model.get_blackout_credit() is None
-
-        credit = {
-            "active": True,
-            "credit_expires": "2026-03-24T00:00:00Z",
-        }
-        model.set_blackout_credit(credit)
-        assert model.get_blackout_credit() == credit
 
 
 class TestFieldLevelValidation:
@@ -1123,24 +1080,6 @@ class TestFieldLevelValidation:
         ]
         assert len(clamped_records) >= 1
 
-    def test_validate_list_field_sulfation_history_non_list(self, temporary_model_path, caplog):
-        """sulfation_history='not_a_list' (str) → reset to [], warning logged."""
-        import logging
-
-        data = self._base_model_data()
-        data["sulfation_history"] = "not_a_list"
-        with open(temporary_model_path, "w") as f:
-            json.dump(data, f)
-
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
-
-        assert model.state["sulfation_history"] == []
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1
-
     def test_validate_list_field_discharge_events_non_list(self, temporary_model_path, caplog):
         """discharge_events=123 (int) → reset to [], warning logged."""
         import logging
@@ -1166,9 +1105,8 @@ class TestFieldLevelValidation:
         data = self._base_model_data()
         data["last_upscmd_type"] = "test.battery.start.deep"
         data["last_upscmd_status"] = "OK"
-        data["scheduled_test_reason"] = "sulfation_0.65"
+        data["scheduled_test_reason"] = "diagnostic_cadence"
         data["test_block_reason"] = "soh_floor_55%"
-        data["sulfation_history"] = [{"timestamp": "2026-03-01T00:00:00Z", "sulfation_score": 0.3}]
         data["discharge_events"] = [
             {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
         ]
@@ -1187,9 +1125,6 @@ class TestFieldLevelValidation:
         # Fields remain unchanged
         assert model.state["last_upscmd_type"] == "test.battery.start.deep"
         assert model.state["last_upscmd_status"] == "OK"
-        assert model.state["sulfation_history"] == [
-            {"timestamp": "2026-03-01T00:00:00Z", "sulfation_score": 0.3}
-        ]
         assert model.state["discharge_events"] == [
             {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
         ]
