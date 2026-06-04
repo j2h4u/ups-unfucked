@@ -141,6 +141,7 @@
     nominal voltage/power from `constants.py`; inject `capacity_ah` into `BatteryModel` from config;
     drop `full_capacity_ah_ref` + `physics.nominal_voltage`/`nominal_power_watts` from the schema,
     validation, default seed; point `battery-health.py` rated-capacity at config.toml.
+
   - Wave 2 — Category ② derived caches (HYG-03, HYG-04, HYG-05): stop persisting
     `scheduled_test_*`/`test_block_reason` (delete `update_scheduling_state`; scheduler keeps live
     `last_*`), `capacity_converged` (health reads live convergence), and `replacement_due` (new
@@ -159,6 +160,7 @@
   - `replacement_due` — derived from `soh_history` regression.
 
 **Known gotchas:**
+
 - The health endpoint (`monitor_config.py` `HealthSnapshot` / `write_health_endpoint`) currently reads ②'s values from `model.json`; after this change it must populate them from the live in-memory computation each poll (and on the first poll after restart). Touches `tests/test_health_endpoint_v16.py`.
 - Changing `ModelState` to drop these keys means the strict loader will reject the existing on-disk `model.json` (which still has them) → deploy needs the same stop → strip keys → start sequence used in Phase 25, OR a one-time strip. Backup at `~/.config/ups-battery-monitor/model.json.pre-v3.2-cleanup.bak`.
 - `capacity_ah_measured` (learned SoH baseline, category ③) is distinct from `full_capacity_ah_ref` (config) — do not conflate them.
@@ -167,6 +169,7 @@ Plans:
 
 - [ ] 26-01-PLAN.md — Wave 1: category ① config/spec out of model.json — NOMINAL_VOLTAGE constant,
   capacity_ah injection, split physics blob, drop full_capacity_ah_ref/nominal_voltage/nominal_power_watts (HYG-01, HYG-02)
+
 - [ ] 26-02-PLAN.md — Wave 2: category ② derived caches out of model.json — drop scheduled_test_*/test_block_reason/capacity_converged,
   live compute_replacement_due, strict-loader gates + deploy strip note (HYG-03, HYG-04, HYG-05)
 
