@@ -135,7 +135,7 @@
 **Requirements**: HYG-01, HYG-02, HYG-03, HYG-04, HYG-05
 **Depends on:** Phase 25 (ModelState schema + strict load validation must exist first)
 **Status:** Planned (2026-06-04)
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
   - Wave 1 — Category ① config/spec (HYG-01, HYG-02): add `NOMINAL_VOLTAGE` constant; source
     nominal voltage/power from `constants.py`; inject `capacity_ah` into `BatteryModel` from config;
@@ -170,7 +170,7 @@ Plans:
 - [x] 26-01-PLAN.md — Wave 1: category ① config/spec out of model.json — NOMINAL_VOLTAGE constant,
   capacity_ah injection, split physics blob, drop full_capacity_ah_ref/nominal_voltage/nominal_power_watts (HYG-01, HYG-02)
 
-- [ ] 26-02-PLAN.md — Wave 2: category ② derived caches out of model.json — drop scheduled_test_*/test_block_reason/capacity_converged,
+- [x] 26-02-PLAN.md — Wave 2: category ② derived caches out of model.json — drop scheduled_test_*/test_block_reason/capacity_converged,
   live compute_replacement_due, strict-loader gates + deploy strip note (HYG-03, HYG-04, HYG-05)
 
 ---
