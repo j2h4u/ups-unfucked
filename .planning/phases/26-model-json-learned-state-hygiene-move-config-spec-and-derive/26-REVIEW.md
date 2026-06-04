@@ -20,7 +20,7 @@ findings:
   info: 4
   total: 8
 status: resolved
-resolution: 7/8 fixed (WR-01..04, IN-01..03); IN-04 deferred as out-of-scope heuristic redesign
+resolution: 8/8 fixed (WR-01..04, IN-01..04)
 ---
 
 > **Resolution (2026-06-04):** All four warnings and three of the four info items were fixed
@@ -35,10 +35,11 @@ resolution: 7/8 fixed (WR-01..04, IN-01..03); IN-04 deferred as out-of-scope heu
 > - **IN-01** — `_estimate_dod_from_buffer` uses `NOMINAL_VOLTAGE`.
 > - **IN-02** — `get_replacement_due()` pass-through shim deleted.
 > - **IN-03** — stale `print_maintenance` docstring corrected.
-> - **IN-04** — DEFERRED. The reviewer itself marked it "optional, out of phase scope": it is a
->   redesign of the DoD heuristic (voltage-swing proxy → LUT/SoC lookup) that changes
->   `discharge_events` classification and feeds scheduling cadence. Behavioral change with
->   trade-offs — warrants its own focused change, not a drive-by edit.
+> - **IN-04** — FIXED (commit follow-up). DoD now computed as `SoC(V_max) - SoC(V_min)` over the
+>   LUT instead of the linear voltage-swing proxy. Investigation corrected the review's premise:
+>   post-Phase-25 the scheduler consumes only the last-blackout **timestamp** (grid-stability
+>   cooldown), NOT discharge depth — so DoD feeds only the `days_since_deep` observability metric,
+>   with no control-path impact. The fix improves that metric's accuracy; daemon behavior unchanged.
 
 # Phase 26: Code Review Report
 
