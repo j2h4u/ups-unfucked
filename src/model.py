@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict, cast
 
 from src import replacement_predictor
 from src.battery_math.constants import NOMINAL_POWER_WATTS, NOMINAL_VOLTAGE, RATED_CAPACITY_AH
@@ -246,7 +246,7 @@ class BatteryModel:
         self.model_path = model_path
         self.capacity_ah = capacity_ah
         self.soh_threshold = soh_threshold
-        self.state = {}
+        self.state: ModelState = {}
         self._seen_timestamps: set = set()
         self.load()
 
@@ -266,7 +266,7 @@ class BatteryModel:
         if self.model_path.exists():
             try:
                 with open(self.model_path, "r") as f:
-                    self.state = json.load(f)
+                    self.state = cast(ModelState, json.load(f))
                 self._seen_timestamps = {
                     e["timestamp"] for e in self.state.get("lut", []) if "timestamp" in e
                 }
@@ -277,7 +277,7 @@ class BatteryModel:
                 )
             except json.JSONDecodeError as e:
                 self._backup_corrupt_model(e)
-                self.state = self._default_vrla_lut()
+                self.state = cast(ModelState, self._default_vrla_lut())
             except OSError as e:
                 raise ModelLoadError(f"Cannot read {self.model_path}: {e}") from e
         else:
@@ -285,7 +285,7 @@ class BatteryModel:
                 "Model file not found; initializing with standard VRLA curve",
                 extra={"event_type": "model_init_default", "model_path": str(self.model_path)},
             )
-            self.state = self._default_vrla_lut()
+            self.state = cast(ModelState, self._default_vrla_lut())
 
         self._reject_unknown_state_keys()
         self._apply_defaults()
@@ -899,7 +899,14 @@ class BatteryModel:
             "timestamp": timestamp,
         }
 
-        bisect.insort(self.state["lut"], entry, key=lambda x: -x["v"])
+        lut = self.state.get("lut")
+        if lut is None:
+            logger.error(
+                "calibration_write: no LUT in model state — skipping calibration point",
+                extra={"event_type": "lut_missing"},
+            )
+            return
+        bisect.insort(lut, entry, key=lambda x: -x["v"])
 
         logger.debug(
             f"Calibration point accumulated: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}"
