@@ -15,6 +15,13 @@ cycles:
     cycle1_high_resolved: 3   # rated_ah propagation, configurable replacement threshold, shared baseline filter
     high_new: 1               # compute_replacement_due drops the convergence gate
     high_remaining: 1
+  - cycle: 3
+    reviewed_at: 2026-06-04T14:20:00+06:00
+    reviewers: [codex, opencode]
+    plans_revised_in: c83beae
+    cycle2_high_resolved: 1   # compute_replacement_due now gates on get_convergence_status().converged
+    high_new: 0
+    high_remaining: 0         # convergence reached
 plans_reviewed: [26-01-PLAN.md, 26-02-PLAN.md]
 ---
 
@@ -269,3 +276,142 @@ behaves identically before/after.
   is warranted to gate `compute_replacement_due()` on `convergence.converged` and add the
   non-converged-history equivalence test. The reporting-tool divergences (MOTD/battery-health) should be
   resolved or explicitly accepted-and-documented in the same replan (MEDIUM).
+
+---
+---
+
+# Cross-AI Plan Review — Phase 26 — CYCLE 3 (FINAL)
+
+**Reviewed:** 2026-06-04T14:20:00+06:00 · **Reviewers:** codex, opencode · **Plans revised in:** c83beae
+
+Cycle-3 context: the plans were revised after cycle 2 to close the single remaining HIGH — the
+`compute_replacement_due()` convergence gate. The revision makes `compute_replacement_due()` call
+`get_convergence_status()` and `return None` when `.converged` is False BEFORE running
+`linear_regression_soh` (mirroring the OLD `discharge_handler._predict_replacement` gate at
+discharge_handler.py:218-219); makes `battery-health.py` apply the same gate
+(`len(capacity_estimates) >= 3 and compute_cov(ah_values) < 0.10`, `compute_cov` from
+`src.capacity_estimator`); and adds test T-26-08 (non-converged fixture asserts `.converged is False`
+then `compute_replacement_due() is None`, plus a converged twin asserting NOT None). Both reviewers
+were asked to confirm full resolution and surface any new HIGH concerns.
+
+## Cycle-2 HIGH Resolution — Adjudicated
+
+| Cycle-2 HIGH | Codex | OpenCode | Adjudication (verified vs source) |
+|---|---|---|---|
+| convergence gate dropped in `compute_replacement_due()` | FULLY | FULLY | **FULLY RESOLVED.** Plan 02 Task 2 action (c) + truth #8 require `get_convergence_status()` → `return None` before any `linear_regression_soh` call, exactly mirroring the verified OLD gate (`discharge_handler.py:218-219` runs regression only `if convergence.converged`). `battery-health.py` gated with the same formula via `compute_cov` (truth #9, action ii). T-26-08 is non-vacuous: it first asserts `get_convergence_status().converged is False` on a regression-quality-soh_history-but-non-converged-capacity_estimates fixture, then asserts `compute_replacement_due() is None`, plus a converged twin asserting NOT None — directly catches the cycle-2 failure mode. Verified against `src/discharge_handler.py`, `src/model.py:807` (`converged = len(estimates) >= 3 and cov < 0.10`), `src/capacity_estimator.py` (`compute_cov`). |
+
+The cycle-2 HIGH is **fully resolved** by both reviewers, independently, with source-grounded reasoning.
+
+## Cycle-1 HIGH Status (regression check)
+
+All three cycle-1 HIGHs remain **FULLY RESOLVED**; the cycle-3 convergence-gate addition does not touch
+`get_convergence_status` internals, the injected `soh_threshold`, or the shared `latest_capacity_ah_ref`
+helper. Confirmed by both reviewers:
+
+| Cycle-1 HIGH | Status |
+|---|---|
+| #1 rated_ah propagation (`rated_ah=self.capacity_ah` both sites + T-26-06) | RESOLVED — unchanged |
+| #2 configurable replacement threshold (`self.soh_threshold` injected; gate is a pre-check that still passes `threshold_soh=self.soh_threshold` inside the converged branch; `[0.80, 0.75]` test) | RESOLVED — unchanged |
+| #3 shared baseline filter (single `latest_capacity_ah_ref()` helper; T-26-07) | RESOLVED — unchanged |
+
+## New Concerns (cycle 3)
+
+**No new HIGH concerns from either reviewer.** OpenCode raised one LOW (theoretical gate-flip on
+re-convergence: a converged model that transiently slips to non-converged would now return `None` live
+where the old persisted snapshot showed a date — judged *more correct*, zero practical reachability since
+CoV is stable after 3+ coulomb-counting estimates; no action). The previously documented MEDIUM
+reporting-tool divergences (standalone MOTD 0.80 threshold; battery-health.py 7.2 rated capacity for
+non-default configs) are unchanged, explicitly accepted-and-documented, and not worsened by the gate fix.
+
+## Codex Cycle-3 Review (verbatim)
+
+**Cycle-2 HIGH Resolution**
+
+**FULLY RESOLVED.** Plan 02 now explicitly restores the old convergence gate: `compute_replacement_due()` must call `get_convergence_status()` and `return None` before any regression when `.converged` is false ([26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:164)). That matches the old persisted path in `_predict_replacement`, which only called `linear_regression_soh` inside `if convergence.converged` ([discharge_handler.py](/home/j2h4u/repos/j2h4u/ups-battery-monitor/src/discharge_handler.py:218)).
+
+The test plan is also non-vacuous: T-26-08 requires regression-quality `soh_history`, independently non-converged `capacity_estimates`, an explicit `get_convergence_status().converged is False` assertion, then `compute_replacement_due() is None`, plus a converged twin asserting `NOT None` ([26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:260)). That directly catches the cycle-2 failure mode.
+
+`battery-health.py` is also brought under the same gate using `compute_cov` and `len(capacity_estimates) >= 3 and cov < 0.10` ([26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:206)), matching the model convergence formula ([model.py](/home/j2h4u/repos/j2h4u/ups-battery-monitor/src/model.py:807)).
+
+**Cycle-1 HIGH Status**
+
+All three cycle-1 HIGHs remain resolved.
+
+- **rated_ah propagation:** still resolved. Plan 01 requires `rated_ah=self.capacity_ah` at both `get_convergence_status()` return sites and adds both-branch/default tests ([26-01-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-01-PLAN.md:23), [26-01-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-01-PLAN.md:186)).
+- **configurable replacement threshold:** still resolved. Plan 02 injects `soh_threshold=config.soh_alert_threshold` and tests both `0.80` and non-`0.80` thresholds ([26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:27), [26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:247)).
+- **shared baseline filter:** still resolved. Plan 02 keeps one shared `latest_capacity_ah_ref()` helper for model and `battery-health.py`, with a mixed-baseline regression test ([26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:152), [26-02-PLAN.md](/home/j2h4u/repos/j2h4u/ups-battery-monitor/.planning/phases/26-model-json-learned-state-hygiene-move-config-spec-and-derive/26-02-PLAN.md:276)).
+
+**New Concerns**
+
+No new HIGH concerns introduced by the cycle-3 revision. I also do not see a new MEDIUM that requires replan. The known non-default reporting divergences for standalone MOTD / `battery-health.py` remain explicitly documented and accepted, not worsened by the convergence-gate fix.
+
+**Summary**
+
+Cycle 3 closes the remaining real value-divergence risk. The revised plan now mirrors the old persisted replacement path’s convergence precondition, applies the same suppression rule to `battery-health.py`, and adds a targeted regression fixture that would fail if the gate were dropped again. The previously resolved rated-capacity, threshold, and baseline-filter fixes remain intact.
+
+**Risk Assessment**
+
+Overall risk: **LOW** for the plan. Remaining risk is implementation discipline, not plan design: the action and verification are now precise enough to catch the cycle-2 bug. **UNRESOLVED HIGH concerns after cycle 3: 0.**
+
+## OpenCode Cycle-3 Review (verbatim)
+
+# Cross-AI Plan Review — Phase 26 — CYCLE 3 (FINAL)
+
+## 1. Cycle-2 HIGH Resolution — Convergence Gate
+
+**FULLY RESOLVED.**
+
+The cycle-2 HIGH was that `compute_replacement_due()` ran `linear_regression_soh` unconditionally, while the OLD `_predict_replacement` (discharge_handler.py:218-219) gated on `convergence.converged`. The cycle-3 revision addresses this across three layers:
+
+| Claim | Where in plan | Verdict |
+|-------|---------------|---------|
+| `compute_replacement_due()` returns `None` when `get_convergence_status().converged` is False, BEFORE calling `linear_regression_soh` | Plan 02 Task 2 action (c), truth #8, T-26-08 threat | **Match.** The action text is explicit: "call `self.get_convergence_status()` and `return None` immediately when `.converged` is False — BEFORE any call to `linear_regression_soh`." This mirrors `discharge_handler.py:218-219` exactly. |
+| `battery-health.py` applies the SAME convergence gate | Plan 02 Task 2 action (ii), truth #9 | **Match.** Uses `compute_cov` from `src.capacity_estimator` (same import as model.py:15), same formula (`len(estimates) >= 3 and cov < 0.10`). |
+| T-26-08 tests the non-converged case | Plan 02 Task 3 action | **Match.** Builds a fixture with regression-quality `soh_history` but non-converged `capacity_estimates`; first asserts `.converged` is False (proving the fixture exercises the gate, not the <3-points path), then asserts `compute_replacement_due() is None`. A converged twin (same soh_history, converged estimates) asserts NOT None, proving the gate flips on convergence alone. |
+
+No residual divergence: the old path's `convergence.converged` check on exactly `len(capacity_estimates) >= 3 and compute_cov(ah_values) < 0.10` is replicated by the same `get_convergence_status()` call in the new path.
+
+## 2. Cycle-1 HIGH Status
+
+All three remain fully resolved with no regressions introduced by the cycle-3 changes:
+
+| Cycle-1 HIGH | Status | Evidence (unchanged from cycle 2) |
+|---|---|---|
+| #1 rated_ah propagation | **RESOLVED** | Plan 01 Task 2 sets `rated_ah=self.capacity_ah` at both `get_convergence_status` return sites + T-26-06 both-branches test. The convergence-gate addition doesn't touch `get_convergence_status` internals. |
+| #2 configurable replacement threshold | **RESOLVED** | Plan 02 Task 2 injects `soh_threshold` via constructor; `compute_replacement_due()` uses `self.soh_threshold` (not a literal `0.80`). The new convergence gate is a *pre-check* that doesn't substitute the threshold value — `linear_regression_soh` still receives `threshold_soh=self.soh_threshold` inside the `if converged` branch. |
+| #3 shared baseline filter | **RESOLVED** | `latest_capacity_ah_ref()` helper consumed by both `compute_replacement_due()` and `battery-health.py`. T-26-07 unchanged. |
+
+## 3. New Concerns
+
+**No HIGH concerns.** One LOW observation:
+
+- **LOW — Theoretical gate-flip on re-convergence:** The old path checked `convergence.converged` once at discharge completion and persisted the result. The new path checks it every poll via `compute_replacement_due()`. If a converged model transiently slips to non-converged (e.g., a new anomalous estimate spikes CoV above 0.10), the old persisted value would still show a date while the new live value would return `None`. In practice, CoV is monotonic-stable after 3+ estimates from coulomb counting, and a spike implies genuinely degraded confidence — returning `None` is *more correct* than serving a stale persisted value. The plan's intent is correct (mirror the gate's *logic*, not freeze its *snapshot*). No action needed.
+
+## 4. Summary
+
+The cycle-3 revision fully addresses the single remaining cycle-2 HIGH. `compute_replacement_due()` now gates on `get_convergence_status().converged` before running the regression, exactly matching the old `discharge_handler._predict_replacement` gate. `battery-health.py` applies the same gate using `compute_cov` from the canonical source. T-26-08 provides a Nyquist-level test: a non-converged fixture with regression-quality `soh_history` proves the gate returns `None` where the old path would have persisted `None`; the converged twin proves the gate flips correctly. All three cycle-1 HIGHs remain resolved with no regressions. No new HIGH concerns are present.
+
+## 5. Risk Assessment
+
+**Overall: LOW.** The one cycle-2 HIGH is definitively resolved. The convergence gate is specified at the level of concrete `file:line` equivalence (`get_convergence_status().converged` → `return None` before `linear_regression_soh`), backed by a test that provably exercises the gate. The three cycle-1 HIGHs stay resolved. No new correctness or equivalence defects. The one LOW observation about monotonicity is a theoretical edge with zero practical reachability and actually represents improved correctness.
+
+**Unresolved HIGH concerns: 0.** Convergence reached.
+
+## Cycle-3 Consensus
+
+### Agreed (both reviewers)
+- The cycle-2 HIGH (`compute_replacement_due()` convergence gate) is **FULLY RESOLVED**: the revised plan
+  mirrors the old `discharge_handler` gate, applies it consistently to `battery-health.py`, and adds a
+  non-vacuous T-26-08 regression test (asserts `.converged is False` then `is None`, plus a converged twin).
+- All three cycle-1 HIGHs remain resolved with no regression introduced by the cycle-3 change.
+- **No new HIGH concerns.** Overall risk **LOW**.
+
+### Divergence
+- None of consequence. OpenCode adds one LOW (theoretical re-convergence gate-flip, judged more-correct
+  and not actionable); Codex reports no new MEDIUM/HIGH. Both converge on 0 unresolved HIGH.
+
+### Cycle-3 Verdict
+- Cycle-2 HIGH: **1 raised → 1 FULLY RESOLVED.**
+- New HIGH this cycle: **0.**
+- **HIGH remaining (unresolved): 0.** Convergence reached — plans are ready for execution. No further
+  replan/review cycle warranted.
