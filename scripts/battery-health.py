@@ -24,8 +24,8 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
     """Print the Maintenance & schedule section.
 
     Sources:
-      - next_test_timestamp: health.json preferred (per-poll scheduler output),
-        falls back to model.json scheduled_test_timestamp.
+      - next_test_timestamp: health.json only (per-poll scheduler output; the model.json
+        scheduled_test_timestamp fallback was removed in HYG-03).
       - scheduling_reason: health.json.
       - last test: model.json last_upscmd_timestamp / last_upscmd_type / last_upscmd_status.
       - IR trend: health.json ir_trend_rate (Ω/day) or recomputed from model r_internal_history.
@@ -106,6 +106,23 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
         print(f"  Capacity / SoH:       SoH={soh_str}  {rated_str}  (no measured capacity yet)")
 
 
+def load_health_endpoint() -> tuple[dict, bool]:
+    """Load the daemon health endpoint once for the whole report.
+
+    Returns ``(health_data, permission_denied)``. health.json carries per-poll scheduler
+    outputs AND the configured ``soh_alert_threshold`` the replacement prediction reads, so
+    it must be loaded before the replacement section (not just the Maintenance section).
+    On PermissionError the Maintenance section prints a sudo/fixture hint; other errors
+    degrade silently to ``{}``.
+    """
+    try:
+        return json.loads(HEALTH_PATH.read_text()), False
+    except PermissionError:
+        return {}, True
+    except (OSError, ValueError):
+        return {}, False
+
+
 def main() -> None:
     if not MODEL_PATH.exists():
         print(f"No battery model at {MODEL_PATH}")
@@ -118,6 +135,10 @@ def main() -> None:
     except (json.JSONDecodeError, OSError) as e:
         print(f"Error reading {MODEL_PATH}: {e}")
         sys.exit(1)
+
+    # Load the health endpoint up front — the replacement prediction below reads its
+    # soh_alert_threshold, and the Maintenance section reuses the same data.
+    health_data, health_perm_denied = load_health_endpoint()
 
     # UPS identity from NUT
     ups_name = model_data.get('ups_name', 'cyberpower-virtual')
@@ -185,22 +206,22 @@ def main() -> None:
         latest = soh_history[-1]
         print(f"  Last discharge:   {latest.get('date', '?')} (SoH was {latest.get('soh', 0):.0%})")
 
-    # Replacement prediction — mirrors the daemon's compute_replacement_due() gate exactly:
-    # (1) capacity_estimates must be converged (>=3 samples, CoV < 0.10); and
+    # Replacement prediction — mirrors the daemon's compute_replacement_due() exactly:
+    # (1) capacity_estimates must be converged (shared is_capacity_converged predicate); and
     # (2) soh_history must have >=3 points for linear regression.
-    # The daemon uses config.soh_alert_threshold; this report uses the 0.80 default
-    # (same as standalone MOTD). For a non-default soh_alert the dates may differ —
-    # accepted (YAGNI: no config loader added to CLI/MOTD per CONTEXT.md scope).
-    # The convergence gate mirrors the daemon so the two never show conflicting states.
+    # The threshold comes from the daemon's health endpoint (config.soh_alert_threshold),
+    # so the CLI date matches the daemon's battery.replacement.due for ANY configured value.
+    # 0.80 is only the fallback when no daemon has written health.json (standalone run).
     capacity_estimates = model_data.get('capacity_estimates', [])
     capacity_converged = is_capacity_converged(capacity_estimates)
 
     if capacity_converged and len(soh_history) >= 3:
-        # Use the shared latest_capacity_ah_ref helper so baseline selection matches
-        # the daemon's compute_replacement_due() path exactly (review HIGH #3).
+        # Shared latest_capacity_ah_ref baseline + health-sourced threshold so this path
+        # reproduces the daemon's compute_replacement_due() value exactly.
+        threshold = health_data.get("soh_alert_threshold", 0.80)
         replacement_prediction = linear_regression_soh(
             soh_history,
-            threshold_soh=0.80,
+            threshold_soh=threshold,
             capacity_ah_ref=latest_capacity_ah_ref(soh_history),
         )
         if replacement_prediction:
@@ -224,18 +245,12 @@ def main() -> None:
             direction = "rising ⚠" if delta_mohm > 0.5 else "stable" if delta_mohm > -0.5 else "improving"
             print(f"  R_internal trend: {delta_mohm:+.1f} mΩ since {r_hist[0]['date']} ({direction})")
 
-    # Maintenance & schedule — load health endpoint, degrade gracefully if unavailable
-    # /run/ups-battery-monitor/ups-health.json is typically root-owned; non-root runs hit
-    # PermissionError. Set UPS_HEALTH_PATH to a readable copy/fixture to avoid sudo.
-    try:
-        health_data = json.loads(HEALTH_PATH.read_text())
-    except PermissionError:
+    # Maintenance & schedule — health_data was loaded at the top of main(). If the endpoint
+    # was permission-denied (root-owned /run file, non-root run), surface the sudo/fixture hint.
+    if health_perm_denied:
         print()
         print("  Maintenance & schedule: health endpoint unavailable (daemon not running, or run with sudo)")
         print("  Tip: set UPS_HEALTH_PATH=/path/to/readable/health.json to use a fixture without sudo")
-        health_data = {}
-    except (OSError, ValueError):
-        health_data = {}
 
     print_maintenance(model_data, health_data)
 

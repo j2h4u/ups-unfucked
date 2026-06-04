@@ -58,6 +58,7 @@ class VirtualUpsExporter:
             last_discharge_timestamp=dh.last_discharge_timestamp,
             consecutive_errors=consecutive_errors,
             shutdown_imminent=current_metrics.shutdown_imminent,
+            soh_alert_threshold=self.battery_model.soh_threshold,
         )
         write_health_endpoint(snapshot)
 
@@ -74,7 +75,7 @@ class VirtualUpsExporter:
         install_date = self.battery_model.get_battery_install_date() or ""
         cycle_count = self.battery_model.get_cycle_count()
         cumulative_sec = self.battery_model.get_cumulative_on_battery_sec()
-        replacement_due = self.battery_model.get_replacement_due() or ""
+        replacement_due = self.battery_model.compute_replacement_due() or ""
         r_internal_mohm = self._compute_median_r_internal_mohm()
 
         return {

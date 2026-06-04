@@ -59,17 +59,19 @@ def render_motd(model_path: Path | None = None, health_path: Path | None = None)
     Returns:
         Newline-joined ``key=value`` lines. Absent values render as empty strings.
     """
-    model = BatteryModel(model_path)
+    health = _load_health(health_path or DEFAULT_HEALTH_PATH)
+    # Source soh_alert_threshold from the daemon's health endpoint so the MOTD replacement
+    # date matches the daemon for any configured value; 0.80 only when no daemon wrote it.
+    model = BatteryModel(model_path, soh_threshold=health.get("soh_alert_threshold", 0.80))
     state = model.state
     convergence = model.get_convergence_status()
-    health = _load_health(health_path or DEFAULT_HEALTH_PATH)
 
     latest_ah = convergence.latest_ah
 
     fields = {
         # --- Battery health (model.json) ---
         "soh_pct": _fraction_to_pct(state.get("soh")),
-        "replacement_due": model.get_replacement_due() or "",
+        "replacement_due": model.compute_replacement_due() or "",
         "new_battery_detected": "true" if state.get("new_battery_detected") else "false",
         "new_battery_timestamp": state.get("new_battery_detected_timestamp") or "",
         # --- Capacity estimation (model.json, computed by get_convergence_status) ---

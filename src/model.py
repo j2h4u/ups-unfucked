@@ -584,15 +584,6 @@ class BatteryModel:
         )
         return result[3] if result is not None else None
 
-    def get_replacement_due(self) -> Optional[str]:
-        """Return predicted replacement due date (live recompute via compute_replacement_due).
-
-        Delegates to compute_replacement_due() so all callers — virtual_ups_exporter,
-        motd_status, health endpoint — get a fresh value each poll without reading a
-        stale persisted field. The name is kept for backward call-site compatibility.
-        """
-        return self.compute_replacement_due()
-
     def add_on_battery_time(self, seconds: float):
         """Accumulate on-battery time (additive, unit: seconds, no upper bound)."""
         self.state["cumulative_on_battery_sec"] = (

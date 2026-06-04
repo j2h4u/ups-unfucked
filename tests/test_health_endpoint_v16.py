@@ -71,6 +71,20 @@ def test_health_endpoint_includes_shutdown_imminent(
         assert data["shutdown_imminent"] is True
 
 
+def test_health_endpoint_includes_soh_alert_threshold(
+    health_endpoint_temp_file, baseline_health_params
+):
+    """WR-01: the configured soh_alert_threshold is serialized so the read-only CLI/MOTD
+    can reproduce the daemon's replacement date for any configured value."""
+    with patch("src.monitor_config.HEALTH_ENDPOINT_PATH", health_endpoint_temp_file):
+        write_health_endpoint(
+            HealthSnapshot(**{**baseline_health_params, "soh_alert_threshold": 0.75})
+        )
+        with open(health_endpoint_temp_file) as f:
+            data = json.load(f)
+        assert data["soh_alert_threshold"] == 0.75
+
+
 @pytest.mark.integration
 def test_health_endpoint_includes_diagnostic_fields(
     health_endpoint_temp_file, baseline_health_params

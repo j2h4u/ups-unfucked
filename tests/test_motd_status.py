@@ -8,6 +8,7 @@ parsed fields rather than the raw string.
 import json
 from pathlib import Path
 
+from src.model import BatteryModel
 from src.motd_status import render_motd
 
 
@@ -105,6 +106,38 @@ def test_soh_and_replacement_due_surface(tmp_path):
     assert fields["soh_pct"] == "85"
     # Live compute_replacement_due() must return a non-empty date for this converged fixture
     assert fields["replacement_due"] != ""
+
+
+def test_replacement_due_uses_threshold_from_health_endpoint(tmp_path):
+    """WR-01: the MOTD replacement date tracks the daemon's configured soh_alert_threshold
+    (read from health.json), not a hardcoded 0.80 — so the two surfaces never disagree."""
+    model_path = tmp_path / "model.json"
+    capacity_estimates = [
+        {"ah_estimate": 7.15, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {"ah_estimate": 7.18, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {"ah_estimate": 7.20, "timestamp": "2025-08-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+    ]
+    soh_history = [
+        {"date": "2025-06-01", "soh": 0.98, "capacity_ah_ref": 7.2},
+        {"date": "2025-09-01", "soh": 0.95, "capacity_ah_ref": 7.2},
+        {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": 7.2},
+        {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": 7.2},
+    ]
+    _write_model(model_path, {"soh": 0.85, "capacity_estimates": capacity_estimates, "soh_history": soh_history})
+
+    health_path = tmp_path / "health.json"
+    _write_health(health_path, {"soh_alert_threshold": 0.70})
+    fields = _render(model_path, health_path)
+
+    # MOTD reproduces the daemon's value for THIS configured threshold, byte-for-byte.
+    daemon_value = BatteryModel(model_path, soh_threshold=0.70).compute_replacement_due()
+    assert fields["replacement_due"] == (daemon_value or "")
+
+    # A different configured threshold yields a different date — proving the value is
+    # sourced from health.json, not hardcoded to 0.80.
+    _write_health(health_path, {"soh_alert_threshold": 0.90})
+    fields_high = _render(model_path, health_path)
+    assert fields_high["replacement_due"] != fields["replacement_due"]
 
 
 def test_new_battery_flag_surfaces(tmp_path):

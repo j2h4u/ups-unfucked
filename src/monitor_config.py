@@ -307,6 +307,8 @@ class HealthSnapshot:
     last_discharge_timestamp: Optional[str] = None
     consecutive_errors: int = 0
     shutdown_imminent: bool = False  # runtime < shutdown threshold (operator visibility)
+    soh_alert_threshold: float = 0.80  # configured SoH replacement threshold; lets the
+    # read-only CLI/MOTD reproduce the daemon's replacement date for any configured value
 
 
 def _opt_round(v: Optional[float], n: int) -> Optional[float]:
@@ -343,6 +345,7 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
         "next_test_timestamp": snapshot.next_test_timestamp,
         "last_discharge_timestamp": snapshot.last_discharge_timestamp,
         "consecutive_errors": snapshot.consecutive_errors,
+        "soh_alert_threshold": snapshot.soh_alert_threshold,
     }
     health_path = HEALTH_ENDPOINT_PATH
 
