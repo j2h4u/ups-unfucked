@@ -88,9 +88,24 @@ def test_soh_and_replacement_due_surface(tmp_path):
     model_path = tmp_path / "model.json"
     # Converged capacity estimates (CoV well below 0.10)
     capacity_estimates = [
-        {"ah_estimate": 7.15, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
-        {"ah_estimate": 7.18, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
-        {"ah_estimate": 7.20, "timestamp": "2025-08-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {
+            "ah_estimate": 7.15,
+            "timestamp": "2025-06-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
+        {
+            "ah_estimate": 7.18,
+            "timestamp": "2025-07-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
+        {
+            "ah_estimate": 7.20,
+            "timestamp": "2025-08-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
     ]
     # Regression-quality soh_history: negative slope, R²≥0.5, all same capacity_ah_ref
     soh_history = [
@@ -99,7 +114,10 @@ def test_soh_and_replacement_due_surface(tmp_path):
         {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": 7.2},
         {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": 7.2},
     ]
-    _write_model(model_path, {"soh": 0.85, "capacity_estimates": capacity_estimates, "soh_history": soh_history})
+    _write_model(
+        model_path,
+        {"soh": 0.85, "capacity_estimates": capacity_estimates, "soh_history": soh_history},
+    )
 
     fields = _render(model_path, tmp_path / "absent-health.json")
 
@@ -113,9 +131,24 @@ def test_replacement_due_uses_threshold_from_health_endpoint(tmp_path):
     (read from health.json), not a hardcoded 0.80 — so the two surfaces never disagree."""
     model_path = tmp_path / "model.json"
     capacity_estimates = [
-        {"ah_estimate": 7.15, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
-        {"ah_estimate": 7.18, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
-        {"ah_estimate": 7.20, "timestamp": "2025-08-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {
+            "ah_estimate": 7.15,
+            "timestamp": "2025-06-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
+        {
+            "ah_estimate": 7.18,
+            "timestamp": "2025-07-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
+        {
+            "ah_estimate": 7.20,
+            "timestamp": "2025-08-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
     ]
     soh_history = [
         {"date": "2025-06-01", "soh": 0.98, "capacity_ah_ref": 7.2},
@@ -123,7 +156,10 @@ def test_replacement_due_uses_threshold_from_health_endpoint(tmp_path):
         {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": 7.2},
         {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": 7.2},
     ]
-    _write_model(model_path, {"soh": 0.85, "capacity_estimates": capacity_estimates, "soh_history": soh_history})
+    _write_model(
+        model_path,
+        {"soh": 0.85, "capacity_estimates": capacity_estimates, "soh_history": soh_history},
+    )
 
     health_path = tmp_path / "health.json"
     _write_health(health_path, {"soh_alert_threshold": 0.70})

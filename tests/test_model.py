@@ -177,7 +177,11 @@ class TestBatteryModelSave:
 
         model2 = BatteryModel(model_path=model_file)
         assert len(model2.get_soh_history()) == 2
-        assert model2.get_soh_history()[1] == {"date": "2026-03-14", "soh": 0.95, "capacity_ah_ref": 7.2}
+        assert model2.get_soh_history()[1] == {
+            "date": "2026-03-14",
+            "soh": 0.95,
+            "capacity_ah_ref": 7.2,
+        }
 
 
 class TestVRLALUTInitialization:
@@ -486,7 +490,9 @@ class TestHistoryPruning:
 
         # Create 50 history entries
         for i in range(50):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001), capacity_ah_ref=7.2)
+            model.add_soh_history_entry(
+                f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001), capacity_ah_ref=7.2
+            )
 
         initial_count = len(model.get_soh_history())
         assert initial_count >= 50
@@ -570,7 +576,9 @@ class TestHistoryPruning:
 
         # Create 40 history entries
         for i in range(40):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001), capacity_ah_ref=7.2)
+            model.add_soh_history_entry(
+                f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001), capacity_ah_ref=7.2
+            )
 
         # Save (should prune internally)
         model.save()
@@ -1220,12 +1228,28 @@ class TestStateSchemaValidation:
 # Fixtures shared by the new HYG-03/04 replacement_due tests
 # ---------------------------------------------------------------------------
 
+
 def _make_converged_capacity_estimates():
     """Return 3 capacity estimates with CoV well below 0.10 (convergence = True)."""
     return [
-        {"ah_estimate": 7.15, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
-        {"ah_estimate": 7.18, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
-        {"ah_estimate": 7.20, "timestamp": "2025-08-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {
+            "ah_estimate": 7.15,
+            "timestamp": "2025-06-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
+        {
+            "ah_estimate": 7.18,
+            "timestamp": "2025-07-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
+        {
+            "ah_estimate": 7.20,
+            "timestamp": "2025-08-01T00:00:00Z",
+            "confidence": 0.95,
+            "metadata": {},
+        },
     ]
 
 
@@ -1276,7 +1300,9 @@ class TestComputeReplacementDueEquivalence:
         )
 
         expected = linear_regression_soh(soh_history, threshold_soh=threshold, capacity_ah_ref=7.2)
-        assert expected is not None, "Fixture self-check: regression_soh returned None (check history quality)"
+        assert expected is not None, (
+            "Fixture self-check: regression_soh returned None (check history quality)"
+        )
 
         assert model.compute_replacement_due() == expected[3]
 
@@ -1320,8 +1346,18 @@ class TestComputeReplacementDueConvergenceGate:
         state = {
             "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
             "capacity_estimates": [
-                {"ah_estimate": 7.0, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.5, "metadata": {}},
-                {"ah_estimate": 6.5, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.5, "metadata": {}},
+                {
+                    "ah_estimate": 7.0,
+                    "timestamp": "2025-06-01T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
+                {
+                    "ah_estimate": 6.5,
+                    "timestamp": "2025-07-01T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
             ],
         }
         with open(model_path, "w") as f:
@@ -1402,8 +1438,12 @@ class TestLatestCapacityAhRefBaseline:
         assert latest_capacity_ah_ref(soh_history) == 7.2
 
         # compute_replacement_due() uses only entries matching the latest baseline (7.2)
-        latest_only_result = linear_regression_soh(soh_history, threshold_soh=0.80, capacity_ah_ref=7.2)
-        all_entries_result = linear_regression_soh(soh_history, threshold_soh=0.80, capacity_ah_ref=None)
+        latest_only_result = linear_regression_soh(
+            soh_history, threshold_soh=0.80, capacity_ah_ref=7.2
+        )
+        all_entries_result = linear_regression_soh(
+            soh_history, threshold_soh=0.80, capacity_ah_ref=None
+        )
 
         assert model.compute_replacement_due() == latest_only_result[3], (
             "compute_replacement_due() must use only the latest-baseline entries"
@@ -1450,10 +1490,16 @@ class TestRegenLoaderGates:
 
         # No removed keys in the saved file
         saved = json.loads(model_path.read_text())
-        for removed_key in ("replacement_due", "capacity_converged",
-                            "scheduled_test_timestamp", "scheduled_test_reason",
-                            "test_block_reason"):
-            assert removed_key not in saved, f"Removed key '{removed_key}' found in freshly saved model.json"
+        for removed_key in (
+            "replacement_due",
+            "capacity_converged",
+            "scheduled_test_timestamp",
+            "scheduled_test_reason",
+            "test_block_reason",
+        ):
+            assert removed_key not in saved, (
+                f"Removed key '{removed_key}' found in freshly saved model.json"
+            )
 
     def test_old_schema_raises_on_load(self, tmp_path):
         """An old-schema model.json carrying removed top-level keys raises ModelLoadError.
@@ -1474,8 +1520,18 @@ class TestRegenLoaderGates:
                 "peukert_exponent": 1.22,
                 "ir_compensation": {"k_volts_per_percent": 0.016, "reference_load_percent": 20.0},
                 "rls_state": {
-                    "ir_k": {"theta": 0.016, "P": 0.9, "sample_count": 5, "forgetting_factor": 0.97},
-                    "peukert": {"theta": 1.22, "P": 0.85, "sample_count": 5, "forgetting_factor": 0.97},
+                    "ir_k": {
+                        "theta": 0.016,
+                        "P": 0.9,
+                        "sample_count": 5,
+                        "forgetting_factor": 0.97,
+                    },
+                    "peukert": {
+                        "theta": 1.22,
+                        "P": 0.85,
+                        "sample_count": 5,
+                        "forgetting_factor": 0.97,
+                    },
                     # Wave-1 removed physics spec sub-keys (silently ignored by _sync_physics_from_state,
                     # but stripped for cleanliness — the strict loader only rejects top-level unknowns)
                     "nominal_voltage": 12.0,
@@ -1491,12 +1547,12 @@ class TestRegenLoaderGates:
             "cycle_count": 12,
             "cumulative_on_battery_sec": 3600.0,
             # Removed top-level keys (from waves 1+2)
-            "full_capacity_ah_ref": 7.2,           # wave-1 removed
-            "replacement_due": "2027-06-01",        # wave-2 removed
-            "capacity_converged": True,             # wave-2 removed
+            "full_capacity_ah_ref": 7.2,  # wave-1 removed
+            "replacement_due": "2027-06-01",  # wave-2 removed
+            "capacity_converged": True,  # wave-2 removed
             "scheduled_test_timestamp": "2026-07-01T08:00:00Z",  # wave-2 removed
-            "scheduled_test_reason": "diagnostic_cadence",        # wave-2 removed
-            "test_block_reason": None,              # wave-2 removed
+            "scheduled_test_reason": "diagnostic_cadence",  # wave-2 removed
+            "test_block_reason": None,  # wave-2 removed
         }
         model_path.write_text(json.dumps(old_schema))
 
@@ -1505,10 +1561,17 @@ class TestRegenLoaderGates:
             BatteryModel(model_path)
         error_msg = str(exc_info.value)
         # At least one of the removed top-level keys must appear in the error
-        assert any(k in error_msg for k in (
-            "full_capacity_ah_ref", "replacement_due", "capacity_converged",
-            "scheduled_test_timestamp", "scheduled_test_reason", "test_block_reason",
-        )), f"Expected removed key in error, got: {error_msg}"
+        assert any(
+            k in error_msg
+            for k in (
+                "full_capacity_ah_ref",
+                "replacement_due",
+                "capacity_converged",
+                "scheduled_test_timestamp",
+                "scheduled_test_reason",
+                "test_block_reason",
+            )
+        ), f"Expected removed key in error, got: {error_msg}"
 
     def test_strip_then_load_clean_and_learned_keys_survive(self, tmp_path):
         """After applying the documented strip, the file loads clean AND learned keys survive.
@@ -1528,11 +1591,21 @@ class TestRegenLoaderGates:
                 "peukert_exponent": 1.22,
                 "ir_compensation": {"k_volts_per_percent": 0.016, "reference_load_percent": 20.0},
                 "rls_state": {
-                    "ir_k": {"theta": 0.016, "P": 0.9, "sample_count": 5, "forgetting_factor": 0.97},
-                    "peukert": {"theta": 1.22, "P": 0.85, "sample_count": 5, "forgetting_factor": 0.97},
+                    "ir_k": {
+                        "theta": 0.016,
+                        "P": 0.9,
+                        "sample_count": 5,
+                        "forgetting_factor": 0.97,
+                    },
+                    "peukert": {
+                        "theta": 1.22,
+                        "P": 0.85,
+                        "sample_count": 5,
+                        "forgetting_factor": 0.97,
+                    },
                 },
-                "nominal_voltage": 12.0,          # wave-1 physics spec sub-key (silently ignored)
-                "nominal_power_watts": 85.0,       # wave-1 physics spec sub-key (silently ignored)
+                "nominal_voltage": 12.0,  # wave-1 physics spec sub-key (silently ignored)
+                "nominal_power_watts": 85.0,  # wave-1 physics spec sub-key (silently ignored)
             },
             "lut": [
                 {"v": 13.4, "soc": 1.00, "source": "standard"},
@@ -1554,8 +1627,14 @@ class TestRegenLoaderGates:
 
         # Apply the documented one-time deploy strip (stop → strip → start sequence)
         data = json.loads(model_path.read_text())
-        for key in ("full_capacity_ah_ref", "replacement_due", "capacity_converged",
-                    "scheduled_test_timestamp", "scheduled_test_reason", "test_block_reason"):
+        for key in (
+            "full_capacity_ah_ref",
+            "replacement_due",
+            "capacity_converged",
+            "scheduled_test_timestamp",
+            "scheduled_test_reason",
+            "test_block_reason",
+        ):
             data.pop(key, None)
         # Also remove physics spec sub-keys for cleanliness (silently ignored by loader but stale)
         physics = data.get("physics", {})

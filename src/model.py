@@ -945,4 +945,3 @@ class BatteryModel:
         cannot defer the next annual cadence ~365 days.
         """
         return self.state.get("last_upscmd_status")
-

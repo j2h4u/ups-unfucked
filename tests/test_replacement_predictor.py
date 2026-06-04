@@ -124,7 +124,11 @@ def test_regression_filters_by_baseline():
         {"date": "2026-01-01", "soh": 1.0, "capacity_ah_ref": 6.8},
         {"date": "2026-01-15", "soh": 0.98, "capacity_ah_ref": 6.8},
         {"date": "2026-02-01", "soh": 0.96, "capacity_ah_ref": 6.8},
-        {"date": "2026-03-01", "soh": 0.90, "capacity_ah_ref": 7.2},  # Transitional, distinct baseline — excluded from both filters
+        {
+            "date": "2026-03-01",
+            "soh": 0.90,
+            "capacity_ah_ref": 7.2,
+        },  # Transitional, distinct baseline — excluded from both filters
         {"date": "2026-03-16", "soh": 0.92, "capacity_ah_ref": 6.9},  # New baseline entries
         {"date": "2026-04-01", "soh": 0.91, "capacity_ah_ref": 6.9},
     ]

@@ -72,7 +72,10 @@ class TestFirstTestDeadlockFix:
             last_blackout_timestamp=None,
             cycle_budget_remaining=100,
         )
-        assert "inf" in decision.reason_detail.lower() or "since last" in decision.reason_detail.lower()
+        assert (
+            "inf" in decision.reason_detail.lower()
+            or "since last" in decision.reason_detail.lower()
+        )
 
 
 class TestAnnualCadence:
@@ -129,6 +132,7 @@ class TestAnnualCadence:
         assert decision.reason_code == "within_cadence"
         # next_eligible should be ~335 days out
         from datetime import datetime, timezone
+
         next_eligible_dt = datetime.fromisoformat(decision.next_eligible_timestamp)
         now = datetime.now(timezone.utc)
         days_until = (next_eligible_dt - now).total_seconds() / 86400.0

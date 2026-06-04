@@ -967,9 +967,7 @@ def test_shallow_discharge_rest_period_does_not_degrade_soh(initial_battery_stat
     # or stay stable (if effect not detected in shallow discharge)
     assert state.soh <= 1.0, "SoH should not exceed 1.0"
     # Accept either improvement (delta > 0) or stability (delta ~0, within measurement noise)
-    assert soh_delta > -0.05, (
-        f"SoH should not degrade further after rest (delta={soh_delta:.4f})"
-    )
+    assert soh_delta > -0.05, f"SoH should not degrade further after rest (delta={soh_delta:.4f})"
 
 
 def test_seasonal_thermal_variation(initial_battery_state):

@@ -383,6 +383,7 @@ class TestSchedulerManager:
         # Verify gathered inputs produce rate_limit decision
         inputs = sm._gather_scheduler_inputs()
         from src.battery_math.scheduler import evaluate_test_scheduling
+
         decision = evaluate_test_scheduling(
             soh_fraction=inputs["soh_fraction"],
             days_since_last_test_success=inputs["days_since_last_test_success"],
@@ -419,6 +420,7 @@ class TestSchedulerManager:
 
         inputs = sm._gather_scheduler_inputs()
         from src.battery_math.scheduler import evaluate_test_scheduling
+
         decision = evaluate_test_scheduling(
             soh_fraction=inputs["soh_fraction"],
             days_since_last_test_success=inputs["days_since_last_test_success"],
@@ -450,6 +452,7 @@ class TestSchedulerManager:
 
         inputs = sm._gather_scheduler_inputs()
         from src.battery_math.scheduler import evaluate_test_scheduling
+
         decision = evaluate_test_scheduling(
             soh_fraction=inputs["soh_fraction"],
             days_since_last_test_success=inputs["days_since_last_test_success"],
@@ -480,6 +483,7 @@ class TestSchedulerManager:
         inputs = sm._gather_scheduler_inputs()
 
         from src.battery_math.scheduler import evaluate_test_scheduling
+
         decision = evaluate_test_scheduling(
             soh_fraction=inputs["soh_fraction"],
             days_since_last_test_success=inputs["days_since_last_test_success"],
@@ -532,7 +536,9 @@ class TestSchedulerManager:
         sm = _make_scheduler(battery_model=bm)
         now = datetime(2026, 3, 20, 10, 5, 0, tzinfo=timezone.utc)
 
-        decision = SchedulerDecision(action="defer_test", test_type=None, reason_code="within_cadence")
+        decision = SchedulerDecision(
+            action="defer_test", test_type=None, reason_code="within_cadence"
+        )
 
         with patch("src.scheduler_manager.evaluate_test_scheduling", return_value=decision):
             sm.run_daily(now, Mock())

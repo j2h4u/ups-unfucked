@@ -59,9 +59,7 @@ def linear_regression_soh(
     """
     # Filter by capacity baseline (every entry is tagged at write time)
     if capacity_ah_ref is not None:
-        filtered_history = [
-            e for e in soh_history if e["capacity_ah_ref"] == capacity_ah_ref
-        ]
+        filtered_history = [e for e in soh_history if e["capacity_ah_ref"] == capacity_ah_ref]
 
         if len(filtered_history) < 3:
             return None
