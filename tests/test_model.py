@@ -95,7 +95,6 @@ class TestBatteryModelLoad:
         """Verify model loads from existing JSON file."""
         model_file = tmp_path / "model.json"
         model_data = {
-            "full_capacity_ah_ref": 7.2,
             "soh": 0.95,
             "lut": [{"v": 13.4, "soc": 1.0, "source": "standard"}],
             "soh_history": [{"date": "2026-03-13", "soh": 0.95}],
@@ -106,7 +105,7 @@ class TestBatteryModelLoad:
         model = BatteryModel(model_path=model_file)
 
         assert model.get_soh() == 0.95
-        assert model.get_capacity_ah() == 7.2
+        assert model.get_capacity_ah() == 7.2  # default from RATED_CAPACITY_AH
         assert len(model.get_lut()) == 1
 
     def test_model_initializes_default_on_missing_file(self, tmp_path):
@@ -256,6 +255,46 @@ class TestBatteryModelMethods:
         model = BatteryModel(model_path=model_file)
 
         assert model.get_capacity_ah() == 7.2
+
+    def test_capacity_ah_injection(self, tmp_path):
+        """BatteryModel(path, capacity_ah=9.0).get_capacity_ah() == 9.0; save/reload does not
+        reintroduce full_capacity_ah_ref into the file."""
+        model_file = tmp_path / "model.json"
+        model = BatteryModel(model_path=model_file, capacity_ah=9.0)
+
+        assert model.get_capacity_ah() == 9.0
+
+        model.save()
+
+        # Reloaded file must not carry full_capacity_ah_ref
+        with open(model_file, "r") as f:
+            raw = json.load(f)
+        assert "full_capacity_ah_ref" not in raw
+
+    def test_rated_ah_propagation_empty_model(self, tmp_path):
+        """get_convergence_status().rated_ah equals the injected capacity_ah (empty-estimates branch)."""
+        model = BatteryModel(model_path=tmp_path / "model.json", capacity_ah=9.0)
+
+        status = model.get_convergence_status()
+        assert status.sample_count == 0  # empty-estimates branch
+        assert status.rated_ah == 9.0
+
+    def test_rated_ah_propagation_populated_model(self, tmp_path):
+        """get_convergence_status().rated_ah equals the injected capacity_ah (populated branch)."""
+        model = BatteryModel(model_path=tmp_path / "model.json", capacity_ah=9.0)
+        model.add_capacity_estimate(8.8, 0.8, {}, "2026-06-01T00:00:00Z")
+
+        status = model.get_convergence_status()
+        assert status.sample_count == 1  # populated branch
+        assert status.rated_ah == 9.0
+
+    def test_rated_ah_propagation_default(self, tmp_path):
+        """get_convergence_status().rated_ah is 7.2 when capacity_ah not injected."""
+        from src.battery_math.constants import RATED_CAPACITY_AH
+
+        model = BatteryModel(model_path=tmp_path / "model.json")
+
+        assert model.get_convergence_status().rated_ah == RATED_CAPACITY_AH
 
     def test_get_soh_default(self, tmp_path):
         """Verify default SoH is 1.0 (100%)."""
@@ -923,7 +962,6 @@ class TestSchedulingSchema:
 
         # Create legacy model.json (no scheduling fields)
         legacy_data = {
-            "full_capacity_ah_ref": 7.2,
             "soh": 0.95,
             "physics": {},
             "lut": [
@@ -978,12 +1016,9 @@ class TestFieldLevelValidation:
     def _base_model_data(self):
         """Return a valid base model dict that passes all validation."""
         return {
-            "full_capacity_ah_ref": 7.2,
             "soh": 0.95,
             "physics": {
                 "peukert_exponent": 1.2,
-                "nominal_voltage": 12.0,
-                "nominal_power_watts": 425.0,
                 "ir_compensation": {"k_volts_per_percent": 0.015, "reference_load_percent": 20.0},
                 "rls_state": {
                     "ir_k": {

@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.battery_math.constants import RATED_CAPACITY_AH
 from src.replacement_predictor import linear_regression_soh
 
 # Production paths — override via env for fixture-based testing (mirrors src/motd_status.py).
@@ -27,7 +28,7 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
       - scheduling_reason: health.json.
       - last test: model.json last_upscmd_timestamp / last_upscmd_type / last_upscmd_status.
       - IR trend: health.json ir_trend_rate (Ω/day) or recomputed from model r_internal_history.
-      - capacity/SoH: model.json soh, capacity_ah / full_capacity_ah_ref.
+      - capacity/SoH: model.json soh; rated capacity from RATED_CAPACITY_AH constant (7.2).
     """
     print()
     print("  Maintenance & schedule")
@@ -89,20 +90,17 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
 
     # --- Capacity / SoH ---
     soh = model_data.get("soh", 1.0)
-    capacity_ah = model_data.get("capacity_ah") or model_data.get("full_capacity_ah_ref")
+    capacity_ah = RATED_CAPACITY_AH
     # Baseline measured capacity is persisted top-level as `capacity_ah_measured`
     # (model.py / discharge_handler.py). `measured_capacity_ah` only exists inside
     # discharge_events[] entries, never top-level — reading it here printed nothing.
     measured_cap = model_data.get("capacity_ah_measured")
     soh_str = f"{soh:.0%}"
-    if capacity_ah:
-        rated_str = f"rated {capacity_ah} Ah"
-        if measured_cap:
-            print(f"  Capacity / SoH:       SoH={soh_str}  measured={measured_cap:.2f} Ah  {rated_str}")
-        else:
-            print(f"  Capacity / SoH:       SoH={soh_str}  {rated_str}  (no measured capacity yet)")
+    rated_str = f"rated {capacity_ah} Ah"
+    if measured_cap:
+        print(f"  Capacity / SoH:       SoH={soh_str}  measured={measured_cap:.2f} Ah  {rated_str}")
     else:
-        print(f"  Capacity / SoH:       SoH={soh_str}")
+        print(f"  Capacity / SoH:       SoH={soh_str}  {rated_str}  (no measured capacity yet)")
 
 
 def main() -> None:
@@ -153,10 +151,8 @@ def main() -> None:
     else:
         print(f"  State of Health:  {soh:.0%}  (healthy)")
 
-    # Rated capacity
-    capacity_ah = model_data.get('capacity_ah') or model_data.get('full_capacity_ah_ref')
-    if capacity_ah:
-        print(f"  Rated capacity:   {capacity_ah} Ah")
+    # Rated capacity (sourced from RATED_CAPACITY_AH constant — not persisted in model.json)
+    print(f"  Rated capacity:   {RATED_CAPACITY_AH} Ah")
 
     # Battery age and cycle count
     install_date = model_data.get('battery_install_date')
@@ -175,7 +171,7 @@ def main() -> None:
     lut = model_data.get('lut', [])
     measured = sum(1 for e in lut if e.get('source') == 'measured')
     if measured == 0:
-        print(f"  Calibration:      standard curve (no real discharge data yet)")
+        print("  Calibration:      standard curve (no real discharge data yet)")
     else:
         print(f"  Calibration:      {measured} measured points, {len(lut)} total in LUT")
 
@@ -193,7 +189,7 @@ def main() -> None:
             slope, intercept, r2, date = replacement_prediction
             print(f"  Replace battery:  ~{date} (trend confidence R²={r2:.2f})")
         else:
-            print(f"  Replace battery:  no degradation trend detected yet")
+            print("  Replace battery:  no degradation trend detected yet")
     elif len(soh_history) > 0:
         print(f"  Replace battery:  need {3 - len(soh_history)} more discharge events for prediction")
 
@@ -214,8 +210,8 @@ def main() -> None:
         health_data = json.loads(HEALTH_PATH.read_text())
     except PermissionError:
         print()
-        print(f"  Maintenance & schedule: health endpoint unavailable (daemon not running, or run with sudo)")
-        print(f"  Tip: set UPS_HEALTH_PATH=/path/to/readable/health.json to use a fixture without sudo")
+        print("  Maintenance & schedule: health endpoint unavailable (daemon not running, or run with sudo)")
+        print("  Tip: set UPS_HEALTH_PATH=/path/to/readable/health.json to use a fixture without sudo")
         health_data = {}
     except (OSError, ValueError):
         health_data = {}

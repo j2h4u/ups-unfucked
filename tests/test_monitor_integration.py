@@ -516,9 +516,8 @@ def test_health_endpoint_capacity_persistence(tmp_path, monkeypatch):
     health_file = tmp_path / "ups-health.json"
     monkeypatch.setattr(src.monitor_config, "HEALTH_ENDPOINT_PATH", health_file)
 
-    # Create real battery model instance
+    # Create real battery model instance (capacity_ah sourced from config, not state)
     battery_model = BatteryModel(model_path)
-    battery_model.state["full_capacity_ah_ref"] = 7.2
     battery_model.state["capacity_estimates"] = []
     battery_model.save()
 

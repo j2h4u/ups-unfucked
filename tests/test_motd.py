@@ -39,7 +39,6 @@ def test_motd_capacity_displays(model_json_with_capacity):
 
     # Setup: Create temporary model.json with 3 capacity_estimates entries
     model_data = {
-        "full_capacity_ah_ref": 7.2,
         "capacity_estimates": [
             {
                 "timestamp": "2026-03-16T10:00:00Z",
@@ -115,7 +114,6 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
 
     # Setup: Create temporary model.json with empty capacity_estimates array
     model_data = {
-        "full_capacity_ah_ref": 7.2,
         "capacity_estimates": [],
         "soh_history": [],
         "lut": [],
@@ -189,7 +187,6 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
 
     # Setup: Create model.json with 2 estimates (count < 3, state = "measuring")
     model_data = {
-        "full_capacity_ah_ref": 7.2,
         "capacity_estimates": [
             {
                 "timestamp": "2026-03-16T10:00:00Z",
