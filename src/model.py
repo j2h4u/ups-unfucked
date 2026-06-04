@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict
 
-from src.battery_math.constants import NOMINAL_POWER_WATTS, RATED_CAPACITY_AH
+from src.battery_math.constants import NOMINAL_POWER_WATTS, NOMINAL_VOLTAGE, RATED_CAPACITY_AH
 from src.capacity_estimator import compute_cov
 
 
@@ -104,11 +104,14 @@ class RLSParams:
 
 @dataclass
 class PhysicsParams:
-    """Typed view of the physics sub-dict in model.json."""
+    """Typed view of the physics sub-dict in model.json.
+
+    Only the three learned keys are stored here: peukert_exponent, ir_compensation,
+    rls_state. nominal_voltage and nominal_power_watts are sourced from constants.py
+    at runtime and are not persisted.
+    """
 
     peukert_exponent: float = DEFAULT_PEUKERT_EXPONENT
-    nominal_voltage: float = 12.0
-    nominal_power_watts: float = NOMINAL_POWER_WATTS
     ir_compensation: IRCompensation = field(default_factory=IRCompensation)
     rls_state: Dict[str, RLSParams] = field(
         default_factory=lambda: {
@@ -307,8 +310,6 @@ class BatteryModel:
 
         self.physics = PhysicsParams(
             peukert_exponent=physics.get("peukert_exponent", DEFAULT_PEUKERT_EXPONENT),
-            nominal_voltage=physics.get("nominal_voltage", 12.0),
-            nominal_power_watts=physics.get("nominal_power_watts", NOMINAL_POWER_WATTS),
             ir_compensation=IRCompensation(
                 k_volts_per_percent=ir.get("k_volts_per_percent", DEFAULT_IR_K_THETA),
                 reference_load_percent=ir.get("reference_load_percent", 20.0),
@@ -317,11 +318,13 @@ class BatteryModel:
         )
 
     def _sync_physics_to_state(self):
-        """Write self.physics back to self.state['physics'] for JSON serialization."""
+        """Write self.physics back to self.state['physics'] for JSON serialization.
+
+        Only the three learned keys persist: peukert_exponent, ir_compensation, rls_state.
+        nominal_voltage and nominal_power_watts are sourced from constants.py at runtime.
+        """
         self.state["physics"] = {
             "peukert_exponent": self.physics.peukert_exponent,
-            "nominal_voltage": self.physics.nominal_voltage,
-            "nominal_power_watts": self.physics.nominal_power_watts,
             "ir_compensation": {
                 "k_volts_per_percent": self.physics.ir_compensation.k_volts_per_percent,
                 "reference_load_percent": self.physics.ir_compensation.reference_load_percent,
@@ -457,8 +460,6 @@ class BatteryModel:
             "soh": 1.0,
             "physics": {
                 "peukert_exponent": DEFAULT_PEUKERT_EXPONENT,
-                "nominal_voltage": 12.0,
-                "nominal_power_watts": NOMINAL_POWER_WATTS,
                 "ir_compensation": {
                     "k_volts_per_percent": DEFAULT_IR_K_THETA,
                     "reference_load_percent": 20.0,
@@ -498,10 +499,10 @@ class BatteryModel:
         return self.physics.peukert_exponent
 
     def get_nominal_voltage(self) -> float:
-        return self.physics.nominal_voltage
+        return NOMINAL_VOLTAGE
 
     def get_nominal_power_watts(self) -> float:
-        return self.physics.nominal_power_watts
+        return NOMINAL_POWER_WATTS
 
     def get_ir_k(self) -> float:
         return self.physics.ir_compensation.k_volts_per_percent
