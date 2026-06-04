@@ -30,6 +30,12 @@ fix:
     uv run ruff format src tests
     uv run ruff check --fix src tests
 
+# Install git hooks (pre-push runs `just check`). Run once per clone.
+install-hooks:
+    git config core.hooksPath .githooks
+    chmod +x .githooks/*
+    @echo "core.hooksPath -> .githooks; pre-push now runs 'just check'"
+
 # Dead-code sieve (vulture, whitelist-gated) — part of `check`/CI. Reviewed false
 # positives go in vulture_whitelist.py with a rationale, not by loosening the gate.
 # Catches the "test-only / never-called" class; cannot see production-dead-but-tested

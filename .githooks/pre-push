@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Pre-push gate — runs the exact CI check set locally before a push leaves the machine,
+# so a red CI is caught here instead of on GitHub. Mirrors .github/workflows/ci.yml via
+# `just check`. Bypass in a pinch with `git push --no-verify`.
+#
+# Enable once per clone: `just install-hooks` (sets core.hooksPath=.githooks).
+set -euo pipefail
+
+if ! command -v just >/dev/null 2>&1; then
+  echo "pre-push: 'just' not found — skipping local CI gate (install just to enable it)." >&2
+  exit 0
+fi
+
+echo "pre-push: running 'just check' (mirrors CI) …" >&2
+if ! just check; then
+  echo "" >&2
+  echo "pre-push: 'just check' failed — push aborted. Fix the gate above," >&2
+  echo "          or bypass intentionally with: git push --no-verify" >&2
+  exit 1
+fi
