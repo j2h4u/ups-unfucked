@@ -19,8 +19,26 @@ findings:
   warning: 4
   info: 4
   total: 8
-status: issues_found
+status: resolved
+resolution: 7/8 fixed (WR-01..04, IN-01..03); IN-04 deferred as out-of-scope heuristic redesign
 ---
+
+> **Resolution (2026-06-04):** All four warnings and three of the four info items were fixed
+> in commits `9507756`, `412b821`, `181e6a1`, `1cd9e97` (543 tests pass, ruff + vulture clean,
+> daemon restarted and verified writing `soh_alert_threshold` to health.json).
+> - **WR-01** — `replacement_due` is now a daemon output: `soh_alert_threshold` is written to
+>   health.json and the read-only CLI/MOTD source the threshold from it (0.80 only as the
+>   standalone fallback). All surfaces agree for any configured value.
+> - **WR-02** — single shared `is_capacity_converged()` predicate, robust to missing keys.
+> - **WR-03** — `add_capacity_estimate` rolls back the in-memory append on save failure.
+> - **WR-04** — `_handle_capacity_convergence` guards `latest_ah is None`.
+> - **IN-01** — `_estimate_dod_from_buffer` uses `NOMINAL_VOLTAGE`.
+> - **IN-02** — `get_replacement_due()` pass-through shim deleted.
+> - **IN-03** — stale `print_maintenance` docstring corrected.
+> - **IN-04** — DEFERRED. The reviewer itself marked it "optional, out of phase scope": it is a
+>   redesign of the DoD heuristic (voltage-swing proxy → LUT/SoC lookup) that changes
+>   `discharge_events` classification and feeds scheduling cadence. Behavioral change with
+>   trade-offs — warrants its own focused change, not a drive-by edit.
 
 # Phase 26: Code Review Report
 
