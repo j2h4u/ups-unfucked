@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: Honest Monitoring & Diagnostic Verification
 status: executing
-last_updated: "2026-06-04T09:08:16.121Z"
-last_activity: 2026-06-04 -- Phase 26 planning complete
+last_updated: "2026-06-04T09:31:16.125Z"
+last_activity: 2026-06-04 -- Phase 26 execution started
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  total_plans: 5
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State — UPS Battery Monitor
@@ -23,17 +23,17 @@ progress:
 
 ## Current Position
 
-Phase: 25
-Plan: Not started
+Phase: 26 (model-json-learned-state-hygiene-move-config-spec-and-derive) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-06-04 -- Phase 26 planning complete
+Last activity: 2026-06-04 -- Phase 26 execution started
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Сервер выключается чисто и вовремя при блекауте, используя каждую минуту — не полагаясь на прошивку CyberPower.
-**Current focus:** Phase 25 — desulfation-retraction-diagnostic-only-capacity-verification
+**Current focus:** Phase 26 — model-json-learned-state-hygiene-move-config-spec-and-derive
 
 **Milestones shipped:**
 
@@ -142,3 +142,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 ---
 
 *State updated: 2026-05-10 — Completed quick task 260510-lhk: Three small dataclass cleanups (CapacityMeasurement/HealthSnapshot frozen, RLSParams.to_dict dropped)*
+
+## Decisions
+
+- [Phase ?]: (Phase 26-01) NOMINAL_VOLTAGE: single source of truth for getters/persistence; capacity_ah: constructor-injected, drives rated_ah in get_convergence_status; battery-health.py uses RATED_CAPACITY_AH constant (no config.toml loader YAGNI)
