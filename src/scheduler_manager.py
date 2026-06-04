@@ -395,20 +395,12 @@ class SchedulerManager:
             },
         )
 
-        # NOT A BUG if health.json (next_test_timestamp) and model.json
-        # (scheduled_test_timestamp) ever show different values: both derive from the
-        # SAME decision.next_eligible_timestamp here, so they cannot drift within a run.
-        # health.json is rewritten every poll from the in-memory value below; model.json
-        # is only persisted when this scheduler path runs (~daily). Any observed mismatch
-        # is a snapshot-timing artifact (one file is staler), never a logic divergence.
+        # Scheduling output is health.json-only (no model.json mirror) — nothing to
+        # reconcile. The in-memory last_* properties below are what the health snapshot
+        # reads each poll; model.json carries only learned state (upscmd results, SoH,
+        # capacity estimates, LUT). There is no model.json scheduling copy to diverge.
         self.last_scheduling_reason = decision.reason_code
         self.last_next_test_timestamp = decision.next_eligible_timestamp
-
-        self.battery_model.update_scheduling_state(
-            scheduled_timestamp=decision.next_eligible_timestamp,
-            reason=decision.reason_code,
-            block_reason=decision.reason_code if decision.action == "block_test" else None,
-        )
 
         if decision.action == "propose_test":
             dispatched = dispatch_test_with_audit(

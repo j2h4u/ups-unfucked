@@ -458,14 +458,15 @@ class DischargeHandler:
             self._handle_capacity_convergence(convergence_status)
 
     def _handle_capacity_convergence(self, convergence_status: ConvergenceStatus) -> None:
-        """Lock baseline on first convergence, detect new battery, persist flags.
+        """Lock baseline on first convergence and detect new battery.
 
         Write-once guard: baseline_lock is logged exactly once per daemon lifecycle
         via self.has_logged_baseline_lock. Subsequent calls skip the log entry but
-        still check for new-battery detection and update capacity_converged flag.
+        still check for new-battery detection. capacity_converged is NOT persisted here;
+        it is derived live from get_convergence_status().converged (health endpoint reads
+        the live ConvergenceStatus, not a stored flag).
         Idempotent after first call.
         """
-        self.battery_model.state["capacity_converged"] = True
 
         if not self.has_logged_baseline_lock:
             logger.info(

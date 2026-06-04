@@ -35,7 +35,6 @@ class ModelState(TypedDict, total=False):
     soh_history: List[Dict[str, Any]]
     capacity_estimates: List[Dict[str, Any]]
     capacity_ah_measured: Optional[float]
-    capacity_converged: bool
     # Physics / LUT
     physics: Dict[str, Any]
     lut: List[Dict[str, Any]]
@@ -44,18 +43,16 @@ class ModelState(TypedDict, total=False):
     battery_install_date: Optional[str]
     cycle_count: int
     cumulative_on_battery_sec: float
-    replacement_due: Optional[str]
     new_battery_detected: bool
     new_battery_detected_timestamp: Optional[str]
     # Discharge log
     discharge_events: List[Dict[str, Any]]
-    # Diagnostic test scheduling
+    # Diagnostic test scheduling (category ③ — learned/persisted: last upscmd result only)
+    # scheduled_test_timestamp / scheduled_test_reason / test_block_reason are NOT persisted:
+    # they are scheduler outputs (health.json-only), not learned state.
     last_upscmd_timestamp: Optional[str]
     last_upscmd_type: Optional[str]
     last_upscmd_status: Optional[str]
-    scheduled_test_timestamp: Optional[str]
-    scheduled_test_reason: Optional[str]
-    test_block_reason: Optional[str]
 
 
 # Derived from the schema so the two never drift. Used by load() to fail-fast on
@@ -370,9 +367,6 @@ class BatteryModel:
         self.state.setdefault("last_upscmd_timestamp", None)
         self.state.setdefault("last_upscmd_type", None)
         self.state.setdefault("last_upscmd_status", None)
-        self.state.setdefault("scheduled_test_timestamp", None)
-        self.state.setdefault("scheduled_test_reason", None)
-        self.state.setdefault("test_block_reason", None)
 
     def _validate_and_clamp_fields(self):
         """Clamp physics values and validate scheduling field types."""
@@ -388,11 +382,8 @@ class BatteryModel:
 
         for key in (
             "last_upscmd_timestamp",
-            "scheduled_test_timestamp",
             "last_upscmd_type",
             "last_upscmd_status",
-            "scheduled_test_reason",
-            "test_block_reason",
         ):
             val = self.state.get(key)
             if val is not None and not isinstance(val, str):
@@ -854,23 +845,6 @@ class BatteryModel:
             - Writes model.json to disk (atomic rename)
         """
         self.save()
-
-    # --- Scheduling State Management ---
-
-    def update_scheduling_state(
-        self, scheduled_timestamp: Optional[str], reason: str, block_reason: Optional[str] = None
-    ) -> None:
-        """Update scheduled test info and block reason.
-
-        Args:
-            scheduled_timestamp: ISO8601 timestamp of next proposed/eligible test
-            reason: Stored as scheduled_test_reason (e.g., 'diagnostic_cadence')
-            block_reason: If test is blocked, reason code (e.g., 'soh_floor_55%'), else None
-        """
-        self.state["scheduled_test_timestamp"] = scheduled_timestamp
-        self.state["scheduled_test_reason"] = reason
-        self.state["test_block_reason"] = block_reason
-        logger.debug(f"Scheduling state updated: reason={reason}, blocked={block_reason}")
 
     def update_upscmd_result(
         self, upscmd_timestamp: str, upscmd_type: str, upscmd_status: str
