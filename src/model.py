@@ -62,25 +62,17 @@ KNOWN_STATE_KEYS = frozenset(ModelState.__annotations__)
 
 
 def latest_capacity_ah_ref(soh_history: List[Dict[str, Any]]) -> Optional[float]:
-    """Return the capacity_ah_ref from the most recent soh_history entry, or None.
+    """Return the capacity_ah_ref of the most recent soh_history entry, or None if empty.
 
-    This is the SINGLE shared baseline selector used by both BatteryModel.compute_replacement_due()
-    and scripts/battery-health.py to ensure both paths select the SAME capacity baseline
-    (preventing mixed-baseline divergence, review HIGH #3).
-
-    The value is already rounded to 2 decimals by add_soh_history_entry (model.py:668),
-    so reading it back is exact — no precision drift versus the old persisted path, which
-    read the same stored entries.
-
-    Returning None when the latest entry has no capacity_ah_ref is INTENTIONAL and
-    pre-field-compatible: linear_regression_soh treats capacity_ah_ref=None as "use all
-    entries with the default baseline", which is exactly the behavior before the
-    capacity_ah_ref tag was added — so untagged/backward-compat histories keep their prior
-    fit without any new branching.
+    The SINGLE shared baseline selector used by both BatteryModel.compute_replacement_due()
+    and scripts/battery-health.py, so both filter the replacement regression on the SAME
+    baseline (preventing mixed-baseline divergence). Every entry is tagged at write time by
+    add_soh_history_entry, so a non-empty history always has the field — the index access
+    fails fast if that invariant is ever broken. None means only "no history yet".
     """
     if not soh_history:
         return None
-    return soh_history[-1].get("capacity_ah_ref")
+    return soh_history[-1]["capacity_ah_ref"]
 
 
 def is_capacity_converged(estimates: List[Dict[str, Any]]) -> bool:
@@ -514,7 +506,13 @@ class BatteryModel:
                 {"v": 11.0, "soc": 0.06, "source": "standard"},
                 {"v": 10.5, "soc": 0.00, "source": "anchor"},
             ],
-            "soh_history": [{"date": datetime.now().strftime("%Y-%m-%d"), "soh": 1.0}],
+            "soh_history": [
+                {
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "soh": 1.0,
+                    "capacity_ah_ref": RATED_CAPACITY_AH,
+                }
+            ],
             # Enterprise-equivalent counters (accumulated over battery lifetime)
             "battery_install_date": None,
             "cycle_count": 0,  # OL→OB transitions (= transfer count)
@@ -708,24 +706,21 @@ class BatteryModel:
         """
         return self.capacity_ah
 
-    def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
-        """Add a SoH history entry with optional capacity baseline tag.
+    def add_soh_history_entry(self, date, soh, capacity_ah_ref):
+        """Add a SoH history entry tagged with the capacity baseline it was computed against.
 
         Args:
             date: ISO8601 date string (e.g., '2026-03-16')
             soh: SoH estimate [0.0, 1.0]
-            capacity_ah_ref: Capacity baseline used in SoH calculation (Ah).
-                            If None, entry has no capacity_ah_ref field (backward compat).
+            capacity_ah_ref: Capacity baseline used in the SoH calculation (Ah). Required —
+                every entry carries it so the replacement regression can filter by baseline.
         """
         if "soh_history" not in self.state:
             self.state["soh_history"] = []
 
-        entry = {"date": date, "soh": soh}
-
-        if capacity_ah_ref is not None:
-            entry["capacity_ah_ref"] = round(capacity_ah_ref, 2)
-
-        self.state["soh_history"].append(entry)
+        self.state["soh_history"].append(
+            {"date": date, "soh": soh, "capacity_ah_ref": round(capacity_ah_ref, 2)}
+        )
         self.state["soh"] = soh  # Update current SoH
 
     def get_soh_history(self):

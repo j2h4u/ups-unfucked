@@ -23,8 +23,10 @@ def linear_regression_soh(
     Args:
         soh_history: List of {'date': 'YYYY-MM-DD', 'soh': float, 'capacity_ah_ref'?: float} dicts
         threshold_soh: SoH level requiring replacement (default 80%)
-        capacity_ah_ref: If provided, use only entries with this baseline (Ah).
-                        If None, use all entries (backward compatible).
+        capacity_ah_ref: Baseline (Ah) to filter entries by — only entries sharing it are
+                        regressed, so a battery swap's new baseline never mixes with the old.
+                        None disables filtering (whole-series regression), used when there is
+                        no baseline to filter on (e.g. empty history).
 
     Returns:
         Tuple: (slope, intercept, r_squared, replacement_date_iso8601)
@@ -55,12 +57,10 @@ def linear_regression_soh(
       regression. Negligible for months-ahead extrapolation. Could deduplicate
       to daily average if needed, but added complexity not justified.
     """
-    # Filter by capacity baseline
+    # Filter by capacity baseline (every entry is tagged at write time)
     if capacity_ah_ref is not None:
-        # Keep only entries matching the baseline
-        # Default missing field to 7.2Ah (original rated capacity)
         filtered_history = [
-            e for e in soh_history if e.get("capacity_ah_ref", 7.2) == capacity_ah_ref
+            e for e in soh_history if e["capacity_ah_ref"] == capacity_ah_ref
         ]
 
         if len(filtered_history) < 3:

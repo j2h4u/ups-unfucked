@@ -171,13 +171,13 @@ class TestBatteryModelSave:
         """Verify data is preserved across save/load cycle."""
         model_file = tmp_path / "model.json"
         model1 = BatteryModel(model_path=model_file)
-        model1.add_soh_history_entry("2026-03-14", 0.95)
+        model1.add_soh_history_entry("2026-03-14", 0.95, capacity_ah_ref=7.2)
 
         model1.save()
 
         model2 = BatteryModel(model_path=model_file)
         assert len(model2.get_soh_history()) == 2
-        assert model2.get_soh_history()[1] == {"date": "2026-03-14", "soh": 0.95}
+        assert model2.get_soh_history()[1] == {"date": "2026-03-14", "soh": 0.95, "capacity_ah_ref": 7.2}
 
 
 class TestVRLALUTInitialization:
@@ -245,11 +245,11 @@ class TestBatteryModelMethods:
         model = BatteryModel(model_path=model_file)
 
         initial_count = len(model.get_soh_history())
-        model.add_soh_history_entry("2026-03-14", 0.90)
+        model.add_soh_history_entry("2026-03-14", 0.90, capacity_ah_ref=7.2)
 
         history = model.get_soh_history()
         assert len(history) == initial_count + 1
-        assert history[-1] == {"date": "2026-03-14", "soh": 0.90}
+        assert history[-1] == {"date": "2026-03-14", "soh": 0.90, "capacity_ah_ref": 7.2}
         assert model.get_soh() == 0.90
 
     def test_get_capacity_ah_default(self, tmp_path):
@@ -486,7 +486,7 @@ class TestHistoryPruning:
 
         # Create 50 history entries
         for i in range(50):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001))
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001), capacity_ah_ref=7.2)
 
         initial_count = len(model.get_soh_history())
         assert initial_count >= 50
@@ -507,7 +507,7 @@ class TestHistoryPruning:
 
         # Create only 15 entries
         for i in range(15):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95)
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95, capacity_ah_ref=7.2)
 
         initial_history = model.get_soh_history().copy()
 
@@ -550,7 +550,7 @@ class TestHistoryPruning:
 
         # Create 35 history entries
         for i in range(35):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95)
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95, capacity_ah_ref=7.2)
 
         # Prune once
         model._cap_history_entries("soh_history", keep_count=30)
@@ -570,7 +570,7 @@ class TestHistoryPruning:
 
         # Create 40 history entries
         for i in range(40):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001))
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 1.0 - (i * 0.001), capacity_ah_ref=7.2)
 
         # Save (should prune internally)
         model.save()
@@ -589,7 +589,7 @@ class TestHistoryPruning:
 
         # Add many entries to both histories
         for i in range(35):
-            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95)
+            model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95, capacity_ah_ref=7.2)
             model.add_r_internal_entry(
                 f"2026-03-{(i % 28) + 1:02d}", 0.03, 13.5, 13.0, 15.0, "TEST"
             )
@@ -926,42 +926,20 @@ class TestSoHHistoryVersioning:
         assert entry["soh"] == 0.92
         assert entry["capacity_ah_ref"] == 6.8  # Tagged
 
-    def test_soh_history_entry_backward_compat(self, tmp_path):
-        """SOH-02: add_soh_history_entry() without capacity_ah_ref is backward compatible."""
+    def test_mixed_baseline_entries_all_tagged(self, tmp_path):
+        """soh_history can hold entries with DIFFERENT baselines (e.g. after a battery swap);
+        every entry is tagged — there is no untagged/old-style entry."""
         model_path = tmp_path / "model.json"
         model = BatteryModel(model_path)
-
-        # Add entry without capacity baseline (old-style)
-        model.add_soh_history_entry(date="2026-03-15", soh=0.95)
-
-        # Verify entry exists but has no capacity_ah_ref field
-        entry = model.state["soh_history"][-1]
-        assert entry["date"] == "2026-03-15"
-        assert entry["soh"] == 0.95
-        assert "capacity_ah_ref" not in entry  # Not tagged (backward compat)
-
-    def test_mixed_baseline_entries(self, tmp_path):
-        """SOH-02: soh_history can contain entries with and without capacity_ah_ref field."""
-        model_path = tmp_path / "model.json"
-        model = BatteryModel(model_path)
-        # Clear default entry
         model.state["soh_history"] = []
 
-        # Add old-style entry (no baseline tag)
-        model.add_soh_history_entry("2026-03-14", 0.97)
-
-        # Add new-style entry with measured baseline
+        model.add_soh_history_entry("2026-03-14", 0.97, capacity_ah_ref=7.2)
         model.add_soh_history_entry("2026-03-15", 0.95, capacity_ah_ref=6.8)
-
-        # Add another new-style entry with different baseline (after battery replaced)
         model.add_soh_history_entry("2026-03-16", 0.92, capacity_ah_ref=6.9)
 
-        # Verify history contains mixed entries
         history = model.state["soh_history"]
         assert len(history) == 3
-        assert "capacity_ah_ref" not in history[0]  # Old entry
-        assert history[1]["capacity_ah_ref"] == 6.8
-        assert history[2]["capacity_ah_ref"] == 6.9
+        assert [e["capacity_ah_ref"] for e in history] == [7.2, 6.8, 6.9]
 
 
 class TestSchedulingSchema:
@@ -1444,11 +1422,6 @@ class TestLatestCapacityAhRefBaseline:
     def test_latest_capacity_ah_ref_helper_empty(self):
         """Empty soh_history → None."""
         assert latest_capacity_ah_ref([]) is None
-
-    def test_latest_capacity_ah_ref_helper_no_tag(self):
-        """Latest entry has no capacity_ah_ref field → None (backward compat)."""
-        history = [{"date": "2026-01-01", "soh": 0.95}]
-        assert latest_capacity_ah_ref(history) is None
 
     def test_latest_capacity_ah_ref_helper_tagged(self):
         """Latest entry has capacity_ah_ref → returns it."""

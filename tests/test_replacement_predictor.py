@@ -124,7 +124,7 @@ def test_regression_filters_by_baseline():
         {"date": "2026-01-01", "soh": 1.0, "capacity_ah_ref": 6.8},
         {"date": "2026-01-15", "soh": 0.98, "capacity_ah_ref": 6.8},
         {"date": "2026-02-01", "soh": 0.96, "capacity_ah_ref": 6.8},
-        {"date": "2026-03-01", "soh": 0.90},  # Battery replaced; new baseline started
+        {"date": "2026-03-01", "soh": 0.90, "capacity_ah_ref": 7.2},  # Transitional, distinct baseline — excluded from both filters
         {"date": "2026-03-16", "soh": 0.92, "capacity_ah_ref": 6.9},  # New baseline entries
         {"date": "2026-04-01", "soh": 0.91, "capacity_ah_ref": 6.9},
     ]
@@ -141,27 +141,6 @@ def test_regression_filters_by_baseline():
 
     # New baseline should return None (only 2 entries with 6.9Ah)
     assert result_new is None  # < 3 entries for new baseline
-
-
-def test_regression_backward_compat():
-    """SOH-03: Entries without capacity_ah_ref field default to 7.2Ah for filtering."""
-
-    # Old entries without field; new entries with field
-    soh_history = [
-        {"date": "2026-01-01", "soh": 1.0},  # No field = defaults to 7.2Ah
-        {"date": "2026-02-01", "soh": 0.98},
-        {"date": "2026-03-01", "soh": 0.96},
-        {"date": "2026-04-01", "soh": 0.92, "capacity_ah_ref": 6.9},  # Different baseline
-    ]
-
-    # Fit line using default 7.2Ah baseline (old entries)
-    result_default = linear_regression_soh(soh_history, capacity_ah_ref=7.2)
-
-    # Should use first 3 entries (defaults to 7.2)
-    assert result_default is not None
-    slope, intercept, r2, date_pred = result_default
-    # Verify it's using the first 3 entries (negative slope = degradation)
-    assert slope < 0
 
 
 def test_regression_min_entries_per_baseline():
