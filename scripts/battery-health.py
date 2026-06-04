@@ -37,7 +37,9 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
     print("  ─────────────────────")
 
     # --- Next diagnostic test ---
-    next_ts = health_data.get("next_test_timestamp") or model_data.get("scheduled_test_timestamp")
+    # Read only from health.json (no model.json scheduled_test_timestamp fallback —
+    # that key was removed in HYG-03; scheduling output is health.json-only).
+    next_ts = health_data.get("next_test_timestamp")
     reason = health_data.get("scheduling_reason", "")
     if next_ts:
         try:

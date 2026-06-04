@@ -288,7 +288,9 @@ class TestSoHRecalibrationFlow:
             {"timestamp": "2026-03-01", "ah_estimate": 6.8, "confidence": 0.78, "metadata": {}},
             {"timestamp": "2026-03-16", "ah_estimate": 6.8, "confidence": 0.82, "metadata": {}},
         ]
-        mock_daemon.battery_model.state["capacity_converged"] = True
+        # capacity_converged is NOT persisted in model.json — derived live from
+        # get_convergence_status().converged (3+ estimates, CoV < 0.10). The three
+        # estimates above (6.7, 6.8, 6.8 — CoV << 0.10) already make converged=True.
         mock_daemon.battery_model.state["capacity_ah_measured"] = 6.8
 
         # Simulate discharge event

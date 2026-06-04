@@ -12,7 +12,9 @@ from src.model import (
     BatteryModel,
     ModelLoadError,
     atomic_write_json,
+    latest_capacity_ah_ref,
 )
+from src.replacement_predictor import linear_regression_soh
 
 
 class TestAtomicWriteJson:
@@ -904,23 +906,30 @@ class TestSoHHistoryVersioning:
 
 
 class TestSchedulingSchema:
-    """Scheduling state schema backward compatibility tests."""
+    """Scheduling state schema tests — only category ③ persisted keys (last upscmd result).
+
+    scheduled_test_timestamp / scheduled_test_reason / test_block_reason are NOT persisted;
+    they are scheduler outputs surfaced health.json-only. Tests that asserted their round-trip
+    were exercising dead behavior and have been removed (project policy: remove tests with dead
+    code). Only last_upscmd_* (category ③ learned state) is tested here.
+    """
 
     def test_scheduling_schema_fields_initialized(self, temporary_model_path):
-        """Scheduling fields initialized to None on new model creation."""
+        """last_upscmd fields initialized to None on new model creation."""
         model = BatteryModel(temporary_model_path)
         assert model.state.get("last_upscmd_timestamp") is None
         assert model.state.get("last_upscmd_type") is None
         assert model.state.get("last_upscmd_status") is None
-        assert model.state.get("scheduled_test_timestamp") is None
-        assert model.state.get("scheduled_test_reason") is None
-        assert model.state.get("test_block_reason") is None
+        # removed keys are NOT present at all (not even as None)
+        assert "scheduled_test_timestamp" not in model.state
+        assert "scheduled_test_reason" not in model.state
+        assert "test_block_reason" not in model.state
 
     def test_scheduling_fields_persist_after_save(self, temporary_model_path):
-        """Scheduling fields persist correctly through save/reload cycle."""
+        """last_upscmd fields persist correctly through save/reload cycle."""
         model = BatteryModel(temporary_model_path)
 
-        # Set scheduling fields
+        # Set last upscmd fields (the only scheduling fields that ARE persisted)
         model.state["last_upscmd_timestamp"] = "2026-03-17T10:30:00Z"
         model.state["last_upscmd_type"] = "test.battery.start.deep"
         model.state["last_upscmd_status"] = "OK"
@@ -931,18 +940,6 @@ class TestSchedulingSchema:
         assert model2.state.get("last_upscmd_timestamp") == "2026-03-17T10:30:00Z"
         assert model2.state.get("last_upscmd_type") == "test.battery.start.deep"
         assert model2.state.get("last_upscmd_status") == "OK"
-
-    def test_update_scheduling_state_method(self, temporary_model_path):
-        """update_scheduling_state() updates scheduled test info."""
-        model = BatteryModel(temporary_model_path)
-        model.update_scheduling_state(
-            scheduled_timestamp="2026-03-24T08:00:00Z",
-            reason="diagnostic_cadence",
-            block_reason=None,
-        )
-        assert model.state["scheduled_test_timestamp"] == "2026-03-24T08:00:00Z"
-        assert model.state["scheduled_test_reason"] == "diagnostic_cadence"
-        assert model.state["test_block_reason"] is None
 
     def test_update_upscmd_result_method(self, temporary_model_path):
         """update_upscmd_result() updates last command info."""
@@ -955,47 +952,6 @@ class TestSchedulingSchema:
         assert model.state["last_upscmd_timestamp"] == "2026-03-17T10:30:00Z"
         assert model.state["last_upscmd_type"] == "test.battery.start.deep"
         assert model.state["last_upscmd_status"] == "OK"
-
-    def test_legacy_model_loads_with_scheduling_code(self, temporary_model_path):
-        """Legacy model.json (no scheduling fields) loads correctly with scheduling code."""
-        import json
-
-        # Create legacy model.json (no scheduling fields)
-        legacy_data = {
-            "soh": 0.95,
-            "physics": {},
-            "lut": [
-                {"v": 13.4, "soc": 1.0, "source": "standard"},
-                {"v": 10.5, "soc": 0.0, "source": "anchor"},
-            ],
-            "soh_history": [],
-            "discharge_events": [],
-        }
-        with open(temporary_model_path, "w") as f:
-            json.dump(legacy_data, f)
-
-        # Load with scheduling code
-        model = BatteryModel(temporary_model_path)
-
-        # Verify scheduling fields are initialized
-        assert model.state.get("last_upscmd_timestamp") is None
-        assert model.get_soh() == 0.95  # Legacy data still intact
-
-    def test_scheduling_fields_not_stripped_on_save(self, temporary_model_path):
-        """model.save() preserves scheduling fields (forward compatibility)."""
-        model = BatteryModel(temporary_model_path)
-
-        # Set scheduling fields
-        model.state["last_upscmd_timestamp"] = "2026-03-17T10:30:00Z"
-        model.state["scheduled_test_reason"] = "diagnostic_cadence"
-
-        # Save and reload
-        model.save()
-        model2 = BatteryModel(temporary_model_path)
-
-        # Verify fields persist
-        assert model2.state.get("last_upscmd_timestamp") == "2026-03-17T10:30:00Z"
-        assert model2.state.get("scheduled_test_reason") == "diagnostic_cadence"
 
     def test_get_last_upscmd_timestamp_method(self, temporary_model_path):
         """get_last_upscmd_timestamp() returns correct value or None."""
@@ -1082,44 +1038,6 @@ class TestFieldLevelValidation:
         ]
         assert len(clamped_records) >= 1
 
-    def test_validate_string_field_scheduled_test_reason_non_string(
-        self, temporary_model_path, caplog
-    ):
-        """scheduled_test_reason=['wrong'] (list) → reset to None, warning logged."""
-        import logging
-
-        data = self._base_model_data()
-        data["scheduled_test_reason"] = ["wrong"]
-        with open(temporary_model_path, "w") as f:
-            json.dump(data, f)
-
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
-
-        assert model.state["scheduled_test_reason"] is None
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1
-
-    def test_validate_string_field_test_block_reason_non_string(self, temporary_model_path, caplog):
-        """test_block_reason=42 (int) → reset to None, warning logged."""
-        import logging
-
-        data = self._base_model_data()
-        data["test_block_reason"] = 42
-        with open(temporary_model_path, "w") as f:
-            json.dump(data, f)
-
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
-
-        assert model.state["test_block_reason"] is None
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1
-
     def test_validate_list_field_discharge_events_non_list(self, temporary_model_path, caplog):
         """discharge_events=123 (int) → reset to [], warning logged."""
         import logging
@@ -1139,14 +1057,16 @@ class TestFieldLevelValidation:
         assert len(clamped_records) >= 1
 
     def test_validate_valid_fields_no_warnings(self, temporary_model_path, caplog):
-        """Valid string and list fields → no model_field_clamped warnings, fields unchanged."""
+        """Valid string and list fields → no model_field_clamped warnings, fields unchanged.
+
+        Only last_upscmd_* are validated as string fields now; scheduled_test_* and
+        test_block_reason are no longer in the schema (removed in HYG-03).
+        """
         import logging
 
         data = self._base_model_data()
         data["last_upscmd_type"] = "test.battery.start.deep"
         data["last_upscmd_status"] = "OK"
-        data["scheduled_test_reason"] = "diagnostic_cadence"
-        data["test_block_reason"] = "soh_floor_55%"
         data["discharge_events"] = [
             {"timestamp": "2026-03-02T00:00:00Z", "depth_of_discharge": 0.8}
         ]
@@ -1217,10 +1137,12 @@ class TestStateSchemaValidation:
 
         Only fills keys absent from the default model so the valid lut/physics/soh
         structures are preserved; the conditional keys get type-appropriate benign values.
+        capacity_converged is no longer in the schema (removed in HYG-03) — it is
+        derived live from get_convergence_status().converged.
         """
         base = BatteryModel(temporary_model_path)
         list_keys = {"soh_history", "capacity_estimates", "r_internal_history", "discharge_events"}
-        bool_keys = {"capacity_converged", "new_battery_detected"}
+        bool_keys = {"new_battery_detected"}  # capacity_converged removed from schema
         for key in KNOWN_STATE_KEYS:
             if key in base.state:
                 continue
@@ -1234,11 +1156,11 @@ class TestStateSchemaValidation:
 
     def test_lifecycle_round_trip_stays_within_schema(self, temporary_model_path):
         """Drift guard: exercising the public mutators then reloading must never produce
-        a key outside the schema — otherwise the strict loader would brick the daemon."""
+        a key outside the schema — otherwise the strict loader would brick the daemon.
+        set_replacement_due() is removed (HYG-03); replacement_due is computed live."""
         model = BatteryModel(temporary_model_path)
         model.increment_cycle_count()
         model.add_on_battery_time(42.0)
-        model.set_replacement_due("2027-01-01")
         model.add_soh_history_entry("2026-06-04", 0.88, capacity_ah_ref=8.5)
         model.append_discharge_event(
             {"timestamp": "2026-06-04T00:00:00+00:00", "depth_of_discharge": 0.8}
@@ -1253,3 +1175,368 @@ class TestStateSchemaValidation:
         reloaded = BatteryModel(temporary_model_path)  # must not raise
 
         assert set(reloaded.state) <= KNOWN_STATE_KEYS
+        # replacement_due is NOT a state key — it is computed live
+        assert "replacement_due" not in reloaded.state
+
+
+# ---------------------------------------------------------------------------
+# Fixtures shared by the new HYG-03/04 replacement_due tests
+# ---------------------------------------------------------------------------
+
+def _make_converged_capacity_estimates():
+    """Return 3 capacity estimates with CoV well below 0.10 (convergence = True)."""
+    return [
+        {"ah_estimate": 7.15, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {"ah_estimate": 7.18, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {"ah_estimate": 7.20, "timestamp": "2025-08-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+    ]
+
+
+def _make_regression_quality_soh_history(capacity_ah_ref=7.2):
+    """Return 4 soh_history entries with clearly negative slope, R²≥0.5.
+
+    Using ~90-day intervals and ~3% SoH drop per quarter, the regression line
+    has a strongly negative slope and R² well above 0.5.
+    """
+    return [
+        {"date": "2025-06-01", "soh": 0.98, "capacity_ah_ref": capacity_ah_ref},
+        {"date": "2025-09-01", "soh": 0.95, "capacity_ah_ref": capacity_ah_ref},
+        {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": capacity_ah_ref},
+        {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": capacity_ah_ref},
+    ]
+
+
+class TestComputeReplacementDueEquivalence:
+    """T-26-04: parametrized equivalence test — compute_replacement_due() reproduces the
+    old discharge_handler._predict_replacement result for ALL configured thresholds."""
+
+    @pytest.mark.parametrize("threshold", [0.80, 0.75])
+    def test_live_recompute_matches_direct_regression_call(self, tmp_path, threshold):
+        """compute_replacement_due() at threshold t equals linear_regression_soh()[3] at t.
+
+        Proves the live recompute reproduces exactly what the OLD persisted
+        discharge_handler path stored at the CONFIGURED threshold — would FAIL if
+        compute_replacement_due() hardcoded 0.80 (the t=0.75 case would diverge).
+
+        The converged capacity_estimates fixture ensures get_convergence_status().converged
+        is True so the convergence gate lets regression through (otherwise both would be
+        None and the assertion would be vacuous).
+        """
+        model_path = tmp_path / "model.json"
+        soh_history = _make_regression_quality_soh_history(capacity_ah_ref=7.2)
+        state = {
+            "soh_history": soh_history,
+            "capacity_estimates": _make_converged_capacity_estimates(),
+        }
+        with open(model_path, "w") as f:
+            json.dump(state, f)
+
+        model = BatteryModel(model_path, soh_threshold=threshold)
+
+        # Fixture self-check: convergence must be True for the equivalence to be non-vacuous
+        assert model.get_convergence_status().converged is True, (
+            "Fixture self-check failed: capacity_estimates must be converged for this test to be meaningful"
+        )
+
+        expected = linear_regression_soh(soh_history, threshold_soh=threshold, capacity_ah_ref=7.2)
+        assert expected is not None, "Fixture self-check: regression_soh returned None (check history quality)"
+
+        assert model.compute_replacement_due() == expected[3]
+
+    def test_short_soh_history_yields_none(self, tmp_path):
+        """< 3 soh_history points → compute_replacement_due() is None."""
+        model_path = tmp_path / "model.json"
+        state = {
+            "soh_history": [
+                {"date": "2026-01-01", "soh": 0.98, "capacity_ah_ref": 7.2},
+                {"date": "2026-03-01", "soh": 0.95, "capacity_ah_ref": 7.2},
+            ],
+            "capacity_estimates": _make_converged_capacity_estimates(),
+        }
+        with open(model_path, "w") as f:
+            json.dump(state, f)
+
+        model = BatteryModel(model_path)
+        # Even with converged estimates, <3 soh points → no regression → None
+        assert model.compute_replacement_due() is None
+
+
+class TestComputeReplacementDueConvergenceGate:
+    """T-26-08 (cycle-2 HIGH): compute_replacement_due() returns None when
+    get_convergence_status().converged is False, even with regression-quality soh_history.
+
+    soh_history and capacity_estimates are INDEPENDENT arrays (model.py:36/37), so a
+    model can have regression-quality soh_history while capacity_estimates is non-converged.
+    Without this gate the OLD persisted None would diverge from the NEW live value —
+    a value-divergence that breaks the HYG-04 "same values" contract for the
+    DEFAULT-config user (cycle-2 HIGH).
+    """
+
+    def test_non_converged_capacity_yields_none(self, tmp_path):
+        """Regression-quality soh_history BUT non-converged capacity_estimates → None.
+
+        First asserts get_convergence_status().converged is False so the fixture
+        provably exercises the convergence gate (not the <3-soh_history path).
+        """
+        model_path = tmp_path / "model.json"
+        # Non-converged: only 2 estimates (below the >=3 threshold)
+        state = {
+            "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
+            "capacity_estimates": [
+                {"ah_estimate": 7.0, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.5, "metadata": {}},
+                {"ah_estimate": 6.5, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.5, "metadata": {}},
+            ],
+        }
+        with open(model_path, "w") as f:
+            json.dump(state, f)
+
+        model = BatteryModel(model_path)
+
+        # Self-validate the fixture: convergence MUST be False for the gate to be exercised
+        assert model.get_convergence_status().converged is False, (
+            "Fixture self-check: capacity_estimates must NOT be converged for T-26-08 to be non-vacuous"
+        )
+        # The gate must suppress the regression result even though soh_history is regression-quality
+        assert model.compute_replacement_due() is None, (
+            "T-26-08: compute_replacement_due() must return None when converged=False, "
+            "matching the old persisted None from discharge_handler (discharge_handler.py:218-219)"
+        )
+
+    def test_converged_twin_yields_date(self, tmp_path):
+        """Same regression-quality soh_history, but converged capacity_estimates → not None.
+
+        Proves the gate flips on convergence alone, holding soh_history constant.
+        """
+        model_path = tmp_path / "model.json"
+        state = {
+            "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
+            "capacity_estimates": _make_converged_capacity_estimates(),
+        }
+        with open(model_path, "w") as f:
+            json.dump(state, f)
+
+        model = BatteryModel(model_path)
+
+        assert model.get_convergence_status().converged is True, (
+            "Fixture self-check: capacity_estimates must be converged for this twin test"
+        )
+        assert model.compute_replacement_due() is not None, (
+            "T-26-08 converged twin: same soh_history + converged capacity → must return a date"
+        )
+
+
+class TestLatestCapacityAhRefBaseline:
+    """T-26-07 (HIGH #3): shared latest_capacity_ah_ref helper ensures compute_replacement_due()
+    and battery-health.py select the SAME capacity baseline for mixed-baseline soh_history."""
+
+    def test_mixed_baseline_selects_latest(self, tmp_path):
+        """Earlier entries: capacity_ah_ref=6.5; latest entries: 7.2.
+
+        compute_replacement_due() uses latest_capacity_ah_ref (7.2) so only the
+        latest-baseline entries participate — differs from the all-entries result.
+        The fixture also seeds converged capacity_estimates so the convergence gate
+        lets regression through (otherwise the baseline comparison is vacuous).
+        """
+        model_path = tmp_path / "model.json"
+        soh_history = [
+            # Old baseline (after battery degraded below threshold)
+            {"date": "2024-01-01", "soh": 0.70, "capacity_ah_ref": 6.5},
+            {"date": "2024-04-01", "soh": 0.65, "capacity_ah_ref": 6.5},
+            {"date": "2024-07-01", "soh": 0.60, "capacity_ah_ref": 6.5},
+            # New baseline (battery replaced)
+            {"date": "2025-06-01", "soh": 0.98, "capacity_ah_ref": 7.2},
+            {"date": "2025-09-01", "soh": 0.95, "capacity_ah_ref": 7.2},
+            {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": 7.2},
+            {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": 7.2},
+        ]
+        state = {
+            "soh_history": soh_history,
+            "capacity_estimates": _make_converged_capacity_estimates(),
+        }
+        with open(model_path, "w") as f:
+            json.dump(state, f)
+
+        model = BatteryModel(model_path)
+
+        # Fixture self-check: converged so the gate lets regression through
+        assert model.get_convergence_status().converged is True
+
+        # The shared helper must select the latest baseline
+        assert latest_capacity_ah_ref(soh_history) == 7.2
+
+        # compute_replacement_due() uses only entries matching the latest baseline (7.2)
+        latest_only_result = linear_regression_soh(soh_history, threshold_soh=0.80, capacity_ah_ref=7.2)
+        all_entries_result = linear_regression_soh(soh_history, threshold_soh=0.80, capacity_ah_ref=None)
+
+        assert model.compute_replacement_due() == latest_only_result[3], (
+            "compute_replacement_due() must use only the latest-baseline entries"
+        )
+        # Prove the baseline filter actually changes the result (test is non-vacuous).
+        # The all-entries result may be None (when the mixed-baseline history fails R²<0.5
+        # due to the V-shaped pattern of old-declining + new-healthy) or a different date.
+        # Either way the latest-only result (a real date) differs from the all-entries result.
+        latest_date = latest_only_result[3]
+        all_entries_date = all_entries_result[3] if all_entries_result is not None else None
+        assert latest_date != all_entries_date, (
+            "Mixed-baseline test must produce different dates for latest-only vs all-entries "
+            "(otherwise the filter has no observable effect and the test is vacuous)"
+        )
+
+    def test_latest_capacity_ah_ref_helper_empty(self):
+        """Empty soh_history → None."""
+        assert latest_capacity_ah_ref([]) is None
+
+    def test_latest_capacity_ah_ref_helper_no_tag(self):
+        """Latest entry has no capacity_ah_ref field → None (backward compat)."""
+        history = [{"date": "2026-01-01", "soh": 0.95}]
+        assert latest_capacity_ah_ref(history) is None
+
+    def test_latest_capacity_ah_ref_helper_tagged(self):
+        """Latest entry has capacity_ah_ref → returns it."""
+        history = [
+            {"date": "2026-01-01", "soh": 0.98, "capacity_ah_ref": 6.5},
+            {"date": "2026-03-01", "soh": 0.95, "capacity_ah_ref": 7.2},
+        ]
+        assert latest_capacity_ah_ref(history) == 7.2
+
+
+class TestRegenLoaderGates:
+    """HYG-05 strict-loader contract tests: regen-loads-clean and strip-then-loads-clean."""
+
+    def test_fresh_save_loads_clean(self, tmp_path):
+        """A freshly generated model.json contains no removed keys and passes _reject_unknown_state_keys.
+
+        Proves save() only emits schema-compliant keys so the strict loader always
+        accepts a newly seeded file without operator intervention.
+        """
+        model_path = tmp_path / "m.json"
+        m1 = BatteryModel(model_path)
+        m1.save()
+
+        # Must not raise
+        BatteryModel(model_path)
+
+        # No removed keys in the saved file
+        saved = json.loads(model_path.read_text())
+        for removed_key in ("replacement_due", "capacity_converged",
+                            "scheduled_test_timestamp", "scheduled_test_reason",
+                            "test_block_reason"):
+            assert removed_key not in saved, f"Removed key '{removed_key}' found in freshly saved model.json"
+
+    def test_old_schema_raises_on_load(self, tmp_path):
+        """An old-schema model.json carrying removed top-level keys raises ModelLoadError.
+
+        Documents the deploy-strip requirement as a tested contract: the strict loader
+        will REJECT the deployed model.json on next start until the operator strips
+        the removed keys (stop → strip → start).
+        """
+        model_path = tmp_path / "old.json"
+
+        # Build a realistic old-schema file with both learned and removed keys
+        old_schema = {
+            # Learned state (must survive the strip)
+            "soh": 0.92,
+            "soh_history": [{"date": "2026-03-01", "soh": 0.92, "capacity_ah_ref": 7.2}],
+            "capacity_estimates": _make_converged_capacity_estimates(),
+            "physics": {
+                "peukert_exponent": 1.22,
+                "ir_compensation": {"k_volts_per_percent": 0.016, "reference_load_percent": 20.0},
+                "rls_state": {
+                    "ir_k": {"theta": 0.016, "P": 0.9, "sample_count": 5, "forgetting_factor": 0.97},
+                    "peukert": {"theta": 1.22, "P": 0.85, "sample_count": 5, "forgetting_factor": 0.97},
+                    # Wave-1 removed physics spec sub-keys (silently ignored by _sync_physics_from_state,
+                    # but stripped for cleanliness — the strict loader only rejects top-level unknowns)
+                    "nominal_voltage": 12.0,
+                    "nominal_power_watts": 85.0,
+                },
+            },
+            "lut": [
+                {"v": 13.4, "soc": 1.00, "source": "standard"},
+                {"v": 10.5, "soc": 0.00, "source": "anchor"},
+            ],
+            "capacity_ah_measured": 7.15,
+            "battery_install_date": "2024-01-15",
+            "cycle_count": 12,
+            "cumulative_on_battery_sec": 3600.0,
+            # Removed top-level keys (from waves 1+2)
+            "full_capacity_ah_ref": 7.2,           # wave-1 removed
+            "replacement_due": "2027-06-01",        # wave-2 removed
+            "capacity_converged": True,             # wave-2 removed
+            "scheduled_test_timestamp": "2026-07-01T08:00:00Z",  # wave-2 removed
+            "scheduled_test_reason": "diagnostic_cadence",        # wave-2 removed
+            "test_block_reason": None,              # wave-2 removed
+        }
+        model_path.write_text(json.dumps(old_schema))
+
+        # Step 1: strict loader must REJECT (documenting deploy-strip requirement)
+        with pytest.raises(ModelLoadError) as exc_info:
+            BatteryModel(model_path)
+        error_msg = str(exc_info.value)
+        # At least one of the removed top-level keys must appear in the error
+        assert any(k in error_msg for k in (
+            "full_capacity_ah_ref", "replacement_due", "capacity_converged",
+            "scheduled_test_timestamp", "scheduled_test_reason", "test_block_reason",
+        )), f"Expected removed key in error, got: {error_msg}"
+
+    def test_strip_then_load_clean_and_learned_keys_survive(self, tmp_path):
+        """After applying the documented strip, the file loads clean AND learned keys survive.
+
+        NOTE: the strict loader only rejects TOP-LEVEL unknown keys.
+        physics.nominal_voltage / physics.nominal_power_watts under the physics dict are
+        silently ignored by _sync_physics_from_state (not rejected); the strip removes them
+        for cleanliness, not to satisfy the loader.
+        """
+        model_path = tmp_path / "old.json"
+        old_schema = {
+            # Learned state (must survive)
+            "soh": 0.92,
+            "soh_history": [{"date": "2026-03-01", "soh": 0.92, "capacity_ah_ref": 7.2}],
+            "capacity_estimates": _make_converged_capacity_estimates(),
+            "physics": {
+                "peukert_exponent": 1.22,
+                "ir_compensation": {"k_volts_per_percent": 0.016, "reference_load_percent": 20.0},
+                "rls_state": {
+                    "ir_k": {"theta": 0.016, "P": 0.9, "sample_count": 5, "forgetting_factor": 0.97},
+                    "peukert": {"theta": 1.22, "P": 0.85, "sample_count": 5, "forgetting_factor": 0.97},
+                },
+                "nominal_voltage": 12.0,          # wave-1 physics spec sub-key (silently ignored)
+                "nominal_power_watts": 85.0,       # wave-1 physics spec sub-key (silently ignored)
+            },
+            "lut": [
+                {"v": 13.4, "soc": 1.00, "source": "standard"},
+                {"v": 10.5, "soc": 0.00, "source": "anchor"},
+            ],
+            "capacity_ah_measured": 7.15,
+            "battery_install_date": "2024-01-15",
+            "cycle_count": 12,
+            "cumulative_on_battery_sec": 3600.0,
+            # Removed top-level keys (all waves)
+            "full_capacity_ah_ref": 7.2,
+            "replacement_due": "2027-06-01",
+            "capacity_converged": True,
+            "scheduled_test_timestamp": "2026-07-01T08:00:00Z",
+            "scheduled_test_reason": "diagnostic_cadence",
+            "test_block_reason": None,
+        }
+        model_path.write_text(json.dumps(old_schema))
+
+        # Apply the documented one-time deploy strip (stop → strip → start sequence)
+        data = json.loads(model_path.read_text())
+        for key in ("full_capacity_ah_ref", "replacement_due", "capacity_converged",
+                    "scheduled_test_timestamp", "scheduled_test_reason", "test_block_reason"):
+            data.pop(key, None)
+        # Also remove physics spec sub-keys for cleanliness (silently ignored by loader but stale)
+        physics = data.get("physics", {})
+        physics.pop("nominal_voltage", None)
+        physics.pop("nominal_power_watts", None)
+        model_path.write_text(json.dumps(data))
+
+        # Step 2: after strip, load must succeed
+        model = BatteryModel(model_path)  # must not raise
+
+        # Step 3: learned keys must have survived the strip
+        assert model.get_soh() == 0.92, "soh must survive strip"
+        assert len(model.get_soh_history()) == 1, "soh_history must survive strip"
+        assert model.physics.peukert_exponent == pytest.approx(1.22, abs=1e-6), (
+            "physics.peukert_exponent (learned) must survive strip"
+        )
