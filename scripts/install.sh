@@ -146,13 +146,6 @@ else
     cp "$DROPIN_SRC" "$DROPIN_DIR/"
     chmod 644 "$DROPIN_DIR/$(basename "$DROPIN_SRC")"
     log_ok "NUT driver drop-in installed to $DROPIN_DIR/"
-
-    # Remove legacy oneshot service if present
-    if [[ -f /etc/systemd/system/ups-virtual-driver.service ]]; then
-        systemctl disable --now ups-virtual-driver 2>/dev/null || true
-        rm -f /etc/systemd/system/ups-virtual-driver.service
-        log_ok "Removed legacy ups-virtual-driver.service"
-    fi
 fi
 
 log_info "Reloading systemd daemon..."
