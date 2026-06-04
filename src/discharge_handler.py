@@ -12,6 +12,7 @@ from typing import Optional
 
 from src import alerter, replacement_predictor, soh_calculator
 from src.battery_math import ScalarRLS, calibrate_peukert
+from src.battery_math.constants import NOMINAL_VOLTAGE
 from src.battery_math.regression import linear_regression_slope
 from src.capacity_estimator import CapacityEstimator
 from src.model import BatteryModel, ConvergenceStatus
@@ -656,8 +657,8 @@ class DischargeHandler:
         v_min = min(discharge_buffer.voltages)
         v_max = max(discharge_buffer.voltages)
 
-        # CyberPower UT850: nominal voltage 12V, min ~10.5V (fully discharged)
-        v_nominal = 12.0
+        # CyberPower UT850: nominal voltage from constants; ~10.5V when fully discharged.
+        v_nominal = NOMINAL_VOLTAGE
         v_floor = 10.5
 
         result = (v_max - v_min) / (v_nominal - v_floor) if (v_nominal - v_floor) > 0 else 0.0
