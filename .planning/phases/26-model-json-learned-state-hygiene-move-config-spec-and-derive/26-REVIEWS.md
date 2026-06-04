@@ -2,6 +2,19 @@
 phase: 26
 reviewers: [codex, opencode]
 reviewed_at: 2026-06-04T03:20:00+06:00
+cycles:
+  - cycle: 1
+    reviewed_at: 2026-06-04T03:20:00+06:00
+    reviewers: [codex, opencode]
+    high_raised: 3
+    high_remaining: 3
+  - cycle: 2
+    reviewed_at: 2026-06-04T03:30:00+06:00
+    reviewers: [codex, opencode]
+    plans_revised_in: b0af9e3
+    cycle1_high_resolved: 3   # rated_ah propagation, configurable replacement threshold, shared baseline filter
+    high_new: 1               # compute_replacement_due drops the convergence gate
+    high_remaining: 1
 plans_reviewed: [26-01-PLAN.md, 26-02-PLAN.md]
 ---
 
@@ -140,3 +153,119 @@ Both reviewers agree the phase decomposition is sound, the code-grounded `file:l
 - **Overall severity:** Codex → MEDIUM-HIGH (replacement_due is user-visible; silent drift without threshold/baseline tightening). OpenCode → LOW (pure deterministic refactor; the gaps are design-preference, daemon runs correctly in all cases).
 - **`ConvergenceStatus.rated_ah` propagation (HIGH, Codex only):** Codex flags that `rated_ah` stays hardcoded to `RATED_CAPACITY_AH` at model.py:789/806, so health/MOTD show 7.2 even when `capacity_ah=9.0` is injected — a goal violation for non-default batteries. OpenCode did not raise this. Worth verifying against the code before execution.
 - **`add_soh_history_entry()` 2-decimal rounding (MEDIUM, Codex only):** could break exact equivalence if config capacity carries more precision.
+
+---
+---
+
+# Cross-AI Plan Review — Phase 26 — CYCLE 2
+
+**Reviewed:** 2026-06-04T03:30:00+06:00 · **Reviewers:** codex, opencode · **Plans revised in:** b0af9e3
+
+Cycle-2 context: the plans were revised after cycle 1 to address the 3 HIGH concerns — (1) rated_ah
+propagation from injected capacity_ah, (2) configurable replacement threshold via `config.soh_alert`
+with a parametrized equivalence test, (3) shared `latest_capacity_ah_ref` baseline filter for
+battery-health.py. Both reviewers were asked to confirm those are fully resolved and to surface any new
+HIGH concerns.
+
+## Cycle-1 HIGH Resolution — Adjudicated
+
+| Cycle-1 HIGH | Codex | OpenCode | Adjudication (verified vs source) |
+|---|---|---|---|
+| #1 rated_ah propagation | PARTIAL | FULLY | **FULLY RESOLVED.** Plan 01 sets `rated_ah=self.capacity_ah` at both return sites (truths + verify gate `rg rated_ah=RATED_CAPACITY_AH src/` empty) and adds a both-branches + default propagation test (T-26-06). Codex's "partial" caveat is the *reporting-tool* divergence (MOTD/battery-health), which is a separate documented MEDIUM design decision, not a failure of the rated_ah mechanism itself. Note: MOTD `capacity_rated_ah` already showed 7.2 pre-refactor because the old `rated_ah` was hardcoded — so this is not an MOTD regression. |
+| #2 configurable replacement threshold | PARTIAL | FULLY | **FULLY RESOLVED (daemon path).** Plan 02 injects `soh_threshold=config.soh_alert_threshold` into `BatteryModel`; `compute_replacement_due()` uses `self.soh_threshold`; the parametrized `[0.80, 0.75]` equivalence test fails on a hardcoded 0.80 (T-26-04). Codex's "partial" is again the standalone-reporting path (MOTD/battery-health intentionally use 0.80) — documented MEDIUM, not the targeted defect. |
+| #3 shared baseline filter | FULLY | FULLY | **FULLY RESOLVED.** Single `latest_capacity_ah_ref()` helper consumed by both `compute_replacement_due()` and battery-health.py; mixed-baseline test asserts latest-only fit differs from all-entries (T-26-07). |
+
+All three cycle-1 HIGHs are **fully resolved** (verified against `src/model.py`, `src/discharge_handler.py`,
+`src/replacement_predictor.py`, `src/motd_status.py`, `src/virtual_ups_exporter.py`).
+
+## New HIGH (cycle 2) — `compute_replacement_due()` drops the convergence gate
+
+**Raised by Codex; VERIFIED REAL against source; UNRESOLVED.**
+
+The OLD persisted path (`src/discharge_handler.py:212-234` `_predict_replacement`) only computes/persists a
+replacement date **`if convergence.converged`** (line 219); otherwise it persists `None`. Plan 02's new
+`compute_replacement_due()` calls `replacement_predictor.linear_regression_soh(self.get_soh_history(), …)`
+**unconditionally** — there is no `get_convergence_status().converged` guard in the plan's truths, action,
+or tests.
+
+`soh_history` (model.py:36, appended by `add_soh_history_entry`) and `capacity_estimates` (model.py:37,
+the input to `get_convergence_status`) are **independent arrays**. A model can therefore hold a
+regression-quality `soh_history` (≥3 points, R²≥0.5, negative slope) while `capacity_estimates` is
+non-converged. In that reachable state:
+
+- OLD persisted `replacement_due` = `None` → MOTD/NUT `battery.replacement.due` showed nothing.
+- NEW live `compute_replacement_due()` = a real date.
+
+This is a **value divergence that violates the HYG-04 "same values" contract for the DEFAULT-config user**
+(the common case), not just non-default batteries. The cycle-2 equivalence test does not catch it because
+its fixture is built converged. This HIGH is independent of the documented reporting-threshold MEDIUMs and
+is not addressed anywhere in the revised plans.
+
+**Fix direction (for replan):** make `compute_replacement_due()` return `None` when
+`get_convergence_status().converged` is False (mirroring the old gate), and add a regression test with
+`soh_history` ≥3 points but non-converged `capacity_estimates` asserting the live value equals the old
+`None`. Decide explicitly whether `get_replacement_due` / NUT export should reflect the gate (recommended,
+to preserve equivalence) — and confirm the standalone MOTD model, which has no capacity estimates injected,
+behaves identically before/after.
+
+## Codex Cycle-2 Review (verbatim)
+
+**Cycle-1 HIGH Resolution Assessment**
+
+- **HIGH #1 rated_ah propagation: PARTIALLY RESOLVED.** The model-level fix is well specified: 26-01 requires `rated_ah=self.capacity_ah` at both branches, and the test plan covers empty, populated, and default cases. Gap: end-to-end MOTD/reporting is not fully proven. `src/motd_status.py` constructs `BatteryModel(model_path)` without config, and Plan 01 does not update that path. `battery-health.py` is moved to the `RATED_CAPACITY_AH` constant, so non-default `capacity_ah=9.0` still diverges there.
+- **HIGH #2 configurable replacement threshold: PARTIALLY RESOLVED.** The daemon/model path is fixed: 26-02 adds `self.soh_threshold`, monitor injects `config.soh_alert_threshold`, and the `[0.80, 0.75]` equivalence test would catch a hardcoded model method. Gap: reporting paths are still default-threshold (MOTD standalone 0.80, battery-health keeps 0.80), so customized `soh_alert=0.75` is not preserved end-to-end.
+- **HIGH #3 shared baseline filter: FULLY RESOLVED for the tagged latest-baseline case.** One `latest_capacity_ah_ref()` helper, used in both `compute_replacement_due()` and `battery-health.py`, plus a mixed-baseline regression test proving latest-baseline-only differs from all-entry output.
+
+**Summary** — The revisions close the narrow hardcoded-return and baseline-filter defects in the core model. Not fully converged: two HIGH output-equivalence risks remain — config-less reporting paths fall back to defaults, and `replacement_due` recomputation appears to drop the old capacity-convergence precondition.
+
+**Concerns**
+- **HIGH (NEW/latent):** Non-default config values lost in reporting tools. `motd_status.py` builds `BatteryModel` without `capacity_ah`/`soh_threshold`; Plan 01 makes `battery-health.py` use `RATED_CAPACITY_AH`; Plan 02 keeps battery-health at `threshold_soh=0.80`. Violates "computed outputs identical" for `capacity_ah != 7.2` or `soh_alert != 0.80`.
+- **HIGH (NEW/latent):** `replacement_due` live recompute omits the old convergence gate. `discharge_handler.py:218-219` only persisted a prediction when `get_convergence_status().converged`; `compute_replacement_due()` runs regression directly on `soh_history`. With 3+ SoH points but non-converged capacity estimates, old persisted value was `None`; new live value may emit a date.
+- **MEDIUM:** `latest_capacity_ah_ref()` returns `None` when the latest entry lacks `capacity_ah_ref`; `linear_regression_soh()` treats missing tags as the 7.2 baseline when filtering. Mixed untagged+tagged history can use all entries instead of the latest effective baseline.
+- **LOW:** Plan 01's `rg full_capacity_ah_ref scripts/ tests/` gate conflicts with Plan 02's old-schema strip test, which intentionally needs the removed-key literals in tests.
+
+**Suggestions** — source report-only capacity from `health.json capacity_ah_rated` (or a lightweight config reader for CLI/MOTD); add `replacement_due` to `health.json` from the daemon's configured model OR make MOTD/battery-health load the same `soh_alert`; add end-to-end tests for `capacity_ah=9.0` and `soh_alert=0.75` across health/MOTD/battery-health; add a 3+-points-but-non-converged regression test for `replacement_due`; make `latest_capacity_ah_ref()` treat a missing latest tag as `RATED_CAPACITY_AH` or test/document why `None` is correct.
+
+**Risk Assessment: HIGH** until the reporting/default-threshold and convergence-gate issues are fixed. Core direction sound, but the remaining gaps can change user-visible values — exactly what Phase 26 forbids.
+
+## OpenCode Cycle-2 Review (verbatim)
+
+**Cycle-1 HIGH Resolution** — HIGH #1 **FULLY RESOLVED** (rated_ah=self.capacity_ah at both sites + propagation test both branches + default; verify gate; T-26-06). HIGH #2 **FULLY RESOLVED** (`soh_threshold` param injected from `config.soh_alert_threshold`; `compute_replacement_due()` uses `self.soh_threshold`; parametrized `[0.80, 0.75]` test; T-26-04). HIGH #3 **FULLY RESOLVED** (shared `latest_capacity_ah_ref()` helper in both paths; mixed-baseline test; T-26-07).
+
+**Summary** — All three cycle-1 HIGHs fully resolved with specific code changes and Nyquist-level regression tests. No new HIGH concerns introduced. One MEDIUM around standalone MOTD diverging from daemon threshold for non-default `soh_alert` users (documented, low-impact — MOTD is a read-only banner, 0.80 is the IEEE standard).
+
+**Concerns**
+- **MEDIUM:** Standalone MOTD threshold diverges from daemon for non-default `soh_alert`. `motd_status.py` builds `BatteryModel(model_path)` → default 0.80; old MOTD read the persisted `replacement_due` computed at `config.soh_alert`. For `soh_alert=0.75`, old MOTD showed the 75% date, new shows 80%. Documented as intentional; bounded (read-only banner, default case unaffected).
+- **MEDIUM:** battery-health.py shows the default rated capacity (7.2) for non-default batteries. Plan 01 hardcodes `RATED_CAPACITY_AH`; for `capacity_ah=9.0` the operator report shows 7.2 while NUT shows 9.0. Not new (battery-health already read 7.2 from model.json); YAGNI-justified and documented.
+- **LOW:** `latest_capacity_ah_ref` returns `None` for backward-compat entries lacking the field → falls back to all-entries (matches pre-field behavior; acceptable).
+- **LOW:** Plan 01 Task 1 verify only runs sag/runtime tests; the final `uv run pytest -q` in Task 3 covers the broader call paths.
+
+**Suggestions** — document the MOTD-vs-daemon threshold divergence in 26-02-SUMMARY; add a clarifying comment near the battery-health `RATED_CAPACITY_AH` import; expand Plan 01 Task 1 verify with discharge/capacity tests; consider documenting/checking the physics sub-key loader nuance in a future phase.
+
+**Risk Assessment: LOW.** All three cycle-1 HIGHs fully resolved; the two MEDIUMs are documented, bounded design decisions; sequential wave ordering enforced; deploy strip tested. Execution can proceed.
+
+## Cycle-2 Consensus
+
+### Agreed (both reviewers)
+- All three cycle-1 HIGH concerns are addressed by the targeted mechanisms in the revised plans
+  (rated_ah at both sites + test; injected `soh_threshold` + parametrized `[0.80,0.75]` test; shared
+  `latest_capacity_ah_ref` helper + mixed-baseline test). HIGH #3 is FULLY RESOLVED by both; #1 and #2
+  are fully resolved for the daemon/model path (Codex's "partial" reduces to the reporting-tool MEDIUMs).
+- The standalone reporting paths (MOTD, battery-health.py) intentionally use defaults (capacity 7.2,
+  threshold 0.80) and can diverge from the daemon for non-default `capacity_ah`/`soh_alert` — both flag
+  this; both treat it as bounded (Codex folds it into a HIGH, OpenCode rates it MEDIUM and documented).
+
+### Divergence
+- **Overall risk:** Codex → HIGH (two unresolved equivalence risks). OpenCode → LOW (all resolved, only
+  documented MEDIUMs).
+- **Convergence gate (Codex only, OpenCode silent):** the decisive item. Verified against source as a
+  **REAL, unaddressed value divergence even for the default-config user** → counts as the one remaining
+  cycle-2 HIGH. OpenCode missed it.
+
+### Cycle-2 Verdict
+- Cycle-1 HIGHs: **3 raised → 3 FULLY RESOLVED.**
+- New HIGH this cycle: **1** (`compute_replacement_due()` drops the convergence gate).
+- **HIGH remaining (unresolved): 1.** Convergence has NOT been reached — one more replan + review cycle
+  is warranted to gate `compute_replacement_due()` on `convergence.converged` and add the
+  non-converged-history equivalence test. The reporting-tool divergences (MOTD/battery-health) should be
+  resolved or explicitly accepted-and-documented in the same replan (MEDIUM).
