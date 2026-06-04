@@ -8,19 +8,26 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.battery_math.constants import RATED_CAPACITY_AH
-from src.model import is_capacity_converged, latest_capacity_ah_ref
+from src.model import ModelState, is_capacity_converged, latest_capacity_ah_ref
 from src.replacement_predictor import linear_regression_soh
 
 # Production paths — override via env for fixture-based testing (mirrors src/motd_status.py).
 # UPS_MODEL_PATH / UPS_HEALTH_PATH allow running against readable copies without sudo.
-MODEL_PATH = Path(os.environ.get("UPS_MODEL_PATH", Path.home() / ".config" / "ups-battery-monitor" / "model.json"))
+MODEL_PATH = Path(
+    os.environ.get("UPS_MODEL_PATH", Path.home() / ".config" / "ups-battery-monitor" / "model.json")
+)
 HEALTH_PATH = Path(os.environ.get("UPS_HEALTH_PATH", "/run/ups-battery-monitor/ups-health.json"))
+# The virtual UPS published by the daemon (enriched battery.* vars), as named in NUT ups.conf.
+# Fixed per deployment; override via env. NOT read from model.json — the strict loader rejects
+# any non-schema key, so model.json never carries a ups name (the old read here was dead).
+VIRTUAL_UPS_NAME = os.environ.get("UPS_VIRTUAL_NAME", "cyberpower-virtual")
 
 
-def print_maintenance(model_data: dict, health_data: dict) -> None:
+def print_maintenance(model_data: ModelState, health_data: dict) -> None:
     """Print the Maintenance & schedule section.
 
     Sources:
@@ -45,8 +52,7 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
             next_dt = datetime.fromisoformat(next_ts)
             days_away = (next_dt - datetime.now().astimezone()).days
             reason_str = f"  ({reason})" if reason else ""
-            print(f"  Next diagnostic test: {next_ts[:10]}"
-                  f"  ({days_away:+d} days){reason_str}")
+            print(f"  Next diagnostic test: {next_ts[:10]}  ({days_away:+d} days){reason_str}")
         except (ValueError, TypeError):
             # ValueError: unparseable ISO string. TypeError: a corrupt JSON file
             # stored a non-string (e.g. numeric epoch) — degrade, don't crash (T-25-07).
@@ -64,8 +70,10 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
             days_ago = (datetime.now().astimezone() - last_dt).days
             type_str = f"  type={last_type}" if last_type else ""
             status_str = f"  status={last_status}" if last_status else ""
-            print(f"  Last test run:        {last_ts[:10]}"
-                  f"  ({days_ago} days ago){type_str}{status_str}")
+            print(
+                f"  Last test run:        {last_ts[:10]}"
+                f"  ({days_ago} days ago){type_str}{status_str}"
+            )
         except (ValueError, TypeError):
             # See T-25-07 note above: tolerate a corrupt non-string timestamp.
             print(f"  Last test run:        {last_ts}{' ' + last_type if last_type else ''}")
@@ -76,14 +84,26 @@ def print_maintenance(model_data: dict, health_data: dict) -> None:
     ir_trend_rate = health_data.get("ir_trend_rate")  # Ω/day from health endpoint
     if ir_trend_rate is not None:
         trend_mohm_day = ir_trend_rate * 1000
-        direction = "rising (aging)" if trend_mohm_day > 0.001 else "stable" if trend_mohm_day > -0.001 else "improving"
+        direction = (
+            "rising (aging)"
+            if trend_mohm_day > 0.001
+            else "stable"
+            if trend_mohm_day > -0.001
+            else "improving"
+        )
         print(f"  IR trend rate:        {trend_mohm_day:+.4f} mΩ/day  ({direction})")
     else:
         # Fall back to recomputing from r_internal_history (same logic as main report)
         r_hist = model_data.get("r_internal_history", [])
         if len(r_hist) >= 3:
             delta_mohm = (r_hist[-1]["r_ohm"] - r_hist[0]["r_ohm"]) * 1000
-            direction = "rising (aging)" if delta_mohm > 0.5 else "stable" if delta_mohm > -0.5 else "improving"
+            direction = (
+                "rising (aging)"
+                if delta_mohm > 0.5
+                else "stable"
+                if delta_mohm > -0.5
+                else "improving"
+            )
             span = f"{r_hist[0]['date']} → {r_hist[-1]['date']}"
             print(f"  IR trend:             {delta_mohm:+.1f} mΩ  ({direction}, {span})")
         elif r_hist:
@@ -131,7 +151,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        model_data = json.loads(MODEL_PATH.read_text())
+        model_data = cast(ModelState, json.loads(MODEL_PATH.read_text()))
     except (json.JSONDecodeError, OSError) as e:
         print(f"Error reading {MODEL_PATH}: {e}")
         sys.exit(1)
@@ -140,23 +160,29 @@ def main() -> None:
     # soh_alert_threshold, and the Maintenance section reuses the same data.
     health_data, health_perm_denied = load_health_endpoint()
 
-    # UPS identity from NUT
-    ups_name = model_data.get('ups_name', 'cyberpower-virtual')
-    # Validate before passing to subprocess — reject leading hyphens to prevent argument injection
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', ups_name):
-        print(f"  WARNING: Invalid ups_name in model.json: {ups_name!r}")
-        ups_name = 'cyberpower-virtual'
+    # UPS identity from NUT — query the daemon's virtual UPS (fixed deployment name).
+    # Validate before passing to subprocess — reject leading hyphens to prevent argument
+    # injection via the UPS_VIRTUAL_NAME env override; fall back to the safe default.
+    ups_name = VIRTUAL_UPS_NAME
+    if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$", ups_name):
+        print(f"  WARNING: Invalid UPS name {ups_name!r}; using default")
+        ups_name = "cyberpower-virtual"
     try:
         upsc_proc = subprocess.run(
-            ['upsc', f'{ups_name}@localhost'], capture_output=True, text=True, timeout=2
+            ["upsc", f"{ups_name}@localhost"], capture_output=True, text=True, timeout=2
         )
         if upsc_proc.returncode != 0:
-            stderr_msg = (upsc_proc.stderr.strip() or f'exit {upsc_proc.returncode}')[:200]
+            stderr_msg = (upsc_proc.stderr.strip() or f"exit {upsc_proc.returncode}")[:200]
             print(f"  UPS: (upsc failed: {stderr_msg})")
         else:
-            nut_vars = {k: v for k, v in (line.split(': ', 1) for line in upsc_proc.stdout.splitlines() if ': ' in line)}
-            mfr = nut_vars.get('device.mfr')
-            device_model = nut_vars.get('device.model')
+            nut_vars = {
+                k: v
+                for k, v in (
+                    line.split(": ", 1) for line in upsc_proc.stdout.splitlines() if ": " in line
+                )
+            }
+            mfr = nut_vars.get("device.mfr")
+            device_model = nut_vars.get("device.model")
             if mfr and device_model:
                 print(f"  UPS:              {mfr} {device_model}")
     except FileNotFoundError:
@@ -167,7 +193,7 @@ def main() -> None:
         print("  UPS: (NUT unavailable)")
 
     # State of Health — how much usable capacity remains vs new battery
-    soh = model_data.get('soh', 1.0)
+    soh = model_data.get("soh", 1.0)
     if soh < 0.80:
         print(f"  State of Health:  {soh:.0%}  ⚠ DEGRADED (below 80%, consider replacement)")
     elif soh < 0.90:
@@ -179,28 +205,28 @@ def main() -> None:
     print(f"  Rated capacity:   {RATED_CAPACITY_AH} Ah")
 
     # Battery age and cycle count
-    install_date = model_data.get('battery_install_date')
+    install_date = model_data.get("battery_install_date")
     if install_date:
         try:
-            age_days = (datetime.now() - datetime.strptime(install_date, '%Y-%m-%d')).days
+            age_days = (datetime.now() - datetime.strptime(install_date, "%Y-%m-%d")).days
             print(f"  Battery age:      {age_days} days (installed {install_date})")
         except ValueError:
             print(f"  Battery age:      unknown (bad install_date: {install_date!r})")
-    cycle_count = model_data.get('cycle_count', 0)
-    cumulative_sec = model_data.get('cumulative_on_battery_sec', 0.0)
+    cycle_count = model_data.get("cycle_count", 0)
+    cumulative_sec = model_data.get("cumulative_on_battery_sec", 0.0)
     cumulative_min = cumulative_sec / 60
     print(f"  Cycles:           {cycle_count} (total {cumulative_min:.0f} min on battery)")
 
     # LUT — how well the voltage-SoC curve is calibrated from real data
-    lut = model_data.get('lut', [])
-    measured = sum(1 for e in lut if e.get('source') == 'measured')
+    lut = model_data.get("lut", [])
+    measured = sum(1 for e in lut if e.get("source") == "measured")
     if measured == 0:
         print("  Calibration:      standard curve (no real discharge data yet)")
     else:
         print(f"  Calibration:      {measured} measured points, {len(lut)} total in LUT")
 
     # Discharge history — each blackout/test contributes a SoH data point
-    soh_history = model_data.get('soh_history', [])
+    soh_history = model_data.get("soh_history", [])
     print(f"  Discharge events: {len(soh_history)} recorded")
     if soh_history:
         latest = soh_history[-1]
@@ -212,7 +238,7 @@ def main() -> None:
     # The threshold comes from the daemon's health endpoint (config.soh_alert_threshold),
     # so the CLI date matches the daemon's battery.replacement.due for ANY configured value.
     # 0.80 is only the fallback when no daemon has written health.json (standalone run).
-    capacity_estimates = model_data.get('capacity_estimates', [])
+    capacity_estimates = model_data.get("capacity_estimates", [])
     capacity_converged = is_capacity_converged(capacity_estimates)
 
     if capacity_converged and len(soh_history) >= 3:
@@ -230,30 +256,42 @@ def main() -> None:
         else:
             print("  Replace battery:  no degradation trend detected yet")
     elif len(soh_history) > 0 and len(soh_history) < 3:
-        print(f"  Replace battery:  need {3 - len(soh_history)} more discharge events for prediction")
+        print(
+            f"  Replace battery:  need {3 - len(soh_history)} more discharge events for prediction"
+        )
     else:
         # Either no soh_history or capacity not yet converged
-        print("  Replace battery:  not enough capacity-convergence data yet (need 3+ converged estimates)")
+        print(
+            "  Replace battery:  not enough capacity-convergence data yet (need 3+ converged estimates)"
+        )
 
     # Internal resistance — rising R means cell aging (plate corrosion / electrolyte loss)
-    r_hist = model_data.get('r_internal_history', [])
+    r_hist = model_data.get("r_internal_history", [])
     if r_hist:
         latest = r_hist[-1]
-        print(f"  R_internal:       {latest['r_ohm']*1000:.1f} mΩ (measured {latest['date']})")
+        print(f"  R_internal:       {latest['r_ohm'] * 1000:.1f} mΩ (measured {latest['date']})")
         if len(r_hist) >= 3:
-            delta_mohm = (r_hist[-1]['r_ohm'] - r_hist[0]['r_ohm']) * 1000
-            direction = "rising ⚠" if delta_mohm > 0.5 else "stable" if delta_mohm > -0.5 else "improving"
-            print(f"  R_internal trend: {delta_mohm:+.1f} mΩ since {r_hist[0]['date']} ({direction})")
+            delta_mohm = (r_hist[-1]["r_ohm"] - r_hist[0]["r_ohm"]) * 1000
+            direction = (
+                "rising ⚠" if delta_mohm > 0.5 else "stable" if delta_mohm > -0.5 else "improving"
+            )
+            print(
+                f"  R_internal trend: {delta_mohm:+.1f} mΩ since {r_hist[0]['date']} ({direction})"
+            )
 
     # Maintenance & schedule — health_data was loaded at the top of main(). If the endpoint
     # was permission-denied (root-owned /run file, non-root run), surface the sudo/fixture hint.
     if health_perm_denied:
         print()
-        print("  Maintenance & schedule: health endpoint unavailable (daemon not running, or run with sudo)")
-        print("  Tip: set UPS_HEALTH_PATH=/path/to/readable/health.json to use a fixture without sudo")
+        print(
+            "  Maintenance & schedule: health endpoint unavailable (daemon not running, or run with sudo)"
+        )
+        print(
+            "  Tip: set UPS_HEALTH_PATH=/path/to/readable/health.json to use a fixture without sudo"
+        )
 
     print_maintenance(model_data, health_data)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

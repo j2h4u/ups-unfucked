@@ -25,7 +25,7 @@ ignore = [
 ]
 
 [tool.pyright]
-include = ["src"]
+include = ["src", "scripts"]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
 

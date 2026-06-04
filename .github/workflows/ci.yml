@@ -23,7 +23,7 @@ jobs:
       - name: Lint
         run: uv run ruff check src tests
       - name: Type check
-        run: uv run pyright src
+        run: uv run pyright
       - name: Dead-code (vulture, whitelist-gated)
         run: uv run vulture
 

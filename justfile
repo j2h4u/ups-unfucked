@@ -13,9 +13,9 @@ fmt-check:
 lint:
     uv run ruff check src tests
 
-# Static type checking
+# Static type checking (src + scripts, per pyproject [tool.pyright].include)
 typecheck:
-    uv run pyright src
+    uv run pyright
 
 # Run all tests (fast inner loop, no coverage gate)
 test:
