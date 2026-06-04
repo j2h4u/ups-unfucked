@@ -11,9 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict
 
+from src import replacement_predictor
 from src.battery_math.constants import NOMINAL_POWER_WATTS, NOMINAL_VOLTAGE, RATED_CAPACITY_AH
 from src.capacity_estimator import compute_cov
-from src import replacement_predictor
 
 
 class ModelLoadError(Exception):
