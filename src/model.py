@@ -788,7 +788,8 @@ class BatteryModel:
         Side effects:
             - Appends entry to model.state['capacity_estimates']
             - Calls _cap_history_entries('capacity_estimates') to limit array to 30 entries
-            - Calls self.save() for atomic persistence (may silently fail on OSError)
+            - Calls self.save() for atomic persistence; on save failure the in-memory
+              append is rolled back so memory and disk stay consistent
         """
         if "capacity_estimates" not in self.state:
             self.state["capacity_estimates"] = []
@@ -804,8 +805,14 @@ class BatteryModel:
         try:
             self.save()
         except (OSError, TypeError, ValueError) as e:
+            # Keep memory == disk: a learned estimate that lives in RAM but never reached
+            # disk is exactly the silent divergence this milestone removes. On a restart the
+            # in-memory-only sample would vanish and convergence replay would see a different
+            # count than the running daemon. Roll the append back so both views agree; the
+            # estimate re-derives on the next discharge.
+            self.state["capacity_estimates"].pop()
             logger.error(
-                f"Failed to persist capacity estimate: {e}",
+                f"Failed to persist capacity estimate, rolled back in-memory append: {e}",
                 exc_info=True,
                 extra={"event_type": "capacity_persist_failed"},
             )

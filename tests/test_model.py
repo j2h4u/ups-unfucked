@@ -886,6 +886,29 @@ class TestIsCapacityConverged:
         assert status.latest_ah == 7.05  # last usable sample, no KeyError
 
 
+class TestAddCapacityEstimatePersistenceRollback:
+    """WR-03: a failed save() must not leave an estimate in memory that never reached disk."""
+
+    def test_save_failure_rolls_back_in_memory_append(self, tmp_path, monkeypatch):
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.add_capacity_estimate(
+            ah_estimate=7.0, confidence=0.0, metadata={}, timestamp="2026-03-16T10:00:00Z"
+        )
+        before = len(model.state["capacity_estimates"])
+
+        def _boom():
+            raise OSError("disk full")
+
+        monkeypatch.setattr(model, "save", _boom)
+        model.add_capacity_estimate(
+            ah_estimate=7.1, confidence=0.0, metadata={}, timestamp="2026-03-16T11:00:00Z"
+        )
+
+        # The failed estimate was rolled back — memory matches what reached disk.
+        assert len(model.state["capacity_estimates"]) == before
+        assert all(e["ah_estimate"] != 7.1 for e in model.state["capacity_estimates"])
+
+
 class TestSoHHistoryVersioning:
     """SOH-02: SoH history versioning with capacity_ah_ref field."""
 
