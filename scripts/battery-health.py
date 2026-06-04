@@ -11,6 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.battery_math.constants import RATED_CAPACITY_AH
+from src.capacity_estimator import compute_cov
+from src.model import latest_capacity_ah_ref
 from src.replacement_predictor import linear_regression_soh
 
 # Production paths — override via env for fixture-based testing (mirrors src/motd_status.py).
@@ -182,16 +184,35 @@ def main() -> None:
         latest = soh_history[-1]
         print(f"  Last discharge:   {latest.get('date', '?')} (SoH was {latest.get('soh', 0):.0%})")
 
-    # Replacement prediction — needs 3+ events for linear regression
-    if len(soh_history) >= 3:
-        replacement_prediction = linear_regression_soh(soh_history, threshold_soh=0.80)
+    # Replacement prediction — mirrors the daemon's compute_replacement_due() gate exactly:
+    # (1) capacity_estimates must be converged (>=3 samples, CoV < 0.10); and
+    # (2) soh_history must have >=3 points for linear regression.
+    # The daemon uses config.soh_alert_threshold; this report uses the 0.80 default
+    # (same as standalone MOTD). For a non-default soh_alert the dates may differ —
+    # accepted (YAGNI: no config loader added to CLI/MOTD per CONTEXT.md scope).
+    # The convergence gate mirrors the daemon so the two never show conflicting states.
+    capacity_estimates = model_data.get('capacity_estimates', [])
+    ah_values = [e['ah_estimate'] for e in capacity_estimates if 'ah_estimate' in e]
+    capacity_converged = len(ah_values) >= 3 and compute_cov(ah_values) < 0.10
+
+    if capacity_converged and len(soh_history) >= 3:
+        # Use the shared latest_capacity_ah_ref helper so baseline selection matches
+        # the daemon's compute_replacement_due() path exactly (review HIGH #3).
+        replacement_prediction = linear_regression_soh(
+            soh_history,
+            threshold_soh=0.80,
+            capacity_ah_ref=latest_capacity_ah_ref(soh_history),
+        )
         if replacement_prediction:
             slope, intercept, r2, date = replacement_prediction
             print(f"  Replace battery:  ~{date} (trend confidence R²={r2:.2f})")
         else:
             print("  Replace battery:  no degradation trend detected yet")
-    elif len(soh_history) > 0:
+    elif len(soh_history) > 0 and len(soh_history) < 3:
         print(f"  Replace battery:  need {3 - len(soh_history)} more discharge events for prediction")
+    else:
+        # Either no soh_history or capacity not yet converged
+        print("  Replace battery:  not enough capacity-convergence data yet (need 3+ converged estimates)")
 
     # Internal resistance — rising R means cell aging (plate corrosion / electrolyte loss)
     r_hist = model_data.get('r_internal_history', [])

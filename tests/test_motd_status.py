@@ -76,14 +76,35 @@ def test_three_tight_samples_report_locked(tmp_path):
 
 
 def test_soh_and_replacement_due_surface(tmp_path):
-    """SoH fraction renders as integer percent; replacement date passes through."""
+    """SoH fraction renders as integer percent; replacement_due is computed live (not persisted).
+
+    replacement_due is now computed via compute_replacement_due() — it requires both
+    converged capacity_estimates (>=3, CoV<0.10) and a regression-quality soh_history
+    (>=3 points, negative slope, R²>=0.5). The MOTD surfaces a non-empty date string
+    when both conditions are met. This tests that the live-compute path surfaces in the
+    rendered output.
+    """
     model_path = tmp_path / "model.json"
-    _write_model(model_path, {"soh": 0.85, "replacement_due": "2027-01-01"})
+    # Converged capacity estimates (CoV well below 0.10)
+    capacity_estimates = [
+        {"ah_estimate": 7.15, "timestamp": "2025-06-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {"ah_estimate": 7.18, "timestamp": "2025-07-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+        {"ah_estimate": 7.20, "timestamp": "2025-08-01T00:00:00Z", "confidence": 0.95, "metadata": {}},
+    ]
+    # Regression-quality soh_history: negative slope, R²≥0.5, all same capacity_ah_ref
+    soh_history = [
+        {"date": "2025-06-01", "soh": 0.98, "capacity_ah_ref": 7.2},
+        {"date": "2025-09-01", "soh": 0.95, "capacity_ah_ref": 7.2},
+        {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": 7.2},
+        {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": 7.2},
+    ]
+    _write_model(model_path, {"soh": 0.85, "capacity_estimates": capacity_estimates, "soh_history": soh_history})
 
     fields = _render(model_path, tmp_path / "absent-health.json")
 
     assert fields["soh_pct"] == "85"
-    assert fields["replacement_due"] == "2027-01-01"
+    # Live compute_replacement_due() must return a non-empty date for this converged fixture
+    assert fields["replacement_due"] != ""
 
 
 def test_new_battery_flag_surfaces(tmp_path):

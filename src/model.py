@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 from src.battery_math.constants import NOMINAL_POWER_WATTS, NOMINAL_VOLTAGE, RATED_CAPACITY_AH
 from src.capacity_estimator import compute_cov
+from src import replacement_predictor
 
 
 class ModelLoadError(Exception):
@@ -58,6 +59,28 @@ class ModelState(TypedDict, total=False):
 # Derived from the schema so the two never drift. Used by load() to fail-fast on
 # unknown keys instead of letting them silently survive save()'s round-trip.
 KNOWN_STATE_KEYS = frozenset(ModelState.__annotations__)
+
+
+def latest_capacity_ah_ref(soh_history: List[Dict[str, Any]]) -> Optional[float]:
+    """Return the capacity_ah_ref from the most recent soh_history entry, or None.
+
+    This is the SINGLE shared baseline selector used by both BatteryModel.compute_replacement_due()
+    and scripts/battery-health.py to ensure both paths select the SAME capacity baseline
+    (preventing mixed-baseline divergence, review HIGH #3).
+
+    The value is already rounded to 2 decimals by add_soh_history_entry (model.py:668),
+    so reading it back is exact — no precision drift versus the old persisted path, which
+    read the same stored entries.
+
+    Returning None when the latest entry has no capacity_ah_ref is INTENTIONAL and
+    pre-field-compatible: linear_regression_soh treats capacity_ah_ref=None as "use all
+    entries with the default baseline", which is exactly the behavior before the
+    capacity_ah_ref tag was added — so untagged/backward-compat histories keep their prior
+    fit without any new branching.
+    """
+    if not soh_history:
+        return None
+    return soh_history[-1].get("capacity_ah_ref")
 
 
 # RLS estimator defaults — single source of truth for _sync_physics_from_state,
@@ -191,7 +214,12 @@ class BatteryModel:
     - Metadata: capacity, current SoH estimate
     """
 
-    def __init__(self, model_path=None, capacity_ah: float = RATED_CAPACITY_AH):
+    def __init__(
+        self,
+        model_path=None,
+        capacity_ah: float = RATED_CAPACITY_AH,
+        soh_threshold: float = 0.80,
+    ):
         """
         Initialize battery model from file or create default.
 
@@ -201,6 +229,10 @@ class BatteryModel:
             capacity_ah: Rated reference capacity in Ah. Sourced from config at
                         runtime (not persisted). Default is RATED_CAPACITY_AH (7.2
                         for CyberPower UT850EG).
+            soh_threshold: SoH fraction at which replacement is recommended. Sourced
+                          from config.soh_alert_threshold at runtime (not persisted).
+                          Default 0.80 matches the config default so standalone callers
+                          (motd_status.py) reproduce the prior value without a config object.
         """
         if model_path is None:
             model_path = Path.home() / ".config" / "ups-battery-monitor" / "model.json"
@@ -209,6 +241,7 @@ class BatteryModel:
 
         self.model_path = model_path
         self.capacity_ah = capacity_ah
+        self.soh_threshold = soh_threshold
         self.state = {}
         self._seen_timestamps: set = set()
         self.load()
@@ -509,13 +542,44 @@ class BatteryModel:
     def get_cumulative_on_battery_sec(self) -> float:
         return self.state.get("cumulative_on_battery_sec", 0.0)
 
-    def get_replacement_due(self) -> str | None:
-        """Return predicted replacement due date (ISO8601 or None)."""
-        return self.state.get("replacement_due")
+    def compute_replacement_due(self) -> Optional[str]:
+        """Compute predicted replacement date live from soh_history regression.
 
-    def set_replacement_due(self, date_str: str | None):
-        """Set predicted replacement due date (ISO8601 string or None)."""
-        self.state["replacement_due"] = date_str
+        Mirrors the OLD discharge_handler._predict_replacement gate exactly:
+        returns None immediately when get_convergence_status().converged is False
+        (discharge_handler.py:218-219 skipped regression when not converged).
+
+        soh_history (model.py:36) and capacity_estimates (model.py:37) are INDEPENDENT
+        arrays, so a model can have regression-quality soh_history while capacity_estimates
+        is non-converged. Without this gate, the live value would diverge from the old
+        persisted None for the default-config user (cycle-2 HIGH, T-26-08).
+
+        Uses self.soh_threshold (NOT a hardcoded 0.80) so the live recompute reproduces
+        the OLD persisted value for ALL configured soh_alert thresholds, not only 0.80
+        (review HIGH #2). The shared latest_capacity_ah_ref helper selects the same
+        baseline as battery-health.py (review HIGH #3).
+
+        Returns:
+            ISO8601 date string, "overdue", or None.
+        """
+        if not self.get_convergence_status().converged:
+            return None
+        soh_hist = self.get_soh_history()
+        result = replacement_predictor.linear_regression_soh(
+            soh_hist,
+            threshold_soh=self.soh_threshold,
+            capacity_ah_ref=latest_capacity_ah_ref(soh_hist),
+        )
+        return result[3] if result is not None else None
+
+    def get_replacement_due(self) -> Optional[str]:
+        """Return predicted replacement due date (live recompute via compute_replacement_due).
+
+        Delegates to compute_replacement_due() so all callers — virtual_ups_exporter,
+        motd_status, health endpoint — get a fresh value each poll without reading a
+        stale persisted field. The name is kept for backward call-site compatibility.
+        """
+        return self.compute_replacement_due()
 
     def add_on_battery_time(self, seconds: float):
         """Accumulate on-battery time (additive, unit: seconds, no upper bound)."""

@@ -213,7 +213,9 @@ class DischargeHandler:
         """Check convergence and run linear regression for replacement prediction.
 
         Returns the regression result tuple (slope, intercept, r2, replacement_date)
-        or None. Persists replacement_due date in the model.
+        or None for _check_alerts. replacement_due is computed live at read time
+        (model.compute_replacement_due) using the configured soh_threshold and
+        latest-entry capacity_ah_ref — not persisted here.
         """
         convergence = self.battery_model.get_convergence_status()
         if convergence.converged:
@@ -224,12 +226,6 @@ class DischargeHandler:
             )
         else:
             replacement_prediction = None
-
-        if replacement_prediction:
-            _, _, _, replacement_date = replacement_prediction
-            self.battery_model.set_replacement_due(replacement_date)
-        else:
-            self.battery_model.set_replacement_due(None)
 
         return replacement_prediction
 
