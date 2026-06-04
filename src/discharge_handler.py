@@ -463,6 +463,16 @@ class DischargeHandler:
         the live ConvergenceStatus, not a stored flag).
         Idempotent after first call.
         """
+        # has_converged() (estimator's own tracker) and get_convergence_status() (the
+        # model's live recompute) are independent. If they disagree — e.g. the model was
+        # reset/reloaded between the two calls so capacity_estimates is empty — latest_ah
+        # is None and the .2f formats below would raise. Fail loud-but-safe instead.
+        if convergence_status.latest_ah is None:
+            logger.error(
+                "convergence/estimator disagreement: latest_ah is None at baseline lock — skipping",
+                extra={"event_type": "convergence_state_mismatch"},
+            )
+            return
 
         if not self.has_logged_baseline_lock:
             logger.info(

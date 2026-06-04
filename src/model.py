@@ -83,6 +83,18 @@ def latest_capacity_ah_ref(soh_history: List[Dict[str, Any]]) -> Optional[float]
     return soh_history[-1].get("capacity_ah_ref")
 
 
+def is_capacity_converged(estimates: List[Dict[str, Any]]) -> bool:
+    """Single shared convergence predicate: >=3 capacity samples AND CoV < 0.10.
+
+    Used by BatteryModel.get_convergence_status() and scripts/battery-health.py so both
+    select samples and apply the CoV gate from ONE definition — they cannot drift. Entries
+    missing 'ah_estimate' are skipped rather than raising KeyError, so a partial/corrupt
+    estimate can never make the daemon and the CLI disagree on `converged`.
+    """
+    ah = [e["ah_estimate"] for e in estimates if "ah_estimate" in e]
+    return len(ah) >= 3 and compute_cov(ah) < 0.10
+
+
 # RLS estimator defaults — single source of truth for _sync_physics_from_state,
 # _default_vrla_lut, and PhysicsParams dataclass defaults.
 DEFAULT_IR_K_THETA = 0.015
@@ -830,10 +842,13 @@ class BatteryModel:
                 mean_ah: Mean of ah_estimates (0.0 if no samples)
         """
         estimates = self.state.get("capacity_estimates", [])
+        # Skip entries missing 'ah_estimate' so a corrupt sample degrades gracefully
+        # instead of raising KeyError — same selection rule as is_capacity_converged().
+        ah_values = [e["ah_estimate"] for e in estimates if "ah_estimate" in e]
 
-        if not estimates:
+        if not ah_values:
             return ConvergenceStatus(
-                sample_count=0,
+                sample_count=len(estimates),
                 confidence_percent=0.0,
                 latest_ah=None,
                 rated_ah=self.capacity_ah,
@@ -843,7 +858,6 @@ class BatteryModel:
                 mean_ah=0.0,
             )
 
-        ah_values = [e["ah_estimate"] for e in estimates]
         cov = compute_cov(ah_values)
 
         # 0.0 for n<3 per design (insufficient data to judge convergence)
@@ -854,7 +868,7 @@ class BatteryModel:
             confidence_percent=confidence * 100,
             latest_ah=ah_values[-1],
             rated_ah=self.capacity_ah,
-            converged=len(estimates) >= 3 and cov < 0.10,
+            converged=is_capacity_converged(estimates),
             capacity_ah_measured=self.state.get("capacity_ah_measured", None),
             cov=cov,
             mean_ah=sum(ah_values) / len(ah_values),

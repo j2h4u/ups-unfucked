@@ -12,6 +12,7 @@ from src.model import (
     BatteryModel,
     ModelLoadError,
     atomic_write_json,
+    is_capacity_converged,
     latest_capacity_ah_ref,
 )
 from src.replacement_predictor import linear_regression_soh
@@ -848,6 +849,41 @@ class TestCapacityEstimates:
         status = model.get_convergence_status()
         with pytest.raises(dataclasses.FrozenInstanceError):
             status.sample_count = 99  # type: ignore[misc]
+
+
+class TestIsCapacityConverged:
+    """WR-02: one shared convergence predicate for daemon + CLI, robust to corrupt entries."""
+
+    def test_three_low_variance_samples_converged(self):
+        estimates = [{"ah_estimate": v} for v in (7.0, 7.2, 7.1)]
+        assert is_capacity_converged(estimates) is True
+
+    def test_fewer_than_three_not_converged(self):
+        estimates = [{"ah_estimate": 7.0}, {"ah_estimate": 7.1}]
+        assert is_capacity_converged(estimates) is False
+
+    def test_high_variance_not_converged(self):
+        estimates = [{"ah_estimate": v} for v in (5.0, 7.0, 9.0)]
+        assert is_capacity_converged(estimates) is False
+
+    def test_entries_missing_ah_estimate_are_skipped_not_raised(self):
+        # A corrupt/partial entry must NOT raise KeyError — it drops out of the sample set
+        # so the daemon and the CLI report the same `converged` from identical state.
+        estimates = [{"ah_estimate": 7.0}, {"confidence": 0.5}, {"ah_estimate": 7.1}]
+        assert is_capacity_converged(estimates) is False  # only 2 usable samples
+
+    def test_convergence_status_agrees_with_predicate_on_corrupt_entry(self, tmp_path):
+        # get_convergence_status() must use the same predicate AND not crash on a missing key.
+        model = BatteryModel(model_path=tmp_path / "model.json")
+        model.state["capacity_estimates"] = [
+            {"ah_estimate": 7.0},
+            {"confidence": 0.5},  # corrupt: no ah_estimate
+            {"ah_estimate": 7.1},
+            {"ah_estimate": 7.05},
+        ]
+        status = model.get_convergence_status()
+        assert status.converged is is_capacity_converged(model.state["capacity_estimates"])
+        assert status.latest_ah == 7.05  # last usable sample, no KeyError
 
 
 class TestSoHHistoryVersioning:

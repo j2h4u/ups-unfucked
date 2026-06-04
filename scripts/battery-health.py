@@ -11,8 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.battery_math.constants import RATED_CAPACITY_AH
-from src.capacity_estimator import compute_cov
-from src.model import latest_capacity_ah_ref
+from src.model import is_capacity_converged, latest_capacity_ah_ref
 from src.replacement_predictor import linear_regression_soh
 
 # Production paths — override via env for fixture-based testing (mirrors src/motd_status.py).
@@ -194,8 +193,7 @@ def main() -> None:
     # accepted (YAGNI: no config loader added to CLI/MOTD per CONTEXT.md scope).
     # The convergence gate mirrors the daemon so the two never show conflicting states.
     capacity_estimates = model_data.get('capacity_estimates', [])
-    ah_values = [e['ah_estimate'] for e in capacity_estimates if 'ah_estimate' in e]
-    capacity_converged = len(ah_values) >= 3 and compute_cov(ah_values) < 0.10
+    capacity_converged = is_capacity_converged(capacity_estimates)
 
     if capacity_converged and len(soh_history) >= 3:
         # Use the shared latest_capacity_ah_ref helper so baseline selection matches
