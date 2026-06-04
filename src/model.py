@@ -31,7 +31,6 @@ class ModelState(TypedDict, total=False):
     """
 
     # Capacity & SoH
-    full_capacity_ah_ref: float
     soh: float
     soh_history: List[Dict[str, Any]]
     capacity_estimates: List[Dict[str, Any]]
@@ -195,13 +194,16 @@ class BatteryModel:
     - Metadata: capacity, current SoH estimate
     """
 
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, capacity_ah: float = RATED_CAPACITY_AH):
         """
         Initialize battery model from file or create default.
 
         Args:
             model_path: Path to model.json (str or Path)
                        If None, defaults to ~/.config/ups-battery-monitor/model.json
+            capacity_ah: Rated reference capacity in Ah. Sourced from config at
+                        runtime (not persisted). Default is RATED_CAPACITY_AH (7.2
+                        for CyberPower UT850EG).
         """
         if model_path is None:
             model_path = Path.home() / ".config" / "ups-battery-monitor" / "model.json"
@@ -209,6 +211,7 @@ class BatteryModel:
             model_path = Path(model_path)
 
         self.model_path = model_path
+        self.capacity_ah = capacity_ah
         self.state = {}
         self._seen_timestamps: set = set()
         self.load()
@@ -383,18 +386,6 @@ class BatteryModel:
             )
             self.state["soh"] = max(0.0, min(1.0, soh))
 
-        capacity_ref = self.state.get("full_capacity_ah_ref")
-        if capacity_ref is not None and (
-            not isinstance(capacity_ref, (int, float)) or capacity_ref <= 0
-        ):
-            logger.warning(
-                "model.json full_capacity_ah_ref=%s invalid, resetting to %s",
-                capacity_ref,
-                RATED_CAPACITY_AH,
-                extra={"event_type": "model_field_clamped"},
-            )
-            self.state["full_capacity_ah_ref"] = RATED_CAPACITY_AH
-
         for key in (
             "last_upscmd_timestamp",
             "scheduled_test_timestamp",
@@ -456,7 +447,6 @@ class BatteryModel:
         - 10.5V: cutoff anchor (0%, physical limit)
         """
         return {
-            "full_capacity_ah_ref": RATED_CAPACITY_AH,
             "soh": 1.0,
             "physics": {
                 "peukert_exponent": DEFAULT_PEUKERT_EXPONENT,
@@ -652,9 +642,13 @@ class BatteryModel:
         self.state["soh"] = value
 
     def get_capacity_ah(self):
-        """Rated reference capacity in Ah (default 7.2 for UT850). Not measured — the
-        measured/converged capacity is tracked separately via get_convergence_status()."""
-        return self.state.get("full_capacity_ah_ref", RATED_CAPACITY_AH)
+        """Runtime-configured rated capacity in Ah (default RATED_CAPACITY_AH).
+
+        Sourced from the capacity_ah constructor argument (injected from config); not
+        persisted in model.json. The measured/converged capacity is tracked separately
+        via get_convergence_status().
+        """
+        return self.capacity_ah
 
     def add_soh_history_entry(self, date, soh, capacity_ah_ref=None):
         """Add a SoH history entry with optional capacity baseline tag.
@@ -772,7 +766,7 @@ class BatteryModel:
                 sample_count: Number of capacity measurements
                 confidence_percent: 0–100%
                 latest_ah: Latest measured capacity, or None if no samples
-                rated_ah: Firmware rated capacity (7.2 for UT850)
+                rated_ah: Runtime-configured rated capacity (self.capacity_ah; default RATED_CAPACITY_AH)
                 converged: True if count >= 3 AND CoV < 0.10
                 capacity_ah_measured: Baseline stored on first convergence;
                     None until first convergence. Distinct from latest_ah —
@@ -787,7 +781,7 @@ class BatteryModel:
                 sample_count=0,
                 confidence_percent=0.0,
                 latest_ah=None,
-                rated_ah=RATED_CAPACITY_AH,
+                rated_ah=self.capacity_ah,
                 converged=False,
                 capacity_ah_measured=None,
                 cov=0.0,
@@ -804,7 +798,7 @@ class BatteryModel:
             sample_count=len(estimates),
             confidence_percent=confidence * 100,
             latest_ah=ah_values[-1],
-            rated_ah=RATED_CAPACITY_AH,
+            rated_ah=self.capacity_ah,
             converged=len(estimates) >= 3 and cov < 0.10,
             capacity_ah_measured=self.state.get("capacity_ah_measured", None),
             cov=cov,

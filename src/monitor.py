@@ -125,8 +125,7 @@ class MonitorDaemon:
     def _init_battery_model_and_estimators(self, config: Config):
         """Initialize battery model, capacity estimator, RLS filters, and discharge handler."""
         model_path = config.model_dir / "model.json"
-        self.battery_model = BatteryModel(model_path)
-        self.battery_model.state["full_capacity_ah_ref"] = config.capacity_ah
+        self.battery_model = BatteryModel(model_path, capacity_ah=config.capacity_ah)
         self._validate_and_repair_model()
 
         if self.battery_model.get_battery_install_date() is None:
