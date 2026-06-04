@@ -12,12 +12,12 @@ from typing import Optional
 
 from src import alerter, replacement_predictor, soh_calculator
 from src.battery_math import ScalarRLS, calibrate_peukert
-from src.battery_math.constants import NOMINAL_VOLTAGE
 from src.battery_math.regression import linear_regression_slope
 from src.capacity_estimator import CapacityEstimator
 from src.model import BatteryModel, ConvergenceStatus
 from src.monitor_config import MIN_DISCHARGE_DURATION_SEC, DischargeBuffer, safe_save
 from src.runtime_calculator import runtime_minutes
+from src.soc_predictor import soc_from_voltage
 
 logger = logging.getLogger("ups-battery-monitor")
 
@@ -639,10 +639,13 @@ class DischargeHandler:
             return "natural"
 
     def _estimate_dod_from_buffer(self, discharge_buffer: DischargeBuffer) -> float:
-        """Estimate depth of discharge from voltage swing (heuristic, not true DoD).
+        """Estimate depth of discharge as the SoC span covered during the event.
 
-        Uses (Vmax - Vmin) / (Vnominal - Vfloor) as a rough proxy.
-        Not based on SoC lookup — requires battery model LUT for true DoD.
+        DoD = SoC(V_max) - SoC(V_min), reading both off the battery model's LUT so the
+        non-linear voltage→SoC curve is honored. This replaces the old
+        (V_max - V_min) / (V_nominal - V_floor) voltage-swing proxy, which under-reported
+        DoD whenever a discharge began already sagged (a lower V_max shrank the swing even
+        though the battery was driven just as deep). DoD feeds the days_since_deep metric.
 
         Args:
             discharge_buffer: DischargeBuffer with voltages array
@@ -652,17 +655,13 @@ class DischargeHandler:
         if not hasattr(discharge_buffer, "voltages") or len(discharge_buffer.voltages) < 2:
             return 0.0
 
-        # Voltage-swing heuristic: (Vmax - Vmin) / (Vnominal - Vfloor). Approximation only —
-        # true DoD requires SoC lookup via LUT, which needs the battery model instance.
+        lut = self.battery_model.get_lut()
         v_min = min(discharge_buffer.voltages)
         v_max = max(discharge_buffer.voltages)
-
-        # CyberPower UT850: nominal voltage from constants; ~10.5V when fully discharged.
-        v_nominal = NOMINAL_VOLTAGE
-        v_floor = 10.5
-
-        result = (v_max - v_min) / (v_nominal - v_floor) if (v_nominal - v_floor) > 0 else 0.0
-        return min(1.0, max(0.0, result))
+        # SoC is higher at V_max (start of discharge) than at V_min (deepest point), so the
+        # difference is the fraction of charge drawn out over the event.
+        dod = soc_from_voltage(v_max, lut) - soc_from_voltage(v_min, lut)
+        return min(1.0, max(0.0, dod))
 
     def _estimate_cycle_budget(self) -> int:
         """Estimate remaining cycle budget: RATED_CYCLE_LIFE * current SoH."""
