@@ -228,7 +228,7 @@ dependencies = [
     { name = "python-systemd" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "pyright" },
     { name = "pytest" },
@@ -239,16 +239,17 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "pyright", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "pytest-timeout", marker = "extra == 'dev'" },
-    { name = "python-systemd" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "vulture", marker = "extra == 'dev'" },
+requires-dist = [{ name = "python-systemd" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "ruff" },
+    { name = "vulture" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "vulture"

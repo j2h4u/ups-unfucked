@@ -2,6 +2,7 @@
 """Battery health report — shows current battery condition and degradation trends."""
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -143,6 +144,80 @@ def load_health_endpoint() -> tuple[dict, bool]:
         return {}, False
 
 
+def print_journal_status(health_data: dict) -> None:
+    """Print durable-journal health and operational evidence separately from model SoH."""
+    healthy = health_data.get("journal_healthy")
+    if healthy is False:
+        print("  Journal:           DEGRADED (capture/replay needs attention)")
+    elif healthy is True:
+        print("  Journal:           healthy")
+    else:
+        print("  Journal:           unknown (health endpoint has no journal state)")
+
+    active_event = health_data.get("active_event_id")
+    if isinstance(active_event, str) and active_event:
+        print(f"  Journal open event: {active_event[:256]}")
+    else:
+        print("  Journal open event: none")
+
+    pending_replay = health_data.get("pending_replay")
+    if pending_replay is True:
+        print("  Journal replay:    pending")
+    elif pending_replay is False:
+        print("  Journal replay:    clear")
+    else:
+        print("  Journal replay:    unknown")
+
+    synced_seq = health_data.get("journal_last_synced_seq")
+    if isinstance(synced_seq, int) and not isinstance(synced_seq, bool) and synced_seq >= 0:
+        print(f"  Journal sync seq:  {synced_seq}")
+
+    last_error = health_data.get("journal_last_error")
+    if isinstance(last_error, str) and last_error:
+        print(f"  Journal error:     {' '.join(last_error.split())[:256]}")
+
+    recovered = health_data.get("recovered_partial_events")
+    if isinstance(recovered, int) and not isinstance(recovered, bool) and recovered >= 0:
+        print(
+            "  Operational partial/recovered: "
+            f"{recovered} (excluded from authoritative capacity/SoH)"
+        )
+    else:
+        print("  Operational partial/recovered: unknown (excluded from authoritative capacity/SoH)")
+
+
+def get_operational_counters(model_data: ModelState, health_data: dict) -> tuple[int, float]:
+    """Return journal-derived counters, falling back to validated model baselines.
+
+    The health endpoint is the live source for counters accumulated from the durable journal.
+    Older/missing endpoints may lack these fields, so the persisted model remains a fallback.
+    Invalid values are never rendered or used in arithmetic.
+    """
+
+    def non_negative_int(value: object) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return None
+
+    def non_negative_seconds(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        numeric = float(value)
+        if math.isfinite(numeric) and numeric >= 0:
+            return numeric
+        return None
+
+    cycle_count = non_negative_int(health_data.get("cycle_count"))
+    if cycle_count is None:
+        cycle_count = non_negative_int(model_data.get("cycle_count")) or 0
+
+    cumulative_sec = non_negative_seconds(health_data.get("cumulative_on_battery_sec"))
+    if cumulative_sec is None:
+        cumulative_sec = non_negative_seconds(model_data.get("cumulative_on_battery_sec")) or 0.0
+
+    return cycle_count, cumulative_sec
+
+
 def main() -> None:
     if not MODEL_PATH.exists():
         print(f"No battery model at {MODEL_PATH}")
@@ -192,17 +267,21 @@ def main() -> None:
     except OSError:
         print("  UPS: (NUT unavailable)")
 
-    # State of Health — how much usable capacity remains vs new battery
+    # State of Health — authoritative model state. Partial/recovered journal events
+    # are operational evidence only and must not be presented as SoH samples.
     soh = model_data.get("soh", 1.0)
     if soh < 0.80:
-        print(f"  State of Health:  {soh:.0%}  ⚠ DEGRADED (below 80%, consider replacement)")
+        print(
+            f"  State of Health (authoritative): {soh:.0%}  "
+            "⚠ DEGRADED (below 80%, consider replacement)"
+        )
     elif soh < 0.90:
-        print(f"  State of Health:  {soh:.0%}  (aging, monitor closely)")
+        print(f"  State of Health (authoritative): {soh:.0%}  (aging, monitor closely)")
     else:
-        print(f"  State of Health:  {soh:.0%}  (healthy)")
+        print(f"  State of Health (authoritative): {soh:.0%}  (healthy)")
 
     # Rated capacity (sourced from RATED_CAPACITY_AH constant — not persisted in model.json)
-    print(f"  Rated capacity:   {RATED_CAPACITY_AH} Ah")
+    print(f"  Rated capacity (authoritative reference): {RATED_CAPACITY_AH} Ah")
 
     # Battery age and cycle count
     install_date = model_data.get("battery_install_date")
@@ -212,10 +291,11 @@ def main() -> None:
             print(f"  Battery age:      {age_days} days (installed {install_date})")
         except ValueError:
             print(f"  Battery age:      unknown (bad install_date: {install_date!r})")
-    cycle_count = model_data.get("cycle_count", 0)
-    cumulative_sec = model_data.get("cumulative_on_battery_sec", 0.0)
+    cycle_count, cumulative_sec = get_operational_counters(model_data, health_data)
     cumulative_min = cumulative_sec / 60
     print(f"  Cycles:           {cycle_count} (total {cumulative_min:.0f} min on battery)")
+
+    print_journal_status(health_data)
 
     # LUT — how well the voltage-SoC curve is calibrated from real data
     lut = model_data.get("lut", [])

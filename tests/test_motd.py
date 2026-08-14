@@ -7,9 +7,36 @@ and new battery detection alerts.
 import json
 import os
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
+
+from src.model import BatteryModel
+
+
+def _write_complete_model(model_file: Path, overrides: dict) -> None:
+    """Write a valid current-schema model fixture with test-specific overrides."""
+    state = deepcopy(BatteryModel(model_file).state)
+    state.update(
+        {
+            "soh_history": state.get("soh_history", []),
+            "capacity_estimates": [],
+            "capacity_ah_measured": None,
+            "r_internal_history": [],
+            "battery_install_date": None,
+            "cycle_count": 0,
+            "cumulative_on_battery_sec": 0.0,
+            "discharge_events": [],
+            "new_battery_detected": False,
+            "new_battery_detected_timestamp": None,
+            "last_upscmd_timestamp": None,
+            "last_upscmd_type": None,
+            "last_upscmd_status": None,
+        }
+    )
+    state.update(overrides)
+    model_file.write_text(json.dumps(state))
 
 
 @pytest.fixture
@@ -44,30 +71,25 @@ def test_motd_capacity_displays(model_json_with_capacity):
                 "timestamp": "2026-03-16T10:00:00Z",
                 "ah_estimate": 6.9,
                 "confidence": 0.88,
-                "delta_soc_percent": 52.3,
-                "duration_sec": 2850,
+                "metadata": {},
             },
             {
                 "timestamp": "2026-03-16T11:00:00Z",
                 "ah_estimate": 7.0,
                 "confidence": 0.90,
-                "delta_soc_percent": 55.8,
-                "duration_sec": 3120,
+                "metadata": {},
             },
             {
                 "timestamp": "2026-03-16T12:00:00Z",
                 "ah_estimate": 6.95,
                 "confidence": 0.92,
-                "delta_soc_percent": 53.5,
-                "duration_sec": 2990,
+                "metadata": {},
             },
         ],
         "soh_history": [],
-        "lut": [],
     }
 
-    with open(model_file, "w") as f:
-        json.dump(model_data, f)
+    _write_complete_model(model_file, model_data)
 
     # Execute: Run 51-ups.sh as subprocess with HOME env pointing to temp directory
     motd_script = Path("scripts/motd/51-ups.sh")
@@ -116,11 +138,9 @@ def test_motd_handles_empty_estimates(model_json_with_capacity):
     model_data = {
         "capacity_estimates": [],
         "soh_history": [],
-        "lut": [],
     }
 
-    with open(model_file, "w") as f:
-        json.dump(model_data, f)
+    _write_complete_model(model_file, model_data)
 
     # Execute: Run 51-ups.sh with HOME override
     motd_script = Path("scripts/motd/51-ups.sh")
@@ -192,23 +212,19 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
                 "timestamp": "2026-03-16T10:00:00Z",
                 "ah_estimate": 6.8,
                 "confidence": 0.45,
-                "delta_soc_percent": 50.0,
-                "duration_sec": 2800,
+                "metadata": {},
             },
             {
                 "timestamp": "2026-03-16T11:00:00Z",
                 "ah_estimate": 7.1,
                 "confidence": 0.50,
-                "delta_soc_percent": 55.0,
-                "duration_sec": 3100,
+                "metadata": {},
             },
         ],
         "soh_history": [],
-        "lut": [],
     }
 
-    with open(model_file, "w") as f:
-        json.dump(model_data, f)
+    _write_complete_model(model_file, model_data)
 
     # Execute: Run 51-ups.sh with HOME override
     result = subprocess.run(
@@ -249,13 +265,11 @@ def test_motd_convergence_status_badge(model_json_with_capacity):
             "timestamp": "2026-03-16T12:00:00Z",
             "ah_estimate": 6.95,
             "confidence": 0.92,
-            "delta_soc_percent": 53.5,
-            "duration_sec": 2990,
+            "metadata": {},
         }
     )
 
-    with open(model_file, "w") as f:
-        json.dump(model_data, f)
+    _write_complete_model(model_file, model_data)
 
     # Execute: Run 51-ups.sh again with 3 samples
     result = subprocess.run(
@@ -301,18 +315,15 @@ def test_motd_shows_new_battery_alert(temp_model_json):
                 "timestamp": "2026-03-16T09:30:00Z",
                 "ah_estimate": 6.9,
                 "confidence": 0.88,
-                "delta_soc_percent": 52.3,
-                "duration_sec": 2850,
+                "metadata": {},
             }
         ],
         "new_battery_detected": True,
         "new_battery_detected_timestamp": "2026-03-16T10:30:00",
         "soh_history": [],
-        "lut": [],
     }
 
-    with open(model_file, "w") as f:
-        json.dump(model_data, f)
+    _write_complete_model(model_file, model_data)
 
     # Run MOTD module (scripts/motd/51-ups.sh)
     motd_script = Path("scripts/motd/51-ups.sh")
@@ -341,8 +352,7 @@ def test_motd_shows_new_battery_alert(temp_model_json):
     # Setup: model.json with flag NOT set
     model_data["new_battery_detected"] = False
 
-    with open(model_file, "w") as f:
-        json.dump(model_data, f)
+    _write_complete_model(model_file, model_data)
 
     result = subprocess.run(
         ["bash", str(motd_script)],

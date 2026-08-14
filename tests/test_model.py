@@ -2,6 +2,7 @@
 
 import json
 import os
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,75 @@ from src.model import (
     latest_capacity_ah_ref,
 )
 from src.replacement_predictor import linear_regression_soh
+
+
+def _state_with(path, updates):
+    """Build a complete current-schema state for direct JSON fixture tests."""
+    seed = BatteryModel(path)
+    state = deepcopy(seed.state)
+    state.update(updates)
+    return state
+
+
+def test_reset_baseline_starts_a_fresh_scientific_state(tmp_path):
+    """Battery replacement must not carry learned state across its new epoch."""
+    model = BatteryModel(tmp_path / "model.json")
+    model.state.update(
+        {
+            "soh": 0.72,
+            "soh_history": [
+                {"date": "2025-01-01", "soh": 0.9, "capacity_ah_ref": 7.2},
+                {"date": "2026-01-01", "soh": 0.72, "capacity_ah_ref": 7.2},
+            ],
+            "capacity_estimates": [{"ah_estimate": 5.4}],
+            "capacity_ah_measured": 5.4,
+            "r_internal_history": [{"r_ohm": 0.08}],
+            "discharge_events": [{"event_id": "old-event"}],
+            "last_upscmd_timestamp": "2026-08-01T00:00:00Z",
+            "last_upscmd_type": "test.battery.start.quick",
+            "last_upscmd_status": "OK",
+        }
+    )
+    model.set_peukert_exponent(1.35)
+    model.physics.ir_compensation.k_volts_per_percent = 0.03
+    model.set_rls_state("ir_k", theta=0.03, P=0.2, sample_count=4)
+    model.set_rls_state("peukert", theta=1.35, P=0.3, sample_count=5)
+
+    model.reset_baseline(install_date="2026-08-15")
+
+    assert model.state["soh"] == 1.0
+    assert model.state["soh_history"] == [
+        {"date": "2026-08-15", "soh": 1.0, "capacity_ah_ref": 7.2}
+    ]
+    assert model.state["capacity_estimates"] == []
+    assert model.state["capacity_ah_measured"] is None
+    assert model.state["r_internal_history"] == []
+    assert model.state["discharge_events"] == []
+    assert {entry["source"] for entry in model.state["lut"]} == {"standard", "anchor"}
+    assert model.get_peukert_exponent() == pytest.approx(1.2)
+    assert model.get_ir_k() == pytest.approx(0.015)
+    assert model.get_rls_state("ir_k")["sample_count"] == 0
+    assert model.get_rls_state("peukert")["sample_count"] == 0
+    assert model.state["last_upscmd_status"] == "OK"
+    assert model.state["last_upscmd_type"] == "test.battery.start.quick"
+    assert model.state["last_upscmd_timestamp"] == "2026-08-01T00:00:00Z"
+
+
+def test_reset_baseline_rolls_back_fresh_state_on_save_failure(tmp_path):
+    """A failed reset save restores both old state and old physics exactly."""
+    model = BatteryModel(tmp_path / "model.json")
+    model.state["soh_history"] = [{"date": "2025-01-01", "soh": 0.8, "capacity_ah_ref": 7.2}]
+    model.state["discharge_events"] = [{"event_id": "old-event"}]
+    model.set_peukert_exponent(1.3)
+    before_state = deepcopy(model.state)
+    before_physics = deepcopy(model.physics)
+
+    with patch.object(model, "save", side_effect=OSError("disk full")):
+        with pytest.raises(OSError, match="disk full"):
+            model.reset_baseline(install_date="2026-08-15")
+
+    assert model.state == before_state
+    assert model.physics == before_physics
 
 
 class TestAtomicWriteJson:
@@ -97,11 +167,18 @@ class TestBatteryModelLoad:
     def test_model_loads_existing_file(self, tmp_path):
         """Verify model loads from existing JSON file."""
         model_file = tmp_path / "model.json"
-        model_data = {
-            "soh": 0.95,
-            "lut": [{"v": 13.4, "soc": 1.0, "source": "standard"}],
-            "soh_history": [{"date": "2026-03-13", "soh": 0.95}],
-        }
+        model_data = _state_with(
+            model_file,
+            {
+                "soh": 0.95,
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+                "lut": [
+                    {"v": 13.4, "soc": 1.0, "source": "standard"},
+                    {"v": 10.5, "soc": 0.0, "source": "anchor"},
+                ],
+                "soh_history": [{"date": "2026-03-13", "soh": 0.95, "capacity_ah_ref": 7.2}],
+            },
+        )
         with open(model_file, "w") as f:
             json.dump(model_data, f)
 
@@ -109,7 +186,7 @@ class TestBatteryModelLoad:
 
         assert model.get_soh() == 0.95
         assert model.get_capacity_ah() == 7.2  # default from RATED_CAPACITY_AH
-        assert len(model.get_lut()) == 1
+        assert len(model.get_lut()) == 2
 
     def test_model_initializes_default_on_missing_file(self, tmp_path):
         """Verify default VRLA curve is used when file doesn't exist."""
@@ -125,19 +202,65 @@ class TestBatteryModelLoad:
         assert lut[0]["v"] == 13.4
         assert lut[-1]["v"] == 10.5
 
-    def test_model_handles_malformed_json(self, tmp_path, caplog):
-        """Verify malformed JSON triggers fallback to default curve."""
+    def test_existing_current_schema_is_read_only_on_constructor(self, tmp_path):
+        """Loading a valid current-schema file does not rewrite its bytes."""
         model_file = tmp_path / "model.json"
-        with open(model_file, "w") as f:
-            f.write("{invalid json content")
+        seed = BatteryModel(model_file)
+        seed.save()
+        before = model_file.read_bytes()
 
-        model = BatteryModel(model_path=model_file)
+        BatteryModel(model_file)
 
-        # Should have default VRLA curve, not crash
-        assert model.get_soh() == 1.0
-        assert model.get_capacity_ah() == 7.2
-        # Verify error was logged
+        assert model_file.read_bytes() == before
+
+    def test_model_handles_malformed_json(self, tmp_path, caplog):
+        """Malformed JSON fails fast and remains byte-for-byte untouched."""
+        model_file = tmp_path / "model.json"
+        malformed = b"{invalid json content"
+        model_file.write_bytes(malformed)
+
+        with pytest.raises(ModelLoadError, match="Malformed model"):
+            BatteryModel(model_path=model_file)
+        assert model_file.read_bytes() == malformed
+        assert not model_file.with_suffix(".json.corrupt").exists()
         assert "Malformed model.json" in caplog.text
+
+    def test_existing_state_requires_every_top_level_key(self, tmp_path):
+        """A missing declared key is invalid; no nested defaults are applied."""
+        model_file = tmp_path / "model.json"
+        state = _state_with(model_file, {})
+        state.pop("capacity_estimates")
+        model_file.write_text(json.dumps(state))
+
+        with pytest.raises(ModelLoadError, match="capacity_estimates"):
+            BatteryModel(model_file)
+
+    @pytest.mark.parametrize(
+        "mutate, expected",
+        [
+            (lambda state: state.__setitem__("soh", 0.0), "soh"),
+            (
+                lambda state: state["physics"].__setitem__("peukert_exponent", 2.0),
+                "peukert_exponent",
+            ),
+            (
+                lambda state: state["physics"]["rls_state"]["ir_k"].__setitem__("theta", "bad"),
+                "physics.rls_state.ir_k.theta",
+            ),
+            (lambda state: state["lut"][0].__setitem__("soc", 2.0), "soc"),
+            (lambda state: state.__setitem__("capacity_ah_measured", 0.0), "capacity_ah_measured"),
+            (lambda state: state.__setitem__("discharge_events", None), "discharge_events"),
+        ],
+    )
+    def test_invalid_current_schema_values_fail_fast(self, tmp_path, mutate, expected):
+        """Invalid primitive, physics, and LUT values are rejected unchanged."""
+        model_file = tmp_path / "model.json"
+        state = _state_with(model_file, {})
+        mutate(state)
+        model_file.write_text(json.dumps(state))
+
+        with pytest.raises(ModelLoadError, match=expected):
+            BatteryModel(model_file)
 
     def test_model_initializes_with_default_path(self, tmp_path):
         """Verify model uses ~/.config path when no model_path given."""
@@ -289,7 +412,7 @@ class TestBatteryModelMethods:
     def test_rated_ah_propagation_populated_model(self, tmp_path):
         """get_convergence_status().rated_ah equals the injected capacity_ah (populated branch)."""
         model = BatteryModel(model_path=tmp_path / "model.json", capacity_ah=9.0)
-        model.add_capacity_estimate(8.8, 0.8, {}, "2026-06-01T00:00:00Z")
+        model.append_capacity_estimate(8.8, 0.8, {}, "2026-06-01T00:00:00Z")
 
         status = model.get_convergence_status()
         assert status.sample_count == 1  # populated branch
@@ -329,155 +452,13 @@ class TestPhysicsSection:
         model.set_peukert_exponent(1.15)
         assert model.get_peukert_exponent() == 1.15
 
-    def test_set_ir_k(self, tmp_path):
-        """set_ir_k updates the IR compensation coefficient."""
-        model = BatteryModel(model_path=tmp_path / "model.json")
-        model.set_ir_k(0.020)
-        assert model.get_ir_k() == 0.020
-
 
 class TestRInternalHistory:
-    """Test internal resistance tracking."""
-
-    def test_add_r_internal_entry(self, tmp_path):
-        model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_r_internal_entry("2026-03-14", 0.0396, 13.50, 13.22, 16.5, "BLACKOUT_TEST")
-
-        history = model.get_r_internal_history()
-        assert len(history) == 1
-        assert history[0] == {
-            "date": "2026-03-14",
-            "r_ohm": 0.0396,
-            "v_before": 13.50,
-            "v_sag": 13.22,
-            "load_percent": 16.5,
-            "event": "BLACKOUT_TEST",
-        }
+    """Test internal resistance history access and persistence."""
 
     def test_r_internal_history_empty_by_default(self, tmp_path):
         model = BatteryModel(model_path=tmp_path / "model.json")
         assert model.get_r_internal_history() == []
-
-    def test_r_internal_history_persists(self, tmp_path):
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-        model.add_r_internal_entry("2026-03-14", 0.0396, 13.50, 13.22, 16.5, "BLACKOUT_TEST")
-        model.save()
-
-        model2 = BatteryModel(model_path=model_file)
-        assert len(model2.get_r_internal_history()) == 1
-
-    def test_r_internal_multiple_entries(self, tmp_path):
-        model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_r_internal_entry("2026-03-14", 0.0396, 13.50, 13.22, 16.5, "BLACKOUT_TEST")
-        model.add_r_internal_entry("2026-03-15", 0.0410, 13.48, 13.19, 17.0, "BLACKOUT_REAL")
-        assert len(model.get_r_internal_history()) == 2
-
-    def test_r_internal_rounding(self, tmp_path):
-        model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_r_internal_entry("2026-03-14", 0.03961111, 13.501, 13.219, 16.55, "BLACKOUT_TEST")
-        entry = model.get_r_internal_history()[0]
-        assert entry["r_ohm"] == 0.0396
-        assert entry["v_before"] == 13.50
-        assert entry["v_sag"] == 13.22
-        assert entry["load_percent"] == 16.6
-
-
-class TestCalibrationWrite:
-    """Test BatteryModel.calibration_write() for real-time discharge data collection."""
-
-    def test_calibration_write_adds_entry(self, tmp_path):
-        """Verify calibration_write() appends new LUT entry with measured source."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        initial_count = len(model.get_lut())
-        model.calibration_write(voltage=12.5, soc=0.65, timestamp=1234567890.0)
-
-        lut = model.get_lut()
-        assert len(lut) == initial_count + 1
-
-        # Find the new entry
-        new_entry = [e for e in lut if e["v"] == 12.5]
-        assert len(new_entry) == 1
-        assert new_entry[0]["soc"] == 0.65
-        assert new_entry[0]["source"] == "measured"
-        assert new_entry[0]["timestamp"] == 1234567890.0
-
-    def test_calibration_write_duplicate_prevention(self, tmp_path):
-        """Verify calibration_write() skips duplicates by timestamp."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        # Write first entry
-        model.calibration_write(voltage=12.5, soc=0.65, timestamp=1000.0)
-        count_after_first = len(model.get_lut())
-
-        # Same timestamp = duplicate (e.g., retry after crash recovery)
-        model.calibration_write(voltage=12.505, soc=0.64, timestamp=1000.0)
-        count_after_second = len(model.get_lut())
-        assert count_after_second == count_after_first
-
-        # Different timestamp = new measurement (even if voltage similar)
-        model.calibration_write(voltage=12.505, soc=0.64, timestamp=2000.0)
-        count_after_third = len(model.get_lut())
-        assert count_after_third == count_after_first + 1
-
-    def test_calibration_write_fsync(self, tmp_path):
-        """Verify calibration_batch_flush() persists accumulated calibration data."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        # Write calibration data (accumulates in memory, not persisted yet)
-        model.calibration_write(voltage=12.5, soc=0.65, timestamp=1234567890.0)
-
-        # Batch flush to persist
-        model.calibration_batch_flush()
-
-        # Verify file was written to disk
-        assert model_file.exists()
-
-        # Reload from disk to verify persistence
-        model2 = BatteryModel(model_path=model_file)
-        lut = model2.get_lut()
-        new_entries = [e for e in lut if e["v"] == 12.5]
-        assert len(new_entries) == 1
-
-    def test_calibration_write_sorts_lut(self, tmp_path):
-        """Verify LUT is sorted descending by voltage after each write."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        # Write entries in non-descending order
-        model.calibration_write(voltage=11.5, soc=0.30, timestamp=1000.0)
-        model.calibration_write(voltage=12.5, soc=0.65, timestamp=2000.0)
-        model.calibration_write(voltage=12.0, soc=0.50, timestamp=3000.0)
-
-        # Check LUT is sorted descending
-        lut = model.get_lut()
-        voltages = [e["v"] for e in lut]
-        assert voltages == sorted(voltages, reverse=True)
-
-    def test_calibration_write_multiple_calls(self, tmp_path):
-        """Verify multiple calibration_write() calls accumulate entries."""
-        model_file = tmp_path / "model.json"
-        model = BatteryModel(model_path=model_file)
-
-        initial_count = len(model.get_lut())
-
-        # Write 3 distinct entries
-        model.calibration_write(voltage=13.0, soc=0.95, timestamp=1000.0)
-        model.calibration_write(voltage=12.5, soc=0.65, timestamp=2000.0)
-        model.calibration_write(voltage=11.5, soc=0.30, timestamp=3000.0)
-
-        lut = model.get_lut()
-        assert len(lut) == initial_count + 3
-
-        # Check all entries are present
-        voltages = [e["v"] for e in lut if e["source"] == "measured"]
-        assert 13.0 in voltages
-        assert 12.5 in voltages
-        assert 11.5 in voltages
 
 
 class TestHistoryPruning:
@@ -528,16 +509,19 @@ class TestHistoryPruning:
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
-        # Create 40 r_internal entries
-        for i in range(40):
-            model.add_r_internal_entry(
-                f"2026-03-{(i % 28) + 1:02d}",
-                0.03 + (i * 0.0001),
-                13.5 - (i * 0.01),
-                13.0,
-                15.0,
-                "TEST",
-            )
+        # Seed valid current-schema entries directly; the former convenience
+        # mutator was removed in favor of journal/transaction writes.
+        model.state["r_internal_history"] = [
+            {
+                "date": f"2026-03-{(i % 28) + 1:02d}",
+                "r_ohm": 0.03 + (i * 0.0001),
+                "v_before": 13.5 - (i * 0.01),
+                "v_sag": 13.0,
+                "load_percent": 15.0,
+                "event": "TEST",
+            }
+            for i in range(40)
+        ]
 
         initial_count = len(model.get_r_internal_history())
         assert initial_count >= 40
@@ -598,8 +582,15 @@ class TestHistoryPruning:
         # Add many entries to both histories
         for i in range(35):
             model.add_soh_history_entry(f"2026-03-{(i % 28) + 1:02d}", 0.95, capacity_ah_ref=7.2)
-            model.add_r_internal_entry(
-                f"2026-03-{(i % 28) + 1:02d}", 0.03, 13.5, 13.0, 15.0, "TEST"
+            model.state["r_internal_history"].append(
+                {
+                    "date": f"2026-03-{(i % 28) + 1:02d}",
+                    "r_ohm": 0.03,
+                    "v_before": 13.5,
+                    "v_sag": 13.0,
+                    "load_percent": 15.0,
+                    "event": "TEST",
+                }
             )
 
         # Save
@@ -623,6 +614,7 @@ class TestFdatasyncOptimization:
         with (
             patch("os.fdatasync") as mock_fdatasync,
             patch("os.fsync") as mock_fsync,
+            patch("src.model._sync_parent_directory") as mock_parent_sync,
             patch("os.open", wraps=os.open),
             patch("os.close", wraps=os.close),
         ):
@@ -630,8 +622,9 @@ class TestFdatasyncOptimization:
 
             # fdatasync should be called
             assert mock_fdatasync.called, "os.fdatasync was not called"
-            # fsync should NOT be called (replaced by fdatasync)
+            # File data uses fdatasync; directory durability is a separate helper.
             assert not mock_fsync.called, "os.fsync should not be called; use fdatasync instead"
+            mock_parent_sync.assert_called_once_with(model_file.parent)
 
     def test_atomic_write_json_still_works_with_fdatasync(self, tmp_path):
         """Verify atomic file write still succeeds after switching to fdatasync."""
@@ -675,15 +668,15 @@ class TestFdatasyncOptimization:
 class TestCapacityEstimates:
     """Test BatteryModel capacity_estimates array."""
 
-    def test_add_capacity_estimate_creates_array_if_missing(self, tmp_path):
-        """Test 1: model.add_capacity_estimate() creates array if not present."""
+    def test_append_capacity_estimate_creates_array_if_missing(self, tmp_path):
+        """The current append primitive creates a capacity estimate entry."""
         model = BatteryModel(model_path=tmp_path / "model.json")
         assert (
             "capacity_estimates" not in model.state
             or len(model.state.get("capacity_estimates", [])) == 0
         )
 
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.5,
             confidence=0.85,
             metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
@@ -698,8 +691,12 @@ class TestCapacityEstimates:
         model = BatteryModel(model_path=tmp_path / "model.json")
 
         # Add two estimates
-        model.add_capacity_estimate(7.4, 0.80, {"delta_soc_percent": 50.0}, "2026-03-15T10:00:00Z")
-        model.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 52.0}, "2026-03-15T11:00:00Z")
+        model.append_capacity_estimate(
+            7.4, 0.80, {"delta_soc_percent": 50.0}, "2026-03-15T10:00:00Z"
+        )
+        model.append_capacity_estimate(
+            7.5, 0.85, {"delta_soc_percent": 52.0}, "2026-03-15T11:00:00Z"
+        )
 
         estimates = model.get_capacity_estimates()
         assert len(estimates) == 2
@@ -713,7 +710,7 @@ class TestCapacityEstimates:
 
         # Add 35 estimates
         for i in range(35):
-            model.add_capacity_estimate(
+            model.append_capacity_estimate(
                 ah_estimate=7.0 + (i * 0.01),
                 confidence=0.5 + (i * 0.01),
                 metadata={"delta_soc_percent": 50.0},
@@ -729,7 +726,9 @@ class TestCapacityEstimates:
         model_file = tmp_path / "model.json"
         model = BatteryModel(model_path=model_file)
 
-        model.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 50.0}, "2026-03-15T12:34:56Z")
+        model.append_capacity_estimate(
+            7.5, 0.85, {"delta_soc_percent": 50.0}, "2026-03-15T12:34:56Z"
+        )
         model.save()
 
         # Verify file exists
@@ -746,8 +745,12 @@ class TestCapacityEstimates:
         model1 = BatteryModel(model_path=model_file)
 
         # Add estimates and save
-        model1.add_capacity_estimate(7.4, 0.80, {"delta_soc_percent": 50.0}, "2026-03-15T10:00:00Z")
-        model1.add_capacity_estimate(7.5, 0.85, {"delta_soc_percent": 52.0}, "2026-03-15T11:00:00Z")
+        model1.append_capacity_estimate(
+            7.4, 0.80, {"delta_soc_percent": 50.0}, "2026-03-15T10:00:00Z"
+        )
+        model1.append_capacity_estimate(
+            7.5, 0.85, {"delta_soc_percent": 52.0}, "2026-03-15T11:00:00Z"
+        )
         model1.save()
 
         # Create new model instance, load from file
@@ -760,7 +763,7 @@ class TestCapacityEstimates:
         """Verify capacity_estimates array elements have all required fields."""
         model = BatteryModel(model_path=tmp_path / "model.json")
 
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.45,
             confidence=0.82,
             metadata={
@@ -798,13 +801,13 @@ class TestCapacityEstimates:
         """Test: get_convergence_status() with 2 measurements (not converged)."""
         model = BatteryModel(model_path=tmp_path / "model.json")
 
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.0,
             confidence=0.0,
             metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
             timestamp="2026-03-16T10:00:00Z",
         )
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.2,
             confidence=0.0,
             metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
@@ -823,19 +826,19 @@ class TestCapacityEstimates:
         model = BatteryModel(model_path=tmp_path / "model.json")
 
         # Add 3 measurements with low variance (CoV < 0.10)
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.0,
             confidence=0.0,
             metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
             timestamp="2026-03-16T10:00:00Z",
         )
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.2,
             confidence=0.0,
             metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
             timestamp="2026-03-16T11:00:00Z",
         )
-        model.add_capacity_estimate(
+        model.append_capacity_estimate(
             ah_estimate=7.1,
             confidence=0.86,
             metadata={"delta_soc_percent": 50.0, "duration_sec": 1234},
@@ -892,29 +895,6 @@ class TestIsCapacityConverged:
         status = model.get_convergence_status()
         assert status.converged is is_capacity_converged(model.state["capacity_estimates"])
         assert status.latest_ah == 7.05  # last usable sample, no KeyError
-
-
-class TestAddCapacityEstimatePersistenceRollback:
-    """WR-03: a failed save() must not leave an estimate in memory that never reached disk."""
-
-    def test_save_failure_rolls_back_in_memory_append(self, tmp_path, monkeypatch):
-        model = BatteryModel(model_path=tmp_path / "model.json")
-        model.add_capacity_estimate(
-            ah_estimate=7.0, confidence=0.0, metadata={}, timestamp="2026-03-16T10:00:00Z"
-        )
-        before = len(model.state["capacity_estimates"])
-
-        def _boom():
-            raise OSError("disk full")
-
-        monkeypatch.setattr(model, "save", _boom)
-        model.add_capacity_estimate(
-            ah_estimate=7.1, confidence=0.0, metadata={}, timestamp="2026-03-16T11:00:00Z"
-        )
-
-        # The failed estimate was rolled back — memory matches what reached disk.
-        assert len(model.state["capacity_estimates"]) == before
-        assert all(e["ah_estimate"] != 7.1 for e in model.state["capacity_estimates"])
 
 
 class TestSoHHistoryVersioning:
@@ -1012,12 +992,13 @@ class TestSchedulingSchema:
 
 
 class TestFieldLevelValidation:
-    """Field-level validation in _validate_and_clamp_fields(): scheduling strings and history lists."""
+    """Persisted field validation rejects invalid types without changing state."""
 
     def _base_model_data(self):
         """Return a valid base model dict that passes all validation."""
         return {
             "soh": 0.95,
+            "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
             "physics": {
                 "peukert_exponent": 1.2,
                 "ir_compensation": {"k_volts_per_percent": 0.015, "reference_load_percent": 20.0},
@@ -1040,69 +1021,53 @@ class TestFieldLevelValidation:
                 {"v": 13.4, "soc": 1.00, "source": "standard"},
                 {"v": 10.5, "soc": 0.00, "source": "anchor"},
             ],
-            "soh_history": [{"date": "2026-03-01", "soh": 0.95}],
+            "soh_history": [{"date": "2026-03-01", "soh": 0.95, "capacity_ah_ref": 7.2}],
+            "capacity_estimates": [],
+            "capacity_ah_measured": None,
+            "r_internal_history": [],
+            "battery_install_date": None,
+            "cycle_count": 0,
+            "cumulative_on_battery_sec": 0.0,
+            "new_battery_detected": False,
+            "new_battery_detected_timestamp": None,
+            "discharge_events": [],
+            "last_upscmd_timestamp": None,
+            "last_upscmd_type": None,
+            "last_upscmd_status": None,
         }
 
-    def test_validate_string_field_last_upscmd_type_non_string(self, temporary_model_path, caplog):
-        """last_upscmd_type=123 (int) → reset to None, warning logged."""
-        import logging
-
+    def test_validate_string_field_last_upscmd_type_non_string(self, temporary_model_path):
+        """last_upscmd_type=123 (int) is rejected."""
         data = self._base_model_data()
         data["last_upscmd_type"] = 123
         with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
+        with pytest.raises(ModelLoadError, match="last_upscmd_type"):
+            BatteryModel(temporary_model_path)
 
-        assert model.state["last_upscmd_type"] is None
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1, (
-            f"Expected model_field_clamped warning, got: {[r.message for r in caplog.records]}"
-        )
-
-    def test_validate_string_field_last_upscmd_status_non_string(
-        self, temporary_model_path, caplog
-    ):
-        """last_upscmd_status=True (bool) → reset to None, warning logged."""
-        import logging
-
+    def test_validate_string_field_last_upscmd_status_non_string(self, temporary_model_path):
+        """last_upscmd_status=True (bool) is rejected."""
         data = self._base_model_data()
         data["last_upscmd_status"] = True
         with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
+        with pytest.raises(ModelLoadError, match="last_upscmd_status"):
+            BatteryModel(temporary_model_path)
 
-        assert model.state["last_upscmd_status"] is None
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1
-
-    def test_validate_list_field_discharge_events_non_list(self, temporary_model_path, caplog):
-        """discharge_events=123 (int) → reset to [], warning logged."""
-        import logging
-
+    def test_validate_list_field_discharge_events_non_list(self, temporary_model_path):
+        """discharge_events=123 (int) is rejected."""
         data = self._base_model_data()
         data["discharge_events"] = 123
         with open(temporary_model_path, "w") as f:
             json.dump(data, f)
 
-        with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-            model = BatteryModel(temporary_model_path)
-
-        assert model.state["discharge_events"] == []
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) >= 1
+        with pytest.raises(ModelLoadError, match="discharge_events"):
+            BatteryModel(temporary_model_path)
 
     def test_validate_valid_fields_no_warnings(self, temporary_model_path, caplog):
-        """Valid string and list fields → no model_field_clamped warnings, fields unchanged.
+        """Valid string and list fields load unchanged.
 
         Only last_upscmd_* are validated as string fields now; scheduled_test_* and
         test_block_reason are no longer in the schema (removed in HYG-03).
@@ -1121,12 +1086,7 @@ class TestFieldLevelValidation:
         with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
             model = BatteryModel(temporary_model_path)
 
-        clamped_records = [
-            r for r in caplog.records if getattr(r, "event_type", "") == "model_field_clamped"
-        ]
-        assert len(clamped_records) == 0, (
-            f"Expected no model_field_clamped warnings for valid data, got: {[r.message for r in clamped_records]}"
-        )
+        assert not [r for r in caplog.records if "model_field" in r.message]
         # Fields remain unchanged
         assert model.state["last_upscmd_type"] == "test.battery.start.deep"
         assert model.state["last_upscmd_status"] == "OK"
@@ -1204,8 +1164,8 @@ class TestStateSchemaValidation:
         a key outside the schema — otherwise the strict loader would brick the daemon.
         set_replacement_due() is removed (HYG-03); replacement_due is computed live."""
         model = BatteryModel(temporary_model_path)
-        model.increment_cycle_count()
-        model.add_on_battery_time(42.0)
+        model.state["cycle_count"] = 1
+        model.state["cumulative_on_battery_sec"] = 42.0
         model.add_soh_history_entry("2026-06-04", 0.88, capacity_ah_ref=8.5)
         model.append_discharge_event(
             {"timestamp": "2026-06-04T00:00:00+00:00", "depth_of_discharge": 0.8}
@@ -1285,10 +1245,14 @@ class TestComputeReplacementDueEquivalence:
         """
         model_path = tmp_path / "model.json"
         soh_history = _make_regression_quality_soh_history(capacity_ah_ref=7.2)
-        state = {
-            "soh_history": soh_history,
-            "capacity_estimates": _make_converged_capacity_estimates(),
-        }
+        state = _state_with(
+            model_path,
+            {
+                "soh_history": soh_history,
+                "capacity_estimates": _make_converged_capacity_estimates(),
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+            },
+        )
         with open(model_path, "w") as f:
             json.dump(state, f)
 
@@ -1309,13 +1273,17 @@ class TestComputeReplacementDueEquivalence:
     def test_short_soh_history_yields_none(self, tmp_path):
         """< 3 soh_history points → compute_replacement_due() is None."""
         model_path = tmp_path / "model.json"
-        state = {
-            "soh_history": [
-                {"date": "2026-01-01", "soh": 0.98, "capacity_ah_ref": 7.2},
-                {"date": "2026-03-01", "soh": 0.95, "capacity_ah_ref": 7.2},
-            ],
-            "capacity_estimates": _make_converged_capacity_estimates(),
-        }
+        state = _state_with(
+            model_path,
+            {
+                "soh_history": [
+                    {"date": "2026-01-01", "soh": 0.98, "capacity_ah_ref": 7.2},
+                    {"date": "2026-03-01", "soh": 0.95, "capacity_ah_ref": 7.2},
+                ],
+                "capacity_estimates": _make_converged_capacity_estimates(),
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+            },
+        )
         with open(model_path, "w") as f:
             json.dump(state, f)
 
@@ -1343,23 +1311,27 @@ class TestComputeReplacementDueConvergenceGate:
         """
         model_path = tmp_path / "model.json"
         # Non-converged: only 2 estimates (below the >=3 threshold)
-        state = {
-            "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
-            "capacity_estimates": [
-                {
-                    "ah_estimate": 7.0,
-                    "timestamp": "2025-06-01T00:00:00Z",
-                    "confidence": 0.5,
-                    "metadata": {},
-                },
-                {
-                    "ah_estimate": 6.5,
-                    "timestamp": "2025-07-01T00:00:00Z",
-                    "confidence": 0.5,
-                    "metadata": {},
-                },
-            ],
-        }
+        state = _state_with(
+            model_path,
+            {
+                "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
+                "capacity_estimates": [
+                    {
+                        "ah_estimate": 7.0,
+                        "timestamp": "2025-06-01T00:00:00Z",
+                        "confidence": 0.5,
+                        "metadata": {},
+                    },
+                    {
+                        "ah_estimate": 6.5,
+                        "timestamp": "2025-07-01T00:00:00Z",
+                        "confidence": 0.5,
+                        "metadata": {},
+                    },
+                ],
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+            },
+        )
         with open(model_path, "w") as f:
             json.dump(state, f)
 
@@ -1381,10 +1353,14 @@ class TestComputeReplacementDueConvergenceGate:
         Proves the gate flips on convergence alone, holding soh_history constant.
         """
         model_path = tmp_path / "model.json"
-        state = {
-            "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
-            "capacity_estimates": _make_converged_capacity_estimates(),
-        }
+        state = _state_with(
+            model_path,
+            {
+                "soh_history": _make_regression_quality_soh_history(capacity_ah_ref=7.2),
+                "capacity_estimates": _make_converged_capacity_estimates(),
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+            },
+        )
         with open(model_path, "w") as f:
             json.dump(state, f)
 
@@ -1422,10 +1398,14 @@ class TestLatestCapacityAhRefBaseline:
             {"date": "2025-12-01", "soh": 0.92, "capacity_ah_ref": 7.2},
             {"date": "2026-03-01", "soh": 0.89, "capacity_ah_ref": 7.2},
         ]
-        state = {
-            "soh_history": soh_history,
-            "capacity_estimates": _make_converged_capacity_estimates(),
-        }
+        state = _state_with(
+            model_path,
+            {
+                "soh_history": soh_history,
+                "capacity_estimates": _make_converged_capacity_estimates(),
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+            },
+        )
         with open(model_path, "w") as f:
             json.dump(state, f)
 
@@ -1476,7 +1456,7 @@ class TestRegenLoaderGates:
     """HYG-05 strict-loader contract tests: regen-loads-clean and strip-then-loads-clean."""
 
     def test_fresh_save_loads_clean(self, tmp_path):
-        """A freshly generated model.json contains no removed keys and passes _reject_unknown_state_keys.
+        """A freshly generated model.json contains no removed keys and passes strict validation.
 
         Proves save() only emits schema-compliant keys so the strict loader always
         accepts a newly seeded file without operator intervention.
@@ -1574,80 +1554,18 @@ class TestRegenLoaderGates:
         ), f"Expected removed key in error, got: {error_msg}"
 
     def test_strip_then_load_clean_and_learned_keys_survive(self, tmp_path):
-        """After applying the documented strip, the file loads clean AND learned keys survive.
-
-        NOTE: the strict loader only rejects TOP-LEVEL unknown keys.
-        physics.nominal_voltage / physics.nominal_power_watts under the physics dict are
-        silently ignored by _sync_physics_from_state (not rejected); the strip removes them
-        for cleanliness, not to satisfy the loader.
-        """
+        """Removing a few retired keys is not a runtime migration path."""
         model_path = tmp_path / "old.json"
-        old_schema = {
-            # Learned state (must survive)
-            "soh": 0.92,
-            "soh_history": [{"date": "2026-03-01", "soh": 0.92, "capacity_ah_ref": 7.2}],
-            "capacity_estimates": _make_converged_capacity_estimates(),
-            "physics": {
-                "peukert_exponent": 1.22,
-                "ir_compensation": {"k_volts_per_percent": 0.016, "reference_load_percent": 20.0},
-                "rls_state": {
-                    "ir_k": {
-                        "theta": 0.016,
-                        "P": 0.9,
-                        "sample_count": 5,
-                        "forgetting_factor": 0.97,
-                    },
-                    "peukert": {
-                        "theta": 1.22,
-                        "P": 0.85,
-                        "sample_count": 5,
-                        "forgetting_factor": 0.97,
-                    },
-                },
-                "nominal_voltage": 12.0,  # wave-1 physics spec sub-key (silently ignored)
-                "nominal_power_watts": 85.0,  # wave-1 physics spec sub-key (silently ignored)
+        old_schema = _state_with(
+            model_path,
+            {
+                "soh": 0.92,
+                "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+                "full_capacity_ah_ref": 7.2,
+                "replacement_due": "2027-06-01",
             },
-            "lut": [
-                {"v": 13.4, "soc": 1.00, "source": "standard"},
-                {"v": 10.5, "soc": 0.00, "source": "anchor"},
-            ],
-            "capacity_ah_measured": 7.15,
-            "battery_install_date": "2024-01-15",
-            "cycle_count": 12,
-            "cumulative_on_battery_sec": 3600.0,
-            # Removed top-level keys (all waves)
-            "full_capacity_ah_ref": 7.2,
-            "replacement_due": "2027-06-01",
-            "capacity_converged": True,
-            "scheduled_test_timestamp": "2026-07-01T08:00:00Z",
-            "scheduled_test_reason": "diagnostic_cadence",
-            "test_block_reason": None,
-        }
+        )
         model_path.write_text(json.dumps(old_schema))
 
-        # Apply the documented one-time deploy strip (stop → strip → start sequence)
-        data = json.loads(model_path.read_text())
-        for key in (
-            "full_capacity_ah_ref",
-            "replacement_due",
-            "capacity_converged",
-            "scheduled_test_timestamp",
-            "scheduled_test_reason",
-            "test_block_reason",
-        ):
-            data.pop(key, None)
-        # Also remove physics spec sub-keys for cleanliness (silently ignored by loader but stale)
-        physics = data.get("physics", {})
-        physics.pop("nominal_voltage", None)
-        physics.pop("nominal_power_watts", None)
-        model_path.write_text(json.dumps(data))
-
-        # Step 2: after strip, load must succeed
-        model = BatteryModel(model_path)  # must not raise
-
-        # Step 3: learned keys must have survived the strip
-        assert model.get_soh() == 0.92, "soh must survive strip"
-        assert len(model.get_soh_history()) == 1, "soh_history must survive strip"
-        assert model.physics.peukert_exponent == pytest.approx(1.22, abs=1e-6), (
-            "physics.peukert_exponent (learned) must survive strip"
-        )
+        with pytest.raises(ModelLoadError):
+            BatteryModel(model_path)

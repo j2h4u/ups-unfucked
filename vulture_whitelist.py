@@ -6,6 +6,10 @@
 current_exponent  # FALSE POSITIVE: live parameter of calibrate_peukert() (calibration.py:15)
 status  # FALSE POSITIVE: sd_notify(status) stub signature param (monitor.py:24)
 _.is_collecting  # KEEP: read-only observability accessor for collector state
+_.is_measuring  # KEEP: read-only observability accessor for sag state
+_.reboot_gaps  # KEEP: journal projection view of explicit reboot-gap evidence
+_.observed_duration  # KEEP: journal duration API covered by one-sample/gapped recovery contract
+torn_tail_recovered  # KEEP: public JournalProjection recovery observability field
 
 # FALSE POSITIVES: ModelState TypedDict fields (model.py). Accessed via state["<key>"]
 # string keys and reflectively through KNOWN_STATE_KEYS = frozenset(ModelState.__annotations__),
@@ -18,3 +22,4 @@ new_battery_detected_timestamp
 last_upscmd_timestamp
 last_upscmd_type
 last_upscmd_status
+battery_epoch_id  # KEEP: strict persisted battery-epoch schema key

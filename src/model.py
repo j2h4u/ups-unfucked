@@ -1,11 +1,14 @@
 """Battery model persistence with atomic JSON writes and VRLA LUT initialization."""
 
-import bisect
+import copy
 import dataclasses
+import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -17,18 +20,15 @@ from src.capacity_estimator import compute_cov
 
 
 class ModelLoadError(Exception):
-    """Raised when model.json cannot be loaded or backed up."""
+    """Raised when an existing model.json is unreadable, malformed, or invalid."""
 
 
-class ModelState(TypedDict, total=False):
+class ModelState(TypedDict):
     """Typed schema for the persisted model.json state dict.
 
-    Single source of truth for the set of legitimate top-level keys. `total=False`
-    because keys are populated incrementally — defaults at load(), capacity/new-battery
-    keys only after the first qualifying discharge. load() rejects any key NOT declared
-    here (see _reject_unknown_state_keys): this is a single-host, no-backward-compat
-    project, so an unknown key means stale/retired state (e.g. the v3.0 sulfation_history,
-    roi_history, blackout_credit) that must be removed, not silently round-tripped.
+    This is the complete current persisted state. Every key is emitted by fresh
+    defaults and every existing file must contain exactly this set of keys.
+    Runtime does not fill in missing keys or preserve retired state.
     """
 
     # Capacity & SoH
@@ -42,6 +42,7 @@ class ModelState(TypedDict, total=False):
     r_internal_history: List[Dict[str, Any]]
     # Lifecycle
     battery_install_date: Optional[str]
+    battery_epoch_id: str
     cycle_count: int
     cumulative_on_battery_sec: float
     new_battery_detected: bool
@@ -59,6 +60,23 @@ class ModelState(TypedDict, total=False):
 # Derived from the schema so the two never drift. Used by load() to fail-fast on
 # unknown keys instead of letting them silently survive save()'s round-trip.
 KNOWN_STATE_KEYS = frozenset(ModelState.__annotations__)
+
+# Release A deliberately has no runtime migration path.  The one-time production
+# conversion is performed before deployment; a running binary accepts only this
+# schema and therefore never needs a legacy sentinel or fallback mapping.
+SCIENTIFIC_FINGERPRINT_FIELDS = (
+    "soh",
+    "soh_history",
+    "capacity_estimates",
+    "capacity_ah_measured",
+    "physics",
+    "lut",
+    "r_internal_history",
+    "battery_install_date",
+    "battery_epoch_id",
+    "new_battery_detected",
+    "new_battery_detected_timestamp",
+)
 
 
 def latest_capacity_ah_ref(soh_history: List[Dict[str, Any]]) -> Optional[float]:
@@ -104,7 +122,6 @@ class ConvergenceStatus:
     converged: bool
     capacity_ah_measured: Optional[float]
     cov: float
-    mean_ah: float
 
 
 @dataclass
@@ -147,7 +164,16 @@ class PhysicsParams:
 logger = logging.getLogger("ups-battery-monitor")
 
 
-def atomic_write(filepath, content: str, mode: int = 0o600) -> None:
+def _sync_parent_directory(parent: Path) -> None:
+    """Durably persist a completed atomic rename in the parent directory."""
+    directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def atomic_write(filepath, content: str, mode: int = 0o600) -> str:
     """
     Safely write string content to filepath with atomic guarantees.
 
@@ -164,11 +190,16 @@ def atomic_write(filepath, content: str, mode: int = 0o600) -> None:
         mode: File permission bits (default 0o600). Callers writing
               files read by other users/services should pass 0o644.
 
+    Returns:
+        SHA-256 digest of the exact UTF-8 content successfully renamed into place.
+
     Raises:
         IOError: If write or fdatasync fails
     """
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
+    content_bytes = content.encode("utf-8")
+    content_hash = hashlib.sha256(content_bytes).hexdigest()
 
     # Same directory ensures same filesystem for atomic rename
     tmp_path = None
@@ -183,7 +214,9 @@ def atomic_write(filepath, content: str, mode: int = 0o600) -> None:
             os.fchmod(tmp.fileno(), mode)
 
         tmp_path.replace(filepath)  # atomic on POSIX (unlink + link)
+        _sync_parent_directory(filepath.parent)
         logger.debug(f"Atomically wrote {filepath}")
+        return content_hash
 
     except Exception as e:
         # Clean up temp file on write-phase or rename-phase error
@@ -203,9 +236,9 @@ def atomic_write(filepath, content: str, mode: int = 0o600) -> None:
         raise
 
 
-def atomic_write_json(filepath, data, mode: int = 0o600) -> None:
+def atomic_write_json(filepath, data, mode: int = 0o600) -> str:
     """Atomically write dict as JSON. Thin wrapper around atomic_write."""
-    atomic_write(filepath, json.dumps(data, indent=2), mode=mode)
+    return atomic_write(filepath, json.dumps(data, indent=2), mode=mode)
 
 
 class BatteryModel:
@@ -246,40 +279,52 @@ class BatteryModel:
         self.model_path = model_path
         self.capacity_ah = capacity_ah
         self.soh_threshold = soh_threshold
-        self.state: ModelState = {}
-        self._seen_timestamps: set = set()
+        self.state: ModelState = self._default_vrla_lut()
         self.load()
 
     def load(self):
         """
         Load model.json from disk or initialize with standard VRLA curve.
 
-        If file exists: parse JSON, apply defaults, validate
+        If file exists: parse JSON and validate the complete current schema
         If missing: create default VRLA curve
-        If malformed JSON: backup corrupt file to .corrupt, start fresh
+        If malformed JSON: raise ModelLoadError without changing the file
         If unreadable (permission/IO error): raise ModelLoadError to prevent
             silent fallback that would overwrite good data on next save()
 
         Raises:
-            ModelLoadError: If model.json exists but cannot be read (OSError).
+            ModelLoadError: If an existing file cannot be read, parsed, or validated.
         """
         if self.model_path.exists():
             try:
                 with open(self.model_path, "r") as f:
-                    self.state = cast(ModelState, json.load(f))
-                self._seen_timestamps = {
-                    e["timestamp"] for e in self.state.get("lut", []) if "timestamp" in e
-                }
-                logger.info(
-                    "Loaded model from %s",
-                    self.model_path,
-                    extra={"event_type": "model_loaded", "model_path": str(self.model_path)},
-                )
+                    loaded = json.load(f)
             except json.JSONDecodeError as e:
-                self._backup_corrupt_model(e)
-                self.state = cast(ModelState, self._default_vrla_lut())
+                logger.error(
+                    "Malformed model.json: %s; refusing startup without changing it",
+                    e,
+                    extra={"event_type": "model_corrupt", "model_path": str(self.model_path)},
+                )
+                raise ModelLoadError(f"Malformed model {self.model_path}: {e}") from e
+            except UnicodeDecodeError as e:
+                logger.error(
+                    "Unreadable model.json encoding: %s; refusing startup without changing it",
+                    e,
+                    extra={"event_type": "model_corrupt", "model_path": str(self.model_path)},
+                )
+                raise ModelLoadError(f"Cannot decode model {self.model_path}: {e}") from e
             except OSError as e:
                 raise ModelLoadError(f"Cannot read {self.model_path}: {e}") from e
+            if not isinstance(loaded, dict):
+                raise ModelLoadError(
+                    f"{self.model_path} must contain a JSON object, got {type(loaded).__name__}"
+                )
+            self.state = cast(ModelState, loaded)
+            logger.info(
+                "Loaded model from %s",
+                self.model_path,
+                extra={"event_type": "model_loaded", "model_path": str(self.model_path)},
+            )
         else:
             logger.info(
                 "Model file not found; initializing with standard VRLA curve",
@@ -287,69 +332,32 @@ class BatteryModel:
             )
             self.state = cast(ModelState, self._default_vrla_lut())
 
-        self._reject_unknown_state_keys()
-        self._apply_defaults()
+        self._require_current_schema()
+        self._validate_state_fields()
         self._sync_physics_from_state()
-        self._validate_and_clamp_fields()
         self._validate_lut()
-
-    def _backup_corrupt_model(self, parse_error: Exception) -> None:
-        """Back up corrupt model.json, raising ModelLoadError if backup fails."""
-        backup = self.model_path.with_suffix(".json.corrupt")
-        logger.error(
-            "Malformed model.json: %s; backing up to %s, starting fresh",
-            parse_error,
-            backup.name,
-            extra={"event_type": "model_corrupt", "model_path": str(self.model_path)},
-        )
-        try:
-            self.model_path.rename(backup)
-        except OSError:
-            # Target may already exist from a previous corrupt load;
-            # use timestamped name to avoid overwriting earlier backup
-            ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-            fallback = self.model_path.with_suffix(f".json.corrupt.{ts}")
-            try:
-                self.model_path.rename(fallback)
-                logger.warning(
-                    "Backed up corrupt model.json to %s (primary target existed)",
-                    fallback.name,
-                    extra={"event_type": "model_backup_fallback"},
-                )
-            except OSError as rename_err:
-                logger.error(
-                    "Cannot back up corrupt model.json: %s — refusing to overwrite",
-                    rename_err,
-                    extra={"event_type": "model_backup_failed"},
-                )
-                raise ModelLoadError(
-                    f"Cannot back up corrupt {self.model_path}: {rename_err}"
-                ) from rename_err
 
     def _sync_physics_from_state(self):
         """Populate self.physics from self.state['physics'] dict."""
-        physics = self.state.get("physics", {})
-        ir = physics.get("ir_compensation", {})
-        rls_data = physics.get("rls_state", {})
+        physics = self.state["physics"]
+        ir = physics["ir_compensation"]
+        rls_data = physics["rls_state"]
 
         rls_state = {}
-        for name, default_theta in [
-            ("ir_k", DEFAULT_IR_K_THETA),
-            ("peukert", DEFAULT_PEUKERT_EXPONENT),
-        ]:
-            stored_params = rls_data.get(name, {})
+        for name in ("ir_k", "peukert"):
+            stored_params = rls_data[name]
             rls_state[name] = RLSParams(
-                theta=stored_params.get("theta", default_theta),
-                P=stored_params.get("P", 1.0),
-                sample_count=stored_params.get("sample_count", 0),
-                forgetting_factor=stored_params.get("forgetting_factor", 0.97),
+                theta=stored_params["theta"],
+                P=stored_params["P"],
+                sample_count=stored_params["sample_count"],
+                forgetting_factor=stored_params["forgetting_factor"],
             )
 
         self.physics = PhysicsParams(
-            peukert_exponent=physics.get("peukert_exponent", DEFAULT_PEUKERT_EXPONENT),
+            peukert_exponent=physics["peukert_exponent"],
             ir_compensation=IRCompensation(
-                k_volts_per_percent=ir.get("k_volts_per_percent", DEFAULT_IR_K_THETA),
-                reference_load_percent=ir.get("reference_load_percent", 20.0),
+                k_volts_per_percent=ir["k_volts_per_percent"],
+                reference_load_percent=ir["reference_load_percent"],
             ),
             rls_state=rls_state,
         )
@@ -371,96 +379,201 @@ class BatteryModel:
             },
         }
 
-    def _reject_unknown_state_keys(self) -> None:
-        """Fail-fast if model.json carries keys outside the ModelState schema.
-
-        No-backward-compat policy: a key not in KNOWN_STATE_KEYS is retired/garbage
-        state (e.g. v3.0 sulfation_history/roi_history/blackout_credit). Rather than
-        silently round-tripping it through save(), refuse to load so the operator
-        removes it. KNOWN_STATE_KEYS is derived from ModelState, so the schema is the
-        single source of truth.
-        """
-        unknown = set(self.state) - KNOWN_STATE_KEYS
-        if unknown:
+    def _require_current_schema(self) -> None:
+        """Require exactly the complete current top-level schema and a UUID epoch."""
+        if not isinstance(self.state, dict):
+            raise ModelLoadError(f"{self.model_path} must contain a JSON object")
+        actual = set(self.state)
+        missing = KNOWN_STATE_KEYS - actual
+        unknown = actual - KNOWN_STATE_KEYS
+        if missing or unknown:
+            details = []
+            if missing:
+                details.append(f"missing key(s): {', '.join(sorted(missing))}")
+            if unknown:
+                details.append(f"unknown key(s): {', '.join(sorted(unknown))}")
             raise ModelLoadError(
-                f"{self.model_path} contains unknown state key(s): "
-                f"{', '.join(sorted(unknown))}. This single-host project keeps no "
-                f"backward-compat shims — remove these key(s) from the file (or delete "
-                f"it to regenerate) and restart."
+                f"{self.model_path} has invalid top-level schema ({'; '.join(details)})"
             )
+        epoch = self.state["battery_epoch_id"]
+        if not isinstance(epoch, str) or not epoch:
+            raise ModelLoadError(f"{self.model_path} has invalid battery_epoch_id")
+        try:
+            uuid.UUID(epoch)
+        except (ValueError, AttributeError):
+            raise ModelLoadError(f"{self.model_path} has invalid battery_epoch_id")
 
-    def _apply_defaults(self):
-        """Set default values for optional fields not present in loaded data."""
-        required_keys = {"lut", "soh", "physics"}
-        missing_keys = required_keys - set(self.state.keys())
-        if missing_keys:
-            logger.warning(
-                "Model missing required keys: %s; using default values",
-                missing_keys,
-                extra={"event_type": "model_missing_keys"},
+    @staticmethod
+    def _require_finite_number(
+        value: Any, path: str, *, minimum: float | None = None, maximum: float | None = None
+    ) -> None:
+        """Require a real finite number, optionally within an inclusive range."""
+        try:
+            finite = math.isfinite(value) if isinstance(value, (int, float)) else False
+        except (OverflowError, TypeError):
+            finite = False
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not finite:
+            raise ModelLoadError(f"{path} must be a finite number")
+        if minimum is not None and value < minimum:
+            raise ModelLoadError(f"{path} must be >= {minimum}")
+        if maximum is not None and value > maximum:
+            raise ModelLoadError(f"{path} must be <= {maximum}")
+
+    @staticmethod
+    def _require_string_or_none(value: Any, path: str) -> None:
+        if value is not None and not isinstance(value, str):
+            raise ModelLoadError(f"{path} must be a string or null")
+
+    def _validate_state_fields(self) -> None:
+        """Validate persisted primitive/container fields without changing state."""
+        state = self.state
+        self._require_finite_number(state["soh"], "soh", minimum=0.0, maximum=1.0)
+        if state["soh"] <= 0.0:
+            raise ModelLoadError("soh must be > 0")
+
+        for key in ("soh_history", "capacity_estimates", "r_internal_history", "discharge_events"):
+            value = state[key]
+            if not isinstance(value, list):
+                raise ModelLoadError(f"{key} must be a list")
+            if any(not isinstance(entry, dict) for entry in value):
+                raise ModelLoadError(f"{key} entries must be objects")
+
+        for index, entry in enumerate(state["soh_history"]):
+            path = f"soh_history[{index}]"
+            if set(entry) != {"date", "soh", "capacity_ah_ref"}:
+                raise ModelLoadError(f"{path} must contain date, soh, capacity_ah_ref only")
+            if not isinstance(entry["date"], str):
+                raise ModelLoadError(f"{path}.date must be a string")
+            self._require_finite_number(entry["soh"], f"{path}.soh", minimum=0.0, maximum=1.0)
+            if entry["soh"] <= 0.0:
+                raise ModelLoadError(f"{path}.soh must be > 0")
+            self._require_finite_number(
+                entry["capacity_ah_ref"], f"{path}.capacity_ah_ref", minimum=0.0
             )
+            if entry["capacity_ah_ref"] <= 0.0:
+                raise ModelLoadError(f"{path}.capacity_ah_ref must be > 0")
 
-        self.state.setdefault("discharge_events", [])
-        self.state.setdefault("last_upscmd_timestamp", None)
-        self.state.setdefault("last_upscmd_type", None)
-        self.state.setdefault("last_upscmd_status", None)
-
-    def _validate_and_clamp_fields(self):
-        """Clamp physics values and validate scheduling field types."""
-        self.physics.peukert_exponent = max(1.0, min(1.5, self.physics.peukert_exponent))
-        soh = self.state.get("soh")
-        if soh is not None and (soh < 0 or soh > 1.0):
-            logger.warning(
-                "model.json soh=%s out of range, clamping to [0, 1]",
-                soh,
-                extra={"event_type": "model_field_clamped"},
+        for index, entry in enumerate(state["capacity_estimates"]):
+            path = f"capacity_estimates[{index}]"
+            if set(entry) != {"timestamp", "ah_estimate", "confidence", "metadata"}:
+                raise ModelLoadError(f"{path} has invalid keys")
+            if not isinstance(entry["timestamp"], str):
+                raise ModelLoadError(f"{path}.timestamp must be a string")
+            self._require_finite_number(entry["ah_estimate"], f"{path}.ah_estimate", minimum=0.0)
+            if entry["ah_estimate"] <= 0.0:
+                raise ModelLoadError(f"{path}.ah_estimate must be > 0")
+            self._require_finite_number(
+                entry["confidence"], f"{path}.confidence", minimum=0.0, maximum=1.0
             )
-            self.state["soh"] = max(0.0, min(1.0, soh))
+            if not isinstance(entry["metadata"], dict):
+                raise ModelLoadError(f"{path}.metadata must be an object")
+
+        for index, entry in enumerate(state["r_internal_history"]):
+            path = f"r_internal_history[{index}]"
+            required = {"date", "r_ohm", "v_before", "v_sag", "load_percent", "event"}
+            if set(entry) != required:
+                raise ModelLoadError(f"{path} has invalid keys")
+            if not isinstance(entry["date"], str) or not isinstance(entry["event"], str):
+                raise ModelLoadError(f"{path}.date and event must be strings")
+            for key in ("r_ohm", "v_before", "v_sag", "load_percent"):
+                self._require_finite_number(entry[key], f"{path}.{key}", minimum=0.0)
 
         for key in (
+            "battery_install_date",
+            "new_battery_detected_timestamp",
             "last_upscmd_timestamp",
             "last_upscmd_type",
             "last_upscmd_status",
         ):
-            val = self.state.get(key)
-            if val is not None and not isinstance(val, str):
-                logger.warning(
-                    "model.json %s=%r is not a string, clearing",
-                    key,
-                    val,
-                    extra={"event_type": "model_field_clamped"},
-                )
-                self.state[key] = None
+            self._require_string_or_none(state[key], key)
+        self._require_finite_number(
+            state["capacity_ah_measured"], "capacity_ah_measured", minimum=0.0
+        ) if state["capacity_ah_measured"] is not None else None
+        if state["capacity_ah_measured"] is not None and state["capacity_ah_measured"] <= 0.0:
+            raise ModelLoadError("capacity_ah_measured must be > 0 or null")
+        if (
+            not isinstance(state["cycle_count"], int)
+            or isinstance(state["cycle_count"], bool)
+            or state["cycle_count"] < 0
+        ):
+            raise ModelLoadError("cycle_count must be a nonnegative integer")
+        self._require_finite_number(
+            state["cumulative_on_battery_sec"], "cumulative_on_battery_sec", minimum=0.0
+        )
+        for key in ("new_battery_detected",):
+            if not isinstance(state[key], bool):
+                raise ModelLoadError(f"{key} must be a boolean")
 
-        for key in ("discharge_events",):
-            val = self.state.get(key)
-            if val is not None and not isinstance(val, list):
-                logger.warning(
-                    "model.json %s=%r is not a list, resetting to []",
-                    key,
-                    val,
-                    extra={"event_type": "model_field_clamped"},
-                )
-                self.state[key] = []
+        physics = state["physics"]
+        if not isinstance(physics, dict) or set(physics) != {
+            "peukert_exponent",
+            "ir_compensation",
+            "rls_state",
+        }:
+            raise ModelLoadError(
+                "physics must contain exactly peukert_exponent, ir_compensation, rls_state"
+            )
+        self._require_finite_number(
+            physics["peukert_exponent"], "physics.peukert_exponent", minimum=1.0, maximum=1.5
+        )
+        ir = physics["ir_compensation"]
+        if not isinstance(ir, dict) or set(ir) != {"k_volts_per_percent", "reference_load_percent"}:
+            raise ModelLoadError("physics.ir_compensation has invalid keys")
+        self._require_finite_number(
+            ir["k_volts_per_percent"], "physics.ir_compensation.k_volts_per_percent"
+        )
+        self._require_finite_number(
+            ir["reference_load_percent"],
+            "physics.ir_compensation.reference_load_percent",
+            minimum=0.0,
+        )
+        rls = physics["rls_state"]
+        if not isinstance(rls, dict) or set(rls) != {"ir_k", "peukert"}:
+            raise ModelLoadError("physics.rls_state must contain exactly ir_k and peukert")
+        required_rls = {"theta", "P", "sample_count", "forgetting_factor"}
+        for name in ("ir_k", "peukert"):
+            params = rls[name]
+            path = f"physics.rls_state.{name}"
+            if not isinstance(params, dict) or set(params) != required_rls:
+                raise ModelLoadError(f"{path} has invalid keys")
+            self._require_finite_number(params["theta"], f"{path}.theta")
+            self._require_finite_number(params["P"], f"{path}.P", minimum=0.0)
+            if (
+                not isinstance(params["sample_count"], int)
+                or isinstance(params["sample_count"], bool)
+                or params["sample_count"] < 0
+            ):
+                raise ModelLoadError(f"{path}.sample_count must be a nonnegative integer")
+            self._require_finite_number(
+                params["forgetting_factor"], f"{path}.forgetting_factor", minimum=0.0
+            )
 
-    def _validate_lut(self):
-        """Drop LUT entries with missing or non-numeric v/soc values."""
-        lut = self.state.get("lut", [])
-        valid_lut = []
-        for entry in lut:
-            v, soc = entry.get("v"), entry.get("soc")
-            if isinstance(v, (int, float)) and isinstance(soc, (int, float)):
-                valid_lut.append(entry)
-            else:
-                logger.warning(
-                    "Dropping invalid LUT entry: %s",
-                    entry,
-                    extra={"event_type": "model_lut_invalid_entry"},
-                )
-        if len(valid_lut) != len(lut):
-            self.state["lut"] = valid_lut
+    def _validate_lut(self) -> None:
+        """Validate the complete LUT without dropping or rewriting entries."""
+        lut = self.state["lut"]
+        if not isinstance(lut, list) or len(lut) < 2:
+            raise ModelLoadError("lut must be a list with at least two entries")
+        for index, entry in enumerate(lut):
+            path = f"lut[{index}]"
+            if not isinstance(entry, dict):
+                raise ModelLoadError(f"{path} must be an object")
+            if not {"v", "soc", "source"}.issubset(entry):
+                raise ModelLoadError(f"{path} must contain v, soc, source")
+            self._require_finite_number(entry["v"], f"{path}.v")
+            self._require_finite_number(entry["soc"], f"{path}.soc", minimum=0.0, maximum=1.0)
+            source = entry["source"]
+            if not isinstance(source, str) or source not in {"standard", "anchor", "measured"}:
+                raise ModelLoadError(f"{path}.source is invalid")
+            allowed = {"v", "soc", "source"}
+            if source == "measured":
+                allowed.add("timestamp")
+                if "timestamp" not in entry:
+                    raise ModelLoadError(f"{path}.timestamp is required for measured LUT entries")
+                self._require_finite_number(entry["timestamp"], f"{path}.timestamp")
+            if set(entry) != allowed:
+                raise ModelLoadError(f"{path} has invalid keys for source {source}")
 
-    def _default_vrla_lut(self) -> Dict[str, Any]:
+    def _default_vrla_lut(self) -> ModelState:
         """
         Standard VRLA 12V discharge curve (7.2Ah reference capacity).
 
@@ -514,9 +627,19 @@ class BatteryModel:
                 }
             ],
             # Enterprise-equivalent counters (accumulated over battery lifetime)
+            "capacity_estimates": [],
+            "capacity_ah_measured": None,
+            "r_internal_history": [],
             "battery_install_date": None,
             "cycle_count": 0,  # OL→OB transitions (= transfer count)
             "cumulative_on_battery_sec": 0.0,
+            "battery_epoch_id": str(uuid.uuid4()),
+            "new_battery_detected": False,
+            "new_battery_detected_timestamp": None,
+            "discharge_events": [],
+            "last_upscmd_timestamp": None,
+            "last_upscmd_type": None,
+            "last_upscmd_status": None,
         }
 
     def get_peukert_exponent(self) -> float:
@@ -542,12 +665,115 @@ class BatteryModel:
     def set_battery_install_date(self, date_str: str):
         self.state["battery_install_date"] = date_str
 
+    def get_battery_epoch_id(self) -> str:
+        """Return the UUID identifying the currently installed battery epoch."""
+        epoch = self.state.get("battery_epoch_id")
+        if not isinstance(epoch, str) or not epoch:
+            raise ModelLoadError("battery model has no valid battery_epoch_id")
+        return epoch
+
+    def scientific_state(self) -> dict[str, Any]:
+        """Return the canonical, scientific subset of persisted model state."""
+        # Fingerprints are used as an observational guard.  Building the
+        # canonical physics mapping here must not synchronize or otherwise
+        # mutate persisted state: a read of the alarm state is not a model
+        # write.  ``self.physics`` is the authoritative in-memory scientific
+        # view between saves, while operational fields remain excluded.
+        scientific = {
+            key: copy.deepcopy(self.state.get(key)) for key in SCIENTIFIC_FINGERPRINT_FIELDS
+        }
+        scientific["physics"] = {
+            "peukert_exponent": self.physics.peukert_exponent,
+            "ir_compensation": {
+                "k_volts_per_percent": self.physics.ir_compensation.k_volts_per_percent,
+                "reference_load_percent": self.physics.ir_compensation.reference_load_percent,
+            },
+            "rls_state": {
+                name: dataclasses.asdict(rls) for name, rls in self.physics.rls_state.items()
+            },
+        }
+        return scientific
+
+    def scientific_fingerprint(self) -> str:
+        """Return a stable SHA-256 fingerprint of fields that affect safety science.
+
+        Event counters, scheduler state, and operational metadata are intentionally
+        excluded.  JSON key ordering and separators are fixed so the same state has
+        the same fingerprint across processes.
+        """
+        canonical = json.dumps(
+            self.scientific_state(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def reset_baseline(
+        self,
+        install_date: Optional[str] = None,
+        *,
+        event_open: bool = False,
+    ) -> str:
+        """Commit an operator-confirmed battery replacement baseline.
+
+        The complete reset is one model transaction: the suspicion is acknowledged,
+        its timestamp is cleared, a fresh UUID epoch is created, and the install date
+        is updated.  An open discharge is rejected because assigning its observations
+        to either epoch would be scientifically ambiguous.  On save failure both the
+        in-memory state and the physics object are restored.
+        """
+        if event_open:
+            raise RuntimeError("cannot reset battery baseline while a discharge event is open")
+
+        previous_state = copy.deepcopy(self.state)
+        previous_physics = copy.deepcopy(self.physics)
+        new_date = install_date or datetime.now().strftime("%Y-%m-%d")
+        new_capacity = self.get_capacity_ah()
+        old_capacity = self.state.get("capacity_ah_measured")
+        fresh_state = self._default_vrla_lut()
+        fresh_state["soh_history"] = [
+            {
+                "date": new_date,
+                "soh": 1.0,
+                "capacity_ah_ref": round(new_capacity, 2),
+            }
+        ]
+        fresh_state["capacity_estimates"] = []
+        fresh_state["capacity_ah_measured"] = None
+        fresh_state["r_internal_history"] = []
+        fresh_state["discharge_events"] = []
+        fresh_state["battery_install_date"] = new_date
+        fresh_state["battery_epoch_id"] = str(uuid.uuid4())
+        fresh_state["cycle_count"] = 0
+        fresh_state["cumulative_on_battery_sec"] = 0.0
+        fresh_state["new_battery_detected"] = False
+        fresh_state["new_battery_detected_timestamp"] = None
+        fresh_state["last_upscmd_timestamp"] = self.state["last_upscmd_timestamp"]
+        fresh_state["last_upscmd_type"] = self.state["last_upscmd_type"]
+        fresh_state["last_upscmd_status"] = self.state["last_upscmd_status"]
+        self.state = fresh_state
+        self.physics = PhysicsParams()
+        try:
+            model_hash = self.save()
+        except Exception:
+            self.state = previous_state
+            self.physics = previous_physics
+            raise
+        logger.info(
+            "baseline_reset: battery epoch rotated",
+            extra={
+                "event_type": "baseline_reset",
+                "battery_epoch_id": self.state["battery_epoch_id"],
+                "battery_install_date": new_date,
+                "capacity_ah_old": old_capacity,
+                "capacity_ah_new": new_capacity,
+            },
+        )
+        return model_hash
+
     def get_cycle_count(self) -> int:
         return self.state.get("cycle_count", 0)
-
-    def increment_cycle_count(self):
-        """Increment OL→OB transition counter (includes flicker events, not just full discharges)."""
-        self.state["cycle_count"] = self.state.get("cycle_count", 0) + 1
 
     def get_cumulative_on_battery_sec(self) -> float:
         return self.state.get("cumulative_on_battery_sec", 0.0)
@@ -582,17 +808,8 @@ class BatteryModel:
         )
         return result[3] if result is not None else None
 
-    def add_on_battery_time(self, seconds: float):
-        """Accumulate on-battery time (additive, unit: seconds, no upper bound)."""
-        self.state["cumulative_on_battery_sec"] = (
-            self.state.get("cumulative_on_battery_sec", 0.0) + seconds
-        )
-
     def set_peukert_exponent(self, value: float):
         self.physics.peukert_exponent = value
-
-    def set_ir_k(self, value: float):
-        self.physics.ir_compensation.k_volts_per_percent = value
 
     def get_rls_state(self, name: str) -> dict:
         """Get RLS estimator state as dict (for ScalarRLS.from_dict compatibility)."""
@@ -610,13 +827,6 @@ class BatteryModel:
         rls.theta = theta
         rls.P = P
         rls.sample_count = sample_count
-
-    def reset_rls_state(self) -> None:
-        """Reset all RLS estimators to defaults (e.g., on battery replacement)."""
-        self.physics.rls_state = {
-            "ir_k": RLSParams(theta=0.015),
-            "peukert": RLSParams(theta=1.2),
-        }
 
     def _cap_history_entries(self, key: str, keep_count: int = 30) -> None:
         """Keep only the most recent keep_count entries from a list field."""
@@ -666,9 +876,29 @@ class BatteryModel:
                 'measured_capacity_ah': float | None
             }
         """
-        self.state.setdefault("discharge_events", []).append(event)
+        self.state["discharge_events"].append(event)
 
-    def save(self):
+    def has_discharge_event(self, event_id: str) -> bool:
+        """Return whether a nested discharge event with *event_id* is persisted in state."""
+        return any(
+            event.get("event_id") == event_id
+            for event in self.state.get("discharge_events", [])
+            if isinstance(event, dict)
+        )
+
+    def get_persisted_hash(self) -> str:
+        """Return the SHA-256 hash of the exact bytes currently persisted on disk.
+
+        A missing or unreadable model is an operational error. Callers updating a
+        journal audit marker must never silently substitute the in-memory state.
+        """
+        try:
+            persisted_bytes = self.model_path.read_bytes()
+        except OSError as exc:
+            raise ModelLoadError(f"Cannot hash persisted model {self.model_path}: {exc}") from exc
+        return hashlib.sha256(persisted_bytes).hexdigest()
+
+    def save(self) -> str:
         """
         Atomically write model to disk with history pruning.
 
@@ -683,7 +913,7 @@ class BatteryModel:
         self._prune_lut()
         self._cap_history_entries("capacity_estimates")
         self._cap_history_entries("discharge_events")
-        atomic_write_json(self.model_path, self.state)
+        return atomic_write_json(self.model_path, self.state)
 
     def get_lut(self):
         """Return the voltage→SoC lookup table entries."""
@@ -692,10 +922,6 @@ class BatteryModel:
     def get_soh(self):
         """SoH estimate [0.0, 1.0]."""
         return self.state.get("soh", 1.0)
-
-    def set_soh(self, value: float):
-        """Update SoH estimate (stored as-is; clamping applied at load() time by _validate_and_clamp_fields)."""
-        self.state["soh"] = value
 
     def get_capacity_ah(self):
         """Runtime-configured rated capacity in Ah (default RATED_CAPACITY_AH).
@@ -715,9 +941,6 @@ class BatteryModel:
             capacity_ah_ref: Capacity baseline used in the SoH calculation (Ah). Required —
                 every entry carries it so the replacement regression can filter by baseline.
         """
-        if "soh_history" not in self.state:
-            self.state["soh_history"] = []
-
         self.state["soh_history"].append(
             {"date": date, "soh": soh, "capacity_ah_ref": round(capacity_ah_ref, 2)}
         )
@@ -727,81 +950,28 @@ class BatteryModel:
         """Return list of {date, soh} entries."""
         return self.state.get("soh_history", [])
 
-    def add_r_internal_entry(self, date, r_ohm, v_before, v_sag, load_percent, event_type):
-        """Add internal resistance measurement from voltage sag observation.
-
-        Args:
-            date: ISO8601 date string (e.g., '2026-03-16')
-            r_ohm: Calculated internal resistance (ohms)
-            v_before: Battery voltage before load transition (V)
-            v_sag: Battery voltage during sag (V)
-            load_percent: UPS load at time of measurement (0-100)
-            event_type: EventType enum value; stored as event_type.name string
-        """
-        if "r_internal_history" not in self.state:
-            self.state["r_internal_history"] = []
-        self.state["r_internal_history"].append(
-            {
-                "date": date,
-                "r_ohm": round(r_ohm, 4),
-                "v_before": round(v_before, 2),
-                "v_sag": round(v_sag, 2),
-                "load_percent": round(load_percent, 1),
-                "event": event_type,
-            }
-        )
-
     def get_r_internal_history(self):
         """Return list of internal resistance measurements."""
         return self.state.get("r_internal_history", [])
 
-    def add_capacity_estimate(
+    def append_capacity_estimate(
         self, ah_estimate: float, confidence: float, metadata: Dict, timestamp: str
     ) -> None:
+        """Append a capacity estimate without persisting it.
+
+        This primitive is intentionally separate from :meth:`add_capacity_estimate` so
+        the event transaction can include capacity, SoH, and physics changes in one
+        model commit.
         """
-        Add a capacity measurement to the estimates array.
-
-        Stores measured capacity with confidence metadata for convergence tracking.
-        Automatically prunes to keep last 30 entries (no unbounded growth).
-        Persists atomically to disk.
-
-        Args:
-            ah_estimate: Measured capacity in Ah (float)
-            confidence: Confidence metric [0.0, 1.0] based on CoV across measurements
-            metadata: Dict with measurement details (delta_soc_percent, duration_sec, discharge_slope_mohm, load_avg_percent, etc.)
-            timestamp: ISO8601 timestamp string
-
-        Side effects:
-            - Appends entry to model.state['capacity_estimates']
-            - Calls _cap_history_entries('capacity_estimates') to limit array to 30 entries
-            - Calls self.save() for atomic persistence; on save failure the in-memory
-              append is rolled back so memory and disk stay consistent
-        """
-        if "capacity_estimates" not in self.state:
-            self.state["capacity_estimates"] = []
-
-        entry = {
-            "timestamp": timestamp,
-            "ah_estimate": ah_estimate,
-            "confidence": confidence,
-            "metadata": metadata,
-        }
-        self.state["capacity_estimates"].append(entry)
+        self.state["capacity_estimates"].append(
+            {
+                "timestamp": timestamp,
+                "ah_estimate": ah_estimate,
+                "confidence": confidence,
+                "metadata": metadata,
+            }
+        )
         self._cap_history_entries("capacity_estimates")
-        try:
-            self.save()
-        except (OSError, TypeError, ValueError) as e:
-            # Keep memory == disk: a learned estimate that lives in RAM but never reached
-            # disk is exactly the silent divergence this milestone removes. On a restart the
-            # in-memory-only sample would vanish and convergence replay would see a different
-            # count than the running daemon. Roll the append back so both views agree; the
-            # estimate re-derives on the next discharge.
-            self.state["capacity_estimates"].pop()
-            logger.error(
-                f"Failed to persist capacity estimate, rolled back in-memory append: {e}",
-                exc_info=True,
-                extra={"event_type": "capacity_persist_failed"},
-            )
 
     def get_capacity_estimates(self) -> List[Dict]:
         """
@@ -832,7 +1002,6 @@ class BatteryModel:
                     None until first convergence. Distinct from latest_ah —
                     this is the locked baseline used for new-battery detection.
                 cov: Coefficient of variation (0.0 if no samples)
-                mean_ah: Mean of ah_estimates (0.0 if no samples)
         """
         estimates = self.state.get("capacity_estimates", [])
         # Skip entries missing 'ah_estimate' so a corrupt sample degrades gracefully
@@ -848,7 +1017,6 @@ class BatteryModel:
                 converged=False,
                 capacity_ah_measured=None,
                 cov=0.0,
-                mean_ah=0.0,
             )
 
         cov = compute_cov(ah_values)
@@ -864,7 +1032,6 @@ class BatteryModel:
             converged=is_capacity_converged(estimates),
             capacity_ah_measured=self.state.get("capacity_ah_measured", None),
             cov=cov,
-            mean_ah=sum(ah_values) / len(ah_values),
         )
 
     def get_anchor_voltage(self) -> Optional[float]:
@@ -874,55 +1041,6 @@ class BatteryModel:
             if entry["soc"] == 0.0 and entry["source"] == "anchor":
                 return entry["v"]
         return None
-
-    def calibration_write(self, voltage: float, soc: float, timestamp: float):
-        """
-        Accumulate calibration datapoint in memory without persisting to disk.
-
-        Called from monitor.py discharge buffer handler to capture intermediate
-        measurements. Points are accumulated in memory and persisted once per
-        REPORTING_INTERVAL via calibration_batch_flush() to reduce SSD wear by ~60x.
-
-        Args:
-            voltage: Measured battery voltage (V)
-            soc: Calculated SoC as fraction (0.0-1.0)
-            timestamp: Unix timestamp of measurement
-        """
-        if timestamp in self._seen_timestamps:
-            return
-        self._seen_timestamps.add(timestamp)
-
-        entry = {
-            "v": round(voltage, 2),
-            "soc": round(soc, 3),
-            "source": "measured",
-            "timestamp": timestamp,
-        }
-
-        lut = self.state.get("lut")
-        if lut is None:
-            logger.error(
-                "calibration_write: no LUT in model state — skipping calibration point",
-                extra={"event_type": "lut_missing"},
-            )
-            return
-        bisect.insort(lut, entry, key=lambda x: -x["v"])
-
-        logger.debug(
-            f"Calibration point accumulated: voltage={voltage:.2f}V, soc={soc:.1%}, timestamp={timestamp}"
-        )
-
-    def calibration_batch_flush(self) -> None:
-        """Persist accumulated calibration points to disk.
-
-        Call once per REPORTING_INTERVAL, not per point. Reduces SSD wear by ~60x during testing.
-
-        Saves LUT (already sorted by calibration_write), preserves atomicity.
-
-        Side effects:
-            - Writes model.json to disk (atomic rename)
-        """
-        self.save()
 
     def update_upscmd_result(
         self, upscmd_timestamp: str, upscmd_type: str, upscmd_status: str

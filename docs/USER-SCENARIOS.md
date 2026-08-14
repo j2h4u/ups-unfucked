@@ -1,16 +1,21 @@
 # User Scenarios
 
-The monitor works fully automatically out of the box. These scenarios describe optional actions for users who want more control or accuracy.
+The monitor observes and protects the UPS automatically out of the box. These scenarios describe
+optional actions for users who want more control or a reviewed capacity measurement.
 
 ## Battery Health Report
 
-The daemon tracks battery health automatically from every discharge event.
+The daemon records every discharge event operationally, while authoritative capacity/SoH updates
+remain evidence-gated.
 
 ```bash
 ./scripts/battery-health.py
 ```
 
-Shows: SoH, capacity, LUT calibration coverage, discharge event count, replacement prediction (after 20+ events), and internal resistance trend.
+Shows: authoritative SoH/capacity state, LUT calibration coverage, journal health, open or
+replay-pending events, operational partial/recovered-event count, replacement prediction, and
+internal resistance trend. Operational partial/recovered events are explicitly excluded from
+authoritative capacity and SoH samples.
 
 Live metrics via NUT: `upsc cyberpower-virtual@localhost`
 
@@ -18,49 +23,53 @@ Live metrics via NUT: `upsc cyberpower-virtual@localhost`
 
 ---
 
-## Deep Battery Test
+## Interrupted shutdown or reboot
 
-Normal short blackouts (1-2 min) calibrate the upper part of the voltage curve. A deep test reaches the "cliff region" (10.5-11.0V) where voltage drops sharply, giving the most accurate low-SoC data.
+The daemon appends each accepted on-battery observation to
+`~/.config/ups-battery-monitor/discharge-events-v1.jsonl` and synchronises it before exposing
+the sample as durable. If shutdown interrupts collection, the next boot replays the journal.
+When the UPS is still on battery, collection continues under the same event ID with an explicit
+reboot gap. When power is online, the event closes at the last confirmed on-battery sample.
+Unknown time across the gap is never integrated.
 
-**When to do this:** Once after initial setup, then every 6-12 months.
+Check the result with:
 
-### Steps
+```bash
+./scripts/battery-health.py
+upsc cyberpower-virtual@localhost | grep -E 'battery|ups.status'
+```
 
-1. **Lower the shutdown threshold** temporarily:
+An open, degraded, or replay-pending journal is an operational incident to investigate. It does
+not disable the NUT low-battery/shutdown path. A recovered partial event is useful runtime
+evidence only; it does not prove full duration, absolute capacity, SoH, or Peukert exponent.
 
-   ```bash
-   nano ~/.config/ups-battery-monitor/config.toml
-   # Change: shutdown_minutes = 1
-   sudo systemctl restart ups-battery-monitor
-   ```
+## Rollback and re-upgrade
 
-2. **Run the deep test** (30-60 min, server runs on battery):
+If a release must be rolled back, stop the daemon while the UPS is online and preserve
+`discharge-events-v1.jsonl` and any recovery artifacts. The older daemon will not project new
+journal-derived counters while rolled back, so its displayed counters may appear frozen. Do not
+delete or manually merge the journal; re-upgrading lets the durable-journal implementation replay
+it again.
 
-   ```bash
-   sudo ~/scripts/cron/ups-test.sh deep
-   ```
+## Controlled capacity test (written and supervised only)
 
-3. **Monitor progress** (optional):
+Do not run an automatic hardware deep test. Do not treat a scheduler suggestion, a short NUT
+self-test, or a natural partial blackout as a capacity measurement. A hardware capacity test is
+considered only after durable capture is deployed, the written protocol is reviewed, and the
+operator gives explicit approval immediately before the test.
 
-   ```bash
-   sudo journalctl -u ups-battery-monitor -f --no-pager
-   ```
-
-4. **Restore normal threshold:**
-
-   ```bash
-   nano ~/.config/ups-battery-monitor/config.toml
-   # Change back: shutdown_minutes = 5
-   sudo systemctl restart ups-battery-monitor
-   ```
-
-**What happens:** The daemon records voltage-SoC points every 10 seconds throughout the discharge. After power restores, cliff region interpolation runs automatically if enough data was captured. The 1-minute threshold ensures the server shuts down before full depletion.
+The complete preconditions, NUT command/abort checks, independent observation, virtual rehearsal,
+recharge, and evidence gate are in
+[CONTROLLED-CAPACITY-TEST-PROTOCOL.md](CONTROLLED-CAPACITY-TEST-PROTOCOL.md). If any prerequisite
+or abort path is uncertain, do not start the test.
 
 ---
 
-## Battery Replacement
+## Battery Replacement and BaselineReset
 
-When the battery degrades beyond useful life, replace it and tell the daemon to start fresh calibration.
+When the battery is replaced, stop the daemon while the UPS is physically online and with no open
+discharge event. Run the sanctioned `BaselineReset` operator transaction once; it creates a new
+`battery_epoch_id` and starts fresh calibration. It is not an automatic deep test.
 
 **When to replace:** SoH below 80% (MOTD alert), replacement predictor date approaching, or runtime consistently shorter than expected. The daemon auto-detects new batteries: if measured capacity jumps >10% after convergence, MOTD will show an alert prompting you to confirm.
 
@@ -68,26 +77,21 @@ When the battery degrades beyond useful life, replace it and tell the daemon to 
 
 1. **Power off the UPS and replace the physical battery.** For CyberPower UT850EG: slide the front panel down, pull the battery tray out, swap the battery, reconnect terminals (red=positive first), slide tray back.
 
-2. **Tell the daemon about the new battery:**
+2. **Run BaselineReset while the service is stopped:**
 
    ```bash
    sudo systemctl stop ups-battery-monitor
-   sudo systemctl start ups-battery-monitor --new-battery
+   sudo python3 -m src.monitor --new-battery
    ```
 
-   Or equivalently, edit the service override to pass the flag once:
+   Then start the service normally:
 
    ```bash
-   sudo python3 -m src.monitor --new-battery
-   # Ctrl+C after it starts, then:
    sudo systemctl start ups-battery-monitor
    ```
 
-3. **Run a deep test** to kickstart calibration (optional but recommended):
-
-   ```bash
-   sudo ~/scripts/cron/ups-test.sh deep
-   ```
+3. **Do not use a battery replacement as permission for an automatic deep test.** Follow the
+   supervised protocol only if a capacity measurement is explicitly approved.
 
 4. **Verify** after the first discharge event:
 
@@ -97,19 +101,28 @@ When the battery degrades beyond useful life, replace it and tell the daemon to 
 
    SoH should be ~100%, Peukert back to default 1.2, cycle count 0.
 
-### What `--new-battery` resets
+### What BaselineReset resets
 
 | Field | Reset to |
 |-------|----------|
 | SoH | 1.0 (100%) |
 | SoH history | Fresh entry only |
 | Peukert exponent | 1.2 (default) |
-| RLS estimators (ir_k, Peukert) | P=1.0 (no confidence) |
+| IR coefficient and RLS estimators (ir_k, Peukert) | Default IR/Peukert values, P=1.0 (no confidence) |
+| Physics parameters | Default physics, including Peukert, IR, and RLS |
+| LUT | New standard VRLA curve plus anchor |
 | Capacity estimates | Cleared |
+| Measured capacity | Cleared |
+| R_internal history | Cleared |
+| Model-level discharge_events | Cleared |
+| Battery epoch | Brand-new UUID |
 | Cycle count | 0 |
 | Battery install date | Today |
 
-What stays unchanged: LUT (standard VRLA curve entries remain), config.toml settings, R_internal history (cleared separately). Old model.json is preserved in daily borg backup if you need to compare.
+The append-only discharge journal remains untouched as historical raw evidence and is not replayed
+into the new epoch. Operational `upscmd` audit metadata remains preserved. BaselineReset creates
+exactly one fresh SoH=1 baseline entry; no old learned state is retained. The pre-reset model is
+preserved in the existing backup for rollback.
 
 ---
 

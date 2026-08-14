@@ -71,18 +71,17 @@ def temporary_model_path():
     """
     Pytest fixture that yields temporary file path for model.json.
 
-    Creates a temporary file with suffix='.json' that can be used for testing
-    model persistence. File is automatically cleaned up after test completes.
+    Yields a temporary, not-yet-created JSON path for testing model persistence.
+    The directory is automatically cleaned up after the test completes.
 
     Yields:
         str: Path to temporary JSON file
     """
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-        tmp_path = tmp.name
-
-    yield tmp_path
-
-    Path(tmp_path).unlink(missing_ok=True)
+    # The loader intentionally distinguishes a missing file (fresh defaults)
+    # from an existing malformed/empty file (fail-fast).  Yield a path that is
+    # ready for a caller to create explicitly rather than an empty placeholder.
+    with tempfile.TemporaryDirectory() as directory:
+        yield Path(directory) / "model.json"
 
 
 @pytest.fixture
@@ -159,7 +158,6 @@ def current_metrics():
         transition_occurred=False,
         shutdown_imminent=False,
         ups_status_override=None,
-        previous_event_type=EventType.ONLINE,
         timestamp=datetime(2026, 3, 12, tzinfo=timezone.utc),
     )
 
@@ -181,6 +179,9 @@ def daemon_config(tmp_path):
 
     from src.monitor_config import Config
 
+    model_dir = tmp_path / "test_model"
+    model_dir.mkdir(mode=0o700)
+
     return Config(
         ups_name="test-cyberpower",
         polling_interval=10,
@@ -190,7 +191,7 @@ def daemon_config(tmp_path):
         nut_timeout=2.0,
         shutdown_minutes=5,
         soh_alert_threshold=0.80,
-        model_dir=tmp_path / "test_model",
+        model_dir=model_dir,
         runtime_threshold_minutes=20,
         reference_load_percent=20.0,
         ema_window_sec=120,

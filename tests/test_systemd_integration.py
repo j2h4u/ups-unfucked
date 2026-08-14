@@ -156,6 +156,15 @@ def test_service_file_service_section_restart_config():
     )
 
 
+def test_notify_service_waits_indefinitely_for_degraded_startup():
+    """A missing physical UPS must not trigger Type=notify startup restarts."""
+    service = parse_service_file(SERVICE_FILE_PATH)["Service"]
+
+    assert service["Type"] == "notify"
+    assert service["TimeoutStartSec"] == "0"
+    assert service["WatchdogSec"] == "120"
+
+
 # ============================================================================
 # Test 4: Unprivileged execution (User/Group)
 # ============================================================================

@@ -2,7 +2,21 @@
 
 import pytest
 
+import src.monitor_config as monitor_config
 from src.monitor_config import SchedulingConfig, get_scheduling_config
+
+
+def test_production_load_config_uses_one_second_poll_and_sixty_second_reporting(
+    tmp_path, monkeypatch
+):
+    """Acquisition and human-reporting cadences remain separate production defaults."""
+    monkeypatch.setattr(monitor_config, "CONFIG_DIR", tmp_path / "missing-config")
+    monkeypatch.setattr(monitor_config, "REPO_ROOT", tmp_path / "missing-repo")
+
+    config = monitor_config.load_config()
+
+    assert config.polling_interval == 1
+    assert config.reporting_interval == 60
 
 
 class TestSchedulingConfigValidation:

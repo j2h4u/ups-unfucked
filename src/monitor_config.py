@@ -4,6 +4,7 @@ Separates configuration/infrastructure from daemon orchestration logic.
 """
 
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -42,15 +43,17 @@ CONFIG_DIR = Path.home() / ".config" / "ups-battery-monitor"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Hardcoded internals (not user-facing)
-POLL_INTERVAL = 10  # seconds between polls
+POLL_INTERVAL = 1  # seconds between NUT acquisition/classification/safety ticks
+REPORTING_INTERVAL_SEC = 60  # human-readable status/reporting cadence
 EMA_WINDOW = 120  # EMA smoothing window (seconds)
 NUT_HOST = "localhost"
 NUT_PORT = 3493
 NUT_TIMEOUT = 2.0  # socket timeout (seconds)
 RUNTIME_THRESHOLD_MINUTES = 20
 REFERENCE_LOAD_PERCENT = 20.0
-REPORTING_INTERVAL_POLLS = 6  # Log metrics every N polls
-HEALTH_ENDPOINT_PATH = Path("/run/ups-battery-monitor/ups-health.json")
+DISCHARGE_SAMPLE_INTERVAL_SEC = 10  # durable operational journal measurement cadence
+_MAX_JOURNAL_ERROR_LENGTH = 256
+_PATH_FRAGMENT_RE = re.compile(r"(?<!\w)(?:~[/\\]|/[^\s]+|[A-Za-z]:[/\\][^\s]+)")
 
 # User-configurable (from config.toml)
 _CONFIGURABLE_DEFAULTS = {
@@ -99,9 +102,7 @@ class Config:
 
     ups_name: str
     polling_interval: int  # seconds between NUT polls
-    reporting_interval: (
-        int  # seconds between status log lines (REPORTING_INTERVAL_POLLS * POLL_INTERVAL)
-    )
+    reporting_interval: int  # seconds between status/reporting lines
     nut_host: str
     nut_port: int
     nut_timeout: float  # NUT socket timeout (seconds)
@@ -172,7 +173,7 @@ def load_config() -> Config:
     return Config(
         ups_name=config_values["ups_name"],
         polling_interval=POLL_INTERVAL,
-        reporting_interval=REPORTING_INTERVAL_POLLS * POLL_INTERVAL,
+        reporting_interval=REPORTING_INTERVAL_SEC,
         nut_host=NUT_HOST,
         nut_port=NUT_PORT,
         nut_timeout=NUT_TIMEOUT,
@@ -228,7 +229,6 @@ class CurrentMetrics:
     transition_occurred: bool = False  # True if state changed this poll
     shutdown_imminent: bool = False  # True if runtime < threshold
     ups_status_override: Optional[str] = None  # Computed status string
-    previous_event_type: EventType = EventType.ONLINE  # Last event_type value
     timestamp: Optional[datetime] = None  # When snapshot was taken
 
 
@@ -239,6 +239,8 @@ class DischargeBuffer:
     voltages: list = field(default_factory=list)
     times: list = field(default_factory=list)
     loads: list = field(default_factory=list)
+    raw_voltages: list = field(default_factory=list)
+    raw_loads: list = field(default_factory=list)
     collecting: bool = False
 
 
@@ -261,9 +263,14 @@ try:
     from systemd.journal import JournalHandler  # pyright: ignore[reportMissingImports]
 
     log_handler = JournalHandler(SYSLOG_IDENTIFIER="ups-battery-monitor")
+    # Tests may install a placeholder ``systemd`` module.  Treat a mock (or
+    # any non-logging handler) as unavailable instead of poisoning the logger
+    # with an object whose level is not an integer.
+    if not isinstance(log_handler, logging.Handler):
+        raise TypeError("systemd JournalHandler is not a logging.Handler")
     log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
     logger.addHandler(log_handler)
-except (ImportError, OSError, ValueError) as e:
+except (ImportError, OSError, TypeError, ValueError) as e:
     log_handler = logging.StreamHandler(sys.stderr)
     log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
     logger.addHandler(log_handler)
@@ -309,6 +316,37 @@ class HealthSnapshot:
     shutdown_imminent: bool = False  # runtime < shutdown threshold (operator visibility)
     soh_alert_threshold: float = 0.80  # configured SoH replacement threshold; lets the
     # read-only CLI/MOTD reproduce the daemon's replacement date for any configured value
+    # Durable discharge journal observability.  These defaults keep health.json stable
+    # while the journal integration is optional (and make an unconfigured exporter safe).
+    journal_healthy: bool = True
+    active_event_id: Optional[str] = None
+    journal_last_synced_seq: Optional[int] = None
+    journal_last_error: Optional[str] = None
+    pending_replay: bool = False
+    recovered_partial_events: int = 0
+    cycle_count: Optional[int] = None
+    cumulative_on_battery_sec: Optional[float] = None
+    scientific_fingerprint: Optional[str] = None
+    baseline_scientific_fingerprint: Optional[str] = None
+    scientific_change_latched: bool = False
+    last_voltage_sag_observation: Optional[dict[str, object]] = None
+    startup_degraded: bool = False
+    model_update_mode: str = "capture_only"
+    automatic_dispatch: bool = False
+    scheduler_mode: str = "proposal_only"
+    eligible_for_operator_test_at: Optional[str] = None
+    last_event_disposition: Optional[str] = None
+
+
+def _sanitize_journal_error(value: object) -> Optional[str]:
+    """Bound and redact a journal error before it reaches health.json."""
+    if value is None:
+        return None
+    text = _PATH_FRAGMENT_RE.sub("[path]", str(value))
+    text = " ".join(text.split())
+    if not text:
+        return None
+    return text[:_MAX_JOURNAL_ERROR_LENGTH]
 
 
 def _opt_round(v: Optional[float], n: int) -> Optional[float]:
@@ -316,12 +354,15 @@ def _opt_round(v: Optional[float], n: int) -> Optional[float]:
     return round(v, n) if v is not None else None
 
 
-def write_health_endpoint(snapshot: HealthSnapshot) -> None:
+def write_health_endpoint(snapshot: HealthSnapshot, *, health_path: Path) -> bool:
     """Write daemon health state to file for external monitoring tools.
 
-    Updates every poll (10s) with current daemon metrics. Uses atomic_write_json
-    for crash-safe writes. Refuses to write through symlinks (security guard).
-    Silently swallows OSError on write failure (logs warning).
+    Updates every poll with current daemon metrics. Uses atomic_write_json for
+    crash-safe writes. Refuses to write through symlinks (security guard).
+    The path is explicit because this library must never silently target a
+    production runtime location.
+    Returns ``True`` after the atomic write succeeds and ``False`` after a
+    bounded serialization or filesystem failure (which is logged).
 
     Monitored by: Grafana Alloy, custom scripts (liveness: last_poll < 30s).
     """
@@ -346,19 +387,39 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
         "last_discharge_timestamp": snapshot.last_discharge_timestamp,
         "consecutive_errors": snapshot.consecutive_errors,
         "soh_alert_threshold": snapshot.soh_alert_threshold,
+        "journal_healthy": snapshot.journal_healthy,
+        "active_event_id": snapshot.active_event_id,
+        "journal_last_synced_seq": snapshot.journal_last_synced_seq,
+        "journal_last_error": _sanitize_journal_error(snapshot.journal_last_error),
+        "pending_replay": snapshot.pending_replay,
+        "recovered_partial_events": snapshot.recovered_partial_events,
+        "cycle_count": snapshot.cycle_count,
+        "cumulative_on_battery_sec": snapshot.cumulative_on_battery_sec,
+        "scientific_fingerprint": snapshot.scientific_fingerprint,
+        "baseline_scientific_fingerprint": snapshot.baseline_scientific_fingerprint,
+        "scientific_change_latched": snapshot.scientific_change_latched,
+        "last_voltage_sag_observation": snapshot.last_voltage_sag_observation,
+        "startup_degraded": snapshot.startup_degraded,
+        "model_update_mode": snapshot.model_update_mode,
+        "automatic_dispatch": snapshot.automatic_dispatch,
+        "scheduler_mode": snapshot.scheduler_mode,
+        "eligible_for_operator_test_at": snapshot.eligible_for_operator_test_at,
+        "last_event_disposition": snapshot.last_event_disposition,
     }
-    health_path = HEALTH_ENDPOINT_PATH
+    health_path = Path(health_path)
 
     try:
         if health_path.is_symlink():
             raise OSError(f"{health_path} is a symlink, refusing to write")
         atomic_write_json(health_path, health_data, mode=0o644)
+        return True
     except OSError as e:
         logger.error(
             "Failed to write health endpoint: %s",
             e,
             extra={"event_type": "health_endpoint_write_failed"},
         )
+        return False
     except (TypeError, ValueError) as e:
         logger.error(
             "Health endpoint serialization bug: %s",
@@ -366,3 +427,4 @@ def write_health_endpoint(snapshot: HealthSnapshot) -> None:
             exc_info=True,
             extra={"event_type": "health_endpoint_serialization_bug"},
         )
+        return False

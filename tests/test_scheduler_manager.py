@@ -3,10 +3,17 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
+import pytest
+
 from src.battery_math.scheduler import SchedulerDecision
+from src.discharge_journal import DischargeJournal, JournalEnd, JournalStart
 from src.monitor_config import SchedulingConfig
 from src.scheduler_manager import (
+    SCHEDULER_MODE_CAPTURE_ONLY,
+    SCHEDULER_MODE_EXECUTE,
+    SCHEDULER_MODE_PROPOSAL_ONLY,
     SchedulerManager,
+    SchedulerModeError,
     dispatch_test_with_audit,
     validate_preconditions_before_upscmd,
 )
@@ -27,7 +34,11 @@ def _make_scheduling_config(**kwargs):
 
 
 def _make_scheduler(
-    battery_model=None, nut_client=None, scheduling_config=None, discharge_handler=None
+    battery_model=None,
+    nut_client=None,
+    scheduling_config=None,
+    discharge_handler=None,
+    scheduler_mode=SCHEDULER_MODE_PROPOSAL_ONLY,
 ):
     battery_model = battery_model or Mock()
     nut_client = nut_client or Mock()
@@ -40,6 +51,7 @@ def _make_scheduler(
         nut_client=nut_client,
         scheduling_config=scheduling_config,
         discharge_handler=discharge_handler,
+        scheduler_mode=scheduler_mode,
     )
 
 
@@ -76,6 +88,40 @@ class TestSchedulerManager:
         assert sm.scheduler_evaluated_today is False
         assert sm.last_scheduling_reason == "observing"
         assert sm.last_next_test_timestamp is None
+
+    def test_constructor_defaults_to_proposal_only(self):
+        """The scheduler default is proposal-only; no UPS command is sent."""
+        sm = _make_scheduler()
+        assert sm.scheduler_mode == SCHEDULER_MODE_PROPOSAL_ONLY
+
+    def test_constructor_rejects_unknown_mode(self):
+        with pytest.raises(ValueError, match="unknown scheduler mode"):
+            _make_scheduler(scheduler_mode="unsafe")
+
+    @pytest.mark.parametrize(
+        "scheduler_mode",
+        [SCHEDULER_MODE_CAPTURE_ONLY, SCHEDULER_MODE_PROPOSAL_ONLY],
+    )
+    def test_proposal_and_capture_do_not_save_scientific_model(self, scheduler_mode):
+        """Non-executing scheduler decisions are health output, not model writes."""
+        model = Mock()
+        model.scientific_fingerprint.return_value = "scientific-baseline"
+        scheduler = _make_scheduler(battery_model=model, scheduler_mode=scheduler_mode)
+        decision = SchedulerDecision(
+            action="propose_test",
+            test_type="quick",
+            reason_code="diagnostic_cadence",
+        )
+
+        scheduler._execute_scheduler_decision(
+            decision,
+            {"soh_fraction": 0.95},
+            datetime(2026, 8, 15, 10, 0, tzinfo=timezone.utc),
+            Mock(),
+        )
+
+        model.save.assert_not_called()
+        assert model.scientific_fingerprint() == "scientific-baseline"
 
     # --- Properties ---
 
@@ -288,6 +334,57 @@ class TestSchedulerManager:
         }
         sm = _make_scheduler(battery_model=bm)
         assert sm._get_last_natural_blackout() is None
+
+    def test_operational_journal_is_authoritative_and_ignores_tests(self, tmp_path):
+        journal = DischargeJournal(tmp_path / "events", boot_id="test-boot")
+        real = journal.start_event(
+            JournalStart(
+                {
+                    "event_classification": "BLACKOUT_REAL",
+                    "start_timestamp": "2026-03-10T10:00:00+00:00",
+                    "raw_status": "OB DISCHRG",
+                }
+            )
+        )
+        journal.close_event(real, JournalEnd({"model_processing_eligible": False}))
+        test = journal.start_event(
+            JournalStart(
+                {
+                    "event_classification": "BLACKOUT_TEST",
+                    "start_timestamp": "2026-03-18T10:00:00+00:00",
+                    "raw_status": "CAL DISCHRG",
+                    "cal_provenance": True,
+                }
+            )
+        )
+        journal.close_event(test, JournalEnd({"model_processing_eligible": False}))
+
+        bm = Mock()
+        bm.state = {
+            "discharge_events": [{"event_reason": "natural", "timestamp": "2026-03-20T10:00:00Z"}]
+        }
+        sm = _make_scheduler(battery_model=bm)
+        sm.operational_journal_provider = lambda: journal
+
+        result = sm._get_last_natural_blackout()
+        assert result["timestamp"].startswith("2026-03-10T10:00:00")
+
+    def test_unavailable_operational_journal_fails_closed(self):
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 1.0
+        bm.get_last_upscmd_timestamp.return_value = None
+        bm.get_last_upscmd_status.return_value = None
+        sm = SchedulerManager(
+            battery_model=bm,
+            nut_client=Mock(),
+            scheduling_config=_make_scheduling_config(scheduler_eval_hour_utc=10),
+            discharge_handler=Mock(last_cycle_budget_remaining=100),
+            operational_journal_provider=lambda: (_ for _ in ()).throw(OSError("journal down")),
+        )
+        sm.run_daily(datetime(2026, 3, 20, 10, 5, tzinfo=timezone.utc), Mock())
+        assert sm.last_scheduling_reason == "operational_journal_unavailable"
+        assert sm.nut_client.send_instcmd.called is False
 
     # --- _gather_scheduler_inputs ---
 
@@ -599,7 +696,7 @@ class TestDispatchWithAuditImport:
     """Verify dispatch_test_with_audit is importable from scheduler_manager and works."""
 
     def test_dispatch_success_updates_model(self, temporary_model_path):
-        """Successful dispatch updates model and returns True."""
+        """Explicit execute mode retains the command-dispatch helper contract."""
         from src.model import BatteryModel
 
         model = BatteryModel(temporary_model_path)
@@ -622,9 +719,109 @@ class TestDispatchWithAuditImport:
                 battery_model=model,
                 decision=decision,
                 current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_EXECUTE,
             )
 
         assert success is True
         # CR-01 regression: no un-clearable `test_running` flag is persisted.
         assert "test_running" not in model.state
         assert model.state["last_upscmd_status"] == "OK"
+
+    def test_dispatch_is_structurally_blocked_in_capture_only(self, temporary_model_path):
+        from src.model import BatteryModel
+
+        model = BatteryModel(temporary_model_path)
+        nut_client_mock = Mock()
+        current_metrics = Mock(ups_status_override="OL", soc=0.98)
+        decision = SchedulerDecision(
+            action="propose_test", test_type="quick", reason_code="diagnostic_cadence"
+        )
+
+        with pytest.raises(SchedulerModeError, match="capture_only"):
+            dispatch_test_with_audit(
+                nut_client=nut_client_mock,
+                battery_model=model,
+                decision=decision,
+                current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_CAPTURE_ONLY,
+            )
+        nut_client_mock.send_instcmd.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status, soc, reason",
+        [
+            (None, 0.98, "UPS_status_unknown"),
+            ("UNKNOWN", 0.98, "UPS_status_unknown"),
+            ("OL", None, "soc_unknown"),
+            ("OL", float("nan"), "soc_unknown"),
+        ],
+    )
+    def test_execute_fails_closed_on_unknown_physical_inputs(
+        self, temporary_model_path, status, soc, reason
+    ):
+        """Missing/invalid startup telemetry cannot become a command or success."""
+        from src.model import BatteryModel
+
+        model = BatteryModel(temporary_model_path)
+        nut_client_mock = Mock()
+        decision = SchedulerDecision(
+            action="propose_test", test_type="quick", reason_code="diagnostic_cadence"
+        )
+        metrics = Mock(ups_status_override=status, soc=soc)
+
+        result = dispatch_test_with_audit(
+            nut_client=nut_client_mock,
+            battery_model=model,
+            decision=decision,
+            current_metrics=metrics,
+            scheduler_mode=SCHEDULER_MODE_EXECUTE,
+        )
+
+        assert result is False
+        nut_client_mock.send_instcmd.assert_not_called()
+        assert model.state.get("last_upscmd_status") is None
+
+    def test_default_manager_retains_proposal_without_send(self):
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        nut = Mock()
+        sm = _make_scheduler(battery_model=bm, nut_client=nut)
+        decision = SchedulerDecision(
+            action="propose_test", test_type="quick", reason_code="diagnostic_cadence"
+        )
+
+        sm._execute_scheduler_decision(
+            decision,
+            {"soh_fraction": 0.85},
+            datetime(2026, 3, 20, 10, 5, tzinfo=timezone.utc),
+            Mock(),
+        )
+
+        assert sm.scheduler_mode == SCHEDULER_MODE_PROPOSAL_ONLY
+        nut.send_instcmd.assert_not_called()
+
+    def test_proposal_only_never_calls_send_instcmd(self):
+        bm = Mock()
+        bm.state = {"discharge_events": []}
+        bm.get_soh.return_value = 0.85
+        bm.get_last_upscmd_timestamp.return_value = None
+        bm.get_last_upscmd_status.return_value = None
+        nut = Mock()
+        sm = _make_scheduler(
+            battery_model=bm,
+            nut_client=nut,
+            scheduler_mode=SCHEDULER_MODE_PROPOSAL_ONLY,
+        )
+        decision = SchedulerDecision(
+            action="propose_test",
+            test_type="quick",
+            reason_code="diagnostic_cadence",
+            next_eligible_timestamp="2026-03-20T10:00:00+00:00",
+        )
+        sm._execute_scheduler_decision(
+            decision,
+            {"soh_fraction": 0.85},
+            datetime(2026, 3, 20, 10, 5, tzinfo=timezone.utc),
+            Mock(),
+        )
+        nut.send_instcmd.assert_not_called()

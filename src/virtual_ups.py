@@ -1,6 +1,6 @@
 """Virtual UPS module for tmpfs-based atomic metric writing and NUT format compliance.
 
-Writes metrics to /run/ups-battery-monitor/ups-virtual.dev in NUT format without SSD wear.
+Writes metrics to the caller-provided runtime file in NUT format without SSD wear.
 Enables transparent data source switching for monitoring tools (upsmon, Grafana) by providing
 a virtual UPS device that reports calculated values.
 
@@ -11,7 +11,7 @@ Key responsibilities:
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from src.event_classifier import EventType
 from src.model import atomic_write
@@ -22,33 +22,38 @@ logger = logging.getLogger("ups-battery-monitor")
 def write_virtual_ups_dev(
     metrics: Dict[str, Any],
     ups_name: str = "cyberpower",
-    output_path: Optional[Path] = None,
-) -> None:
+    *,
+    output_path: Path,
+) -> bool:
     """
     Atomically write virtual UPS metrics to tmpfs in NUT format.
 
-    Writes to /run/ups-battery-monitor/ups-virtual.dev using atomic pattern
-    (tempfile + fsync + rename) to prevent partial writes on crash or power loss.
-    Uses tmpfs (/run) for safety and performance (no SSD wear).
+    Uses an atomic pattern (tempfile + fsync + rename) to prevent partial
+    writes on crash or power loss.  The destination is deliberately required
+    from the caller: only the production composition root may choose its
+    runtime destination.
 
     Args:
         metrics: Dict of {field_name: value} to write to virtual UPS
                  Expected keys: battery.voltage, battery.charge, battery.runtime,
                                ups.load, ups.status, input.voltage, etc.
         ups_name: UPS device name for NUT format (default: "cyberpower")
-        output_path: Optional override for output file path. Defaults to
-                     /run/ups-battery-monitor/ups-virtual.dev. Used by tests
-                     to write to tmp_path instead of production tmpfs.
+        output_path: Explicit output file path.  Tests and local utilities must
+                     pass a private temporary path; production passes its
+                     configured runtime path from the composition root.
 
     Raises:
         IOError: If write, fsync, or atomic rename fails
-        OSError: If /run/ups-battery-monitor is unavailable or permissions insufficient
+        OSError: If the destination is unavailable or permissions insufficient
+
+    Returns:
+        ``True`` after the atomic write completes.
 
     Logging:
         - Success: "Virtual UPS metrics written at {timestamp}"
         - Error: "Failed to write virtual UPS metrics: {e}"
     """
-    virtual_ups_path = output_path or Path("/run/ups-battery-monitor/ups-virtual.dev")
+    virtual_ups_path = Path(output_path)
 
     # Guard against symlink attack: refuse to write through symlinks
     if virtual_ups_path.is_symlink():
@@ -64,6 +69,7 @@ def write_virtual_ups_dev(
     content = "".join(f"{key}: {value}\n" for key, value in sanitized.items())
 
     atomic_write(virtual_ups_path, content, mode=0o644)
+    return True
 
 
 # NUT protocol wire-format status strings.
