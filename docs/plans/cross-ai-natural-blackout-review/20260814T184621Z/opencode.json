@@ -1,0 +1,76 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "deny",
+    "read": {
+      "*": "allow",
+      ".env": "deny",
+      ".env.*": "deny",
+      ".env.example": "allow"
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "bash": {
+      "*": "deny",
+      "git diff*": "allow",
+      "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor diff*": "allow",
+      "git status*": "allow",
+      "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor status*": "allow",
+      "git log*": "allow",
+      "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor log*": "allow",
+      "git show*": "allow",
+      "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor show*": "allow"
+    },
+    "edit": "deny",
+    "write": "deny",
+    "task": "deny",
+    "question": "deny",
+    "external_directory": {
+      "*": "deny"
+    },
+    "doom_loop": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "skill": "deny"
+  },
+  "agent": {
+    "plan": {
+      "mode": "primary",
+      "permission": {
+        "*": "deny",
+        "read": {
+          "*": "allow",
+          ".env": "deny",
+          ".env.*": "deny",
+          ".env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "list": "allow",
+        "bash": {
+          "*": "deny",
+          "git diff*": "allow",
+          "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor diff*": "allow",
+          "git status*": "allow",
+          "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor status*": "allow",
+          "git log*": "allow",
+          "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor log*": "allow",
+          "git show*": "allow",
+          "git -C /home/j2h4u/repos/j2h4u/ups-battery-monitor show*": "allow"
+        },
+        "edit": "deny",
+        "write": "deny",
+        "task": "deny",
+        "question": "deny",
+        "external_directory": {
+          "*": "deny"
+        },
+        "doom_loop": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "skill": "deny"
+      }
+    }
+  }
+}

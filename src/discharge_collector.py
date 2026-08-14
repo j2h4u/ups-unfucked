@@ -1,38 +1,50 @@
-"""Discharge sample collector — accumulation, cooldown, and calibration writes.
+"""Discharge sample collector — operational event capture and journaling.
 
 Extracted from MonitorDaemon to reduce its responsibility surface (ARCH-05).
-DischargeCollector owns the discharge buffer lifecycle, cooldown state machine,
-and calibration point writes — all stateful collaborator behavior that does not
-belong inline in the daemon orchestration loop.
+DischargeCollector owns the discharge buffer lifecycle and durable operational
+journal writes.  It deliberately does not mutate the learned battery model.
 """
 
 import logging
+import time
 from typing import Optional
 
+from src.discharge_journal import (
+    DischargeJournal,
+    JournalEnd,
+    JournalError,
+    JournalSample,
+    JournalStart,
+)
+from src.discharge_types import CompletedDischarge
 from src.event_classifier import EventType
 from src.model import BatteryModel
-from src.monitor_config import DISCHARGE_BUFFER_MAX_SAMPLES, Config, DischargeBuffer
-from src.soc_predictor import soc_from_voltage
+from src.monitor_config import (
+    DISCHARGE_BUFFER_MAX_SAMPLES,
+    DISCHARGE_SAMPLE_INTERVAL_SEC,
+    Config,
+    DischargeBuffer,
+)
 
 logger = logging.getLogger("ups-battery-monitor")
 
 
 class DischargeCollector:
-    """Discharge buffer lifecycle, cooldown state machine, and calibration writes.
+    """Capture the visible lifecycle of operational battery events.
 
     Extracted from MonitorDaemon to own all discharge collection state:
-    discharge_buffer, _discharge_start_time, _discharge_buffer_clear_countdown,
-    and _calibration_last_written_index.
+    discharge_buffer and event/journal state.  Operational events are durable
+    evidence only; they must never mutate the learned LUT in this collector.
 
     Usage:
         collector = DischargeCollector(battery_model, config, discharge_handler, ema_filter)
         # Each poll:
-        cooldown_expired = collector.track(voltage, timestamp, event_type, current_metrics)
-        if cooldown_expired:
-            _update_battery_health()
+        completion = collector.track(voltage, timestamp, event_type, current_metrics)
+        if completion is not None:
+            _update_battery_health(completion)
         # After _update_battery_health() processes the buffer:
         collector.reset_buffer()
-        # On OB->OL finalization (non-cooldown path):
+        # On the first visible OB->OL transition:
         collector.finalize(timestamp)
     """
 
@@ -42,13 +54,13 @@ class DischargeCollector:
         config: Config,
         discharge_handler,  # DischargeHandler — for discharge_predicted_runtime handoff
         ema_filter,  # EMAFilter — for stabilized check and load reads
+        journal: Optional[DischargeJournal] = None,
     ):
         """Initialize DischargeCollector.
 
         Args:
-            battery_model: Persistent battery model — used for increment_cycle_count(),
-                add_on_battery_time(), calibration_write(), calibration_batch_flush(),
-                get_lut().
+            battery_model: Persistent battery model — used for the current battery
+                epoch ID and read-only lifecycle context.
             config: Frozen Config dataclass — provides polling_interval, reporting_interval,
                 reference_load_percent.
             discharge_handler: DischargeHandler — discharge_predicted_runtime is set here
@@ -59,11 +71,19 @@ class DischargeCollector:
         self.config = config
         self.discharge_handler = discharge_handler
         self.ema_filter = ema_filter
+        self.journal = journal
 
         self.discharge_buffer = DischargeBuffer()
-        self._discharge_start_time: Optional[float] = None
-        self._discharge_buffer_clear_countdown: Optional[int] = None
-        self._calibration_last_written_index: int = 0
+        self._discharge_start_monotonic: Optional[float] = None
+        self._event_id: Optional[str] = None
+        self._journal_cursor = None
+        self._boot_recovery_checked = False
+        self._last_durable_sample_timestamp: Optional[float] = None
+        self._next_sample_deadline: Optional[float] = None
+        self._last_journal_sample_timestamp: Optional[float] = None
+        self._cached_observation: Optional[dict] = None
+        self._cal_provenance = False
+        self._sag_observation_payload: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -79,73 +99,113 @@ class DischargeCollector:
         """Current discharge buffer (read by MonitorDaemon._update_battery_health)."""
         return self.discharge_buffer
 
+    @property
+    def event_id(self) -> Optional[str]:
+        return self._event_id
+
     def track(
         self,
         voltage: float,
         timestamp: float,
         event_type,
         current_metrics,
-    ) -> bool:
+        raw_ups_data=None,
+        monotonic_timestamp: Optional[float] = None,
+        sag_observation=None,
+    ) -> Optional[CompletedDischarge]:
         """Drive the discharge state machine for one poll tick.
 
-        Handles: cooldown management, sample accumulation, calibration writes,
-        and finalization when transitioning back to OL.
+        Every visible OB starts/continues an event.  The first OB is always
+        journaled; subsequent measurement samples use a monotonic deadline and
+        are journaled every ten seconds.  The first visible OL closes the event
+        immediately after flushing the cached last OB observation.
 
         Args:
             voltage: Current EMA voltage reading.
             timestamp: Unix timestamp for this poll.
             event_type: Classified event (EventType enum).
-            current_metrics: CurrentMetrics with previous_event_type and time_rem_minutes.
+            current_metrics: CurrentMetrics with time_rem_minutes.
+            sag_observation: Optional immutable VoltageSagObservation produced by
+                SagTracker. It is embedded in the existing sample payload.
 
         Returns:
-            True if cooldown expired and caller must call _update_battery_health(),
-            False otherwise.
+            An immutable completion request on the first visible OL, otherwise
+            ``None``.
         """
-        previous_event_type = current_metrics.previous_event_type
+        monotonic_timestamp = (
+            monotonic_timestamp
+            if isinstance(monotonic_timestamp, (int, float))
+            and not isinstance(monotonic_timestamp, bool)
+            else time.monotonic()
+        )
+        if self._is_raw_calibration_status(raw_ups_data):
+            # CAL provenance is sticky metadata for the event, not a mutation
+            # guard.  All operational events are ineligible for model writes.
+            self._cal_provenance = True
 
-        if self._handle_discharge_cooldown(event_type, previous_event_type):
-            return True
+        if not self._boot_recovery_checked:
+            self._recover_open_event(event_type, timestamp)
+            self._boot_recovery_checked = True
 
         is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
         if is_discharging:
             if not self.discharge_buffer.collecting:
-                self._start_discharge_collection(timestamp, current_metrics)
+                # A caller may consume the completion asynchronously; do not
+                # carry CAL provenance from a previously closed event into a
+                # new OB event.
+                if self._event_id is not None and not self._is_raw_calibration_status(raw_ups_data):
+                    self._cal_provenance = False
+                self._start_discharge_collection(
+                    timestamp, current_metrics, raw_ups_data, monotonic_timestamp
+                )
+            if sag_observation is not None:
+                self._sag_observation_payload = {
+                    "observed_at": sag_observation.observed_at.isoformat(),
+                    "event_type": str(sag_observation.event_type),
+                    "voltage_before": float(sag_observation.voltage_before),
+                    "voltage_sag": float(sag_observation.voltage_sag),
+                    "load_percent": float(sag_observation.load_percent),
+                    "apparent_r_internal_ohm": float(sag_observation.apparent_r_internal_ohm),
+                }
             if voltage is not None:
-                if len(self.discharge_buffer.voltages) >= DISCHARGE_BUFFER_MAX_SAMPLES:
-                    logger.warning(
-                        f"Discharge buffer capped at {DISCHARGE_BUFFER_MAX_SAMPLES} samples",
-                        extra={
-                            "event_type": "discharge_buffer_capped",
-                            "max_samples": DISCHARGE_BUFFER_MAX_SAMPLES,
-                        },
-                    )
-                else:
-                    self.discharge_buffer.voltages.append(voltage)
-                    self.discharge_buffer.times.append(timestamp)
-                    load = self.ema_filter.load if self.ema_filter.load is not None else 0.0
-                    self.discharge_buffer.loads.append(load)
-                self._write_calibration_points(event_type)
-        else:
-            if self.discharge_buffer.collecting:
-                self.finalize(timestamp)
+                self._observe_ob(
+                    event_type,
+                    voltage,
+                    load=self.ema_filter.load if self.ema_filter.load is not None else 0.0,
+                    current_metrics=current_metrics,
+                    raw_ups_data=raw_ups_data,
+                    timestamp=timestamp,
+                    monotonic_timestamp=monotonic_timestamp,
+                )
+            return None
 
-        return False
+        # There is deliberately no cooldown or event coalescing here.  A
+        # visible OL is the recovery observation for this event, and a later
+        # OB opens a new event ID (OB -> OL -> OB is two events).
+        if self.discharge_buffer.collecting:
+            return self._close_completed_event(timestamp, monotonic_timestamp)
+
+        return None
 
     def finalize(self, timestamp: float) -> None:
         """End discharge collection: record on-battery time and reset buffer state.
 
-        Called when transitioning out of discharging state (non-cooldown path).
+        Called after the operational completion has been handed to the handler.
 
         Args:
             timestamp: Unix timestamp when collection ended.
         """
-        if self._discharge_start_time is not None:
-            on_battery_sec = timestamp - self._discharge_start_time
-            self.battery_model.add_on_battery_time(on_battery_sec)
-            self._discharge_start_time = None
+        self._discharge_start_monotonic = None
         self.discharge_buffer.collecting = False
-        self._calibration_last_written_index = 0
+        self._event_id = None
+        self._journal_cursor = None
+        self._cached_observation = None
+        self._last_journal_sample_timestamp = None
+        self._last_durable_sample_timestamp = None
+        self._next_sample_deadline = None
+        self._cal_provenance = False
+        self._sag_observation_payload = None
 
     def reset_buffer(self) -> None:
         """Replace discharge_buffer with a fresh DischargeBuffer.
@@ -154,11 +214,40 @@ class DischargeCollector:
         """
         self.discharge_buffer = DischargeBuffer()
 
+    def shutdown(self, timestamp: Optional[float] = None) -> None:
+        """Best-effort partial end marker; scientific processing is never run here."""
+        if self.journal is None or self._journal_cursor is None:
+            return
+        try:
+            self._flush_cached_observation()
+            self.journal.close_event(
+                self._journal_cursor,
+                JournalEnd(
+                    {
+                        "lifecycle": "closed_shutdown_requested",
+                        "last_confirmed_timestamp": self._last_durable_sample_timestamp,
+                        "last_accepted_seq": self._journal_cursor.seq,
+                        "evidence_class": "operational_partial",
+                        "model_processing_eligible": False,
+                        "eligibility_reasons": ["shutdown_requested", "operational_partial"],
+                    }
+                ),
+            )
+            self._journal_cursor = None
+        except (JournalError, OSError) as exc:
+            self._journal_failure("shutdown", exc)
+
     # ------------------------------------------------------------------
     # Private methods
     # ------------------------------------------------------------------
 
-    def _start_discharge_collection(self, timestamp: float, current_metrics) -> None:
+    def _start_discharge_collection(
+        self,
+        timestamp: float,
+        current_metrics,
+        raw_ups_data=None,
+        monotonic_timestamp: Optional[float] = None,
+    ) -> None:
         """Initialize discharge buffer for a new OL→OB event.
 
         Clears buffers, increments cycle count, snapshots predicted runtime.
@@ -177,12 +266,45 @@ class DischargeCollector:
         self.discharge_buffer.voltages = []
         self.discharge_buffer.times = []
         self.discharge_buffer.loads = []
-        self._discharge_start_time = timestamp
-        # cycle_count counts OL→OB transitions (including flicker),
-        # matching enterprise "transfer count" metric (Eaton/APC). This is
-        # NOT the same as discharge events (which require 300s+ duration).
-        # Actual battery wear proxy = cumulative_on_battery_sec.
-        self.battery_model.increment_cycle_count()
+        self.discharge_buffer.raw_voltages = []
+        self.discharge_buffer.raw_loads = []
+        self._discharge_start_monotonic = monotonic_timestamp
+        self._event_id = None
+        self._journal_cursor = None
+        self._cached_observation = None
+        self._last_journal_sample_timestamp = None
+        self._last_durable_sample_timestamp = None
+        self._next_sample_deadline = None
+        self._sag_observation_payload = None
+        if self.journal is not None:
+            try:
+                self._journal_cursor = self.journal.start_event(
+                    JournalStart(
+                        {
+                            "event_classification": event_type.name,
+                            "classifications": [event_type.name],
+                            "start_timestamp": timestamp,
+                            "raw_nut": self._raw_nut(raw_ups_data),
+                            "raw_voltage": (raw_ups_data or {}).get("battery.voltage"),
+                            "raw_load": (raw_ups_data or {}).get("ups.load"),
+                            "raw_input_voltage": (raw_ups_data or {}).get("input.voltage"),
+                            "raw_status": (raw_ups_data or {}).get("ups.status"),
+                            "predicted_runtime_minutes": (
+                                current_metrics.time_rem_minutes
+                                if self.ema_filter.stabilized
+                                else None
+                            ),
+                            "shutdown_threshold_minutes": self.config.shutdown_minutes,
+                            "cal_provenance": self._cal_provenance,
+                            "model_processing_eligible": False,
+                            "evidence_class": "operational",
+                            "battery_epoch_id": self.battery_model.get_battery_epoch_id(),
+                        }
+                    )
+                )
+                self._event_id = self._journal_cursor.event_id
+            except (JournalError, OSError) as exc:
+                self._journal_failure("start", exc)
         # Snapshot predicted runtime at OB start for prediction error logging
         if self.ema_filter.stabilized and current_metrics.time_rem_minutes is not None:
             self.discharge_handler.discharge_predicted_runtime = current_metrics.time_rem_minutes
@@ -198,92 +320,286 @@ class DischargeCollector:
             },
         )
 
-    def _handle_discharge_cooldown(self, event_type, previous_event_type) -> bool:
-        """Manage 60s cooldown timer after OB→OL transition.
+    @staticmethod
+    def _raw_nut(raw_ups_data) -> dict:
+        """Keep only the UPS fields used by capture and classification."""
+        raw = raw_ups_data or {}
+        return {
+            key: raw[key]
+            for key in ("battery.voltage", "ups.load", "input.voltage", "ups.status")
+            if key in raw
+        }
 
-        OB→OL→OB within 60s is treated as a single discharge event (power flicker).
-        Returns True if cooldown expired — caller must call _update_battery_health()
-        and return (do NOT continue processing the current tick).
+    def _observe_ob(
+        self,
+        event_type,
+        voltage: float,
+        load: float,
+        current_metrics,
+        raw_ups_data,
+        timestamp: float,
+        monotonic_timestamp: float,
+    ) -> None:
+        """Cache each acquisition and persist on a monotonic ten-second deadline."""
+        raw = self._raw_nut(raw_ups_data)
+        payload = {
+            "timestamp": timestamp,
+            "event_classification": event_type.name,
+            "raw_nut": raw,
+            "raw_voltage": raw.get("battery.voltage"),
+            "raw_load": raw.get("ups.load"),
+            "raw_input_voltage": raw.get("input.voltage"),
+            "raw_status": raw.get("ups.status"),
+            "ema_voltage": voltage,
+            "ema_load": load,
+            "model_input_soc": (
+                current_metrics.soc if isinstance(current_metrics.soc, (int, float)) else None
+            ),
+            "model_input_runtime_minutes": current_metrics.time_rem_minutes,
+            "model_input_event": event_type.name,
+            "cal_provenance": self._cal_provenance,
+        }
+        if self._sag_observation_payload is not None:
+            # Keep this observation in the established sample payload. It is
+            # diagnostic evidence only and never grants model/RLS write rights.
+            payload["voltage_sag_observation"] = dict(self._sag_observation_payload)
+        self._cached_observation = payload
+        should_persist = (
+            self._last_journal_sample_timestamp is None
+            or self._next_sample_deadline is None
+            or monotonic_timestamp >= self._next_sample_deadline
+        )
+        if should_persist:
+            self._persist_observation(payload, monotonic_timestamp)
 
-        Args:
-            event_type: Current event type.
-            previous_event_type: Event type from the previous poll.
-
-        Returns:
-            True if cooldown expired (buffer ready for processing), False otherwise.
-        """
-        is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
-
-        if not is_discharging:
-            if previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
-                logger.info(
-                    "Power loss detected; starting 60s discharge cooldown",
-                    extra={"event_type": "discharge_cooldown_start"},
-                )
-                self._discharge_buffer_clear_countdown = 60
-
-        if is_discharging and self._discharge_buffer_clear_countdown is not None:
-            logger.info(
-                "Power restored during cooldown; treating as discharge continuation",
-                extra={"event_type": "discharge_cooldown_cancelled"},
+    def _persist_observation(self, payload: dict, monotonic_timestamp: float) -> None:
+        """Persist one selected observation and mirror it into the bounded buffer."""
+        persisted = self._append_journal_sample_payload(payload)
+        if persisted:
+            self._last_journal_sample_timestamp = payload.get("timestamp")
+            self._last_durable_sample_timestamp = payload.get("timestamp")
+            self._next_sample_deadline = monotonic_timestamp + 10.0
+        if len(self.discharge_buffer.voltages) >= DISCHARGE_BUFFER_MAX_SAMPLES:
+            logger.warning(
+                "Discharge buffer capped at %s samples",
+                DISCHARGE_BUFFER_MAX_SAMPLES,
+                extra={
+                    "event_type": "discharge_buffer_capped",
+                    "max_samples": DISCHARGE_BUFFER_MAX_SAMPLES,
+                },
             )
-            self._discharge_buffer_clear_countdown = None
-
-        if self._discharge_buffer_clear_countdown is not None:
-            self._discharge_buffer_clear_countdown -= self.config.polling_interval
-            if self._discharge_buffer_clear_countdown <= 0:
-                self._discharge_buffer_clear_countdown = None
-                logger.info(
-                    "Cooldown expired (60s OL confirmed); clearing discharge buffer and calling _update_battery_health",
-                    extra={"event_type": "discharge_cooldown_expired"},
-                )
-                return True
-
-        return False
-
-    def _write_calibration_points(self, event_type) -> None:
-        """Flush accumulated discharge points to LUT every reporting_interval during any blackout.
-
-        Args:
-            event_type: Current event type (used for logging context).
-        """
-        reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
-        if (
-            len(self.discharge_buffer.voltages) - self._calibration_last_written_index
-            < reporting_interval_polls
-        ):
             return
+        self.discharge_buffer.voltages.append(payload["ema_voltage"])
+        self.discharge_buffer.times.append(payload["timestamp"])
+        self.discharge_buffer.loads.append(payload["ema_load"])
+        self.discharge_buffer.raw_voltages.append(payload.get("raw_voltage"))
+        self.discharge_buffer.raw_loads.append(payload.get("raw_load"))
 
-        for i in range(self._calibration_last_written_index, len(self.discharge_buffer.voltages)):
-            try:
-                v = self.discharge_buffer.voltages[i]
-                t = self.discharge_buffer.times[i]
-                soc_est = soc_from_voltage(v, self.battery_model.get_lut())
-                self.battery_model.calibration_write(v, soc_est, t)
-                self._calibration_last_written_index = i + 1
-            except (KeyError, ValueError, OSError) as e:
-                logger.error(
-                    f"Calibration write failed at index {i}: {e}",
-                    exc_info=True,
-                )
-                self._calibration_last_written_index = i + 1
-                continue
+    @staticmethod
+    def _is_raw_calibration_status(raw_ups_data) -> bool:
+        """Return whether the raw UPS status identifies a CAL self-test."""
+        status = (raw_ups_data or {}).get("ups.status")
+        return DischargeCollector._status_has_calibration_flag(status)
 
-        # Batch flush: persist all accumulated points once per reporting_interval
-        points_written = self._calibration_last_written_index
-        if points_written > 0:
+    @staticmethod
+    def _status_has_calibration_flag(status) -> bool:
+        return isinstance(status, str) and "CAL" in status.split()
+
+    def _recover_open_event(self, event_type, timestamp: float) -> None:
+        """Reattach or close an event left open by an earlier boot."""
+        if self.journal is None or self.journal.health.open_event_id is None:
+            return
+        event_id = self.journal.health.open_event_id
+        try:
+            projection = self.journal.replay()
+            event = projection.events[event_id]
+            if (
+                event.start is None
+                or event.start.payload.get("battery_epoch_id")
+                != self.battery_model.get_battery_epoch_id()
+            ):
+                # Keep an unknown/previous-battery event as raw history-only
+                # evidence, but close it so the journal can accept new events.
+                cursor = self.journal.resume_event(event_id)
+                start_payload = event.start.payload if event.start is not None else {}
+                last_sample = event.samples[-1].payload if event.samples else {}
+                epoch_reason = (
+                    "missing_battery_epoch_id"
+                    if "battery_epoch_id" not in start_payload
+                    else "battery_epoch_mismatch"
+                )
+                last_sample_timestamp = last_sample.get("timestamp")
+                logger.warning(
+                    "Closing open discharge event %s as history-only: %s",
+                    event_id,
+                    epoch_reason,
+                )
+                self.journal.close_event(
+                    cursor,
+                    JournalEnd(
+                        {
+                            "lifecycle": "closed_epoch_mismatch",
+                            "disposition": "history_only",
+                            "reason": epoch_reason,
+                            "last_confirmed_timestamp": last_sample_timestamp,
+                            "last_confirmed_ob_timestamp": last_sample_timestamp,
+                            "observed_recovery_timestamp": timestamp,
+                            "observed_duration_sec": None,
+                            "last_accepted_seq": cursor.seq,
+                            "evidence_class": "operational_partial",
+                            "model_processing_eligible": False,
+                            "eligibility_reasons": [epoch_reason, "history_only"],
+                        }
+                    ),
+                )
+                return
+            if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+                self._cal_provenance = bool(
+                    event.start and event.start.payload.get("cal_provenance")
+                ) or any(
+                    bool(sample.payload.get("cal_provenance"))
+                    or self._status_has_calibration_flag(sample.payload.get("raw_status"))
+                    for sample in event.samples
+                    if not sample.payload.get("reboot_gap")
+                )
+                self._event_id = event_id
+                self._journal_cursor = self.journal.resume_event(event_id)
+                self._journal_cursor = self.journal.append_reboot_gap(
+                    self._journal_cursor, payload={"reboot_timestamp": timestamp}
+                )
+                self.discharge_buffer.collecting = True
+                start_payload = event.start.payload if event.start is not None else {}
+                # A reboot creates a non-integrable gap.  Start a fresh
+                # monotonic segment for any duration observed after resume.
+                self._discharge_start_monotonic = time.monotonic()
+                for sample in event.samples:
+                    if sample.payload.get("reboot_gap"):
+                        continue
+                    voltage = sample.payload.get("ema_voltage")
+                    sample_time = sample.payload.get("timestamp")
+                    if isinstance(voltage, (int, float)) and isinstance(sample_time, (int, float)):
+                        self.discharge_buffer.voltages.append(float(voltage))
+                        self.discharge_buffer.times.append(float(sample_time))
+                        self.discharge_buffer.loads.append(
+                            float(sample.payload.get("ema_load", 0.0))
+                        )
+                        self.discharge_buffer.raw_voltages.append(sample.payload.get("raw_voltage"))
+                        self.discharge_buffer.raw_loads.append(sample.payload.get("raw_load"))
+                        self._cached_observation = dict(sample.payload)
+                        self._last_journal_sample_timestamp = float(sample_time)
+                        self._last_durable_sample_timestamp = float(sample_time)
+                self._next_sample_deadline = time.monotonic() + DISCHARGE_SAMPLE_INTERVAL_SEC
+                logger.warning("Resumed open discharge event %s after reboot", event_id)
+            else:
+                cursor = self.journal.resume_event(event_id)
+                start_payload = event.start.payload if event.start is not None else {}
+                last_sample = event.samples[-1].payload if event.samples else start_payload
+                self.journal.close_event(
+                    cursor,
+                    JournalEnd(
+                        {
+                            "lifecycle": "closed_restart_recovered",
+                            "last_confirmed_timestamp": last_sample.get(
+                                "timestamp", last_sample.get("start_timestamp")
+                            ),
+                            "observed_recovery_timestamp": timestamp,
+                            "last_confirmed_ob_timestamp": last_sample.get(
+                                "timestamp", last_sample.get("start_timestamp")
+                            ),
+                            "observed_duration_sec": None,
+                            "last_accepted_seq": cursor.seq,
+                            "evidence_class": "operational_gapped",
+                            "model_processing_eligible": False,
+                            "eligibility_reasons": ["restart_recovered_gap", "operational"],
+                        }
+                    ),
+                )
+                logger.warning("Closed open discharge event %s during boot recovery", event_id)
+        except (JournalError, OSError, KeyError, TypeError, ValueError) as exc:
+            self._journal_failure("boot recovery", exc)
+
+    def _append_journal_sample_payload(self, payload: dict) -> bool:
+        if self.journal is None or self._journal_cursor is None:
+            return False
+        try:
+            self._journal_cursor = self.journal.append_sample(
+                self._journal_cursor, JournalSample(payload)
+            )
+            return True
+        except (JournalError, OSError, KeyError, TypeError, ValueError) as exc:
+            self._journal_failure("sample", exc)
+            return False
+
+    def _close_completed_event(
+        self, timestamp: float, monotonic_timestamp: Optional[float] = None
+    ) -> Optional[CompletedDischarge]:
+        if not self.discharge_buffer.collecting:
+            return None
+        event_id = self._event_id
+        self._flush_cached_observation(monotonic_timestamp)
+        last_ob = self._last_durable_sample_timestamp
+        mono_start = self._discharge_start_monotonic
+        mono_end = monotonic_timestamp if monotonic_timestamp is not None else time.monotonic()
+        duration = max(0.0, mono_end - mono_start) if mono_start is not None else None
+        if self.journal is not None and self._journal_cursor is not None:
             try:
-                self.battery_model.calibration_batch_flush()
-                logger.info(
-                    f"Batch flushed {points_written} calibration points to disk",
-                    extra={
-                        "event_type": "calibration_batch_flush",
-                        "points_written": points_written,
-                    },
+                self.journal.close_event(
+                    self._journal_cursor,
+                    JournalEnd(
+                        {
+                            "lifecycle": "closed_power_restored",
+                            "observed_recovery_timestamp": timestamp,
+                            "last_confirmed_ob_timestamp": last_ob,
+                            "last_confirmed_timestamp": last_ob,
+                            "last_accepted_seq": self._journal_cursor.seq,
+                            "observed_duration_sec": duration,
+                            "duration_sec": duration,
+                            "evidence_class": "operational",
+                            "model_processing_eligible": False,
+                            "eligibility_reasons": [
+                                "operational_event",
+                                "not_a_controlled_capacity_test",
+                            ],
+                            "cal_provenance": self._cal_provenance,
+                        }
+                    ),
                 )
-            except OSError as e:
-                logger.error(
-                    f"Calibration batch flush failed: {e}",
-                    exc_info=True,
-                    extra={"event_type": "calibration_flush_failed"},
-                )
+            except (JournalError, OSError) as exc:
+                self._journal_failure("end", exc)
+        # Closing is a lifecycle transition, not a delayed completion.  The
+        # monitor may process the returned completion immediately, while this
+        # guard also prevents repeated OL polls from appending duplicate ends.
+        self.discharge_buffer.collecting = False
+        self._journal_cursor = None
+        return CompletedDischarge(
+            event_id,
+            "closed_power_restored",
+            "operational",
+            tuple(self.discharge_buffer.voltages),
+            tuple(self.discharge_buffer.times),
+            tuple(self.discharge_buffer.loads),
+            False,
+            ("operational_event", "not_a_controlled_capacity_test"),
+        )
+
+    def _flush_cached_observation(self, monotonic_timestamp: Optional[float] = None) -> bool:
+        """Persist the latest accepted observation before writing an event end."""
+        if self._cached_observation is None:
+            return True
+        if self._last_journal_sample_timestamp == self._cached_observation.get("timestamp"):
+            return True
+        self._persist_observation(
+            self._cached_observation,
+            monotonic_timestamp if monotonic_timestamp is not None else time.monotonic(),
+        )
+        return self._last_journal_sample_timestamp == self._cached_observation.get("timestamp")
+
+    def _journal_failure(self, operation: str, exc: BaseException) -> None:
+        if self.journal is not None:
+            self.journal.mark_degraded(f"{operation}: {exc}")
+        logger.error(
+            "Discharge journal %s failed; continuing degraded: %s",
+            operation,
+            exc,
+            exc_info=True,
+        )

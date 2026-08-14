@@ -20,7 +20,29 @@ Analogy: engine wear. A new engine delivers full power; after 100k km — only 8
 
 SoH affects runtime: at SoH=0.8, the battery delivers only 80% of its nominal runtime.
 
-Calculated after every qualifying discharge (≥300s, ΔSoC ≥5%) using **capacity-based method**: coulomb counting measures Ah delivered during discharge, LUT-based ΔSoC extrapolates to full-discharge capacity, and `SoH = measured_capacity / rated_capacity`. The update uses **Bayesian prior-posterior blending** weighted by ΔSoC depth — shallow events (small ΔSoC) barely change SoH, while deep discharges carry full weight.
+An **authoritative** model value is produced only when the event satisfies the configured
+scientific evidence gate. A natural partial blackout or reboot-gapped recovery may be retained as
+operational runtime evidence, but it does not update absolute capacity, SoH, or Peukert state.
+For an eligible controlled-capacity event, the capacity-based method uses measured current × time,
+LUT-based ΔSoC, and `SoH = measured_capacity / rated_capacity`; the update is weighted by the
+observed discharge depth.
+
+### Evidence class
+
+The scientific quality label attached to an event, independent of whether its lifecycle is
+closed. `operational_partial` and `operational_gapped` support voltage/load trajectory and
+runtime-to-safety-threshold analysis only. `operational_complete_to_safety_threshold` supports
+practical runtime modelling but is not full battery capacity. `controlled_quick_test` is a switch
+over/health check. Only `controlled_capacity_test`, with a defined load/current, temperature
+context, endpoint, and complete observation, can support authoritative capacity and SoH (and only
+supports Peukert when the load/rate evidence is sufficient).
+
+### Lifecycle
+
+The operational state of a journal event: `open`, `closed_power_restored`,
+`closed_shutdown_requested`, `closed_restart_recovered`, or `closed_corrupt_tail`. Lifecycle
+closure means the observation stream has an end marker; it does not mean the event is scientifically
+complete.
 
 ### VRLA — Valve-Regulated Lead-Acid
 Sealed, maintenance-free lead-acid battery type. Found in most consumer UPS units, including CyberPower UT850EG.
@@ -40,7 +62,9 @@ The 11.0–10.5V range where VRLA battery voltage drops **sharply and non-linear
 
 Analogy: a mountain slope. Most of the discharge is a gentle descent (13.4V → 11.0V). Then — a cliff. Without knowing the cliff shape, runtime prediction will be wildly wrong.
 
-The daemon measures the cliff shape automatically during deep discharges (long blackouts or `test.battery.start.deep`).
+The daemon can retain observations from long blackouts, but a controlled capacity test is the
+only path for an authoritative full-capacity claim. Do not invoke `test.battery.start.deep`
+automatically; see the supervised protocol.
 
 ---
 
@@ -89,7 +113,8 @@ A number from 1.0 to ~1.4 characterizing battery "quality":
 - **1.2** = typical VRLA (our code default)
 - **1.4** = old/cheap battery, significant capacity loss under load
 
-Auto-calibration: after every blackout, the code compares predicted vs actual runtime. If the error exceeds 10%, it computes a new exponent and saves it to `model.json`.
+Calibration is evidence-gated. A partial or reboot-gapped event may support operational runtime
+trends, but it is not a complete discharge for an authoritative Peukert fit.
 
 ---
 
@@ -111,14 +136,18 @@ A ring buffer that:
 ### EMA Stabilization
 The EMA needs time to "warm up" — initial values are unreliable because the average hasn't settled.
 
-Threshold: **12 samples** (≈2 minutes at 10-second poll interval). Until stabilized, IR compensation and SoC calculation are disabled (logs show `stabilized=False`, `V_norm=N/A`).
+Threshold: **120 acquisition ticks** (≈2 minutes at the 1-second physical poll interval). Until
+stabilized, IR compensation and SoC calculation are disabled (logs show `stabilized=False`,
+`V_norm=N/A`).
 
-Why 12, not 3: at α≈0.08 (window=120s, poll=10s), at least 12 samples are needed for the EMA to reach 63% of the true value (one time constant τ).
+Why 120, not 12: at α≈0.008 (window=120s, physical poll=1s), about 120 acquisition ticks are
+needed for the EMA to reach 63% of the true value (one time constant τ).
 
 ### Alpha (α) — Smoothing Coefficient
 Weight of the new sample in the EMA. Formula: `α = 1 - exp(-Δt / τ)`, where Δt = poll interval, τ = smoothing window.
 
-With our settings (Δt=10s, τ=120s): **α ≈ 0.08**. This means each new sample contributes 8% to the result, while 92% is inertia from previous values.
+With our settings (Δt=1s, τ=120s): **α ≈ 0.008**. This means each acquisition tick contributes
+about 0.8% to the result, while the remainder is inertia from previous values.
 
 ### IR Compensation (Internal Resistance Compensation)
 Corrects battery voltage for load effects.
@@ -161,7 +190,9 @@ Battery and UPS physical parameters stored in `model.json`:
 - `ir_compensation.reference_load_percent` — baseline load
 
 ### SoH History
-Array of `{date, soh}` entries — battery degradation history. Each blackout adds a point. Linear regression on these points predicts the replacement date.
+Array of `{date, soh}` entries — authoritative battery degradation history. Only accepted
+evidence-gated results add points; a partial/recovered blackout is not an SoH sample. Linear
+regression on the retained history predicts the replacement date.
 
 ---
 
@@ -190,9 +221,14 @@ Distinguishes real from test by `input.voltage`: during a test, the UPS disconne
 
 ### Discharge Buffer
 Accumulates (voltage, time) pairs while running on battery (OB). On power restoration (OB→OL), the data is used for:
-1. SoH calculation (area under curve)
-2. Peukert exponent auto-calibration
-3. In calibration mode — writing points to the LUT
+1. operational runtime and voltage/load evidence;
+2. scientific processing only when the event's evidence class passes its explicit gate;
+3. LUT observation updates where the current implementation permits them.
+
+The durable source is the append-only JSONL journal at
+`~/.config/ups-battery-monitor/discharge-events-v1.jsonl`, not the in-memory buffer. A synced
+sample survives SIGTERM, crash, and reboot replay; an unknown reboot interval remains an explicit
+gap and is never integrated.
 
 ---
 

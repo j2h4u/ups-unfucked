@@ -109,6 +109,11 @@ UPS_NAME="cyberpower"
 UPS_VIRTUAL_NAME="${UPS_NAME}-virtual"
 RUNTIME_DIR="/run/ups-battery-monitor"
 
+if [[ -z "$INSTALL_HOME" || "$INSTALL_HOME" == "/" ]]; then
+    log_error "Could not resolve a safe home directory for $RUN_USER"
+    exit 1
+fi
+
 log_info "Repository root: $REPO_ROOT"
 log_info "Service will run as user: $RUN_USER"
 
@@ -121,6 +126,75 @@ if [[ ! -f "$REPO_ROOT/config/dummy-ups.conf" ]]; then
     log_error "NUT config not found at $REPO_ROOT/config/dummy-ups.conf"
     exit 1
 fi
+
+# === PRIVATE BATTERY STATE ===
+# The daemon writes model.json and its append-only discharge journal below this
+# directory.  Refuse symlinks before any chmod/chown/touch so reinstall cannot
+# redirect state writes outside the configured home.  Existing journal contents
+# are never replaced; only its ownership and mode are repaired.
+
+ensure_private_state() {
+    local config_dir="$INSTALL_HOME/.config"
+    local state_dir="$config_dir/ups-battery-monitor"
+    local journal="$state_dir/discharge-events-v1.jsonl"
+
+    for path in "$INSTALL_HOME" "$config_dir" "$state_dir" "$journal"; do
+        if [[ -L "$path" ]]; then
+            log_error "Refusing symlink in battery state path: $path"
+            exit 1
+        fi
+    done
+
+    if [[ -e "$config_dir" && ! -d "$config_dir" ]]; then
+        log_error "Battery config parent is not a directory: $config_dir"
+        exit 1
+    fi
+    if [[ -e "$state_dir" && ! -d "$state_dir" ]]; then
+        log_error "Battery state path is not a directory: $state_dir"
+        exit 1
+    fi
+    if [[ -e "$journal" && ! -f "$journal" ]]; then
+        log_error "Discharge journal is not a regular file: $journal"
+        exit 1
+    fi
+
+    # Stop an existing writer before changing any shared private state. The
+    # final service restart below starts it again after installation completes.
+    if systemctl is-active --quiet ups-battery-monitor 2>/dev/null; then
+        run_cmd systemctl stop ups-battery-monitor
+        if [[ "$DRY_RUN" == "yes" ]]; then
+            log_info "[DRY-RUN] Existing monitor service would be stopped before private state changes"
+        else
+            log_ok "Monitor service stopped before private state changes"
+        fi
+    else
+        log_info "Monitor service is not active; no stop needed before private state changes"
+    fi
+
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would ensure private model directory: $state_dir (owner=$RUN_USER, mode=0700)"
+        if [[ -e "$journal" ]]; then
+            echo "[DRY-RUN] Would preserve and secure existing journal: $journal (owner=$RUN_USER, mode=0600)"
+        else
+            echo "[DRY-RUN] Would create journal: $journal (owner=$RUN_USER, mode=0600)"
+        fi
+        return
+    fi
+
+    mkdir -p -- "$state_dir"
+    chmod 700 -- "$state_dir"
+    chown --no-dereference "$RUN_USER:$RUN_USER" "$state_dir"
+
+    if [[ ! -e "$journal" ]]; then
+        # touch is safe here because the symlink check above rejected the path.
+        touch -- "$journal"
+    fi
+    chmod 600 -- "$journal"
+    chown --no-dereference "$RUN_USER:$RUN_USER" "$journal"
+    log_ok "Private battery state ready: $state_dir (0700), journal preserved at $journal (0600)"
+}
+
+ensure_private_state
 
 # === SERVICE FILE INSTALLATION ===
 

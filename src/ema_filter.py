@@ -10,7 +10,7 @@ class MetricEMA:
         self,
         metric_name: str,
         window_sec: int = 120,
-        poll_interval_sec: int = 10,
+        poll_interval_sec: int = 1,
         sensitivity: float = 0.05,
     ):
         """Initialize MetricEMA for a named metric.
@@ -100,7 +100,7 @@ class EMAFilter:
       most 2s old.
     """
 
-    def __init__(self, window_sec=120, poll_interval_sec=10, sensitivity=0.05):
+    def __init__(self, window_sec=120, poll_interval_sec=1, sensitivity=0.05):
         """Initialize EMAFilter for voltage and load tracking.
 
         Args:

@@ -22,11 +22,6 @@ from pathlib import Path
 
 from src.model import BatteryModel
 
-# Mirrors monitor_config.HEALTH_ENDPOINT_PATH. Defined here instead of imported
-# because importing monitor_config runs `git describe` at module load (it computes
-# DAEMON_VERSION eagerly) — too heavy for a banner that runs on every shell login.
-DEFAULT_HEALTH_PATH = Path("/run/ups-battery-monitor/ups-health.json")
-
 
 def _load_health(health_path: Path) -> dict:
     """Read the daemon's health endpoint JSON. Missing or invalid → empty dict."""
@@ -49,20 +44,43 @@ def _capacity_status(sample_count: int, converged: bool) -> str:
     return "locked" if converged else "measuring"
 
 
-def render_motd(model_path: Path | None = None, health_path: Path | None = None) -> str:
+def _health_bool(value: object) -> str:
+    """Render an optional health boolean without treating missing data as healthy."""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return "unknown"
+
+
+def _health_text(value: object, *, limit: int = 256) -> str:
+    """Keep health values safe for the flat key=value MOTD protocol."""
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.replace("=", " ").split())[:limit]
+
+
+def _health_count(value: object) -> str:
+    """Render a non-negative counter, or empty when the endpoint did not provide one."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return str(value)
+    return ""
+
+
+def render_motd(*, model_path: Path, health_path: Path) -> str:
     """Build the ``key=value`` block consumed by the MOTD modules.
 
     Args:
-        model_path: Path to model.json. Defaults to BatteryModel's standard location.
-        health_path: Path to the health endpoint. Defaults to DEFAULT_HEALTH_PATH.
+        model_path: Explicit path to model.json.
+        health_path: Explicit path to the health endpoint.
 
     Returns:
         Newline-joined ``key=value`` lines. Absent values render as empty strings.
     """
-    health = _load_health(health_path or DEFAULT_HEALTH_PATH)
+    health = _load_health(Path(health_path))
     # Source soh_alert_threshold from the daemon's health endpoint so the MOTD replacement
     # date matches the daemon for any configured value; 0.80 only when no daemon wrote it.
-    model = BatteryModel(model_path, soh_threshold=health.get("soh_alert_threshold", 0.80))
+    model = BatteryModel(Path(model_path), soh_threshold=health.get("soh_alert_threshold", 0.80))
     state = model.state
     convergence = model.get_convergence_status()
 
@@ -80,6 +98,18 @@ def render_motd(model_path: Path | None = None, health_path: Path | None = None)
         "capacity_samples": str(convergence.sample_count),
         "capacity_status": _capacity_status(convergence.sample_count, convergence.converged),
         "capacity_confidence_pct": str(round(convergence.confidence_percent)),
+        # --- Durable discharge journal (runtime health endpoint) ---
+        # These operational fields are deliberately separate from the authoritative
+        # model capacity/SoH fields above.  A partial/recovered event is evidence of
+        # observed runtime, not a capacity or SoH sample.
+        "journal_healthy": _health_bool(health.get("journal_healthy")),
+        "active_event_id": _health_text(health.get("active_event_id")),
+        "journal_last_synced_seq": _health_count(health.get("journal_last_synced_seq")),
+        "journal_last_error": _health_text(health.get("journal_last_error")),
+        "pending_replay": _health_bool(health.get("pending_replay")),
+        "recovered_partial_events": _health_count(health.get("recovered_partial_events")),
+        "capacity_evidence": "authoritative_model_only",
+        "operational_evidence_note": "partial_or_recovered_events_excluded_from_capacity_soh",
         # --- Scheduling (runtime health endpoint) ---
         "next_test_timestamp": health.get("next_test_timestamp") or "",
     }
@@ -89,15 +119,24 @@ def render_motd(model_path: Path | None = None, health_path: Path | None = None)
 def main() -> None:
     """Print the MOTD status block to stdout.
 
-    Paths default to the standard locations; UPS_MODEL_PATH / UPS_HEALTH_PATH
-    override them (used by the MOTD scripts' local-test path and by tests).
+    The CLI is the production composition root and is therefore the only place
+    that supplies the standard locations. UPS_MODEL_PATH / UPS_HEALTH_PATH
+    override them for local invocations and tests.
     """
     model_env = os.environ.get("UPS_MODEL_PATH")
     health_env = os.environ.get("UPS_HEALTH_PATH")
+    model_path = (
+        Path(model_env)
+        if model_env
+        else Path.home() / ".config" / "ups-battery-monitor" / "model.json"
+    )
+    health_path = (
+        Path(health_env) if health_env else Path("/run/ups-battery-monitor/ups-health.json")
+    )
     print(
         render_motd(
-            model_path=Path(model_env) if model_env else None,
-            health_path=Path(health_env) if health_env else None,
+            model_path=model_path,
+            health_path=health_path,
         )
     )
 

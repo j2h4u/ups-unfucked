@@ -6,6 +6,7 @@ parsed fields rather than the raw string.
 """
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from src.model import BatteryModel
@@ -23,7 +24,12 @@ def _render(model_path: Path, health_path: Path) -> dict[str, str]:
 
 
 def _write_model(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data))
+    # Build a complete current-schema fixture, then override only fields under test.
+    # The loader intentionally rejects partial persisted state.
+    state = deepcopy(BatteryModel(path).state)
+    state.update(data)
+    state["battery_epoch_id"] = "00000000-0000-0000-0000-000000000001"
+    path.write_text(json.dumps(state))
 
 
 def _write_health(path: Path, data: dict) -> None:
@@ -44,7 +50,25 @@ def test_missing_files_yield_empty_unknown_state(tmp_path):
 def test_two_samples_report_measuring(tmp_path):
     """Fewer than 3 estimates → measuring, zero confidence, latest Ah surfaced."""
     model_path = tmp_path / "model.json"
-    _write_model(model_path, {"capacity_estimates": [{"ah_estimate": 6.0}, {"ah_estimate": 6.1}]})
+    _write_model(
+        model_path,
+        {
+            "capacity_estimates": [
+                {
+                    "ah_estimate": 6.0,
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
+                {
+                    "ah_estimate": 6.1,
+                    "timestamp": "2026-01-02T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
+            ]
+        },
+    )
 
     fields = _render(model_path, tmp_path / "absent-health.json")
 
@@ -61,9 +85,24 @@ def test_three_tight_samples_report_locked(tmp_path):
         model_path,
         {
             "capacity_estimates": [
-                {"ah_estimate": 6.0},
-                {"ah_estimate": 6.05},
-                {"ah_estimate": 5.95},
+                {
+                    "ah_estimate": 6.0,
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
+                {
+                    "ah_estimate": 6.05,
+                    "timestamp": "2026-01-02T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
+                {
+                    "ah_estimate": 5.95,
+                    "timestamp": "2026-01-03T00:00:00Z",
+                    "confidence": 0.5,
+                    "metadata": {},
+                },
             ]
         },
     )
@@ -218,3 +257,36 @@ def test_null_next_test_in_health_renders_empty(tmp_path):
     fields = _render(model_path, health_path)
 
     assert fields["next_test_timestamp"] == ""
+
+
+def test_journal_health_and_operational_evidence_are_separate(tmp_path):
+    """Journal state is surfaced without turning recovered events into capacity samples."""
+    model_path = tmp_path / "model.json"
+    _write_model(model_path, {})
+    health_path = tmp_path / "health.json"
+    _write_health(
+        health_path,
+        {
+            "journal_healthy": False,
+            "active_event_id": "event-123",
+            "journal_last_synced_seq": 9,
+            "journal_last_error": "write failed\n/path=private",
+            "pending_replay": True,
+            "recovered_partial_events": 2,
+        },
+    )
+
+    fields = _render(model_path, health_path)
+
+    assert fields["journal_healthy"] == "false"
+    assert fields["active_event_id"] == "event-123"
+    assert fields["journal_last_synced_seq"] == "9"
+    assert fields["journal_last_error"] == "write failed /path private"
+    assert fields["pending_replay"] == "true"
+    assert fields["recovered_partial_events"] == "2"
+    assert fields["capacity_evidence"] == "authoritative_model_only"
+    assert (
+        fields["operational_evidence_note"]
+        == "partial_or_recovered_events_excluded_from_capacity_soh"
+    )
+    assert fields["capacity_samples"] == "0"

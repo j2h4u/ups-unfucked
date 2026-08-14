@@ -1,6 +1,6 @@
 # ups-unfucked — Current Context
 
-This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-03-17 (post v2.0, all audit findings closed).
+This document provides essential context for expert reviewers, panels, and new contributors. Updated 2026-08-14 after the durable-discharge incident and journal design.
 
 ## What This Is
 
@@ -20,9 +20,10 @@ A Python daemon that transforms a budget CyberPower UT850EG ($30 UPS) into an en
 ```
 Real UPS (usbhid-ups) → NUT upsd (:3493)
     ↓ TCP (LIST VAR, single connection per poll)
-ups-battery-monitor daemon (10s poll interval)
+ups-battery-monitor daemon (1s physical poll; 10s durable samples; 60s human report)
     ↓ MetricEMA (per-metric adaptive EMA) → IR compensation → SoC (voltage LUT) → Runtime (Peukert)
     ↓ Event classifier (ONLINE / BLACKOUT_REAL / BLACKOUT_TEST)
+    ↓ Event journal (raw evidence) → lifecycle/evidence classification → gated model updates
     ↓ SoH tracking → Capacity estimation → Replacement prediction → R_internal measurement
     ↓ Enterprise counters (cycle count, cumulative on-battery time, install date)
     ↓ Per-poll writes during OB state (no 60s lag on LB flag)
@@ -36,7 +37,12 @@ health.json (last_poll, SoC, online, capacity metrics — for external monitorin
 
 **Key principles**:
 - Daemon is a **data source**, not a decision maker. Shutdown logic belongs to upsmon. Daemon publishes corrected metrics and LB flag through the virtual UPS.
-- **Memory is source of truth for model.json.** Daemon loads model.json at startup and holds state in memory. Writes to disk happen only on real events (discharge complete, battery replacement, capacity convergence, graceful shutdown) — not on every poll or sag. Between events, the file is not touched. To edit model.json while daemon is running: `systemctl stop ups-battery-monitor`, edit, `systemctl start ups-battery-monitor`.
+- **The journal is source of truth for raw operational discharge evidence.** It lives at
+  `~/.config/ups-battery-monitor/discharge-events-v1.jsonl`, uses one synced JSON record per
+  accepted observation, and is replayed at boot. `model.json` remains the authoritative derived
+  battery state, but partial or reboot-gapped events never update its absolute capacity, SoH, or
+  Peukert fields. To edit model.json while daemon is running: `systemctl stop
+  ups-battery-monitor`, edit, `systemctl start ups-battery-monitor`.
 
 ## What The Daemon Computes (vs firmware)
 
@@ -44,8 +50,8 @@ health.json (last_poll, SoC, online, capacity metrics — for external monitorin
 |--------|----------|--------|--------|
 | Charge % | Coulomb counter (drifts, ±50% error) | Voltage→SoC lookup table | LUT with linear interpolation, IR-compensated |
 | Runtime | ~22 min reported, actual ~47 min | Peukert model (±10%) | Physics-based, load-dependent, SoH-adjusted |
-| SoH | Not available | Capacity-based degradation tracking | measured_Ah / rated_Ah, Bayesian blend weighted by ΔSoC |
-| Measured capacity | Not available | Coulomb counting from deep discharges | Trapezoidal integration, CoV-based convergence (≥3 samples) |
+| SoH | Not available | Evidence-gated capacity-based degradation tracking | measured_Ah / rated_Ah only for eligible controlled evidence |
+| Measured capacity | Not available | Controlled load/current plus voltage evidence | Trapezoidal integration, CoV-based convergence (≥3 eligible samples) |
 | Replacement due date | Not available | Linear regression on SoH history | Persisted in model.json, exported to virtual UPS |
 | Internal resistance | Not available | Voltage sag measurement (dV/dI) | On every OL→OB transition |
 | Cycle count | Not available | OL→OB transition counter | Persisted in model.json |
@@ -54,13 +60,15 @@ health.json (last_poll, SoC, online, capacity metrics — for external monitorin
 
 ## Self-Calibration
 
-The daemon learns the battery automatically:
-- **Every blackout** (even 1-2 min): writes measured voltage→SoC points to LUT, gradually replacing the standard VRLA curve
+The daemon learns conservatively from retained evidence:
+- **Every accepted on-battery sample** is durably journaled with raw values and model inputs; partial/reboot-gapped events remain operational evidence only
+- **Eligible observations** may write measured voltage→SoC points to the LUT, subject to their evidence gate
 - **LUT dedup**: entries within ±0.01V are deduplicated, keeping most recent per voltage band
-- **Cliff region** (10.5-11.0V): interpolated when ≥2 measured points exist there (requires deep discharge)
-- **Peukert exponent**: auto-calibrated via RLS (Recursive Least Squares) with forgetting factor λ=0.97. Clamped values (hitting [1.0, 1.4] bounds) are skipped to prevent convergence drift.
+- **Cliff region** (10.5-11.0V): observations can be retained there, but an authoritative
+  capacity claim requires a complete supervised endpoint observation
+- **Peukert exponent**: calibrated only from evidence that can support a complete load/rate comparison; partial/reboot-gapped events cannot produce an authoritative fit
 - **IR compensation coefficient**: auto-calibrated from voltage sag measurements via RLS
-- **No special mode needed**: all calibration is continuous and automatic
+- **No automatic hardware deep test**: any capacity test follows the written supervised protocol and explicit approval gate
 
 ## Key Technical Decisions
 
@@ -76,7 +84,16 @@ The daemon learns the battery automatically:
 
 6. **Fallback shutdown rejected**: Daemon does not call `systemctl poweroff`. That's upsmon's job. Separation of concerns per NUT architecture.
 
-7. **Capacity-based SoH** (not area-under-curve): v2.0 replaced the original voltage-area formula (which produced wrong SoH on partial discharges) with measured_capacity/rated_capacity. Coulomb counting + LUT ΔSoC extrapolation.
+7. **Evidence-gated capacity-based SoH** (not area-under-curve): measured_capacity/rated_capacity
+   is authoritative only for a controlled-capacity event. Partial/recovered observations support
+   practical runtime trends and do not masquerade as capacity.
+
+8. **Durable discharge journal**: local JSONL is append-only, `0600`, and synced per accepted
+   sample. Journal failure is visible but fail-open for LB/shutdown. Boot replay is idempotent,
+   preserves event IDs, and records unknown reboot gaps instead of inventing runtime.
+
+9. **Rollback preserves evidence**: older code may show frozen journal-derived counters; never
+   delete or manually merge the journal, and let a re-upgrade replay it.
 
 ## Codebase
 
@@ -102,7 +119,7 @@ The daemon learns the battery automatically:
 Documented inline in code as "Known limitations (audit 2026-03-17)" blocks. Key ones:
 - **No temperature sensor**: ±3% SoC uncertainty from temperature. $2 NTC thermistor is highest-ROI hardware improvement.
 - **CyberPower doesn't expose temperature**: No `battery.temperature` or `ups.temperature` via NUT.
-- **Cliff region accuracy**: Requires deep discharge to measure 10.5-11.0V range. Short blackouts only calibrate upper curve.
+- **Cliff region accuracy**: Requires a complete, supervised observation to claim a 10.5-11.0V capacity result. Short blackouts only provide upper-curve operational evidence.
 - **Peukert scalar**: Exponent is load-independent. Works with consistent ~15-20% load. Would need rework for variable loads.
 - **Nominal voltage in current calculation**: ~4% systematic bias in coulomb counting (F14/F27). Consistent direction, doesn't affect convergence.
 - **IR compensation during discharge**: Linear model approximate during OB. ≤0.06V error at typical loads (F3/F8).
@@ -110,8 +127,10 @@ Documented inline in code as "Known limitations (audit 2026-03-17)" blocks. Key 
 ## Documentation
 
 - `README.md` — Product overview, architecture, quick start, roadmap
-- `docs/USER-SCENARIOS.md` — Health report, deep test, battery replacement, config
+- `docs/USER-SCENARIOS.md` — Health report, interrupted shutdown/recovery, supervised capacity test, battery replacement, config
 - `docs/GLOSSARY.md` — Term definitions for all domain concepts
+- `docs/CONTROLLED-CAPACITY-TEST-PROTOCOL.md` — written/supervised protocol; no automatic hardware deep test
+- `docs/adr/0002-durable-discharge-journal.md` — decision reversing obsolete timestamp-dedup/checkpoint assumptions
 - `docs/archive/` — Completed work: 10 module audits, 7 expert panels, research docs, incident report
 
 ## v3.0 — Active Battery Care (Anti-Sulfation) — RETRACTED in v3.2
@@ -128,7 +147,7 @@ Documented inline in code as "Known limitations (audit 2026-03-17)" blocks. Key 
 - ~~**Cycle ROI metric**: net benefit per discharge (sulfation reversal vs cycle wear)~~
 - ~~**Integration with existing systemd timers**: daemon overrides or skips scheduled deep tests based on battery state~~
 
-**Current design (v3.2):** The scheduler proposes a single safety-gated diagnostic capacity/SoH
-verification test on an ~365-day cadence (IEEE-1188). Trigger is the persistent
-`last_upscmd_timestamp` from model.json (restart-safe). Safety gates: SoH floor ≥60%,
-rate limit, grid-stability cooldown, cycle budget. First/default test type: `quick`.
+**Current design:** Any hardware capacity test is considered only through the written supervised
+protocol, after full charge/rest, endpoint and abort checks, virtual rehearsal, and explicit user
+approval. No daemon path executes or recommends an automatic hardware deep test. Scheduler and
+health context may remain visible, but they are not permission to issue a real NUT test command.

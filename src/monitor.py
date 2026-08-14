@@ -8,11 +8,17 @@ discharge lifecycle extracted to discharge_handler.py.
 """
 
 import argparse
+import errno
+import fcntl
+import math
+import os
 import signal
 import socket
 import sys
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -29,9 +35,16 @@ from src.battery_math import ScalarRLS
 from src.capacity_estimator import CapacityEstimator
 from src.discharge_collector import DischargeCollector
 from src.discharge_handler import DischargeHandler
+from src.discharge_journal import (
+    AppliedDisposition,
+    DischargeJournal,
+    JournalError,
+    JournalProjection,
+)
+from src.discharge_types import CompletedDischarge
 from src.ema_filter import EMAFilter, ir_compensate
 from src.event_classifier import EventClassifier, EventType
-from src.model import BatteryModel
+from src.model import DEFAULT_PEUKERT_EXPONENT, BatteryModel
 from src.monitor_config import (
     DAEMON_VERSION,
     ERROR_LOG_BURST,
@@ -49,6 +62,8 @@ from src.soc_predictor import charge_percentage, soc_from_voltage
 from src.virtual_ups import compute_ups_status_override
 from src.virtual_ups_exporter import VirtualUpsExporter
 
+_JOURNAL_PROJECTION_UNSET = object()
+
 
 class MonitorDaemon:
     """
@@ -57,30 +72,92 @@ class MonitorDaemon:
     Polls NUT upsd, applies EMA smoothing, tracks battery state.
     """
 
-    def __init__(self, config: Config):
+    def __init__(
+        self,
+        config: Config,
+        journal: Optional[DischargeJournal] = None,
+        *,
+        virtual_ups_path: Path,
+        health_path: Path,
+    ):
         """Initialize daemon with provided configuration.
 
         Args:
             config: Config dataclass instance with all daemon parameters.
         """
-        self.running = True
         self.config = config
+        self.virtual_ups_path = Path(virtual_ups_path)
+        self.health_path = Path(health_path)
         self.shutdown_threshold_minutes = config.shutdown_minutes
 
-        config.model_dir.mkdir(parents=True, exist_ok=True)
+        # Only create a new state directory with the private mode required for
+        # the model/journal.  An existing directory may be managed by the
+        # caller and must not be chmod'ed as a startup side effect.
+        try:
+            config.model_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except FileExistsError:
+            if not config.model_dir.is_dir():
+                raise RuntimeError(f"model_dir is not a directory: {config.model_dir}")
+        self._writer_lock_fd = self._acquire_writer_lock(config.model_dir)
+        self._ready_sent = False
+        self.startup_degraded = False
+        self._last_sag_observation = None
+        self.journal: Optional[DischargeJournal] = journal
+        self.journal_error: Optional[str] = None
+        if self.journal is None:
+            try:
+                self.journal = DischargeJournal(config.model_dir / "discharge-events-v1.jsonl")
+            except (JournalError, OSError, ValueError) as exc:
+                # Persistence is fail-open: NUT, LB and shutdown keep running.
+                self.journal_error = str(exc)[:512]
+                logger.error(
+                    "Discharge journal unavailable; continuing degraded: %s",
+                    exc,
+                    exc_info=True,
+                )
+        self.running = True
 
-        self.nut_client = NUTClient(
-            host=config.nut_host,
-            port=config.nut_port,
-            timeout=config.nut_timeout,
-            ups_name=config.ups_name,
-        )
+        try:
+            self.nut_client = NUTClient(
+                host=config.nut_host,
+                port=config.nut_port,
+                timeout=config.nut_timeout,
+                ups_name=config.ups_name,
+            )
 
-        self.ema_filter = EMAFilter(
-            window_sec=config.ema_window_sec, poll_interval_sec=config.polling_interval
-        )
+            self.ema_filter = EMAFilter(
+                window_sec=config.ema_window_sec, poll_interval_sec=config.polling_interval
+            )
+        except BaseException:
+            self._release_writer_lock()
+            raise
 
-        self._init_battery_model_and_estimators(config)
+        try:
+            self._init_battery_model_and_estimators(config)
+        except BaseException:
+            # A constructor failure must not leave the process-wide writer
+            # lock held until garbage collection.  This is especially
+            # important when model/journal composition fails during startup.
+            self._release_writer_lock()
+            raise
+        # Replay only after initialization has persisted the current model
+        # state; otherwise the final init save could overwrite an applied
+        # event committed by the authoritative handler.
+        self._pending_replay = False
+        self._recovered_partial_events = 0
+        self._replay_closed_events()
+        # The repaired/replayed state is the startup baseline.  From this point
+        # Release A is capture-only: scientific writes are observed and alarmed,
+        # never silently accepted as learning.
+        self.capture_only = True
+        try:
+            self.baseline_scientific_fingerprint = self.battery_model.scientific_fingerprint()
+        except BaseException:
+            self._release_writer_lock()
+            raise
+        self._fingerprint_alarm_latched = False
+        self._journal_projection_cache = None
+        self._journal_projection_cache_active = False
 
         self.current_metrics = CurrentMetrics()
         self._last_logged_soc = None
@@ -101,9 +178,14 @@ class MonitorDaemon:
         self._startup_logged = False
         self._consecutive_errors = 0
         self._startup_time: Optional[float] = None
+        self._next_reporting_deadline: Optional[float] = None
 
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
+        try:
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            signal.signal(signal.SIGINT, self._signal_handler)
+        except BaseException:
+            self._release_writer_lock()
+            raise
 
         logger.info(
             f"Daemon initialized: shutdown_threshold={self.shutdown_threshold_minutes}min, "
@@ -119,22 +201,27 @@ class MonitorDaemon:
         )
 
         # Fail fast on misconfigured NUT rather than silently looping
-        self._check_nut_connectivity()
-        self._probe_temperature_sensor()
+        try:
+            self._check_nut_connectivity()
+            self._probe_temperature_sensor()
+        except BaseException:
+            self._release_writer_lock()
+            raise
 
     def _init_battery_model_and_estimators(self, config: Config):
         """Initialize battery model, capacity estimator, RLS filters, and discharge handler."""
         model_path = config.model_dir / "model.json"
+        new_model = not model_path.exists()
         self.battery_model = BatteryModel(
             model_path,
             capacity_ah=config.capacity_ah,
             soh_threshold=config.soh_alert_threshold,
         )
-        self._validate_and_repair_model()
+        self._validate_model()
 
-        if self.battery_model.get_battery_install_date() is None:
-            self.battery_model.set_battery_install_date(datetime.now().strftime("%Y-%m-%d"))
-        if not model_path.exists():
+        if new_model:
+            if self.battery_model.get_battery_install_date() is None:
+                self.battery_model.set_battery_install_date(datetime.now().strftime("%Y-%m-%d"))
             self.battery_model.save()  # Write defaults so tools (battery-health.py, MOTD) can read
         self.event_classifier = EventClassifier()
 
@@ -180,13 +267,14 @@ class MonitorDaemon:
             config=config,
             discharge_handler=self.discharge_handler,
             ema_filter=self.ema_filter,
+            journal=self.journal,
         )
-
         self.scheduler_manager = SchedulerManager(
             battery_model=self.battery_model,
             nut_client=self.nut_client,
             scheduling_config=config.scheduling or SchedulingConfig(),
             discharge_handler=self.discharge_handler,
+            operational_journal_provider=lambda: self.journal,
         )
 
         self.exporter = VirtualUpsExporter(
@@ -194,13 +282,361 @@ class MonitorDaemon:
             event_classifier=self.event_classifier,
             discharge_handler=self.discharge_handler,
             scheduler_manager=self.scheduler_manager,
+            journal_health_provider=self._journal_health,
+            virtual_ups_path=self.virtual_ups_path,
+            health_path=self.health_path,
         )
 
-        self.battery_model.state["new_battery_detected"] = False
-        self.battery_model.save()
+    @staticmethod
+    def _acquire_writer_lock(model_dir):
+        """Take the process-wide writer lock before opening mutable state/output."""
+        lock_path = model_dir / "monitor.lock"
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(lock_path, flags, 0o600)
+            os.fchmod(fd, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError as exc:
+            if "fd" in locals():
+                os.close(fd)
+            if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                raise RuntimeError(f"another monitor writer already owns {lock_path}") from exc
+            raise RuntimeError(f"cannot acquire monitor writer lock {lock_path}: {exc}") from exc
 
-    def _validate_and_repair_model(self):
-        """Validate battery model; repair out-of-range values to safe defaults."""
+    def _release_writer_lock(self) -> None:
+        fd = getattr(self, "_writer_lock_fd", None)
+        if fd is None:
+            return
+        self._writer_lock_fd = None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    def __del__(self):
+        # Covers constructor failures and test-created daemons that are not run.
+        try:
+            self._release_writer_lock()
+        except Exception:
+            pass
+
+    def _journal_health(self) -> dict:
+        """Expose bounded journal health to the optional health exporter."""
+        if self.journal is None:
+            return {
+                "journal_healthy": False,
+                "active_event_id": None,
+                "journal_last_synced_seq": None,
+                "journal_last_error": self.journal_error,
+                "pending_replay": getattr(self, "_pending_replay", False),
+                "recovered_partial_events": 0,
+                "cycle_count": self.battery_model.get_cycle_count(),
+                "cumulative_on_battery_sec": self.battery_model.get_cumulative_on_battery_sec(),
+                "scientific_fingerprint": self.battery_model.scientific_fingerprint(),
+                "baseline_scientific_fingerprint": self.baseline_scientific_fingerprint,
+                "scientific_change_latched": self._fingerprint_alarm_latched,
+                "startup_degraded": self.startup_degraded,
+                "last_voltage_sag_observation": self._last_sag_observation,
+                "last_event_disposition": None,
+            }
+        try:
+            projection = self._journal_projection_for_poll()
+        except (JournalError, OSError, TypeError, ValueError) as exc:
+            self._journal_degraded("health", exc)
+            projection = None
+        health = self.journal.health
+        counters = self._journal_counters(projection=projection)
+        current_epoch = self.battery_model.get_battery_epoch_id()
+        return {
+            "journal_healthy": health.healthy,
+            "active_event_id": health.open_event_id,
+            "journal_last_synced_seq": health.last_synced_seq,
+            "journal_last_error": health.last_error,
+            "pending_replay": self._pending_replay,
+            "recovered_partial_events": self._recovered_partial_events,
+            "scientific_fingerprint": self.battery_model.scientific_fingerprint(),
+            "baseline_scientific_fingerprint": self.baseline_scientific_fingerprint,
+            "scientific_change_latched": self._fingerprint_alarm_latched,
+            "startup_degraded": self.startup_degraded,
+            "last_voltage_sag_observation": self._last_sag_observation,
+            "last_event_disposition": self._last_event_disposition_from_projection(
+                projection, current_epoch
+            ),
+            **counters,
+        }
+
+    @staticmethod
+    def _last_event_disposition_from_projection(projection, current_epoch: str) -> Optional[str]:
+        """Return only an explicit disposition from the latest current-epoch marker."""
+        if projection is None:
+            return None
+        terminal_events = [
+            event
+            for event in projection.events.values()
+            if event.start is not None
+            and event.start.payload.get("battery_epoch_id") == current_epoch
+            and event.end is not None
+        ]
+        if not terminal_events:
+            return None
+        record_positions = {id(record): index for index, record in enumerate(projection.records)}
+        latest = max(
+            terminal_events,
+            key=lambda event: record_positions.get(
+                id(event.applied if event.applied is not None else event.end), -1
+            ),
+        )
+        if latest.applied is None:
+            return None
+        disposition = latest.applied.payload.get("disposition")
+        return disposition if disposition in {"recorded_only", "applied", "rejected"} else None
+
+    def _check_capture_only_fingerprint(self) -> None:
+        """Alarm if scientific state changes while Release A is capture-only."""
+        if not self.capture_only:
+            return
+        current = self.battery_model.scientific_fingerprint()
+        if current != self.baseline_scientific_fingerprint:
+            if self._fingerprint_alarm_latched:
+                return
+            self._fingerprint_alarm_latched = True
+            logger.error(
+                "Scientific model changed while capture_only is armed",
+                extra={
+                    "event_type": "capture_only_scientific_change",
+                    "baseline_fingerprint": self.baseline_scientific_fingerprint,
+                    "current_fingerprint": current,
+                },
+            )
+
+    def _replay_closed_events(self) -> None:
+        """Apply eligible closed events and repair exactly-once audit markers."""
+        if self.journal is None:
+            return
+        try:
+            projection = self.journal.replay()
+            current_epoch = self.battery_model.get_battery_epoch_id()
+            for event in projection.events.values():
+                start = event.start
+                if start is None or start.payload.get("battery_epoch_id") != current_epoch:
+                    # Journal evidence is retained verbatim, but an event from
+                    # another/unknown battery epoch cannot affect this model's
+                    # replay, markers, pending state, or recovery counters.
+                    continue
+                if event.end is None:
+                    continue
+                end_payload = event.end.payload
+                evidence = end_payload.get("evidence_class", "operational_partial")
+                if (
+                    evidence in {"operational_partial", "operational_gapped"}
+                    or end_payload.get("lifecycle") == "closed_restart_recovered"
+                ):
+                    self._recovered_partial_events += 1
+                    # Capture-only operational events are a terminal decision.
+                    # The marker records that the event was retained without a
+                    # scientific model application.
+                    if event.applied is None:
+                        self._mark_applied(
+                            event.event_id,
+                            self.battery_model.get_persisted_hash(),
+                            "recorded_only",
+                        )
+                    continue
+                if event.applied is not None:
+                    continue
+                completion = self._completion_from_projection(event)
+                if completion is None:
+                    self._pending_replay = True
+                    continue
+                result = self.discharge_handler.apply_completed_discharge(completion)
+                if result.applied:
+                    self._mark_applied(result.event_id, result.model_hash, "applied")
+                elif result.already_applied:
+                    self._mark_applied(
+                        result.event_id,
+                        self.battery_model.get_persisted_hash(),
+                        "applied",
+                    )
+                elif result.skipped:
+                    # A normal policy rejection is final for this event.  Only
+                    # persistence/shape failures remain pending for operator repair.
+                    if completion.evidence_class.startswith("operational"):
+                        self._mark_applied(
+                            completion.event_id,
+                            self.battery_model.get_persisted_hash(),
+                            "recorded_only",
+                        )
+                    else:
+                        result_reasons = getattr(result, "eligibility_reasons", ())
+                        if not isinstance(result_reasons, (tuple, list)):
+                            result_reasons = ()
+                        quality_rejected = any(
+                            reason in {"soh_quality_rejected", "capacity_quality_rejected"}
+                            for reason in result_reasons
+                        )
+                        if quality_rejected:
+                            self._mark_applied(
+                                completion.event_id,
+                                self.battery_model.get_persisted_hash(),
+                                "rejected",
+                            )
+                        else:
+                            self._pending_replay = True
+        except Exception as exc:
+            self._pending_replay = True
+            self._journal_degraded("replay", exc)
+
+    def _completion_from_projection(self, event) -> Optional[CompletedDischarge]:
+        end = event.end
+        if end is None:
+            return None
+        voltages: list[float] = []
+        times: list[float] = []
+        loads: list[float] = []
+        for record in event.samples:
+            if record.payload.get("reboot_gap"):
+                continue
+            voltage = record.payload.get("ema_voltage")
+            timestamp = record.payload.get("timestamp")
+            load = record.payload.get("ema_load")
+            if not all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in (voltage, timestamp, load)
+            ):
+                return None
+            voltages.append(float(voltage))
+            times.append(float(timestamp))
+            loads.append(float(load))
+        reasons = tuple(end.payload.get("eligibility_reasons", ()))
+        return CompletedDischarge(
+            event.event_id,
+            str(end.payload.get("lifecycle", "closed_power_restored")),
+            str(end.payload.get("evidence_class", "operational_partial")),
+            tuple(voltages),
+            tuple(times),
+            tuple(loads),
+            bool(end.payload.get("model_processing_eligible", False)),
+            reasons,
+        )
+
+    def _mark_applied(
+        self,
+        event_id: Optional[str],
+        model_hash: Optional[str],
+        disposition: AppliedDisposition,
+    ) -> None:
+        # A missing identity means there is no durable event whose terminal
+        # marker can be repaired.  Do not turn a journal-start failure into a
+        # misleading pending-replay alarm.
+        if not event_id or not model_hash:
+            return
+        if self.journal is None:
+            self._pending_replay = True
+            return
+        try:
+            self.journal.mark_applied(event_id, model_hash, disposition)
+        except (JournalError, OSError) as exc:
+            self._pending_replay = True
+            self._journal_degraded("mark_applied", exc)
+
+    def _journal_degraded(self, operation: str, exc: BaseException) -> None:
+        self.journal_error = str(exc)[:512]
+        if self.journal is not None:
+            self.journal.mark_degraded(f"{operation}: {exc}")
+        logger.error(
+            "Discharge journal %s failed; continuing degraded: %s", operation, exc, exc_info=True
+        )
+
+    def _journal_counters(
+        self, *, projection: JournalProjection | None | object = _JOURNAL_PROJECTION_UNSET
+    ) -> dict[str, object]:
+        if self.journal is None:
+            return {
+                "cycle_count": self.battery_model.get_cycle_count(),
+                "cumulative_on_battery_sec": self.battery_model.get_cumulative_on_battery_sec(),
+            }
+        try:
+            resolved_projection = projection
+            if resolved_projection is _JOURNAL_PROJECTION_UNSET:
+                resolved_projection = self._journal_projection_for_poll()
+            if resolved_projection is None or not isinstance(
+                resolved_projection, JournalProjection
+            ):
+                raise JournalError("journal projection unavailable")
+            current_epoch = self.battery_model.get_battery_epoch_id()
+            current_events = [
+                event
+                for event in resolved_projection.events.values()
+                if event.start is not None
+                and event.start.payload.get("battery_epoch_id") == current_epoch
+            ]
+            base_cycles = self.battery_model.get_cycle_count()
+            base_seconds = self.battery_model.get_cumulative_on_battery_sec()
+            if not isinstance(base_cycles, (int, float)) or not isinstance(
+                base_seconds, (int, float)
+            ):
+                raise ValueError("invalid model counter baseline")
+            duration = sum(
+                self._observed_duration_from_projection(event) or 0.0 for event in current_events
+            )
+            return {
+                "cycle_count": int(base_cycles) + len(current_events),
+                "cumulative_on_battery_sec": float(base_seconds) + duration,
+            }
+        except (JournalError, OSError, TypeError, ValueError) as exc:
+            self._journal_degraded("counters", exc)
+            return {
+                "cycle_count": self.battery_model.get_cycle_count(),
+                "cumulative_on_battery_sec": self.battery_model.get_cumulative_on_battery_sec(),
+            }
+
+    def _journal_projection_for_poll(self) -> Optional[JournalProjection]:
+        """Return one journal replay for the current poll's health exports.
+
+        The journal remains the source of truth.  This small cache only shares
+        the immutable projection between the virtual UPS and health writers in
+        one acquisition tick; calls outside a poll still read a fresh replay.
+        """
+        if self.journal is None:
+            return None
+        if getattr(self, "_journal_projection_cache_active", False):
+            projection = getattr(self, "_journal_projection_cache", None)
+            if projection is None:
+                projection = self.journal.replay()
+                self._journal_projection_cache = projection
+            return projection
+        return self.journal.replay()
+
+    @staticmethod
+    def _observed_duration_from_projection(event) -> Optional[float]:
+        """Calculate event duration without replaying the journal per event."""
+        has_reboot_gap = any(record.payload.get("reboot_gap") for record in event.samples)
+        if event.end is not None and not has_reboot_gap:
+            observed = event.end.payload.get("observed_duration_sec")
+            if (
+                isinstance(observed, (int, float))
+                and not isinstance(observed, bool)
+                and math.isfinite(float(observed))
+                and observed >= 0
+            ):
+                return float(observed)
+        by_boot: dict[str, list[float]] = {}
+        for record in event.samples:
+            if record.payload.get("reboot_gap"):
+                continue
+            timestamp = record.payload.get("timestamp")
+            if (
+                isinstance(timestamp, (int, float))
+                and not isinstance(timestamp, bool)
+                and math.isfinite(float(timestamp))
+            ):
+                by_boot.setdefault(record.boot_id, []).append(float(timestamp))
+        return sum(max(values) - min(values) for values in by_boot.values()) if by_boot else None
+
+    def _validate_model(self):
+        """Validate battery model state without mutating or repairing it."""
         lut = self.battery_model.get_lut()
         if len(lut) < 2:
             logger.warning(
@@ -214,8 +650,10 @@ class MonitorDaemon:
 
         soh = self.battery_model.get_soh()
         if not (0.0 < soh <= 1.0):
-            logger.warning(f"Model SoH={soh} out of valid range (0, 1]; resetting to 1.0")
-            self.battery_model.set_soh(1.0)
+            raise ValueError(
+                f"Model SoH={soh!r} is invalid; refusing startup self-heal. "
+                "Repair the scientific state through the sanctioned baseline reset."
+            )
 
         capacity = self.battery_model.get_capacity_ah()
         if capacity <= 0:
@@ -278,7 +716,6 @@ class MonitorDaemon:
         On OB→OL transition: triggers _update_battery_health (SoH, LUT, capacity).
         """
         event_type = self.current_metrics.event_type
-        previous_event_type = self.current_metrics.previous_event_type
 
         if event_type == EventType.BLACKOUT_REAL:
             time_rem = self.current_metrics.time_rem_minutes
@@ -310,40 +747,59 @@ class MonitorDaemon:
                 self.shutdown_threshold_minutes,
             )
 
-        if (
-            self.current_metrics.transition_occurred
-            and event_type == EventType.ONLINE
-            and previous_event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
-        ):
-            logger.info(
-                "Power restored; updating LUT with measured discharge points",
-                extra={"event_type": "power_restored"},
+    def _update_battery_health(self, completion: Optional[CompletedDischarge] = None):
+        """Apply one completion through the authoritative Phase 2 boundary."""
+        if completion is None:
+            return
+        try:
+            result = self.discharge_handler.apply_completed_discharge(completion)
+            if result.applied:
+                self._mark_applied(result.event_id, result.model_hash, "applied")
+            elif result.already_applied:
+                self._mark_applied(
+                    result.event_id,
+                    self.battery_model.get_persisted_hash(),
+                    "applied",
+                )
+            elif (
+                result.skipped
+                and not completion.model_processing_eligible
+                and completion.evidence_class.startswith("operational")
+            ):
+                # Ordinary operational capture is complete as soon as the
+                # durable end marker exists.  Scientific ineligibility must
+                # not leave the event pending until the next restart, but a
+                # scientific calculation/shape failure remains unmarked for
+                # its retry/audit path.
+                self._mark_applied(
+                    completion.event_id,
+                    self.battery_model.get_persisted_hash(),
+                    "recorded_only",
+                )
+            elif result.skipped:
+                result_reasons = getattr(result, "eligibility_reasons", ())
+                if not isinstance(result_reasons, (tuple, list)):
+                    result_reasons = ()
+                if any(
+                    reason in {"soh_quality_rejected", "capacity_quality_rejected"}
+                    for reason in result_reasons
+                ):
+                    self._mark_applied(
+                        completion.event_id,
+                        self.battery_model.get_persisted_hash(),
+                        "rejected",
+                    )
+                else:
+                    self._pending_replay = True
+        except (OSError, TypeError, ValueError, RuntimeError) as exc:
+            logger.error(
+                "Discharge application failed; capture remains durable: %s", exc, exc_info=True
             )
-            self._update_battery_health()
-
-    def _update_battery_health(self):
-        """Delegate to DischargeHandler; resets discharge buffer after processing."""
-        buffer = self.discharge_collector.buffer
-        self.discharge_handler.update_battery_health(buffer)
-        # Measure actual capacity from the completed discharge BEFORE the buffer is
-        # reset. This path was orphaned (DC-001): _handle_discharge_complete had no
-        # production caller — only tests — so capacity_ah_measured / convergence
-        # never populated at runtime regardless of discharge depth. The estimator
-        # self-gates on discharge quality (rejects shallow/short), so calling it on
-        # every OB->OL is safe.
-        self._handle_discharge_complete(
-            {
-                "voltage_series": buffer.voltages,
-                "time_series": buffer.times,
-                "load_series": buffer.loads,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        self.discharge_collector.reset_buffer()
-
-    def _handle_discharge_complete(self, discharge_data: dict) -> None:
-        """Delegate to DischargeHandler."""
-        self.discharge_handler.handle_discharge_complete(discharge_data)
+        finally:
+            self.discharge_collector.finalize(
+                completion.times[-1] if completion.times else time.time()
+            )
+            self.discharge_collector.reset_buffer()
 
     def _auto_calibrate_peukert(self, current_soh: float):
         """Delegate to DischargeHandler."""
@@ -358,72 +814,113 @@ class MonitorDaemon:
     # --- Battery baseline reset ---
 
     def _reset_battery_baseline(self):
-        """Reset capacity estimation and SoH history baseline on battery replacement."""
-
-        old_capacity = self.battery_model.state.get("capacity_ah_measured")
-        new_capacity = self.battery_model.get_capacity_ah()
-
-        self.battery_model.state["capacity_estimates"] = []
-        self.battery_model.state["capacity_ah_measured"] = None
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        self.battery_model.state["soh"] = 1.0
-        self.battery_model.add_soh_history_entry(
-            date=today,
-            soh=1.0,
-            capacity_ah_ref=new_capacity,  # 7.2Ah (rated, fresh baseline)
+        """Apply the sanctioned operator baseline reset transaction."""
+        if self.journal is None:
+            raise RuntimeError("cannot reset battery baseline: discharge journal unavailable")
+        journal_health = self.journal.health
+        if not journal_health.healthy:
+            raise RuntimeError("cannot reset battery baseline: discharge journal unhealthy")
+        journal_event_open = isinstance(journal_health.open_event_id, str) and bool(
+            journal_health.open_event_id
         )
+        collector_event_open = bool(
+            self.discharge_collector.is_collecting or self.discharge_collector.event_id
+        )
+        if journal_event_open or collector_event_open:
+            raise RuntimeError("cannot reset battery baseline while a discharge event is open")
 
-        self.battery_model.state["cycle_count"] = 0
+        # Construct every replacement runtime object before touching the
+        # persisted model or live handler.  If the model transaction rejects
+        # the reset, the old estimator/RLS/tracking remain intact.
+        fresh_capacity_estimator = CapacityEstimator(
+            peukert_exponent=DEFAULT_PEUKERT_EXPONENT,
+            nominal_voltage=self.battery_model.get_nominal_voltage(),
+            nominal_power_watts=self.battery_model.get_nominal_power_watts(),
+            capacity_ah=self.battery_model.get_capacity_ah(),
+        )
+        fresh_rls_peukert = ScalarRLS(theta=DEFAULT_PEUKERT_EXPONENT, P=1.0)
 
-        self.battery_model.reset_rls_state()
+        self.battery_model.reset_baseline(event_open=False)
+
+        # The model reset is the commit boundary.  From here on all runtime
+        # scientific state must describe only the replacement battery.
+        self.capacity_estimator = fresh_capacity_estimator
+        self.discharge_handler.capacity_estimator = fresh_capacity_estimator
+        self.rls_peukert = fresh_rls_peukert
+        self.discharge_handler.rls_peukert = fresh_rls_peukert
+        self.ir_reference_load_percent = self.battery_model.get_ir_reference_load()
+        self.discharge_handler.discharge_predicted_runtime = None
+        self.discharge_handler.has_logged_baseline_lock = False
+        self.discharge_handler.last_days_since_deep = None
+        self.discharge_handler.last_ir_trend_rate = 0.0
+        self.discharge_handler.last_cycle_budget_remaining = 0
+        self.discharge_handler.last_discharge_timestamp = None
+        self.has_logged_baseline_lock = False
+        self.baseline_scientific_fingerprint = self.battery_model.scientific_fingerprint()
+        self._fingerprint_alarm_latched = False
         self.sag_tracker.reset_rls(theta=0.015, P=1.0)
-        self.rls_peukert = ScalarRLS(theta=1.2, P=1.0)
-        self.discharge_handler.rls_peukert = self.rls_peukert
-
-        msg = (
-            f"baseline_reset: capacity baseline reset from {old_capacity:.2f}Ah to {new_capacity:.2f}Ah"
-            if old_capacity is not None
-            else f"baseline_reset: capacity baseline initialized to {new_capacity:.2f}Ah (first reset)"
-        )
-        extra = {
-            "event_type": "baseline_reset",
-            "capacity_ah_new": f"{new_capacity:.2f}",
-        }
-        if old_capacity is not None:
-            extra["capacity_ah_old"] = f"{old_capacity:.2f}"
-        logger.info(msg, extra=extra)
-
-        self.battery_model.save()
 
     def _signal_handler(self, signum, frame):
-        """Handle SIGTERM/SIGINT: persist model, then stop polling loop."""
+        """Record a stop request only; persistence belongs to normal shutdown."""
         logger.info(
             f"Received signal {signum}; shutting down",
             extra={"event_type": "shutdown", "signal": signum},
         )
-        try:
-            self.battery_model.save()
-            logger.info("Model saved before shutdown", extra={"event_type": "shutdown_save"})
-        except (OSError, TypeError, ValueError) as e:
-            logger.error(
-                f"Failed to save model on shutdown: {e}",
-                exc_info=True,
-                extra={"event_type": "shutdown_save_failed"},
-            )
         self.running = False
 
     # --- Pipeline stages ---
+
+    @staticmethod
+    def _physical_reply_is_valid(ups_data) -> bool:
+        """Return whether a NUT reply is complete enough for any pipeline work.
+
+        A numeric voltage/load pair without a status is not a usable physical
+        sample: retaining the previous status in that case could overwrite a
+        real OB/LB safety state with a synthetic online value.  Accept numeric
+        strings here because test doubles and some NUT adapters expose parsed
+        values that way; the downstream EMA still performs its own strict
+        numeric check before mutating its filter.
+        """
+        if not isinstance(ups_data, Mapping):
+            return False
+        status = ups_data.get("ups.status")
+        if not isinstance(status, str) or not status.strip():
+            return False
+
+        numeric_values = {}
+        for field in ("battery.voltage", "ups.load"):
+            value = ups_data.get(field)
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                return False
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(numeric_value):
+                return False
+            numeric_values[field] = numeric_value
+
+        return (
+            8.0 <= numeric_values["battery.voltage"] <= 15.0
+            and 0.0 <= numeric_values["ups.load"] <= 100.0
+        )
 
     def _update_ema(self, ups_data):
         """Feed voltage/load into EMA filter, log stabilization event."""
         voltage = ups_data.get("battery.voltage")
         load = ups_data.get("ups.load")
-        if voltage is None or load is None:
+        if (
+            not isinstance(voltage, (int, float))
+            or isinstance(voltage, bool)
+            or not isinstance(load, (int, float))
+            or isinstance(load, bool)
+            or not math.isfinite(float(voltage))
+            or not math.isfinite(float(load))
+        ):
             return None, None
 
         # Voltage bounds check (8.0-15.0V) and load bounds check (0-100%)
-        if not (8.0 <= voltage <= 15.0):
+        if not (8.0 <= float(voltage) <= 15.0):
             logger.warning(
                 f"Voltage {voltage:.2f}V out of bounds [8.0-15.0V]; skipping sample",
                 extra={
@@ -433,7 +930,7 @@ class MonitorDaemon:
                 },
             )
             return None, None
-        if not (0 <= load <= 100):
+        if not (0 <= float(load) <= 100):
             logger.warning(
                 f"Load {load:.1f}% out of bounds [0-100%]; skipping sample",
                 extra={
@@ -562,11 +1059,44 @@ class MonitorDaemon:
 
     # --- Main loop ---
 
+    def _reporting_due(self, monotonic_timestamp: float) -> bool:
+        """Return true on the elapsed-time status deadline, including first poll."""
+        interval = max(1.0, float(self.config.reporting_interval))
+        if self._next_reporting_deadline is None:
+            self._next_reporting_deadline = monotonic_timestamp + interval
+            return True
+        if monotonic_timestamp < self._next_reporting_deadline:
+            return False
+        # Preserve a stable cadence while recovering from a slow poll; do not
+        # use poll-count modulo because NUT latency and errors are variable.
+        while self._next_reporting_deadline <= monotonic_timestamp:
+            self._next_reporting_deadline += interval
+        return True
+
     def _poll_once(self) -> None:
+        """Execute one acquisition tick and always emit one watchdog heartbeat."""
+        # Keep this cadence guarantee outside the data-validation branches:
+        # NUT outages and partial replies must not create a systemd restart
+        # loop.  The cache is scoped to this same tick so both exporters share
+        # one immutable journal projection.
+        self._journal_projection_cache_active = True
+        self._journal_projection_cache = None
+        try:
+            self._poll_once_inner()
+        finally:
+            self._journal_projection_cache_active = False
+            self._journal_projection_cache = None
+            sd_notify("WATCHDOG=1")
+
+    def _poll_once_inner(self) -> None:
         """Execute a single poll cycle: fetch UPS data, update metrics, write outputs."""
-        timestamp = time.time()
+        poll_started_monotonic = time.monotonic()
         ups_data = self.nut_client.get_ups_vars()
-        poll_latency_ms = (time.time() - timestamp) * 1000
+        # The observation clocks belong to the successful NUT response, not
+        # the beginning of a potentially slow socket read.
+        poll_monotonic = time.monotonic()
+        timestamp = time.time()
+        poll_latency_ms = (poll_monotonic - poll_started_monotonic) * 1000
 
         if not self._startup_logged:
             assert self._startup_time is not None
@@ -576,61 +1106,131 @@ class MonitorDaemon:
                 extra={"event_type": "startup_complete", "startup_ms": f"{startup_delta_ms:.0f}"},
             )
             self._startup_logged = True
-        voltage, load = self._update_ema(ups_data)
-        if voltage is None:
+
+        if not self._physical_reply_is_valid(ups_data):
             logger.warning(
-                f"Poll {self.poll_count}: Missing voltage or load data",
+                f"Poll {self.poll_count}: physical UPS response is incomplete or invalid",
+                extra={
+                    "event_type": "invalid_physical_reply",
+                    "poll_count": self.poll_count,
+                },
+            )
+            self.startup_degraded = True
+            sd_notify("STATUS=degraded: physical UPS response incomplete; outputs are not fresh")
+            return
+
+        voltage, load = self._update_ema(ups_data)
+        if voltage is None or load is None:
+            logger.warning(
+                f"Poll {self.poll_count}: Missing voltage or load data after validation",
                 extra={"event_type": "missing_poll_data", "poll_count": self.poll_count},
             )
-            time.sleep(self.config.polling_interval)
+            self.startup_degraded = True
+            sd_notify("STATUS=degraded: physical UPS response incomplete; outputs are not fresh")
             return
+
+        physical_poll_valid = True
 
         self._consecutive_errors = 0  # Reset after validated poll data
 
         self._classify_event(ups_data)
-        self.sag_tracker.track(
+        event_type = self.current_metrics.event_type
+        computed_metrics = None
+        if event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST):
+            computed_metrics = self._compute_metrics()
+        sag_observation = self.sag_tracker.track(
             voltage,
             event_type=self.current_metrics.event_type,
             transition_occurred=self.event_classifier.transition_occurred,
             current_load=self.ema_filter.load,
         )
-        cooldown_expired = self.discharge_collector.track(
-            voltage, timestamp, self.current_metrics.event_type, self.current_metrics
+        if sag_observation is not None:
+            # Keep the immutable observation on the existing health provider
+            # path.  It is deliberately not promoted to a model write or a new
+            # journal record type in capture-only Release A.
+            self._last_sag_observation = {
+                "observed_at": sag_observation.observed_at.isoformat(),
+                "event_type": sag_observation.event_type,
+                "voltage_before": sag_observation.voltage_before,
+                "voltage_sag": sag_observation.voltage_sag,
+                "load_percent": sag_observation.load_percent,
+                "apparent_r_internal_ohm": sag_observation.apparent_r_internal_ohm,
+            }
+        completion = self.discharge_collector.track(
+            voltage,
+            timestamp,
+            self.current_metrics.event_type,
+            self.current_metrics,
+            raw_ups_data=ups_data,
+            monotonic_timestamp=poll_monotonic,
+            sag_observation=sag_observation,
         )
-        if cooldown_expired:
-            self._update_battery_health()
+        if completion is not None:
+            self._update_battery_health(completion)
 
         event_type = self.current_metrics.event_type
         is_discharging = event_type in (EventType.BLACKOUT_REAL, EventType.BLACKOUT_TEST)
 
         # Event transition handling runs EVERY poll (not gated)
         self._handle_event_transition()
-        # Default to ONLINE when classifier returned None (no status data)
-        self.current_metrics.previous_event_type = (
-            self.current_metrics.event_type or EventType.ONLINE
+        if self._reporting_due(poll_monotonic):
+            logger.debug("Metrics gate: status/reporting deadline reached")
+            if computed_metrics is None and is_discharging:
+                battery_charge, time_rem = self._compute_metrics()
+            elif computed_metrics is not None:
+                battery_charge, time_rem = computed_metrics
+            else:
+                battery_charge = self.current_metrics.battery_charge
+                time_rem = self.current_metrics.time_rem_minutes
+            self._log_status(battery_charge, time_rem, poll_latency_ms)
+        else:
+            battery_charge = self.current_metrics.battery_charge
+            time_rem = self.current_metrics.time_rem_minutes
+
+        # Virtual UPS and health are safety/operational surfaces, so they are
+        # refreshed on every one-second acquisition tick independently of the
+        # human-readable 60-second status cadence.
+        self._check_capture_only_fingerprint()
+        virtual_ups_ok = self.exporter.write_virtual_ups(
+            ups_data, battery_charge, time_rem, self.current_metrics
         )
 
-        reporting_interval_polls = self.config.reporting_interval // self.config.polling_interval
-        if is_discharging or self.poll_count % reporting_interval_polls == 0:
-            logger.debug(
-                f"Metrics gate: is_discharging={is_discharging}, poll_count={self.poll_count}"
-            )
-            battery_charge, time_rem = self._compute_metrics()
-            self._log_status(battery_charge, time_rem, poll_latency_ms)
-            self.exporter.write_virtual_ups(
-                ups_data, battery_charge, time_rem, self.current_metrics
-            )
-
-        self.exporter.write_health_snapshot(
+        health_ok = self.exporter.write_health_snapshot(
             poll_latency_ms, self.current_metrics, self._consecutive_errors
         )
         self.scheduler_manager.run_daily(datetime.now(timezone.utc), self.current_metrics)
 
-        # Report healthy to systemd AFTER critical writes succeed
-        sd_notify("WATCHDOG=1")
-        time.sleep(1 if self.sag_tracker.is_measuring else self.config.polling_interval)
+        outputs_fresh = physical_poll_valid and bool(virtual_ups_ok) and bool(health_ok)
+        if outputs_fresh:
+            self.startup_degraded = False
+            if self._ready_sent:
+                sd_notify("STATUS=ready: physical UPS poll and outputs are fresh")
+            else:
+                # READY is a postcondition of the first complete physical poll and
+                # both output writes, never a promise that NUT is reachable.
+                sd_notify("READY=1\nSTATUS=ready: physical UPS poll and outputs are fresh")
+                self._ready_sent = True
+        else:
+            self.startup_degraded = True
+            sd_notify("STATUS=degraded: physical UPS status or output is not fresh")
 
     def run(self):
+        """Run the poll loop and perform durable, non-scientific shutdown."""
+        try:
+            self._run_loop()
+        finally:
+            try:
+                self.discharge_collector.shutdown(time.time())
+            except (OSError, TypeError, ValueError) as exc:
+                logger.error(
+                    "Failed to close capture during normal shutdown: %s", exc, exc_info=True
+                )
+            finally:
+                if self.journal is not None:
+                    self.journal.close()
+                self._release_writer_lock()
+
+    def _run_loop(self):
         """
         Main polling loop.
 
@@ -638,15 +1238,26 @@ class MonitorDaemon:
         pipeline: EMA → event classification → sag/discharge tracking →
         metrics → virtual UPS output. Runs until SIGTERM/SIGINT.
         """
-        sd_notify("READY=1")
         logger.info("ups-battery-monitor %s starting", DAEMON_VERSION)
         self.poll_count = 0
         self._stabilization_logged = False
         self._startup_logged = False
         self._consecutive_errors = 0
         self._startup_time = time.monotonic()
+        self._next_reporting_deadline = None
+        next_poll_deadline = self._startup_time
 
         while self.running:
+            now = time.monotonic()
+            if now < next_poll_deadline:
+                time.sleep(next_poll_deadline - now)
+                if not self.running:
+                    break
+            next_poll_deadline += max(0.1, float(self.config.polling_interval))
+            if next_poll_deadline <= time.monotonic():
+                next_poll_deadline = time.monotonic() + max(
+                    0.1, float(self.config.polling_interval)
+                )
             try:
                 self._poll_once()
             except KeyboardInterrupt:
@@ -654,6 +1265,10 @@ class MonitorDaemon:
                 break
             except (socket.error, OSError, ConnectionError, TimeoutError) as e:
                 self._consecutive_errors += 1
+                self.startup_degraded = True
+                # READY is deliberately not retracted.  STATUS still exposes
+                # the post-READY outage so operators see the degraded state.
+                sd_notify("STATUS=degraded: physical UPS unavailable; outputs are not fresh")
                 self.sag_tracker.reset_idle()
                 error_type = type(e).__name__
                 error_type_changed = error_type != getattr(self, "_last_error_type", None)
@@ -678,7 +1293,6 @@ class MonitorDaemon:
                             "error_class": error_type,
                         },
                     )
-                time.sleep(self.config.polling_interval)
             except Exception as e:
                 # Non-transient error (AttributeError, TypeError, KeyError, etc.)
                 # indicates a bug — fail fast rather than silently retrying forever
@@ -722,7 +1336,11 @@ def main():
 
     try:
         config = load_config()
-        daemon = MonitorDaemon(config)
+        daemon = MonitorDaemon(
+            config,
+            virtual_ups_path=Path("/run/ups-battery-monitor/ups-virtual.dev"),
+            health_path=Path("/run/ups-battery-monitor/ups-health.json"),
+        )
         if args.new_battery:
             daemon._reset_battery_baseline()
         daemon.run()

@@ -2,9 +2,17 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
 from src.battery_math.scheduler import SchedulerDecision
 from src.model import BatteryModel
-from src.scheduler_manager import dispatch_test_with_audit, validate_preconditions_before_upscmd
+from src.scheduler_manager import (
+    SCHEDULER_MODE_CAPTURE_ONLY,
+    SCHEDULER_MODE_EXECUTE,
+    SchedulerModeError,
+    dispatch_test_with_audit,
+    validate_preconditions_before_upscmd,
+)
 
 
 class TestPreconditionValidator:
@@ -109,6 +117,7 @@ class TestDispatchFunction:
                 battery_model=model,
                 decision=decision,
                 current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_EXECUTE,
             )
 
         assert success is True
@@ -145,6 +154,7 @@ class TestDispatchFunction:
                 battery_model=model,
                 decision=decision,
                 current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_EXECUTE,
             )
 
         assert success is False
@@ -175,6 +185,7 @@ class TestDispatchFunction:
                 battery_model=model,
                 decision=decision,
                 current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_EXECUTE,
             )
 
         assert success is False
@@ -203,6 +214,7 @@ class TestDispatchFunction:
                 battery_model=model,
                 decision=decision,
                 current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_EXECUTE,
             )
 
         # Verify model methods were called
@@ -236,7 +248,31 @@ class TestDispatchIntegration:
                 battery_model=model,
                 decision=decision,
                 current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_EXECUTE,
             )
 
         assert success is True
         assert nut_client_mock.send_instcmd.called
+
+    def test_dispatch_capture_only_blocks_before_command(self, temporary_model_path):
+        """Capture-only mode rejects dispatch before reaching the UPS client."""
+        model = BatteryModel(temporary_model_path)
+
+        nut_client_mock = Mock()
+        current_metrics = Mock(ups_status_override="OL", soc=0.98)
+        decision = SchedulerDecision(
+            action="propose_test",
+            test_type="quick",
+            reason_code="diagnostic_cadence",
+        )
+
+        with pytest.raises(SchedulerModeError, match="capture_only"):
+            dispatch_test_with_audit(
+                nut_client=nut_client_mock,
+                battery_model=model,
+                decision=decision,
+                current_metrics=current_metrics,
+                scheduler_mode=SCHEDULER_MODE_CAPTURE_ONLY,
+            )
+
+        nut_client_mock.send_instcmd.assert_not_called()

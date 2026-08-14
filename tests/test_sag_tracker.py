@@ -4,6 +4,7 @@ Tests the SagTracker class directly without constructing MonitorDaemon.
 BatteryModel is mocked; ScalarRLS is used as a real object (pure math kernel).
 """
 
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,7 +12,7 @@ import pytest
 from src.battery_math.rls import ScalarRLS
 from src.event_classifier import EventType
 from src.monitor_config import SAG_SAMPLES_REQUIRED, SagState
-from src.sag_tracker import SagTracker
+from src.sag_tracker import SagTracker, VoltageSagObservation
 
 
 def make_tracker(
@@ -127,17 +128,26 @@ def test_track_completes_after_required_samples():
         current_load=20.0,
     )
     # Feed exactly SAG_SAMPLES_REQUIRED samples
+    observation = None
     for _ in range(SAG_SAMPLES_REQUIRED):
-        tracker.track(
+        sample_observation = tracker.track(
             voltage=12.8,
             event_type=EventType.BLACKOUT_REAL,
             transition_occurred=False,
             current_load=20.0,
         )
+        if sample_observation is not None:
+            observation = sample_observation
     assert tracker._state == SagState.COMPLETE
     assert tracker.is_measuring is False
-    # Should have recorded the sag
-    mock_model.add_r_internal_entry.assert_called_once()
+    assert isinstance(observation, VoltageSagObservation)
+    assert observation.event_type == EventType.BLACKOUT_REAL.name
+    # OL->OB is observation-only in Release A: no history/RLS/model writes.
+    mock_model.add_r_internal_entry.assert_not_called()
+    mock_model.set_ir_k.assert_not_called()
+    mock_model.set_rls_state.assert_not_called()
+    with pytest.raises(FrozenInstanceError):
+        observation.voltage_sag = 99.0
 
 
 def test_track_sag_uses_median_of_last_3():
@@ -154,17 +164,19 @@ def test_track_sag_uses_median_of_last_3():
     # Buffer = [13.5, 12.90, 12.85, 12.80, 12.75]
     # Last 3 = [12.85, 12.80, 12.75] -> sorted [12.75, 12.80, 12.85] -> median 12.80
     voltages = [12.90, 12.85, 12.80, 12.75]
+    observation = None
     for v in voltages:
-        tracker.track(
+        observation = tracker.track(
             voltage=v,
             event_type=EventType.BLACKOUT_REAL,
             transition_occurred=False,
             current_load=25.0,
         )
 
-    call_args = mock_model.add_r_internal_entry.call_args
-    v_sag_recorded = call_args[0][3]  # 4th positional arg: v_sag
+    assert isinstance(observation, VoltageSagObservation)
+    v_sag_recorded = observation.voltage_sag
     assert abs(v_sag_recorded - 12.80) < 1e-9
+    mock_model.add_r_internal_entry.assert_not_called()
 
 
 # ------------------------------------------------------------------
@@ -258,50 +270,44 @@ def test_record_sag_skipped_when_delta_v_not_positive(v_before, v_sag):
 
 
 def test_record_sag_computes_r_internal_and_calls_model():
-    """_record_voltage_sag computes R_internal and calls add_r_internal_entry."""
+    """_record_voltage_sag returns R_internal as an immutable observation."""
     tracker, mock_model = make_tracker(nominal_voltage=13.0, nominal_power_watts=425.0)
     tracker._v_before_sag = 13.0
     tracker._current_load = 25.0
 
-    tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
+    observation = tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
 
     # I_actual = 25/100 * 425 / 13 ≈ 0.817A
     # delta_v = 13.0 - 12.5 = 0.5V
     # r_ohm = 0.5 / (25/100 * 425/13) ≈ 0.612 Ohm
-    mock_model.add_r_internal_entry.assert_called_once()
-    call_args = mock_model.add_r_internal_entry.call_args[0]
-    r_ohm = call_args[1]
+    assert isinstance(observation, VoltageSagObservation)
+    r_ohm = observation.apparent_r_internal_ohm
     assert r_ohm > 0
-    v_before = call_args[2]
-    v_sag_arg = call_args[3]
-    assert abs(v_before - 13.0) < 1e-9
-    assert abs(v_sag_arg - 12.5) < 1e-9
-    assert call_args[5] == EventType.BLACKOUT_REAL.name
+    assert abs(observation.voltage_before - 13.0) < 1e-9
+    assert abs(observation.voltage_sag - 12.5) < 1e-9
+    assert observation.event_type == EventType.BLACKOUT_REAL.name
+    mock_model.add_r_internal_entry.assert_not_called()
 
 
-def test_record_sag_updates_ir_k_via_rls():
-    """_record_voltage_sag runs RLS update and stores updated ir_k."""
+def test_record_sag_does_not_update_ir_k_or_rls():
+    """The biased OL->OB step cannot update ir_k, RLS, or persisted history."""
     tracker, mock_model = make_tracker(nominal_voltage=13.0, nominal_power_watts=425.0)
     tracker._v_before_sag = 13.0
     tracker._current_load = 25.0
     old_ir_k = tracker.ir_k
 
-    tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
+    observation = tracker._record_voltage_sag(v_sag=12.5, event_type=EventType.BLACKOUT_REAL)
 
-    # ir_k should have changed
-    assert tracker.ir_k != old_ir_k
-    # Should be within physical bounds
-    assert 0.005 <= tracker.ir_k <= 0.025
-    # model.set_ir_k and set_rls_state should be called
-    mock_model.set_ir_k.assert_called_once_with(tracker.ir_k)
-    mock_model.set_rls_state.assert_called_once()
-    # RLS sample count should be 1
-    assert tracker.rls_ir_k.sample_count == 1
+    assert isinstance(observation, VoltageSagObservation)
+    assert tracker.ir_k == old_ir_k
+    assert tracker.rls_ir_k.sample_count == 0
+    mock_model.set_ir_k.assert_not_called()
+    mock_model.set_rls_state.assert_not_called()
+    mock_model.add_r_internal_entry.assert_not_called()
 
 
-def test_record_sag_clamps_ir_k_at_lower_bound():
-    """ir_k clamped to IR_K_MIN (0.005) when RLS estimate goes below."""
-    # Use tiny sag (near zero delta_v) to drive ir_k_measured near zero
+def test_record_sag_apparent_resistance_is_not_applied_at_lower_bound():
+    """Apparent resistance is observable but cannot alter persisted ir_k."""
     tracker, mock_model = make_tracker(
         ir_k=0.005,
         rls_theta=0.005,
@@ -310,13 +316,14 @@ def test_record_sag_clamps_ir_k_at_lower_bound():
     )
     tracker._v_before_sag = 13.0
     tracker._current_load = 25.0
-    # Very small sag -> very small ir_k_measured -> RLS pulls theta below 0.005
-    tracker._record_voltage_sag(v_sag=12.999, event_type=EventType.BLACKOUT_REAL)
-    assert tracker.ir_k >= 0.005
+    observation = tracker._record_voltage_sag(v_sag=12.999, event_type=EventType.BLACKOUT_REAL)
+    assert observation is not None
+    assert observation.apparent_r_internal_ohm > 0
+    assert tracker.ir_k == 0.005
 
 
-def test_record_sag_clamps_ir_k_at_upper_bound():
-    """ir_k clamped to IR_K_MAX (0.025) when RLS estimate goes above."""
+def test_record_sag_apparent_resistance_is_not_applied_at_upper_bound():
+    """Large apparent resistance cannot alter persisted ir_k."""
     tracker, mock_model = make_tracker(
         ir_k=0.025,
         rls_theta=0.025,
@@ -325,9 +332,10 @@ def test_record_sag_clamps_ir_k_at_upper_bound():
     )
     tracker._v_before_sag = 13.0
     tracker._current_load = 25.0
-    # Very large sag -> ir_k_measured >> 0.025 -> clamp to 0.025
-    tracker._record_voltage_sag(v_sag=10.0, event_type=EventType.BLACKOUT_REAL)
-    assert tracker.ir_k <= 0.025
+    observation = tracker._record_voltage_sag(v_sag=10.0, event_type=EventType.BLACKOUT_REAL)
+    assert observation is not None
+    assert observation.apparent_r_internal_ohm > 0
+    assert tracker.ir_k == 0.025
 
 
 # ------------------------------------------------------------------

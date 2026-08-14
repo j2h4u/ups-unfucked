@@ -20,7 +20,9 @@ Environment="PYTHONPATH=@INSTALL_DIR@"
 ExecStart=/usr/bin/python3 -m src.monitor
 Restart=on-failure
 RestartSec=10
-TimeoutStartSec=30
+# NUT/output outages are degraded operation; Type=notify must not restart the
+# daemon merely because its first successful READY notification is delayed.
+TimeoutStartSec=0
 StandardOutput=null
 StandardError=journal
 SyslogIdentifier=ups-battery-monitor

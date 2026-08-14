@@ -1,13 +1,15 @@
-"""Voltage sag state machine and ir_k auto-calibration.
+"""Voltage sag state machine and observation-only OL→OB capture.
 
 Extracted from MonitorDaemon to reduce its responsibility surface (ARCH-03).
-SagTracker owns the IDLE -> MEASURING -> COMPLETE state machine, sag recording,
-and RLS ir_k calibration — all stateful collaborator behavior that does not
-belong inline in the daemon orchestration loop.
+SagTracker owns the IDLE -> MEASURING -> COMPLETE state machine and returns
+immutable sag observations.  OL→OB observations do not update the persisted
+IR model: that voltage step mixes charger surface-charge collapse with true
+internal resistance.
 """
 
 import logging
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from src.battery_math.rls import ScalarRLS
@@ -16,17 +18,30 @@ from src.monitor_config import SAG_SAMPLES_REQUIRED, SagState
 
 logger = logging.getLogger("ups-battery-monitor")
 
-# Physical bounds for ir_k: below 0.005 is noise, above 0.025 is implausible for VRLA.
-IR_K_MIN = 0.005
-IR_K_MAX = 0.025
+
+@dataclass(frozen=True)
+class VoltageSagObservation:
+    """Immutable OL→OB sag observation.
+
+    This is deliberately a journal/reporting value, not a model update.  The
+    initial OL→OB drop includes charger surface-charge collapse and therefore
+    is not independent evidence for changing ``ir_k``.
+    """
+
+    observed_at: datetime
+    event_type: str
+    voltage_before: float
+    voltage_sag: float
+    load_percent: float
+    apparent_r_internal_ohm: float
 
 
 class SagTracker:
-    """Voltage sag state machine and ir_k auto-calibration.
+    """Voltage sag state machine with observation-only OL→OB capture.
 
-    Measures voltage sag on OL->OB transitions to estimate battery internal
-    resistance. Owns the IDLE -> MEASURING -> COMPLETE state machine and
-    the RLS estimator for ir_k calibration.
+    Measures voltage sag on OL->OB transitions and returns a frozen
+    :class:`VoltageSagObservation`.  The RLS estimator is retained as the
+    current model input but is intentionally not updated by this path.
 
     Usage:
         tracker = SagTracker(battery_model, rls_ir_k, ir_k)
@@ -49,9 +64,8 @@ class SagTracker:
         """Initialize SagTracker.
 
         Args:
-            battery_model: Persistent battery model — used for get_nominal_voltage(),
-                get_nominal_power_watts(), add_r_internal_entry(), set_ir_k(),
-                set_rls_state().
+            battery_model: Persistent battery model — used only to read nominal
+                voltage and power while constructing an observation.
             rls_ir_k: Pre-seeded RLS estimator (restored from model.json on startup
                 so calibration survives restarts).
             ir_k: Current ir_k value from model (restored on startup).
@@ -80,7 +94,7 @@ class SagTracker:
         event_type,
         transition_occurred: bool,
         current_load: Optional[float],
-    ) -> None:
+    ) -> Optional[VoltageSagObservation]:
         """Drive the sag state machine for one poll tick.
 
         Call this once per poll after EMA update and event classification.
@@ -100,6 +114,7 @@ class SagTracker:
 
         # Store load for use by _record_voltage_sag (called within this tick).
         self._current_load = current_load
+        observation = None
 
         # OL->OB: start measuring. Capture the EMA voltage *before* the sag
         # develops — this is the pre-sag reference voltage.
@@ -119,8 +134,10 @@ class SagTracker:
             if len(self._sag_buffer) >= SAG_SAMPLES_REQUIRED:
                 # Median of last 3 samples for noise rejection.
                 v_sag = sorted(self._sag_buffer[-3:])[1]
-                self._record_voltage_sag(v_sag, event_type)
+                observation = self._record_voltage_sag(v_sag, event_type)
                 self._state = SagState.COMPLETE
+
+        return observation
 
     def reset_idle(self) -> None:
         """Reset state to IDLE (called on polling error to prevent stuck 1s sleep)."""
@@ -140,32 +157,36 @@ class SagTracker:
     # Private methods
     # ------------------------------------------------------------------
 
-    def _record_voltage_sag(self, v_sag: float, event_type) -> None:
-        """Record voltage sag measurement and update ir_k via RLS calibration.
+    def _record_voltage_sag(self, v_sag: float, event_type) -> Optional[VoltageSagObservation]:
+        """Return an immutable sag observation without changing model state.
 
-        Computes R_internal from delta_v / I_actual, logs the measurement,
-        then updates the RLS estimator and persists to battery_model.
+        Computes R_internal from delta_v / I_actual.  The old implementation
+        persisted the measurement and updated the RLS estimator here.  That is
+        unsafe for OL→OB because the voltage step also contains surface-charge
+        collapse; Release A records the observation only and leaves ``ir_k``,
+        RLS state, and ``r_internal_history`` untouched.
 
         Skips silently when:
           - v_before_sag is None (no pre-sag reference captured)
           - current_load is None or zero (no current flowing, can't compute R)
         """
         if self._v_before_sag is None or self._current_load is None:
-            return
+            return None
 
         load = self._current_load
         nominal_voltage = self.battery_model.get_nominal_voltage()
         nominal_power_watts = self.battery_model.get_nominal_power_watts()
 
+        if nominal_voltage <= 0 or nominal_power_watts <= 0:
+            return None
         I_actual = load / 100.0 * nominal_power_watts / nominal_voltage
         if I_actual <= 0:
-            return
+            return None
 
         delta_v = self._v_before_sag - v_sag
         # Guard: the UPS can return to OL before the sag fully develops, leaving
         # v_sag == v_before (delta_v <= 0). A zero/negative R_internal is physically
-        # meaningless and poisons both r_internal_history and the RLS estimator —
-        # repeated zeros drag ir_k down toward IR_K_MIN, under-compensating real sag.
+        # meaningless and must not become history or calibration input.
         # Skip these non-measurements rather than record them. (Observed May 2026:
         # 2 of 3 calibration tests returned delta_v=0 and corrupted ir_k.)
         if delta_v <= 0:
@@ -173,56 +194,27 @@ class SagTracker:
                 "Voltage sag skipped: delta_v=%.3fV <= 0 (UPS returned to OL before sag developed)",
                 delta_v,
             )
-            return
+            return None
         r_ohm = delta_v / I_actual
-        today = datetime.now().strftime("%Y-%m-%d")
-        self.battery_model.add_r_internal_entry(
-            today, r_ohm, self._v_before_sag, v_sag, load, event_type.name
-        )
-
-        # RLS auto-calibration of ir_k from measured sag data.
-        #
-        # KNOWN LIMITATION (why the clamp below is load-bearing, not paranoia):
-        # v_before is the EMA voltage captured at the OL->OB transition — i.e. the
-        # charger's FLOAT voltage (~13.7V), not the battery's resting OCV (~13.0V).
-        # When the charger drops out, the measured delta_v bundles surface-charge
-        # collapse (~0.7V) together with the true IR drop (I*R, ~0.1-0.2V). So
-        # r_ohm is systematically OVERESTIMATED (observed: 159mOhm vs a plausible
-        # ~30-50mOhm for this VRLA), and ir_k_measured saturates against IR_K_MAX.
-        # The clamp keeps a biased measurement from blowing up runtime prediction.
-        # A correct fix requires isolating IR from surface charge (e.g. dV/dI across
-        # a load step, or a settled-OCV reference) — tracked as future work, not
-        # patchable here. Do NOT widen IR_K_MAX to "let the real value through":
-        # the real value isn't in this measurement.
-        if nominal_voltage > 0:
-            ir_k_measured = r_ohm * nominal_power_watts / (nominal_voltage * 100.0)
-            new_ir_k, new_P = self.rls_ir_k.update(ir_k_measured)
-            new_ir_k = max(IR_K_MIN, min(IR_K_MAX, new_ir_k))
-            self.ir_k = new_ir_k
-            self.battery_model.set_ir_k(new_ir_k)
-            self.battery_model.set_rls_state("ir_k", new_ir_k, new_P, self.rls_ir_k.sample_count)
-            logger.info(
-                f"ir_k calibrated: {new_ir_k:.4f} (P={new_P:.4f}, "
-                f"confidence={self.rls_ir_k.confidence:.0%}, "
-                f"measured={ir_k_measured:.4f})",
-                extra={
-                    "event_type": "ir_k_calibration",
-                    "ir_k": f"{new_ir_k:.4f}",
-                    "ir_k_measured": f"{ir_k_measured:.4f}",
-                    "rls_p": f"{new_P:.4f}",
-                    "rls_confidence": f"{self.rls_ir_k.confidence:.3f}",
-                    "sample_count": str(self.rls_ir_k.sample_count),
-                },
-            )
-
         logger.info(
-            f"Voltage sag: {self._v_before_sag:.2f}V -> {v_sag:.2f}V, "
-            f"R_internal={r_ohm * 1000:.1f}mOhm at {load:.1f}% load",
+            "Voltage sag observation: %.2fV -> %.2fV, R_internal=%.1fmOhm at %.1f%% load",
+            self._v_before_sag,
+            v_sag,
+            r_ohm * 1000,
+            load,
             extra={
-                "event_type": "voltage_sag",
+                "event_type": "voltage_sag_observation",
                 "v_before": f"{self._v_before_sag:.2f}",
                 "v_sag": f"{v_sag:.2f}",
                 "r_internal_mohm": f"{r_ohm * 1000:.1f}",
                 "load_pct": f"{load:.1f}",
             },
+        )
+        return VoltageSagObservation(
+            observed_at=datetime.now(timezone.utc),
+            event_type=getattr(event_type, "name", str(event_type)),
+            voltage_before=self._v_before_sag,
+            voltage_sag=v_sag,
+            load_percent=load,
+            apparent_r_internal_ohm=r_ohm,
         )

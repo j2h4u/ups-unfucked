@@ -7,11 +7,31 @@ format is fully NUT-compatible for transparent data source switching.
 
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from src.event_classifier import EventType
 from src.virtual_ups import compute_ups_status_override, write_virtual_ups_dev
+
+
+def test_virtual_ups_path_is_required(monkeypatch):
+    """A missing argument cannot make a library writer target /run."""
+    atomic_write = Mock()
+    monkeypatch.setattr("src.virtual_ups.atomic_write", atomic_write)
+
+    with pytest.raises(TypeError, match="output_path"):
+        write_virtual_ups_dev({"ups.status": "OB DISCHRG LB"})
+
+    atomic_write.assert_not_called()
+
+
+def test_virtual_ups_write_uses_explicit_isolated_test_path(tmp_path):
+    """Tests pass a private destination instead of relying on process env."""
+    output_path = tmp_path / "virtual-ups" / "ups-virtual.dev"
+    write_virtual_ups_dev({"ups.status": "OB DISCHRG LB"}, output_path=output_path)
+
+    assert output_path.read_text(encoding="utf-8") == ("ups.status: OB DISCHRG LB\n")
 
 
 class TestVirtualUPSWriting:

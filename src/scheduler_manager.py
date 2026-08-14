@@ -7,20 +7,40 @@ inline in the daemon orchestration loop.
 """
 
 import logging
+import math
 import socket
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from src.battery_math.scheduler import SchedulerDecision, evaluate_test_scheduling
+from src.discharge_journal import DischargeJournal
 from src.model import BatteryModel
 from src.monitor_config import CurrentMetrics, SchedulingConfig, safe_save
 
 logger = logging.getLogger("ups-battery-monitor")
 
 
+SCHEDULER_MODE_CAPTURE_ONLY = "capture_only"
+SCHEDULER_MODE_PROPOSAL_ONLY = "proposal_only"
+SCHEDULER_MODE_EXECUTE = "execute"
+_SCHEDULER_MODES = {
+    SCHEDULER_MODE_CAPTURE_ONLY,
+    SCHEDULER_MODE_PROPOSAL_ONLY,
+    SCHEDULER_MODE_EXECUTE,
+}
+
+
+class SchedulerModeError(RuntimeError):
+    """Raised when a UPS command is attempted from a non-executing mode."""
+
+
+class OperationalJournalUnavailable(RuntimeError):
+    """The authoritative operational history cannot be read safely."""
+
+
 def validate_preconditions_before_upscmd(
-    ups_status: str,
-    soc: float,
+    ups_status: Optional[str],
+    soc: Optional[float],
     recent_power_glitches: int,
 ) -> tuple[bool, str]:
     """Validate preconditions before dispatching test command.
@@ -43,9 +63,21 @@ def validate_preconditions_before_upscmd(
     Returns:
         tuple[bool, str]: (can_proceed, reason_if_blocked)
     """
-    if "OL" not in ups_status or "OB" in ups_status or "CAL" in ups_status:
+    if not isinstance(ups_status, str) or not ups_status.strip():
+        return False, "UPS_status_unknown"
+    status_tokens = set(ups_status.split())
+    if not status_tokens.intersection({"OL", "OB", "CAL", "OFF", "BYPASS", "BOOST", "TRIM"}):
+        return False, "UPS_status_unknown"
+    if "OL" not in status_tokens or "OB" in status_tokens or "CAL" in status_tokens:
         return False, "UPS_not_online_cannot_test_during_discharge"
 
+    if (
+        isinstance(soc, bool)
+        or not isinstance(soc, (int, float))
+        or not math.isfinite(float(soc))
+        or not 0.0 <= float(soc) <= 1.0
+    ):
+        return False, "soc_unknown"
     if soc < 0.95:
         return False, "soc_below_threshold"
 
@@ -60,6 +92,8 @@ def dispatch_test_with_audit(
     battery_model: BatteryModel,
     decision: SchedulerDecision,
     current_metrics: CurrentMetrics,
+    *,
+    scheduler_mode: str = SCHEDULER_MODE_CAPTURE_ONLY,
 ) -> bool:
     """Dispatch test command with full precondition checks and journald logging.
 
@@ -68,14 +102,26 @@ def dispatch_test_with_audit(
         battery_model: BatteryModel for persistence
         decision: SchedulerDecision from evaluate_test_scheduling()
         current_metrics: CurrentMetrics with UPS status and SoC
+        scheduler_mode: ``capture_only`` (default) and ``proposal_only`` reject
+            command dispatch; ``execute`` must be selected explicitly.
 
     Returns:
         bool: True if test was dispatched, False if blocked or failed
     """
-    ups_status = current_metrics.ups_status_override or "OL"
-    if current_metrics.ups_status_override is None:
-        logger.debug("ups_status_override is None (before first poll); defaulting to OL")
-    soc = current_metrics.soc if current_metrics.soc is not None else 1.0
+    if scheduler_mode != SCHEDULER_MODE_EXECUTE:
+        # Keep this guard at the only command-dispatch boundary.  Callers cannot
+        # accidentally turn a proposal into an UPS side effect by reaching this
+        # helper directly; an explicit mode is required for an executable test.
+        raise SchedulerModeError(
+            "UPS command dispatch is disabled in scheduler mode "
+            f"{scheduler_mode!r}; use {SCHEDULER_MODE_EXECUTE!r} explicitly"
+        )
+
+    # Execute mode still fails closed until a real, current physical poll has
+    # supplied both fields.  Treating missing values as OL/100% would make a
+    # stale or partial startup snapshot eligible for a UPS command.
+    ups_status = current_metrics.ups_status_override
+    soc = current_metrics.soc
     recent_power_glitches = 0
 
     preconditions_ok, block_reason = validate_preconditions_before_upscmd(
@@ -166,6 +212,8 @@ class SchedulerManager:
         nut_client,
         scheduling_config: SchedulingConfig,
         discharge_handler,
+        operational_journal_provider: Optional[Callable[[], Optional[DischargeJournal]]] = None,
+        scheduler_mode: str = SCHEDULER_MODE_PROPOSAL_ONLY,
     ):
         """Initialize SchedulerManager.
 
@@ -175,11 +223,21 @@ class SchedulerManager:
             nut_client: NUTClient instance for sending test commands.
             scheduling_config: SchedulingConfig with eval_hour_utc, cooldown, verbose flag.
             discharge_handler: DischargeHandler for cycle budget remaining.
+            scheduler_mode: proposal-only by default; capture-only is the global
+                application safety mode and execute is an explicit opt-in for a
+                separately authorized operator path.
         """
         self.battery_model = battery_model
         self.nut_client = nut_client
         self.scheduling_config = scheduling_config
         self.discharge_handler = discharge_handler
+        self.operational_journal_provider = operational_journal_provider
+        if scheduler_mode not in _SCHEDULER_MODES:
+            raise ValueError(
+                f"unknown scheduler mode {scheduler_mode!r}; "
+                f"expected one of {sorted(_SCHEDULER_MODES)}"
+            )
+        self.scheduler_mode = scheduler_mode
         self.scheduler_evaluated_today = False
         self._last_scheduling_reason: str = "observing"
         self._last_next_test_timestamp: Optional[str] = None
@@ -246,6 +304,19 @@ class SchedulerManager:
             )
 
             self._execute_scheduler_decision(decision, scheduler_inputs, now, current_metrics)
+        except OperationalJournalUnavailable as e:
+            # A missing/corrupt operational journal must never turn into a
+            # test proposal based on stale model.json history.
+            self.last_scheduling_reason = "operational_journal_unavailable"
+            self.last_next_test_timestamp = None
+            logger.error(
+                "Automatic battery test withheld: %s",
+                e,
+                extra={
+                    "event_type": "scheduler_history_unavailable",
+                    "reason": str(e)[:256],
+                },
+            )
         except (
             KeyError,
             AttributeError,
@@ -336,10 +407,58 @@ class SchedulerManager:
             return float("inf")
 
     def _get_last_natural_blackout(self) -> Optional[dict]:
-        """Return most recent natural blackout event (DoD, timestamp).
+        """Return most recent real blackout from authoritative journal history.
 
-        Reads discharge_events filtered by event_reason=="natural".
+        When a journal provider is configured, model.json is deliberately not
+        consulted.  BLACKOUT_TEST/CAL events are excluded by classification.
         """
+        if self.operational_journal_provider is not None:
+            try:
+                journal = self.operational_journal_provider()
+                if journal is None:
+                    raise OperationalJournalUnavailable(
+                        "operational journal provider returned no journal"
+                    )
+                health = getattr(journal, "health", None)
+                if health is not None and not health.healthy:
+                    raise OperationalJournalUnavailable(
+                        f"operational journal unhealthy: {health.last_error or 'unknown error'}"
+                    )
+                projection = journal.replay()
+            except OperationalJournalUnavailable:
+                raise
+            except Exception as exc:
+                raise OperationalJournalUnavailable(
+                    f"operational journal read failed: {type(exc).__name__}: {exc}"
+                ) from exc
+
+            candidates: list[dict] = []
+            for event in projection.events.values():
+                start = event.start
+                if start is None or event.end is None:
+                    continue
+                payload = start.payload
+                if payload.get("event_classification") != "BLACKOUT_REAL":
+                    continue
+                if payload.get("cal_provenance"):
+                    continue
+                raw_status = payload.get("raw_status")
+                if isinstance(raw_status, str) and "CAL" in raw_status.split():
+                    continue
+                timestamp = payload.get("start_timestamp")
+                if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+                    timestamp = datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+                if not isinstance(timestamp, str):
+                    continue
+                candidates.append(
+                    {
+                        "timestamp": timestamp,
+                        "depth": float(payload.get("depth_of_discharge", 0.0) or 0.0),
+                        "event_id": event.event_id,
+                    }
+                )
+            return max(candidates, key=lambda item: item["timestamp"]) if candidates else None
+
         events = self.battery_model.state.get("discharge_events", [])
         for event in reversed(events):  # Most recent first
             if event.get("event_reason") == "natural":
@@ -403,23 +522,35 @@ class SchedulerManager:
         self.last_next_test_timestamp = decision.next_eligible_timestamp
 
         if decision.action == "propose_test":
-            dispatched = dispatch_test_with_audit(
-                nut_client=self.nut_client,
-                battery_model=self.battery_model,
-                decision=decision,
-                current_metrics=current_metrics,
-            )
-            if not dispatched:
-                logger.warning(
-                    "Test proposed but dispatch failed",
+            if self.scheduler_mode == SCHEDULER_MODE_EXECUTE:
+                dispatched = dispatch_test_with_audit(
+                    nut_client=self.nut_client,
+                    battery_model=self.battery_model,
+                    decision=decision,
+                    current_metrics=current_metrics,
+                    scheduler_mode=self.scheduler_mode,
+                )
+                if not dispatched:
+                    logger.warning(
+                        "Test proposed but dispatch failed",
+                        extra={
+                            "event_type": "test_dispatch_not_sent",
+                            "reason_code": decision.reason_code,
+                        },
+                    )
+            else:
+                # A proposal is a reportable scheduler result, never an UPS
+                # command, in the first-release modes.
+                logger.info(
+                    "Test proposal retained without dispatch (mode=%s)",
+                    self.scheduler_mode,
                     extra={
-                        "event_type": "test_dispatch_not_sent",
+                        "event_type": "test_proposal_only",
                         "reason_code": decision.reason_code,
+                        "scheduler_mode": self.scheduler_mode,
                     },
                 )
         else:
             logger.info(
                 f"Test {decision.action}: {decision.reason_code} ({decision.reason_detail})"
             )
-
-        self.battery_model.save()

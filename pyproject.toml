@@ -7,7 +7,7 @@ dependencies = [
     "python-systemd",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = ["pytest", "pytest-timeout", "pyright", "ruff", "vulture", "pytest-cov"]
 
 [project.scripts]
