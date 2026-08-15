@@ -259,7 +259,7 @@ sudo systemctl daemon-reload; or begin; restore_after_replace "daemon-reload fai
 bounded_start 10; or begin; restore_after_replace "new service failed to start within 10 seconds"; exit 1; end
 ```
 
-Только этот блок содержит остановку. Его целевой stop-to-start интервал — менее
+Только этот блок содержит остановку. Его целевой stop-to-monitor-start интервал — менее
 30 секунд; обычный запуск ограничен 10 секундами, rollback — 30 секундами,
 поскольку старый unit имеет `TimeoutStartSec=30`. Все UUID, jq, проверки,
 worktree и unit-файлы подготовлены заранее. Ни один запуск не блокирует
@@ -269,13 +269,24 @@ worktree и unit-файлы подготовлены заранее. Ни оди
 ## Приёмка и rollback
 
 После старта проверить свежий health-файл, оба виртуальных выхода и физический
-UPS:
+UPS. Остановка монитора удаляет его `RuntimeDirectory`, поэтому уже работающий
+`dummy-ups` может потерять `.dev` и завершиться. Его штатный systemd unit имеет
+`RestartSec=15s`: не считать первый `Driver not connected` отказом Release A,
+а ограниченно ждать переподключения до 30 секунд.
 
 ```fish
 test -s /run/ups-battery-monitor/ups-health.json; and jq -e '.startup_degraded == false and .model_update_mode == "capture_only" and .automatic_dispatch == false' /run/ups-battery-monitor/ups-health.json
 upsc cyberpower@localhost ups.status
-upsc cyberpower-virtual@localhost ups.status
 test -s /run/ups-battery-monitor/ups-virtual.dev
+set virtual_ready false
+for second in (seq 1 30)
+    if upsc cyberpower-virtual@localhost ups.status 2>/dev/null | string match -rq '(^|[[:space:]])OL([[:space:]]|$)'
+        set virtual_ready true
+        break
+    end
+    sleep 1
+end
+test "$virtual_ready" = true
 ```
 
 READY считается доказанным только после валидного свежего poll и успешной записи
