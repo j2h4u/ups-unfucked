@@ -2,11 +2,12 @@
 
 **Status:** Candidate acceptance and rollback procedure. This document does not claim deployment.
 
-This runbook covers the per-event JSONL candidate described by ADR 0003. Run it only against a
-pinned release candidate that has passed its automated and review gates. Safety has priority over
-data collection or learning.
+This runbook covers the per-event JSONL candidate described by ADR 0003 and the Slice-0 authority
+boundary in ADR 0004. Run it only against a pinned release candidate that has passed its automated
+and review gates. Safety has priority over data collection or learning.
 
 Normative companions: [ADR 0003](adr/0003-domain-jsonl-automatic-blackout-learning.md),
+[ADR 0004](adr/0004-unified-fragment-capabilities-and-recharge-linkage.md),
 [Glossary](GLOSSARY.md), and [user scenarios](USER-SCENARIOS.md).
 
 The release gates are fixed: per-function CRAP must be at most 30, every production module at most
@@ -105,6 +106,303 @@ fingerprint. Check all of the following before stopping anything:
 
 Abort preflight on any missing, stale, contradictory, or unexplained value. Do not repair JSONL or
 `model.json` by hand.
+
+### V3 capability-baseline preflight (Slice 0)
+
+The read-only producer exists, but this section is not evidence that v3 is implemented or
+deployed. The baseline is derived configuration at
+`~/.config/ups-battery-monitor/telemetry-capability-baseline-v1.json`; it is not scientific
+evidence.
+
+Before v3 activation, while the physical UPS is online and the normal control path is available:
+
+1. Confirm that no test or power command is in progress. The baseline producer is read-only with
+   respect to NUT and must not start, stop, or schedule a UPS test.
+2. Confirm `~/.config/ups-battery-monitor` is owned by the service user with mode `0700`, then run
+   the reviewed producer from the pinned checkout. It reads only ordinary `LIST VAR` replies and
+   refuses to replace an existing artifact:
+
+   ```bash
+   scripts/record-telemetry-capability-baseline \
+     --output ~/.config/ups-battery-monitor/telemetry-capability-baseline-v1.json
+   ```
+
+   The canonical filename is intentional; dated sibling baselines are not runtime authority. A
+   persistent owner-only dot-lock coordinates future runs. An interrupted publication may leave
+   an owner-only `.tmp-*` dotfile, which is not a baseline and must never be selected manually.
+3. Require exactly 60 consecutive complete ordinary replies, plus UPS model/serial, explicit UPS
+   firmware presence/value when exposed, and NUT driver identity/version. Absence of an UPS
+   firmware field is recorded as absence; a driver version is never substituted for it. The
+   production window takes about one minute at the fixed one-second cadence. The producer must
+   align later poll starts to monotonic one-second deadlines from collection start; an overrun
+   starts the next overdue poll immediately without negative sleep or accumulated drift. It must
+   refuse concurrent runs, incomplete replies,
+   identity changes, unsafe ownership/mode, and implicit replacement of an existing destination.
+4. Verify canonical schema, owner-only permissions, configured endpoint, and current physical
+   identity through one additional ordinary `LIST VAR` reply:
+
+   ```bash
+   scripts/record-telemetry-capability-baseline --verify \
+     --output ~/.config/ups-battery-monitor/telemetry-capability-baseline-v1.json
+   ```
+
+   `--verify` checks only the canonical artifact/schema, owner-only permissions, configured
+   endpoint, and current physical NUT identity. It does not compare state-scoped token-shape
+   signatures; those signatures are admission evidence for the v3 preflight and exact-state
+   capability admission.
+
+   Confirm that the artifact records every observed `ups.status`. Optional fields are scoped only
+   to states in which they were observed; an OL-only run cannot authorize a battery-on-OB
+   capability.
+5. Require the v3 activation preflight to match the baseline's physical UPS and NUT identity. A
+   missing, corrupt, non-owner-only, or mismatched baseline is a fail-closed activation refusal:
+   stop, keep the prior runtime untouched, and follow the stale-baseline recovery procedure below.
+   Never seed the initial v3 manifest from a fixture, an archive, or silent daemon auto-collection.
+
+#### Safe stale-baseline recovery
+
+The canonical artifact is derived configuration, not scientific evidence. A stale, corrupt,
+non-owner-only, or identity-mismatched artifact must never be used as a compatibility input. Keep v3
+activation blocked and leave the existing safety/runtime service untouched while recovering it.
+The checks below are entered from fish, but the multiline recovery transactions are explicitly run
+inside `bash -c`; the Python heredocs are not fish syntax. The workflow uses no broad recursive
+deletion and never follows the final artifact symlink.
+
+1. Confirm that the physical UPS is online and that no test or power command is in progress. Ensure
+   that no baseline record or verify process remains active; the command must print no rows. If it
+   prints a process, wait for it to finish and do not kill it by a broad pattern:
+
+   ```fish
+   pgrep -af '[r]ecord-telemetry-capability-baseline|[t]elemetry_capability_cli' || true
+   ```
+
+2. Validate the exact parent, canonical artifact, and persistent baseline lock before moving
+   anything. Run as the service user, and retain the printed owner UID, mode, size, and SHA-256 as
+   the recovery receipt. A failure is a stop condition; do not substitute a similarly named file.
+   From fish, invoke the following audited transaction through `bash -c`:
+
+   ```bash
+   bash -c '
+   set -euo pipefail
+   python3 - "$HOME/.config/ups-battery-monitor/telemetry-capability-baseline-v1.json" <<PY
+   import errno
+   import fcntl
+   import hashlib
+   import os
+   import stat
+   import sys
+
+   path = os.path.abspath(sys.argv[1])
+   parent = os.path.dirname(path)
+   if os.path.basename(path) != "telemetry-capability-baseline-v1.json":
+       raise SystemExit("canonical baseline path is not exact")
+   parent_info = os.lstat(parent)
+   if not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode):
+       raise SystemExit("baseline parent is not a real directory")
+   if parent_info.st_uid != os.getuid() or stat.S_IMODE(parent_info.st_mode) != 0o700:
+       raise SystemExit("baseline parent owner/mode is not service-user/0700")
+   lock_path = os.path.join(parent, "." + os.path.basename(path) + ".lock")
+   lock_flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+   try:
+       lock_fd = os.open(lock_path, lock_flags, 0o600)
+   except OSError as exc:
+       raise SystemExit("baseline lock cannot be opened") from exc
+   try:
+       os.fchmod(lock_fd, 0o600)
+       lock_info = os.fstat(lock_fd)
+       if (
+           not stat.S_ISREG(lock_info.st_mode)
+           or lock_info.st_uid != os.getuid()
+           or stat.S_IMODE(lock_info.st_mode) != 0o600
+       ):
+           raise SystemExit("baseline lock owner/mode is unsafe")
+       try:
+           fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+       except OSError as exc:
+           if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+               raise SystemExit("another baseline run is active") from exc
+           raise SystemExit("baseline lock cannot be acquired") from exc
+       artifact_info = os.lstat(path)
+       if stat.S_ISLNK(artifact_info.st_mode) or not stat.S_ISREG(artifact_info.st_mode):
+           raise SystemExit("canonical baseline is not a regular non-symlink file")
+       if artifact_info.st_uid != os.getuid() or stat.S_IMODE(artifact_info.st_mode) != 0o600:
+           raise SystemExit("canonical baseline owner/mode is not service-user/0600")
+       flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+       fd = os.open(path, flags)
+       try:
+           opened = os.fstat(fd)
+           if (opened.st_dev, opened.st_ino) != (artifact_info.st_dev, artifact_info.st_ino):
+               raise SystemExit("canonical baseline changed during validation")
+           digest = hashlib.sha256()
+           while chunk := os.read(fd, 1024 * 1024):
+               digest.update(chunk)
+           after = os.fstat(fd)
+       finally:
+           os.close(fd)
+       if (
+           (after.st_dev, after.st_ino, after.st_size)
+           != (artifact_info.st_dev, artifact_info.st_ino, artifact_info.st_size)
+       ):
+           raise SystemExit("canonical baseline changed while hashing")
+       print(
+           f"owner_uid={artifact_info.st_uid} mode={stat.S_IMODE(artifact_info.st_mode):04o} "
+           f"size={artifact_info.st_size} inode={artifact_info.st_ino} "
+           f"sha256={digest.hexdigest()}"
+       )
+   finally:
+       fcntl.flock(lock_fd, fcntl.LOCK_UN)
+       os.close(lock_fd)
+   PY
+   '
+   ```
+
+3. With activation still blocked and the receipt captured, perform a same-directory,
+   no-clobber archive move while holding the same persistent lock. This uses a hard-link-plus-unlink
+   transaction rather than an overwrite-capable `mv`; a collision gets a numeric suffix. It fsyncs
+   the parent directory immediately after the no-clobber link and immediately after the source
+   unlink. It verifies the archived copy's owner, mode, size, device/inode, and SHA-256, then
+   re-verifies the source before removing the canonical name. If any check fails, it stops and
+   leaves the canonical artifact in place. From fish, invoke this audited transaction through
+   `bash -c`:
+
+   ```bash
+   bash -c '
+   set -euo pipefail
+   python3 - "$HOME/.config/ups-battery-monitor/telemetry-capability-baseline-v1.json" <<PY
+   import datetime
+   import errno
+   import fcntl
+   import hashlib
+   import os
+   import stat
+   import sys
+
+   source = os.path.abspath(sys.argv[1])
+   parent = os.path.dirname(source)
+   if os.path.basename(source) != "telemetry-capability-baseline-v1.json":
+       raise SystemExit("canonical baseline path is not exact")
+   parent_info = os.lstat(parent)
+   if not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode):
+       raise SystemExit("baseline parent is not a real directory")
+   if parent_info.st_uid != os.getuid() or stat.S_IMODE(parent_info.st_mode) != 0o700:
+       raise SystemExit("baseline parent owner/mode is not service-user/0700")
+   lock_path = os.path.join(parent, "." + os.path.basename(source) + ".lock")
+   lock_flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+   try:
+       lock_fd = os.open(lock_path, lock_flags, 0o600)
+   except OSError as exc:
+       raise SystemExit("baseline lock cannot be opened") from exc
+
+   def receipt(path):
+       info = os.lstat(path)
+       if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+           raise SystemExit("archive candidate is not a regular non-symlink file")
+       if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+           raise SystemExit("archive candidate owner/mode is unsafe")
+       fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+       try:
+           opened = os.fstat(fd)
+           if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+               raise SystemExit("file changed during validation")
+           digest = hashlib.sha256()
+           while chunk := os.read(fd, 1024 * 1024):
+               digest.update(chunk)
+           after = os.fstat(fd)
+       finally:
+           os.close(fd)
+       if (
+           (after.st_dev, after.st_ino, after.st_size)
+           != (info.st_dev, info.st_ino, info.st_size)
+       ):
+           raise SystemExit("file changed while hashing")
+       return (
+           info.st_uid,
+           stat.S_IMODE(info.st_mode),
+           info.st_size,
+           info.st_dev,
+           info.st_ino,
+           digest.hexdigest(),
+       )
+
+   def fsync_parent():
+       directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+       try:
+           os.fsync(directory_fd)
+       finally:
+           os.close(directory_fd)
+
+   try:
+       os.fchmod(lock_fd, 0o600)
+       lock_info = os.fstat(lock_fd)
+       if (
+           not stat.S_ISREG(lock_info.st_mode)
+           or lock_info.st_uid != os.getuid()
+           or stat.S_IMODE(lock_info.st_mode) != 0o600
+       ):
+           raise SystemExit("baseline lock owner/mode is unsafe")
+       try:
+           fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+       except OSError as exc:
+           if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+               raise SystemExit("another baseline run is active") from exc
+           raise SystemExit("baseline lock cannot be acquired") from exc
+       source_info = os.lstat(source)
+       if stat.S_ISLNK(source_info.st_mode) or not stat.S_ISREG(source_info.st_mode):
+           raise SystemExit("canonical baseline is not a regular non-symlink file")
+       if source_info.st_uid != os.getuid() or stat.S_IMODE(source_info.st_mode) != 0o600:
+           raise SystemExit("canonical baseline owner/mode is not service-user/0600")
+       before = receipt(source)
+       stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+       archive_base = os.path.join(parent, f".stale-{stamp}-{os.getpid()}")
+       suffix = 0
+       while True:
+           candidate = archive_base if suffix == 0 else f"{archive_base}-{suffix}"
+           try:
+               os.link(source, candidate, follow_symlinks=False)
+               archive = candidate
+               break
+           except FileExistsError:
+               suffix += 1
+               if suffix > 1000:
+                   raise SystemExit("could not allocate a unique stale archive name")
+       fsync_parent()
+       archived = receipt(archive)
+       if before != archived:
+           raise SystemExit("archived baseline receipt differs from source; source preserved")
+       if receipt(source) != before:
+           raise SystemExit("canonical baseline changed before removal; source preserved")
+       os.unlink(source)
+       fsync_parent()
+       print(f"archived={archive}")
+       print(
+           f"owner_uid={archived[0]} mode={archived[1]:04o} size={archived[2]} "
+           f"inode={archived[4]} sha256={archived[5]}"
+       )
+   finally:
+       fcntl.flock(lock_fd, fcntl.LOCK_UN)
+       os.close(lock_fd)
+   PY
+   '
+   ```
+
+   The `.stale-UTC-pid` file is review-only. Never pass it to `--output`, copy it over the
+   canonical name, or treat it as a compatibility baseline; the producer accepts only the
+   canonical filename and refuses no-clobber replacement.
+
+4. Rerun the canonical record command from preflight step 2, then rerun the canonical verify
+   command from preflight step 4. `--verify` checks only the canonical artifact/schema,
+   owner-only permissions, configured endpoint, and current physical NUT identity. It does not
+   compare state-scoped token-shape signatures: those signatures are admission evidence for the v3
+   preflight and exact-state capability admission, not part of identity-only verification. Both
+   commands must succeed before any v3 activation review resumes. If record or verify fails, keep
+   activation blocked and preserve both the new diagnostic and the stale archive.
+
+After v3 is already running, a hardware or NUT-driver identity change disables dependent typed
+capabilities while safety and raw capture continue. Read-only re-observation may restore an
+already reviewed field only after its state-scoped 60-reply signature matches the registered
+signature. New or semantically changed fields remain raw-only until a reviewed policy revision.
+This recovery behavior does not waive the initial activation preflight and does not authorize a
+model write.
 
 ### Safety publication and startup failure semantics
 
