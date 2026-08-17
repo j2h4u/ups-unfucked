@@ -2,10 +2,12 @@
 Description=UPS Battery Monitor
 Documentation=https://github.com/j2h4u/ups-battery-monitor
 After=sysinit.target network-online.target nut-server.service
-Wants=network-online.target
+Wants=network-online.target nut-driver@cyberpower-virtual.service
 ConditionPathExists=/run/nut/
+# Allow three bounded restart attempts in five minutes.  RestartSec=10 prevents
+# a restart storm while still surfacing a persistent fatal safety failure.
+StartLimitIntervalSec=300
 StartLimitBurst=3
-StartLimitIntervalSec=60
 
 [Service]
 Type=notify
@@ -18,6 +20,14 @@ RuntimeDirectoryPreserve=restart
 WorkingDirectory=@INSTALL_DIR@
 Environment="PYTHONPATH=@INSTALL_DIR@"
 ExecStart=/usr/bin/python3 -m src.monitor
+# Remove a file left by an unclean shutdown before any bound dummy driver can
+# observe it.  The driver is ordered after this service and waits for a fresh
+# publication before starting.
+ExecStartPre=-/usr/bin/unlink /run/ups-battery-monitor/ups-virtual.dev
+# A stopped monitor must not leave dummy-ups serving its last OL snapshot.
+# The target is a dedicated regular file under RuntimeDirectory; unlink is
+# intentionally non-following and is ignored when the file is already absent.
+ExecStopPost=-/usr/bin/unlink /run/ups-battery-monitor/ups-virtual.dev
 Restart=on-failure
 RestartSec=10
 # NUT/output outages are degraded operation; Type=notify must not restart the

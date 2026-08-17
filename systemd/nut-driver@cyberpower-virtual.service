@@ -1,0 +1,31 @@
+# Exact virtual driver instance owned by ups-battery-monitor.
+#
+# This intentionally replaces the stock template only for the dummy-ups
+# instance.  Its [Install] target is the monitor service, so NUT's
+# enumerator-enabled symlink cannot join nut-driver.target and cannot create
+# the stock driver -> target -> server -> monitor cycle.
+
+[Unit]
+Description=Network UPS Tools - device driver for cyberpower-virtual
+After=local-fs.target ups-battery-monitor.service
+BindsTo=ups-battery-monitor.service
+PartOf=ups-battery-monitor.service
+
+[Service]
+# Preserve the stock NUT 2.8 driver environment and command semantics.
+Environment=NUT_IGNORE_NOWAIT=true
+EnvironmentFile=-/etc/nut/nut.conf
+SyslogIdentifier=%N
+ExecStartPre=-/usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles.d/nut-common-tmpfiles.conf
+# Do not let dummy-ups consume a stale publication from before this monitor generation.
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do [ -f /run/ups-battery-monitor/ups-virtual.dev ] && exit 0; sleep 1; done; echo "Timeout waiting for ups-virtual.dev" >&2; exit 1'
+ExecStart=/bin/sh -c 'NUTDEV="`/usr/libexec/nut-driver-enumerator.sh --get-device-for-service %i`" && [ -n "$NUTDEV" ] || { echo "FATAL: Could not find a NUT device section for service unit %i" >&2 ; exit 1 ; } ; exec /usr/sbin/upsdrvctl  start "$NUTDEV"'
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStop=/bin/sh -c 'NUTDEV="`/usr/libexec/nut-driver-enumerator.sh --get-device-for-service %i`" && [ -n "$NUTDEV" ] || { echo "FATAL: Could not find a NUT device section for service unit %i" >&2 ; exit 1 ; } ; /usr/sbin/upsdrvctl stop "$NUTDEV"'
+StartLimitInterval=0
+Restart=always
+RestartSec=15s
+Type=forking
+
+[Install]
+WantedBy=ups-battery-monitor.service

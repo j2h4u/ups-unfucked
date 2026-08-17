@@ -1,10 +1,22 @@
-"""Pure kernel: Peukert's Law runtime prediction.
+"""Canonical Peukert runtime prediction with the safety zero-load cap."""
 
-Pure physics — no I/O, no state mutation. See runtime_calculator.py for
-the production wrapper that applies SoC/SoH scaling and the 24h zero-load cap.
-"""
+from dataclasses import dataclass
 
 from src.battery_math.constants import NOMINAL_POWER_WATTS, RATED_CAPACITY_AH
+
+
+@dataclass(frozen=True, slots=True)
+class PeukertParameters:
+    """Independent physical inputs for one remaining-runtime prediction."""
+
+    capacity_ah: float = RATED_CAPACITY_AH
+    soh: float = 1.0
+    peukert_exponent: float = 1.2
+    nominal_voltage: float = 12.0
+    nominal_power_watts: float = NOMINAL_POWER_WATTS
+
+
+DEFAULT_PEUKERT_PARAMETERS = PeukertParameters()
 
 
 def peukert_runtime_hours(
@@ -25,10 +37,10 @@ def peukert_runtime_hours(
 
     Returns:
         Runtime in hours at SoC=1.0, SoH=1.0
-        Returns 0.0 for zero/negative load (battery_math strict; runtime_calculator uses 24h cap).
+        Returns the canonical 24-hour safety cap for zero/negative load.
     """
     if load_percent <= 0:
-        return 0.0
+        return 24.0
 
     I_rated = capacity_ah / 20.0
     I_actual = load_percent / 100.0 * nominal_power_watts / nominal_voltage
@@ -39,37 +51,35 @@ def peukert_runtime_hours(
 def runtime_minutes(
     soc: float,
     load_percent: float,
-    capacity_ah: float = RATED_CAPACITY_AH,
-    soh: float = 1.0,
-    peukert_exponent: float = 1.2,
-    nominal_voltage: float = 12.0,
-    nominal_power_watts: float = NOMINAL_POWER_WATTS,
+    parameters: PeukertParameters = DEFAULT_PEUKERT_PARAMETERS,
 ) -> float:
     """Pure function: Predict remaining battery runtime in minutes.
 
-    Returns 0.0 if load=0 or SoC=0. No I/O, no state mutation.
+    Returns the canonical 24-hour cap if load is zero/negative and 0 if SoC is zero.
 
     Args:
         soc: State of Charge [0.0, 1.0]
         load_percent: Load [0, 100]%
-        capacity_ah: Battery capacity (Ah)
-        soh: State of Health [0.0, 1.0]
-        peukert_exponent: Exponent n [1.0, 1.4]
-        nominal_voltage: Battery nominal voltage (V)
-        nominal_power_watts: UPS nominal power output (W)
+        parameters: Frozen battery and UPS physics inputs.
 
     Returns:
         Runtime in minutes at given SoC and SoH
     """
     if soc <= 0:
         return 0.0
+    if load_percent <= 0:
+        return 24.0 * 60.0
 
     T_hours = (
         peukert_runtime_hours(
-            load_percent, capacity_ah, peukert_exponent, nominal_voltage, nominal_power_watts
+            load_percent,
+            parameters.capacity_ah,
+            parameters.peukert_exponent,
+            parameters.nominal_voltage,
+            parameters.nominal_power_watts,
         )
         * soc
-        * soh
+        * parameters.soh
     )
 
     return max(0.0, T_hours * 60)

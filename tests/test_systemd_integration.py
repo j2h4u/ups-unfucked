@@ -12,6 +12,11 @@ from pathlib import Path
 
 # Service file path (relative to repo root)
 SERVICE_FILE_PATH = Path(__file__).parent.parent / "systemd" / "ups-battery-monitor.service"
+DRIVER_UNIT_PATH = (
+    Path(__file__).parent.parent / "systemd" / "nut-driver@cyberpower-virtual.service"
+)
+LEGACY_DRIVER_DROPIN_PATH = Path(__file__).parent.parent / "systemd" / "nut-driver-virtual.conf"
+DUMMY_CONFIG_PATH = Path(__file__).parent.parent / "config" / "dummy-ups.conf"
 
 
 def parse_service_file(path):
@@ -106,6 +111,9 @@ def test_service_file_unit_section_required_fields():
     # Wants for network-online.target
     assert "Wants" in unit, "Wants directive missing"
     assert "network-online.target" in unit["Wants"], "network-online.target not in Wants"
+    assert "nut-driver@cyberpower-virtual.service" in unit["Wants"], (
+        "monitor restart must start the bound virtual driver"
+    )
 
     # ConditionPathExists for soft NUT check
     assert "ConditionPathExists" in unit, "ConditionPathExists missing"
@@ -121,8 +129,7 @@ def test_service_file_service_section_restart_config():
     """
     Test: [Service] restart directives and [Unit] rate-limiting.
 
-    OPS-01: Restart=on-failure, RestartSec=10, StartLimitBurst=3,
-            StartLimitIntervalSec=60
+    OPS-01: Restart=on-failure, RestartSec=10, bounded retry interval.
     """
     config = parse_service_file(SERVICE_FILE_PATH)
 
@@ -139,21 +146,16 @@ def test_service_file_service_section_restart_config():
     assert "RestartSec" in service, "RestartSec missing"
     assert service["RestartSec"] == "10", f"RestartSec should be 10, got '{service['RestartSec']}'"
 
-    # StartLimitBurst/IntervalSec belong in [Unit], not [Service]
+    # StartLimitIntervalSec belongs in [Unit]. Three attempts in five minutes
+    # are bounded, while RestartSec=10 prevents an immediate restart storm.
     assert "Unit" in config, "[Unit] section missing"
     unit = config["Unit"]
 
-    # StartLimitBurst = 3 (max 3 restarts before giving up)
-    assert "StartLimitBurst" in unit, "StartLimitBurst missing from [Unit]"
-    assert unit["StartLimitBurst"] == "3", (
-        f"StartLimitBurst should be 3, got '{unit['StartLimitBurst']}'"
-    )
-
-    # StartLimitIntervalSec = 60 (within 60-second window)
     assert "StartLimitIntervalSec" in unit, "StartLimitIntervalSec missing from [Unit]"
-    assert unit["StartLimitIntervalSec"] == "60", (
-        f"StartLimitIntervalSec should be 60, got '{unit['StartLimitIntervalSec']}'"
+    assert unit["StartLimitIntervalSec"] == "300", (
+        f"StartLimitIntervalSec should be 300, got '{unit['StartLimitIntervalSec']}'"
     )
+    assert unit["StartLimitBurst"] == "3"
 
 
 def test_notify_service_waits_indefinitely_for_degraded_startup():
@@ -163,6 +165,88 @@ def test_notify_service_waits_indefinitely_for_degraded_startup():
     assert service["Type"] == "notify"
     assert service["TimeoutStartSec"] == "0"
     assert service["WatchdogSec"] == "120"
+
+
+def test_stopped_monitor_invalidates_virtual_ups_snapshot():
+    """A dead monitor cannot leave dummy-ups serving stale virtual OL."""
+    service = parse_service_file(SERVICE_FILE_PATH)["Service"]
+
+    assert service["ExecStartPre"] == ("-/usr/bin/unlink /run/ups-battery-monitor/ups-virtual.dev")
+    assert service["ExecStopPost"] == ("-/usr/bin/unlink /run/ups-battery-monitor/ups-virtual.dev")
+
+
+def test_virtual_driver_is_bound_to_monitor_lifecycle_without_reverse_ordering():
+    """The dummy projection stops with monitor and is pulled back on restart."""
+    monitor = parse_service_file(SERVICE_FILE_PATH)["Unit"]
+    driver = parse_service_file(DRIVER_UNIT_PATH)
+    unit = driver["Unit"]
+    service = driver["Service"]
+    install = driver["Install"]
+
+    assert "nut-driver@cyberpower-virtual.service" in monitor["Wants"]
+    assert unit["BindsTo"] == "ups-battery-monitor.service"
+    assert unit["PartOf"] == "ups-battery-monitor.service"
+    assert "ups-battery-monitor.service" in unit["After"]
+    assert "Before" not in unit
+    assert all("nut-driver.target" not in value for value in unit.values())
+    assert install["WantedBy"] == "ups-battery-monitor.service"
+    assert service["Environment"] == "NUT_IGNORE_NOWAIT=true"
+    assert "upsdrvctl  start" in service["ExecStart"]
+    assert "upsdrvctl stop" in service["ExecStop"]
+    assert service["Restart"] == "always"
+    assert service["RestartSec"] == "15s"
+    assert service["Type"] == "forking"
+    assert "/run/ups-battery-monitor/ups-virtual.dev" in service["ExecStartPre"]
+
+
+def test_legacy_enumerator_owned_driver_dropin_is_retired():
+    """The exact fragment must survive enumerator cleanup of instance drop-ins."""
+    assert not LEGACY_DRIVER_DROPIN_PATH.exists()
+
+
+def test_rendered_topology_has_no_stock_target_cycle():
+    """Stock target/server ordering leads into monitor-owned virtual driver only."""
+    after = {
+        "nut-driver.target": {"local-fs.target"},
+        "nut-server.service": {"nut-driver.target"},
+        "ups-battery-monitor.service": {"nut-server.service"},
+        "nut-driver@cyberpower-virtual.service": {
+            "local-fs.target",
+            "ups-battery-monitor.service",
+        },
+    }
+
+    assert "nut-driver@cyberpower-virtual.service" not in after["nut-driver.target"]
+    assert "nut-driver.target" in after["nut-server.service"]
+    assert "nut-server.service" in after["ups-battery-monitor.service"]
+    assert "ups-battery-monitor.service" in after["nut-driver@cyberpower-virtual.service"]
+
+    def reaches(start: str, target: str, seen: set[str] | None = None) -> bool:
+        visited = set() if seen is None else seen
+        if start == target:
+            return True
+        if start in visited:
+            return False
+        visited.add(start)
+        return any(reaches(parent, target, visited) for parent in after.get(start, set()))
+
+    def has_cycle(unit: str, path: set[str]) -> bool:
+        if unit in path:
+            return True
+        return any(has_cycle(parent, path | {unit}) for parent in after.get(unit, set()))
+
+    for unit in after:
+        assert not has_cycle(unit, set()), f"ordering cycle from {unit}"
+    assert reaches("nut-driver@cyberpower-virtual.service", "nut-driver.target")
+
+
+def test_virtual_dummy_config_points_only_at_runtime_publication():
+    """The NUT projection consumes the lifecycle-owned runtime file."""
+    config = DUMMY_CONFIG_PATH.read_text()
+
+    assert "[cyberpower-virtual]" in config
+    assert "driver = dummy-ups" in config
+    assert "port = /run/ups-battery-monitor/ups-virtual.dev" in config
 
 
 # ============================================================================

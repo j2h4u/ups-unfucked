@@ -1,0 +1,339 @@
+"""Small storage boundary used when scientific startup cannot be recovered.
+
+The safety loop does not need an event repository to publish the current UPS
+state.  This object deliberately implements only the bounded read operations
+used by the health reporter; all scientific mutations remain unavailable.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Protocol, cast
+
+from src.application.errors import StoragePortError
+from src.application.ports import (
+    AssessmentCloseEventStorePort,
+    AssessmentQueryEventStorePort,
+    CaptureRecoveryEventStorePort,
+    CloseablePort,
+    MaintenanceEventStorePort,
+    ProcessingRejectionEventStorePort,
+    ReportingEventStorePort,
+    ReportOutboxEventStorePort,
+    StartupRecoveryEventStorePort,
+)
+from src.application.storage_values import (
+    CaptureCloseReconciliation,
+    CaptureCloseState,
+    EpochIndexScan,
+    EpochIndexTail,
+    EventHandle,
+    EventProjection,
+    EventRecord,
+    EventRef,
+    EventStart,
+    EventSummary,
+    ProcessingRef,
+    RecoveredCapture,
+    ReportNoticeIdentity,
+    SealedEventRef,
+    StorageHealth,
+    TerminalOutcomeRecord,
+    WorkRegistry,
+)
+from src.domain.reasons import InfrastructureReason
+
+
+class EventStorageUnavailable(StoragePortError):
+    """Scientific event storage is unavailable for this process lifetime."""
+
+
+class _DeferredStoreDelegate(
+    CaptureRecoveryEventStorePort,
+    AssessmentQueryEventStorePort,
+    AssessmentCloseEventStorePort,
+    StartupRecoveryEventStorePort,
+    ReportingEventStorePort,
+    ProcessingRejectionEventStorePort,
+    CloseablePort,
+    Protocol,
+):
+    """Complete capability required only by the forwarding startup facade."""
+
+    @property
+    def report_outbox(self) -> ReportOutboxEventStorePort: ...
+
+    @property
+    def maintenance(self) -> MaintenanceEventStorePort: ...
+
+
+class DegradedEventStore:
+    """No-capture store that keeps safety/reporting construction deterministic."""
+
+    acknowledge_capture_recovery: Callable[[], None]
+
+    def __init__(self, reason: BaseException | str) -> None:
+        self.reason = _bounded_reason(reason)
+        self._closed = False
+        self.acknowledge_capture_recovery = lambda: None
+        self.report_outbox: ReportOutboxEventStorePort = self
+        self.maintenance: MaintenanceEventStorePort = self
+
+    def close(self) -> None:
+        """Close the no-op boundary without attempting any filesystem work."""
+        self._closed = True
+
+    def open(self, start: EventStart) -> EventHandle:
+        del start
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def append(self, handle: EventHandle, record: EventRecord) -> EventHandle:
+        del handle, record
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def seal(self, handle: EventHandle, outcome: TerminalOutcomeRecord) -> SealedEventRef:
+        del handle, outcome
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def reject_processing(
+        self,
+        processing: ProcessingRef,
+        reason: InfrastructureReason,
+    ) -> SealedEventRef:
+        del processing, reason
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def project(self, ref: EventRef | EventHandle | SealedEventRef) -> EventProjection:
+        del ref
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def recover_startup(self) -> RecoveredCapture | None:
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def checkpoint_processing(self, handle: EventHandle, frozen_stage: str) -> None:
+        del handle, frozen_stage
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def reconcile_damaged_close(
+        self,
+        blackout_id: str,
+        current_handle: EventHandle | None,
+    ) -> CaptureCloseReconciliation:
+        del blackout_id
+        return CaptureCloseReconciliation(CaptureCloseState.UNKNOWN, current_handle)
+
+    def work_registry(self) -> WorkRegistry:
+        """Expose an empty registry so no event can be invented in degraded mode."""
+        return WorkRegistry(None, ())
+
+    def storage_health(
+        self,
+        *,
+        queued_observations: int | None = None,
+        consumed_step_budget_remaining: int | None = None,
+    ) -> StorageHealth:
+        """Return a latched, operator-visible storage alarm."""
+        return StorageHealth(
+            capture_available=False,
+            active_phase=None,
+            queued_observations=queued_observations,
+            durability_lag_s=None,
+            index_available=False,
+            rebuild_generation=None,
+            rebuild_in_progress=False,
+            rebuild_files_done=0,
+            rebuild_files_target=0,
+            rebuild_files_remaining=0,
+            rebuild_last_progress_utc=None,
+            rebuild_stalled=False,
+            consumed_step_budget_remaining=consumed_step_budget_remaining,
+            event_count=0,
+            total_bytes=0,
+            free_bytes=0,
+            alarm="startup_degraded",
+            bounded_error=self.reason,
+        )
+
+    def index_tail(self, limit: int) -> tuple[EventSummary, ...]:
+        """Return no sealed science while the index is unavailable."""
+        del limit
+        return ()
+
+    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail:
+        """Return an incomplete empty cohort instead of querying storage."""
+        del battery_epoch_id, limit
+        return EpochIndexTail((), 0, False)
+
+    def index_scan_for_decline_epoch(self, battery_epoch_id: str) -> EpochIndexScan:
+        """Return an incomplete empty decline cohort instead of querying storage."""
+        del battery_epoch_id
+        return EpochIndexScan((), False)
+
+    def report_outbox_pending(self, limit: int) -> tuple[ReportNoticeIdentity, ...]:
+        del limit
+        return ()
+
+    def acknowledge_report_notice(self, notice: ReportNoticeIdentity) -> None:
+        del notice
+        raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def begin_index_rebuild(self) -> str:
+        """Keep maintenance a bounded no-op until a later retry can recover."""
+        return "degraded-startup"
+
+    def rebuild_index_tick(
+        self,
+        *,
+        max_files: int,
+        max_bytes: int,
+        max_wall_s: float = 0.20,
+    ) -> bool:
+        """Complete no work; no recovery bytes are touched in this boundary."""
+        del max_files, max_bytes, max_wall_s
+        return True
+
+    def promote_index_rebuild(self) -> None:
+        """Do not promote a projection that was never rebuilt."""
+        return None
+
+
+class DeferredEventStore:
+    """Safety-first facade that activates one real store after the first poll."""
+
+    def __init__(self, reason: BaseException | str) -> None:
+        self._fallback = DegradedEventStore(reason)
+        self._delegate: _DeferredStoreDelegate | None = None
+        self.report_outbox: ReportOutboxEventStorePort = _DeferredReportOutbox(self)
+        self.maintenance: MaintenanceEventStorePort = _DeferredMaintenance(self)
+
+    def activate(self, store: _DeferredStoreDelegate) -> None:
+        if self._delegate is not None and self._delegate is not store:
+            raise RuntimeError("deferred event store was already activated")
+        self._delegate = store
+
+    def degrade(self, reason: BaseException | str) -> None:
+        if self._delegate is None:
+            self._fallback = DegradedEventStore(reason)
+
+    def close(self) -> None:
+        self._target().close()
+
+    def open(self, start: EventStart) -> EventHandle:
+        return self._target().open(start)
+
+    def append(self, handle: EventHandle, record: EventRecord) -> EventHandle:
+        return self._target().append(handle, record)
+
+    def seal(self, handle: EventHandle, outcome: TerminalOutcomeRecord) -> SealedEventRef:
+        return self._target().seal(handle, outcome)
+
+    def reject_processing(
+        self,
+        processing: ProcessingRef,
+        reason: InfrastructureReason,
+    ) -> SealedEventRef:
+        return self._target().reject_processing(processing, reason)
+
+    def project(self, ref: EventRef | EventHandle | SealedEventRef) -> EventProjection:
+        return cast(AssessmentQueryEventStorePort, self._target()).project(ref)
+
+    def recover_startup(self):
+        return self._target().recover_startup()
+
+    def work_registry(self) -> WorkRegistry:
+        return self._target().work_registry()
+
+    def checkpoint_processing(self, handle: EventHandle, frozen_stage: str) -> None:
+        self._target().checkpoint_processing(handle, frozen_stage)
+
+    def reconcile_damaged_close(
+        self,
+        blackout_id: str,
+        current_handle: EventHandle | None,
+    ) -> CaptureCloseReconciliation:
+        return self._target().reconcile_damaged_close(blackout_id, current_handle)
+
+    def acknowledge_capture_recovery(self) -> None:
+        self._target().acknowledge_capture_recovery()
+
+    def index_tail(self, limit: int) -> tuple[EventSummary, ...]:
+        return self._target().index_tail(limit)
+
+    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail:
+        return self._target().index_tail_for_epoch(battery_epoch_id, limit)
+
+    def index_scan_for_decline_epoch(self, battery_epoch_id: str) -> EpochIndexScan:
+        return self._target().index_scan_for_decline_epoch(battery_epoch_id)
+
+    def storage_health(
+        self,
+        *,
+        queued_observations: int | None = None,
+        consumed_step_budget_remaining: int | None = None,
+    ) -> StorageHealth:
+        return self._target().storage_health(
+            queued_observations=queued_observations,
+            consumed_step_budget_remaining=consumed_step_budget_remaining,
+        )
+
+    def _target(self) -> _DeferredStoreDelegate:
+        return cast(_DeferredStoreDelegate, self._delegate or self._fallback)
+
+
+class _DeferredReportOutbox:
+    """Forward report delivery to whichever storage target is currently active."""
+
+    def __init__(self, owner: DeferredEventStore) -> None:
+        self._owner = owner
+
+    def report_outbox_pending(self, limit: int) -> tuple[ReportNoticeIdentity, ...]:
+        return self._owner._target().report_outbox.report_outbox_pending(limit)
+
+    def acknowledge_report_notice(self, notice: ReportNoticeIdentity) -> None:
+        self._owner._target().report_outbox.acknowledge_report_notice(notice)
+
+
+class _DeferredMaintenance:
+    """Forward bounded maintenance to the active or degraded target."""
+
+    def __init__(self, owner: DeferredEventStore) -> None:
+        self._owner = owner
+
+    def storage_health(
+        self,
+        *,
+        queued_observations: int | None = None,
+        consumed_step_budget_remaining: int | None = None,
+    ) -> StorageHealth:
+        return self._owner._target().maintenance.storage_health(
+            queued_observations=queued_observations,
+            consumed_step_budget_remaining=consumed_step_budget_remaining,
+        )
+
+    def begin_index_rebuild(self) -> str:
+        return self._owner._target().maintenance.begin_index_rebuild()
+
+    def rebuild_index_tick(
+        self,
+        *,
+        max_files: int,
+        max_bytes: int,
+        max_wall_s: float = 0.20,
+    ) -> bool:
+        return self._owner._target().maintenance.rebuild_index_tick(
+            max_files=max_files,
+            max_bytes=max_bytes,
+            max_wall_s=max_wall_s,
+        )
+
+    def promote_index_rebuild(self) -> None:
+        self._owner._target().maintenance.promote_index_rebuild()
+
+
+def _bounded_reason(reason: BaseException | str) -> str:
+    text = " ".join(str(reason).split())
+    if not text:
+        text = "scientific event storage unavailable"
+    if isinstance(reason, BaseException):
+        text = f"{type(reason).__name__}: {text}"
+    return text[:512]

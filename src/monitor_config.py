@@ -1,430 +1,127 @@
-"""UPS Battery Monitor — configuration, dataclasses, constants, and helpers.
+"""Validated configuration for the safety-first monitor composition root."""
 
-Separates configuration/infrastructure from daemon orchestration logic.
-"""
+from __future__ import annotations
 
 import logging
-import re
-import subprocess
-import sys
-import time
+import math
 import tomllib
-from dataclasses import dataclass, field, fields
-
-
-def _get_version() -> str:
-    """Derive version from git tag (e.g. 'v3.1-2-gabcdef1'). Falls back to 'unknown'."""
-    try:
-        return subprocess.check_output(
-            ["git", "describe", "--tags", "--always"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return "unknown"
-
-
-DAEMON_VERSION = _get_version()
-from datetime import datetime, timezone
-from enum import Enum
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
-from src.battery_math.constants import (
-    MIN_DISCHARGE_DURATION_SEC,  # noqa: F401 — re-exported for discharge_handler, soh_calculator
-    RATED_CAPACITY_AH,
-)
-from src.event_classifier import EventType
-from src.model import BatteryModel, atomic_write_json
+from src.battery_math.constants import RATED_CAPACITY_AH
+from src.domain.safety_policy import validate_shutdown_threshold_minutes
 
-# Precedence: config.toml > code defaults. Physics params (IR_K, etc.) live in model.json.
+logger = logging.getLogger("ups-battery-monitor")
 
 CONFIG_DIR = Path.home() / ".config" / "ups-battery-monitor"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Hardcoded internals (not user-facing)
-POLL_INTERVAL = 1  # seconds between NUT acquisition/classification/safety ticks
-REPORTING_INTERVAL_SEC = 60  # human-readable status/reporting cadence
-EMA_WINDOW = 120  # EMA smoothing window (seconds)
+POLL_INTERVAL_SEC = 1
+REPORTING_INTERVAL_SEC = 60
+EMA_WINDOW_SEC = 120
 NUT_HOST = "localhost"
 NUT_PORT = 3493
-NUT_TIMEOUT = 2.0  # socket timeout (seconds)
-RUNTIME_THRESHOLD_MINUTES = 20
-REFERENCE_LOAD_PERCENT = 20.0
-DISCHARGE_SAMPLE_INTERVAL_SEC = 10  # durable operational journal measurement cadence
-_MAX_JOURNAL_ERROR_LENGTH = 256
-_PATH_FRAGMENT_RE = re.compile(r"(?<!\w)(?:~[/\\]|/[^\s]+|[A-Za-z]:[/\\][^\s]+)")
-
-# User-configurable (from config.toml)
-_CONFIGURABLE_DEFAULTS = {
-    "ups_name": "cyberpower",
-    "shutdown_minutes": 5,
-    "soh_alert": 0.80,
-    "capacity_ah": RATED_CAPACITY_AH,
-}
-
-# Internal constants (not user-configurable)
-SAG_SAMPLES_REQUIRED = 5  # Collect 5 voltage samples, take median of last 3 for noise rejection
-DISCHARGE_BUFFER_MAX_SAMPLES = 1000  # Prevents unbounded memory growth (~2.8h at default poll rate)
-ERROR_LOG_BURST = (
-    10  # Full traceback for first N errors, then summary every REPORTING_INTERVAL_POLLS
-)
+NUT_TIMEOUT_SEC = 2.0
 
 
-@dataclass
-class SchedulingConfig:
-    """User-configurable scheduling knobs.
-
-    Algorithmic constants (SoH floor, rate limit, cycle budget) live as named constants
-    in their respective modules (scheduler.py constants, discharge_handler.py inline constants).
-    """
-
-    grid_stability_cooldown_hours: float = 4.0
-    scheduler_eval_hour_utc: int = 8
-    verbose_scheduling: bool = False
-
-    def validate(self) -> list[str]:
-        """Return list of validation errors, empty if valid."""
-        errors = []
-        if self.grid_stability_cooldown_hours < 0:
-            errors.append("grid_stability_cooldown_hours must be ≥0 (0 disables gate)")
-        if not (0 <= self.scheduler_eval_hour_utc <= 23):
-            errors.append("scheduler_eval_hour_utc must be in [0, 23]")
-        return errors
+class ConfigError(ValueError):
+    """The daemon configuration cannot be represented safely."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Config:
-    """Immutable UPS daemon configuration.
+    """Complete runtime configuration with no scientific model parameters."""
 
-    Created at startup, passed to MonitorDaemon.__init__.
-    """
+    ups_name: str = "cyberpower"
+    shutdown_minutes: int = 5
+    capacity_ah: float = RATED_CAPACITY_AH
+    model_dir: Path = CONFIG_DIR
+    nut_host: str = NUT_HOST
+    nut_port: int = NUT_PORT
+    nut_timeout: float = NUT_TIMEOUT_SEC
+    polling_interval: int = POLL_INTERVAL_SEC
+    reporting_interval: int = REPORTING_INTERVAL_SEC
+    ema_window_sec: int = EMA_WINDOW_SEC
 
-    ups_name: str
-    polling_interval: int  # seconds between NUT polls
-    reporting_interval: int  # seconds between status/reporting lines
-    nut_host: str
-    nut_port: int
-    nut_timeout: float  # NUT socket timeout (seconds)
-    shutdown_minutes: int
-    soh_alert_threshold: float  # SoH fraction [0.0, 1.0] below which to alert
-    model_dir: Path
-    runtime_threshold_minutes: int
-    reference_load_percent: float  # UPS load percentage used in Peukert/IR calculations (0-100)
-    ema_window_sec: int  # EMA smoothing window for voltage (seconds)
-    capacity_ah: float  # Rated battery capacity (Ah)
-    scheduling: Optional[SchedulingConfig] = None
+    def __post_init__(self) -> None:
+        if not self.ups_name or any(character.isspace() for character in self.ups_name):
+            raise ConfigError("ups_name must be a non-empty NUT identifier")
+        try:
+            validate_shutdown_threshold_minutes(self.shutdown_minutes)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        if isinstance(self.capacity_ah, bool) or self.capacity_ah <= 0.0:
+            raise ConfigError("capacity_ah must be positive")
+        if self.polling_interval != POLL_INTERVAL_SEC:
+            raise ConfigError("physical polling interval is fixed at one second")
+        if self.reporting_interval <= 0:
+            raise ConfigError("reporting_interval must be positive")
+        if self.ema_window_sec <= 0:
+            raise ConfigError("ema_window_sec must be positive")
+        if not 1 <= self.nut_port <= 65535:
+            raise ConfigError("nut_port must be between 1 and 65535")
+        if (
+            isinstance(self.nut_timeout, bool)
+            or not isinstance(self.nut_timeout, (int, float))
+            or not math.isfinite(float(self.nut_timeout))
+            or self.nut_timeout <= 0.0
+        ):
+            raise ConfigError("nut_timeout must be positive")
 
 
-def load_config() -> Config:
-    """Load user config from TOML, falling back to defaults for missing keys.
+def load_config(*, paths: tuple[Path, ...] | None = None) -> Config:
+    """Load the first present TOML file and validate the bounded runtime schema."""
+    search_paths = paths or (CONFIG_DIR / "config.toml", REPO_ROOT / "config.toml")
+    raw: dict[str, object] = {}
+    for path in search_paths:
+        if not path.is_file():
+            continue
+        try:
+            with path.open("rb") as stream:
+                raw = tomllib.load(stream)
+        except OSError as exc:
+            raise ConfigError(f"cannot read configuration {path}: {exc}") from exc
+        except tomllib.TOMLDecodeError as exc:
+            raise ConfigError(f"malformed configuration {path}: {exc}") from exc
+        break
 
-    Search order: CONFIG_DIR/config.toml (~/.config/ups-battery-monitor/)
-    then REPO_ROOT/config.toml. First found wins.
-
-    Returns: Config dataclass instance with all fields populated.
-    Raises: ValueError if scheduling configuration is invalid.
-    """
-    cfg_dict = {}
-    for path in [CONFIG_DIR / "config.toml", REPO_ROOT / "config.toml"]:
-        if path.is_file():
-            try:
-                with open(path, "rb") as f:
-                    cfg_dict = tomllib.load(f)
-                break
-            except OSError as e:
-                logger.error(f"Cannot read config {path}: {e}")
-                raise SystemExit(f"Config file error: {path}: {e}") from e
-            except tomllib.TOMLDecodeError as e:
-                logger.error(f"Malformed config {path}: {e}")
-                raise SystemExit(f"Config parse error: {path}: {e}") from e
-
-    config_values = {k: cfg_dict.get(k, v) for k, v in _CONFIGURABLE_DEFAULTS.items()}
-
-    errors = []
-    shutdown_minutes = config_values["shutdown_minutes"]
-    if not isinstance(shutdown_minutes, int) or shutdown_minutes <= 0:
-        errors.append(f"shutdown_minutes must be a positive integer, got {shutdown_minutes!r}")
-
-    soh_alert = config_values["soh_alert"]
-    if not isinstance(soh_alert, (int, float)) or not (0.0 <= float(soh_alert) <= 1.0):
-        errors.append(f"soh_alert must be a float in [0.0, 1.0], got {soh_alert!r}")
-
-    capacity_ah = config_values["capacity_ah"]
-    if not isinstance(capacity_ah, (int, float)) or float(capacity_ah) <= 0:
-        errors.append(f"capacity_ah must be a positive number, got {capacity_ah!r}")
-
-    if errors:
-        raise SystemExit(f"Config validation error: {'; '.join(errors)}")
-
-    # Validate scheduling configuration
-    sched_config = get_scheduling_config(cfg_dict)
-    if "scheduling" in cfg_dict:
-        logger.info(
-            "Scheduling configuration loaded and validated",
-            extra={
-                "event_type": "config_loaded",
-                "grid_stability_cooldown_hours": sched_config.grid_stability_cooldown_hours,
-                "scheduler_eval_hour_utc": sched_config.scheduler_eval_hour_utc,
-                "verbose_scheduling": sched_config.verbose_scheduling,
-            },
+    if "reference_load_percent" in raw:
+        raise ConfigError(
+            "reference_load_percent is model-owned and must not appear in runtime configuration"
         )
 
+    allowed = {"ups_name", "shutdown_minutes", "capacity_ah"}
+    unknown = sorted(set(raw).difference(allowed))
+    if unknown:
+        logger.warning("Ignoring unknown configuration keys: %s", ", ".join(unknown))
+
+    ups_name = raw.get("ups_name", "cyberpower")
+    shutdown_minutes = raw.get("shutdown_minutes", 5)
+    capacity_ah = raw.get("capacity_ah", RATED_CAPACITY_AH)
+    if not isinstance(ups_name, str):
+        raise ConfigError("ups_name must be a string")
+    if isinstance(shutdown_minutes, bool) or not isinstance(shutdown_minutes, int):
+        raise ConfigError("shutdown_minutes must be a positive integer")
+    if isinstance(capacity_ah, bool) or not isinstance(capacity_ah, (int, float)):
+        raise ConfigError("capacity_ah must be a positive number")
     return Config(
-        ups_name=config_values["ups_name"],
-        polling_interval=POLL_INTERVAL,
-        reporting_interval=REPORTING_INTERVAL_SEC,
-        nut_host=NUT_HOST,
-        nut_port=NUT_PORT,
-        nut_timeout=NUT_TIMEOUT,
-        shutdown_minutes=config_values["shutdown_minutes"],
-        soh_alert_threshold=config_values["soh_alert"],
+        ups_name=ups_name,
+        shutdown_minutes=shutdown_minutes,
+        capacity_ah=float(capacity_ah),
         model_dir=CONFIG_DIR,
-        runtime_threshold_minutes=RUNTIME_THRESHOLD_MINUTES,
-        capacity_ah=config_values["capacity_ah"],
-        reference_load_percent=REFERENCE_LOAD_PERCENT,
-        ema_window_sec=EMA_WINDOW,
-        scheduling=sched_config,
     )
 
 
-def get_scheduling_config(config_dict: dict) -> SchedulingConfig:
-    """Extract and validate scheduling configuration from TOML dict.
-
-    Args:
-        config_dict: Parsed TOML dictionary (from tomllib.load)
-
-    Returns:
-        SchedulingConfig with all parameters (defaults applied for missing keys)
-
-    Raises:
-        ValueError: If any parameter is invalid
-    """
-    scheduling_section = config_dict.get("scheduling", {})
-    known_fields = {f.name for f in fields(SchedulingConfig)}
-    unknown_keys = set(scheduling_section) - known_fields
-    if unknown_keys:
-        logger.warning(
-            "Unknown scheduling config keys ignored: %s", ", ".join(sorted(unknown_keys))
-        )
-    scheduling_params = {k: v for k, v in scheduling_section.items() if k in known_fields}
-    sched_config = SchedulingConfig(**scheduling_params)
-    errors = sched_config.validate()
-    if errors:
-        raise ValueError(f"Invalid scheduling configuration: {'; '.join(errors)}")
-    return sched_config
-
-
-@dataclass
-class CurrentMetrics:
-    """Current UPS battery state snapshot, updated every poll.
-
-    Type hints enable IDE autocomplete and mypy validation.
-    """
-
-    soc: Optional[float] = None  # State of Charge, 0-1
-    battery_charge: Optional[float] = None  # NUT battery.charge, 0-100
-    time_rem_minutes: Optional[float] = None  # Estimated runtime, minutes
-    event_type: Optional[EventType] = None  # From EventClassifier
-    transition_occurred: bool = False  # True if state changed this poll
-    shutdown_imminent: bool = False  # True if runtime < threshold
-    ups_status_override: Optional[str] = None  # Computed status string
-    timestamp: Optional[datetime] = None  # When snapshot was taken
-
-
-@dataclass
-class DischargeBuffer:
-    """Buffer for collecting voltage/time/load samples during discharge events."""
-
-    voltages: list = field(default_factory=list)
-    times: list = field(default_factory=list)
-    loads: list = field(default_factory=list)
-    raw_voltages: list = field(default_factory=list)
-    raw_loads: list = field(default_factory=list)
-    collecting: bool = False
-
-
-class SagState(Enum):
-    """Voltage sag measurement state machine: IDLE → MEASURING → COMPLETE."""
-
-    IDLE = "idle"  # Waiting for OL→OB transition
-    MEASURING = "measuring"  # Collecting samples (fast poll active)
-    COMPLETE = "complete"  # Sag recorded, back to normal polling
-
-
-# Logging: JournalHandler when running under systemd, stderr fallback otherwise.
-# SyslogIdentifier in service file provides the prefix — no need to repeat in formatter.
-logger = logging.getLogger("ups-battery-monitor")
-logger.setLevel(logging.INFO)
-if logger.handlers:
-    logger.handlers.clear()
-
-try:
-    from systemd.journal import JournalHandler  # pyright: ignore[reportMissingImports]
-
-    log_handler = JournalHandler(SYSLOG_IDENTIFIER="ups-battery-monitor")
-    # Tests may install a placeholder ``systemd`` module.  Treat a mock (or
-    # any non-logging handler) as unavailable instead of poisoning the logger
-    # with an object whose level is not an integer.
-    if not isinstance(log_handler, logging.Handler):
-        raise TypeError("systemd JournalHandler is not a logging.Handler")
-    log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
-    logger.addHandler(log_handler)
-except (ImportError, OSError, TypeError, ValueError) as e:
-    log_handler = logging.StreamHandler(sys.stderr)
-    log_handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
-    logger.addHandler(log_handler)
-    logger.info(f"JournalHandler unavailable, using stderr: {e}")
-
-
-def safe_save(model: BatteryModel) -> None:
-    """Save model to disk; log and swallow errors so daemon continues.
-
-    Intentional resilience: a failed model.json write must not kill the daemon.
-    NUT is the source of truth; in-memory state remains correct.
-    model_save_failed event_type is captured by Alloy for alerting.
-    """
+def configure_logging() -> None:
+    """Install one process logger without making systemd a library dependency."""
+    logger.setLevel(logging.INFO)
+    if logger.handlers:
+        return
     try:
-        model.save()
-    except (OSError, TypeError, ValueError) as e:
-        logger.error("Failed to persist model: %s", e, extra={"event_type": "model_save_failed"})
-
-
-@dataclass(frozen=True)
-class HealthSnapshot:
-    """Aggregated health state for external monitoring tools.
-
-    Groups the 16+ metrics written to health.json every poll.
-    Construct in monitor.py, pass to write_health_endpoint().
-    """
-
-    soc_percent: float = 0.0  # [0, 100]
-    is_online: bool = False
-    poll_latency_ms: Optional[float] = None  # NUT TCP round-trip (ms)
-    capacity_ah_measured: Optional[float] = None  # Latest single measurement (Ah)
-    capacity_ah_rated: float = RATED_CAPACITY_AH  # Firmware rated capacity (Ah)
-    capacity_confidence: float = 0.0  # [0.0, 1.0] — derived from 1-CoV
-    capacity_samples_count: int = 0
-    capacity_converged: bool = False  # count >= 3 AND CoV < 0.10
-    days_since_deep: Optional[float] = None  # Days since last >70% DoD discharge
-    ir_trend_rate: Optional[float] = None  # Ω/day (positive = degrading)
-    cycle_budget_remaining: Optional[int] = None  # Estimated remaining cycles
-    scheduling_reason: str = "observing"
-    next_test_timestamp: Optional[str] = None
-    last_discharge_timestamp: Optional[str] = None
-    consecutive_errors: int = 0
-    shutdown_imminent: bool = False  # runtime < shutdown threshold (operator visibility)
-    soh_alert_threshold: float = 0.80  # configured SoH replacement threshold; lets the
-    # read-only CLI/MOTD reproduce the daemon's replacement date for any configured value
-    # Durable discharge journal observability.  These defaults keep health.json stable
-    # while the journal integration is optional (and make an unconfigured exporter safe).
-    journal_healthy: bool = True
-    active_event_id: Optional[str] = None
-    journal_last_synced_seq: Optional[int] = None
-    journal_last_error: Optional[str] = None
-    pending_replay: bool = False
-    recovered_partial_events: int = 0
-    cycle_count: Optional[int] = None
-    cumulative_on_battery_sec: Optional[float] = None
-    scientific_fingerprint: Optional[str] = None
-    baseline_scientific_fingerprint: Optional[str] = None
-    scientific_change_latched: bool = False
-    last_voltage_sag_observation: Optional[dict[str, object]] = None
-    startup_degraded: bool = False
-    model_update_mode: str = "capture_only"
-    automatic_dispatch: bool = False
-    scheduler_mode: str = "proposal_only"
-    eligible_for_operator_test_at: Optional[str] = None
-    last_event_disposition: Optional[str] = None
-
-
-def _sanitize_journal_error(value: object) -> Optional[str]:
-    """Bound and redact a journal error before it reaches health.json."""
-    if value is None:
-        return None
-    text = _PATH_FRAGMENT_RE.sub("[path]", str(value))
-    text = " ".join(text.split())
-    if not text:
-        return None
-    return text[:_MAX_JOURNAL_ERROR_LENGTH]
-
-
-def _opt_round(v: Optional[float], n: int) -> Optional[float]:
-    """Round v to n decimal places, or return None if v is None."""
-    return round(v, n) if v is not None else None
-
-
-def write_health_endpoint(snapshot: HealthSnapshot, *, health_path: Path) -> bool:
-    """Write daemon health state to file for external monitoring tools.
-
-    Updates every poll with current daemon metrics. Uses atomic_write_json for
-    crash-safe writes. Refuses to write through symlinks (security guard).
-    The path is explicit because this library must never silently target a
-    production runtime location.
-    Returns ``True`` after the atomic write succeeds and ``False`` after a
-    bounded serialization or filesystem failure (which is logged).
-
-    Monitored by: Grafana Alloy, custom scripts (liveness: last_poll < 30s).
-    """
-    health_data = {
-        "last_poll": datetime.now(timezone.utc).isoformat(),
-        "last_poll_unix": int(time.time()),
-        "current_soc_percent": round(snapshot.soc_percent, 1),
-        "online": snapshot.is_online,
-        "shutdown_imminent": snapshot.shutdown_imminent,
-        "daemon_version": DAEMON_VERSION,
-        "poll_latency_ms": _opt_round(snapshot.poll_latency_ms, 1),
-        "capacity_ah_measured": _opt_round(snapshot.capacity_ah_measured, 2),
-        "capacity_ah_rated": round(snapshot.capacity_ah_rated, 2),
-        "capacity_confidence": round(snapshot.capacity_confidence, 3),
-        "capacity_samples_count": snapshot.capacity_samples_count,
-        "capacity_converged": snapshot.capacity_converged,
-        "days_since_deep": _opt_round(snapshot.days_since_deep, 1),
-        "ir_trend_rate": _opt_round(snapshot.ir_trend_rate, 6),
-        "cycle_budget_remaining": snapshot.cycle_budget_remaining,
-        "scheduling_reason": snapshot.scheduling_reason,
-        "next_test_timestamp": snapshot.next_test_timestamp,
-        "last_discharge_timestamp": snapshot.last_discharge_timestamp,
-        "consecutive_errors": snapshot.consecutive_errors,
-        "soh_alert_threshold": snapshot.soh_alert_threshold,
-        "journal_healthy": snapshot.journal_healthy,
-        "active_event_id": snapshot.active_event_id,
-        "journal_last_synced_seq": snapshot.journal_last_synced_seq,
-        "journal_last_error": _sanitize_journal_error(snapshot.journal_last_error),
-        "pending_replay": snapshot.pending_replay,
-        "recovered_partial_events": snapshot.recovered_partial_events,
-        "cycle_count": snapshot.cycle_count,
-        "cumulative_on_battery_sec": snapshot.cumulative_on_battery_sec,
-        "scientific_fingerprint": snapshot.scientific_fingerprint,
-        "baseline_scientific_fingerprint": snapshot.baseline_scientific_fingerprint,
-        "scientific_change_latched": snapshot.scientific_change_latched,
-        "last_voltage_sag_observation": snapshot.last_voltage_sag_observation,
-        "startup_degraded": snapshot.startup_degraded,
-        "model_update_mode": snapshot.model_update_mode,
-        "automatic_dispatch": snapshot.automatic_dispatch,
-        "scheduler_mode": snapshot.scheduler_mode,
-        "eligible_for_operator_test_at": snapshot.eligible_for_operator_test_at,
-        "last_event_disposition": snapshot.last_event_disposition,
-    }
-    health_path = Path(health_path)
-
-    try:
-        if health_path.is_symlink():
-            raise OSError(f"{health_path} is a symlink, refusing to write")
-        atomic_write_json(health_path, health_data, mode=0o644)
-        return True
-    except OSError as e:
-        logger.error(
-            "Failed to write health endpoint: %s",
-            e,
-            extra={"event_type": "health_endpoint_write_failed"},
-        )
-        return False
-    except (TypeError, ValueError) as e:
-        logger.error(
-            "Health endpoint serialization bug: %s",
-            e,
-            exc_info=True,
-            extra={"event_type": "health_endpoint_serialization_bug"},
-        )
-        return False
+        from systemd.journal import JournalHandler  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        handler: logging.Handler = logging.StreamHandler()
+    else:
+        handler = JournalHandler(SYSLOG_IDENTIFIER="ups-battery-monitor")
+    handler.setFormatter(logging.Formatter("%(levelname)s - %(message)s"))
+    logger.addHandler(handler)

@@ -1,6 +1,7 @@
-"""Focused checks for the operator-facing battery-health journal section."""
+"""Focused checks for the health-only operator CLI."""
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -13,49 +14,40 @@ def _load_report_module():
     return module
 
 
-def test_journal_report_distinguishes_degraded_recovery_from_authoritative_model(capsys):
+def test_report_reads_only_bounded_health_projection(tmp_path: Path) -> None:
     report = _load_report_module()
-
-    report.print_journal_status(
-        {
-            "journal_healthy": False,
-            "active_event_id": "event-123",
-            "journal_last_synced_seq": 9,
-            "journal_last_error": "write failed\n/path=private",
-            "pending_replay": True,
-            "recovered_partial_events": 2,
-        }
+    health_path = tmp_path / "health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "physical_status": "OB DISCHRG LB",
+                "virtual_status": "OB DISCHRG",
+                "raw_lb_observed": True,
+                "virtual_lb": False,
+                "storage": {
+                    "queued_observations": 3,
+                    "consumed_step_budget_remaining": 252,
+                },
+            }
+        )
     )
 
-    output = capsys.readouterr().out
-    assert "Journal:           DEGRADED" in output
-    assert "Journal open event: event-123" in output
-    assert "Journal replay:    pending" in output
-    assert "Journal sync seq:  9" in output
-    assert "Journal error:     write failed /path=private" in output
-    assert "Operational partial/recovered: 2" in output
-    assert "excluded from authoritative capacity/SoH" in output
+    rendered = report.render_report(health_path)
+
+    assert "physical_status=OB DISCHRG LB" in rendered
+    assert "virtual_status=OB DISCHRG" in rendered
+    assert "raw_lb_observed=true" in rendered
+    assert "queued_observations=3" in rendered
+    assert "consumed_evidence_budget_remaining=252" in rendered
 
 
-def test_health_counters_override_model_counters():
+def test_cli_no_longer_imports_or_reads_mutable_model(tmp_path: Path, monkeypatch, capsys) -> None:
     report = _load_report_module()
+    health_path = tmp_path / "health.json"
+    health_path.write_text("{}")
+    monkeypatch.setenv("UPS_HEALTH_PATH", str(health_path))
+    monkeypatch.setenv("UPS_MODEL_PATH", str(tmp_path / "must-not-be-read.json"))
 
-    cycle_count, cumulative_sec = report.get_operational_counters(
-        {"cycle_count": 21, "cumulative_on_battery_sec": 490.0},
-        {"cycle_count": 24, "cumulative_on_battery_sec": 812.5},
-    )
+    report.main()
 
-    assert cycle_count == 24
-    assert cumulative_sec == 812.5
-
-
-def test_invalid_health_counters_fall_back_to_model():
-    report = _load_report_module()
-
-    cycle_count, cumulative_sec = report.get_operational_counters(
-        {"cycle_count": 21, "cumulative_on_battery_sec": 490.0},
-        {"cycle_count": -1, "cumulative_on_battery_sec": "not-a-number"},
-    )
-
-    assert cycle_count == 21
-    assert cumulative_sec == 490.0
+    assert "physical_status=" in capsys.readouterr().out

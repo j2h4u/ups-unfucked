@@ -10,11 +10,17 @@ import re
 import socket
 import time
 from contextlib import contextmanager
-from typing import Optional, Tuple
+from typing import Protocol
 
 logger = logging.getLogger("ups-battery-monitor")
 
 _NUT_SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+class NUTTelemetryPort(Protocol):
+    """Read-only NUT contract exposed to the telemetry adapter."""
+
+    def get_ups_vars_with_tokens(self) -> tuple[dict[str, float | str], dict[str, str]]: ...
 
 
 def _validate_nut_identifier(value: str, label: str) -> None:
@@ -34,8 +40,8 @@ class NUTClient:
     Features:
     - Stateless polling (reconnect on each call for automatic recovery)
     - Socket timeout prevents hanging if NUT service crashes
-    - Error handling logs issues but doesn't crash
-    - Returns dict with all requested variables; None for failed reads
+    - Error handling leaves socket failures visible to the read-only caller
+    - Returns parsed variables plus exact raw value tokens for provenance
     """
 
     def __init__(self, host="localhost", port=3493, timeout=2.0, ups_name="cyberpower"):
@@ -64,12 +70,8 @@ class NUTClient:
             logger.debug(f"Socket close error (ignored): {e}")
 
     @staticmethod
-    def _parse_var_line(line):
-        """
-        Parse a NUT VAR response line into (var_name, value).
-
-        Returns (var_name, float_or_str) or None if line is not a VAR line.
-        """
+    def _parse_var_line_with_token(line):
+        """Parse one VAR line while retaining the exact quoted value token."""
         if not line.startswith("VAR "):
             return None
         words = line.split()
@@ -81,9 +83,10 @@ class NUTClient:
             return None
         raw_value = parts[1]
         try:
-            return (var_name, float(raw_value))
+            value = float(raw_value)
         except ValueError:
-            return (var_name, raw_value)
+            value = raw_value
+        return var_name, value, raw_value
 
     def connect(self):
         """Establish TCP connection to NUT upsd (called by _socket_session context manager)."""
@@ -99,27 +102,6 @@ class NUTClient:
             yield
         finally:
             self._close_socket()
-
-    def send_command(self, command):
-        """
-        Send command to NUT, receive response (one line).
-
-        Uses a single recv(4096) call — only suitable for single-line responses
-        (GET VAR, USERNAME, PASSWORD, LOGIN, INSTCMD). For multi-line responses
-        (LIST VAR), use get_ups_vars() which calls _recv_until() instead.
-
-        Args:
-            command: NUT protocol command string (without newline)
-
-        Returns:
-            Response string (stripped)
-        """
-        if "\n" in command or "\r" in command:
-            raise ValueError(f"NUT protocol injection: control char in command: {command!r}")
-        assert self.sock is not None
-        self.sock.sendall((command + "\n").encode())
-        response = self.sock.recv(4096).decode().strip()
-        return response
 
     _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB
 
@@ -141,14 +123,13 @@ class NUTClient:
         """
         assert self.sock is not None
         buf = b""
-        delim_bytes = delimiter.encode()
         deadline = time.monotonic() + self.timeout
-        while delim_bytes not in buf:
+        while not self._contains_complete_line(buf, delimiter):
             if time.monotonic() > deadline:
                 raise socket.timeout("LIST VAR response deadline exceeded")
             chunk = self.sock.recv(4096)
             if not chunk:
-                break
+                raise ConnectionError("LIST VAR connection closed before END sentinel")
             buf += chunk
             if len(buf) > self._MAX_RECV_BYTES:
                 raise ConnectionError(
@@ -156,101 +137,35 @@ class NUTClient:
                 )
         return buf.decode()
 
-    def get_ups_vars(self):
-        """
-        Fetch all UPS variables in a single connection using LIST VAR.
+    @staticmethod
+    def _contains_complete_line(payload: bytes, expected_line: str) -> bool:
+        """Match the protocol sentinel as a complete terminated line only."""
+        expected = expected_line.encode()
+        return any(
+            line.rstrip(b"\r\n") == expected and line.endswith((b"\n", b"\r"))
+            for line in payload.splitlines(keepends=True)
+        )
 
-        Uses NUT protocol's LIST VAR command to get all variables in one
-        TCP connection instead of 6 separate connections.
+    def get_ups_vars_with_tokens(self) -> tuple[dict[str, float | str], dict[str, str]]:
+        """Fetch UPS variables and retain exact NUT value tokens for provenance.
 
-        Returns:
-            Dict {var_name: value} — float where possible, string otherwise
-
-        Raises:
-            socket.timeout: If socket communication times out (caller should retry)
-            socket.error: If socket communication fails (caller should retry)
+        The first mapping contains parsed values; the second mapping contains
+        the unmodified text between NUT's quotes. This lets scientific capture
+        derive voltage quantization without changing the values used by the
+        established safety path.
         """
         with self._socket_session():
             assert self.sock is not None
             self.sock.sendall(f"LIST VAR {self.ups_name}\n".encode())
             raw = self._recv_until(f"END LIST VAR {self.ups_name}")
 
-            ups_vars = {}
+            values: dict[str, float | str] = {}
+            tokens: dict[str, str] = {}
             for line in raw.splitlines():
-                parsed = self._parse_var_line(line)
-                if parsed is not None:
-                    ups_vars[parsed[0]] = parsed[1]
-            return ups_vars
-
-    def send_instcmd(self, cmd_name: str, cmd_param: Optional[str] = None) -> Tuple[bool, str]:
-        """
-        Send instant command via NUT RFC 9271 INSTCMD protocol.
-
-        Dispatches immediate commands to the UPS via authenticated NUT protocol.
-        Implements full RFC 9271 authentication handshake: USERNAME → PASSWORD → LOGIN → INSTCMD.
-
-        Args:
-            cmd_name: Command name in NUT format (e.g., 'test.battery.start.quick')
-            cmd_param: Optional parameter value (not typically used for battery tests)
-
-        Returns:
-            Tuple[bool, str] with success flag and message where:
-            - (True, response_text): Command accepted by upsd (e.g., 'OK' or 'OK TRACKING <id>')
-            - (False, error_text): Command failed or auth failed (e.g., 'ERR CMD-NOT-SUPPORTED')
-
-        Raises:
-            socket.timeout: Connection timeout (caller should retry)
-            socket.error: Socket communication failed (caller should retry)
-
-        Protocol flow (RFC 9271):
-            1. USERNAME upsmon    → OK
-            2. PASSWORD           → OK  (requires upsd.users to allow passwordless auth for upsmon)
-            3. LOGIN <upsname>    → OK
-            4. INSTCMD <upsname> <cmd> [param] → OK or ERR
-            5. LOGOUT (implicit via socket close)
-
-        Example:
-            success, msg = client.send_instcmd('test.battery.start.quick')
-            if success:
-                print(f"Test started: {msg}")
-            else:
-                print(f"Error: {msg}")
-        """
-        with self._socket_session():
-            try:
-                response = self.send_command("USERNAME upsmon")
-                if not response.startswith("OK"):
-                    return (False, f"USERNAME failed: {response}")
-
-                # Security note: empty PASSWORD is intentional. NUT upsd.users
-                # allows passwordless auth for the upsmon role. This means any
-                # local process can send INSTCMD to the UPS. Acceptable for
-                # single-server deployment where NUT listens on loopback only
-                # (LISTEN 127.0.0.1 in upsd.conf). If NUT is exposed on the
-                # network, configure a password in upsd.users and update this call.
-                response = self.send_command("PASSWORD")
-                if not response.startswith("OK"):
-                    return (False, f"PASSWORD failed: {response}")
-
-                response = self.send_command(f"LOGIN {self.ups_name}")
-                if not response.startswith("OK"):
-                    return (False, f"LOGIN failed: {response}")
-
-                _validate_nut_identifier(cmd_name, "cmd_name")
-                if cmd_param is not None:
-                    _validate_nut_identifier(cmd_param, "cmd_param")
-                    cmd = f"INSTCMD {self.ups_name} {cmd_name} {cmd_param}"
-                else:
-                    cmd = f"INSTCMD {self.ups_name} {cmd_name}"
-
-                response = self.send_command(cmd)
-
-                if response.startswith("OK"):
-                    return (True, response)
-                elif response.startswith("ERR"):
-                    return (False, response)
-                else:
-                    return (False, f"Unexpected response: {response}")
-
-            except (socket.timeout, socket.error):
-                raise  # Propagate for caller retry logic
+                parsed = self._parse_var_line_with_token(line)
+                if parsed is None:
+                    continue
+                var_name, value, raw_value = parsed
+                values[var_name] = value
+                tokens[var_name] = raw_value
+            return values, tokens

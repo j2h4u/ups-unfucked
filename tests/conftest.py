@@ -1,8 +1,6 @@
-"""Pytest configuration and shared fixtures for UPS Battery Monitor tests."""
+"""Shared physical-NUT fixtures retained after the runtime cutover."""
 
 import socket
-import tempfile
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -10,42 +8,16 @@ import pytest
 
 @pytest.fixture
 def mock_socket_timeout():
-    """
-    Fixture that simulates socket.timeout exception on recv().
-
-    Used to test daemon behavior when NUT upsd becomes unresponsive or network
-    timeout occurs. Enables verification of graceful error handling without hanging.
-    """
     mock_sock = Mock(spec=socket.socket)
-
     mock_sock.recv = Mock(side_effect=socket.timeout("Connection timed out"))
     mock_sock.sendall = Mock(return_value=None)
     mock_sock.connect = Mock(return_value=None)
     mock_sock.close = Mock(return_value=None)
-
     return mock_sock
 
 
 @pytest.fixture
 def mock_socket_list_var():
-    """
-    Fixture returning mock socket with proper LIST VAR multi-line response.
-
-    Real NUT upsd format for LIST VAR command returns multi-line response:
-    VAR cyberpower battery.voltage "13.4"
-    VAR cyberpower battery.charge "85"
-    VAR cyberpower ups.status "OL"
-    VAR cyberpower ups.load "25"
-    VAR cyberpower input.voltage "230"
-    END LIST VAR cyberpower
-
-    This fixture ensures get_ups_vars() parsing works correctly.
-
-    NOTE: The entire response is returned in a single recv() call. This does NOT
-    exercise the multi-chunk TCP reassembly path — a real NUT connection may
-    split the response across multiple recv() calls. See test_nut_client.py for
-    coverage limitations.
-    """
     response = b"""VAR cyberpower battery.voltage "13.4"
 VAR cyberpower battery.charge "85"
 VAR cyberpower ups.status "OL"
@@ -54,221 +26,8 @@ VAR cyberpower input.voltage "230"
 END LIST VAR cyberpower
 """
     mock_sock = Mock(spec=socket.socket)
-
-    def mock_recv(bufsize):
-        return response
-
-    mock_sock.recv = Mock(side_effect=mock_recv)
+    mock_sock.recv = Mock(return_value=response)
     mock_sock.sendall = Mock(return_value=None)
     mock_sock.connect = Mock(return_value=None)
     mock_sock.close = Mock(return_value=None)
-
     return mock_sock
-
-
-@pytest.fixture
-def temporary_model_path():
-    """
-    Pytest fixture that yields temporary file path for model.json.
-
-    Yields a temporary, not-yet-created JSON path for testing model persistence.
-    The directory is automatically cleaned up after the test completes.
-
-    Yields:
-        str: Path to temporary JSON file
-    """
-    # The loader intentionally distinguishes a missing file (fresh defaults)
-    # from an existing malformed/empty file (fail-fast).  Yield a path that is
-    # ready for a caller to create explicitly rather than an empty placeholder.
-    with tempfile.TemporaryDirectory() as directory:
-        yield Path(directory) / "model.json"
-
-
-@pytest.fixture
-def mock_lut_standard():
-    """
-    Standard VRLA LUT from research (02-RESEARCH.md).
-
-    Returns a list of dictionaries with voltage, SoC, and source tracking.
-    Used for SoC prediction tests and interpolation validation.
-    """
-    return [
-        {"v": 13.4, "soc": 1.0, "source": "standard"},
-        {"v": 12.8, "soc": 0.9, "source": "standard"},
-        {"v": 12.4, "soc": 0.64, "source": "standard"},  # Knee point
-        {"v": 12.0, "soc": 0.4, "source": "standard"},
-        {"v": 11.5, "soc": 0.2, "source": "standard"},
-        {"v": 10.5, "soc": 0.0, "source": "anchor"},
-    ]
-
-
-@pytest.fixture
-def mock_lut_measured():
-    """
-    Measured VRLA LUT for test scenarios.
-
-    Subset of standard LUT with some measured points included.
-    Used to test LUT flexibility and measured point handling.
-    """
-    return [
-        {"v": 13.4, "soc": 1.0, "source": "measured"},
-        {"v": 12.4, "soc": 0.63, "source": "measured"},
-        {"v": 11.0, "soc": 0.15, "source": "measured"},
-        {"v": 10.5, "soc": 0.0, "source": "anchor"},
-    ]
-
-
-@pytest.fixture
-def sample_model_data(mock_lut_standard):
-    """
-    Complete battery model dict with standard LUT and metadata.
-
-    Provides realistic model data for integration tests. Includes capacity,
-    state of health, LUT, and SoH history tracking.
-    """
-    return {
-        "capacity_ah": 7.2,
-        "soh": 1.0,
-        "lut": mock_lut_standard,
-        "soh_history": [{"date": "2026-03-12", "soh": 1.0}],
-    }
-
-
-@pytest.fixture
-def current_metrics():
-    """
-    Fixture returning a CurrentMetrics dataclass instance with default test values.
-
-    Provides reusable metric state across test suite. Tests will import CurrentMetrics
-    from src.monitor and use this fixture to get populated instances.
-
-    Returns:
-        CurrentMetrics: Current metrics with typed field values for SoC, charge, runtime, event state.
-    """
-    from datetime import datetime, timezone
-
-    from src.event_classifier import EventType
-    from src.monitor_config import CurrentMetrics
-
-    return CurrentMetrics(
-        soc=0.75,
-        battery_charge=75.0,
-        time_rem_minutes=30.0,
-        event_type=EventType.ONLINE,
-        transition_occurred=False,
-        shutdown_imminent=False,
-        ups_status_override=None,
-        timestamp=datetime(2026, 3, 12, tzinfo=timezone.utc),
-    )
-
-
-@pytest.fixture
-def daemon_config(tmp_path):
-    """
-    Fixture returning a Config dataclass instance with typical test values.
-
-    Provides reusable configuration across test suite. Tests will import Config
-    from src.monitor and use this fixture to get populated instances.
-
-    Args:
-        tmp_path: pytest's temporary directory fixture for test isolation.
-
-    Returns:
-        Config: Configuration dataclass with UPS name, intervals, hosts, paths, thresholds, model parameters.
-    """
-
-    from src.monitor_config import Config
-
-    model_dir = tmp_path / "test_model"
-    model_dir.mkdir(mode=0o700)
-
-    return Config(
-        ups_name="test-cyberpower",
-        polling_interval=10,
-        reporting_interval=60,
-        nut_host="localhost",
-        nut_port=3493,
-        nut_timeout=2.0,
-        shutdown_minutes=5,
-        soh_alert_threshold=0.80,
-        model_dir=model_dir,
-        runtime_threshold_minutes=20,
-        reference_load_percent=20.0,
-        ema_window_sec=120,
-        capacity_ah=7.2,
-    )
-
-
-@pytest.fixture
-def synthetic_discharge(mock_lut_standard):
-    """
-    Synthetic discharge data for capacity estimator testing.
-
-    Represents a 100-point discharge event over ~990 seconds:
-    - Voltage: drops from 13.2V to 10.5V (50% ΔSoC)
-    - Current: constant 35A (load ~27%)
-    - Duration: 990 seconds (~16.5 minutes)
-    - Expected capacity: ~5.8Ah via coulomb counting
-
-    Returns:
-        tuple: (voltage_series, time_series, load_series, lut)
-    """
-    # 100 time points over 990 seconds (every ~10 seconds)
-    time_series = [float(i * 10) for i in range(100)]
-
-    # Voltage drops linearly from 13.2V to 10.5V (50% ΔSoC)
-    voltage_series = [13.2 - (i * 0.027) for i in range(100)]
-
-    load_series = [30.0] * 100  # 30% load ≈ 10.6A
-
-    return voltage_series, time_series, load_series, mock_lut_standard
-
-
-@pytest.fixture
-def synthetic_discharge_full():
-    """
-    Synthetic discharge data modeled after a 47-minute blackout scenario.
-
-    Synthetic but realistic parameters for a CyberPower UT850EG discharge:
-    - Duration: ~2820 seconds (47 minutes)
-    - Voltage drop: 13.2V → 10.5V (50% ΔSoC)
-    - Load: ~26% average (normalized to UPS rating)
-    - Expected capacity: ~7.2Ah
-
-    Returns:
-        tuple: (voltage_series, time_series, load_series, lut)
-    """
-    # Simulated real discharge over 2820 seconds (47 minutes)
-    # Sample every 10 seconds, so 282 samples
-    num_samples = 282
-    time_series = [float(i * 10) for i in range(num_samples)]
-
-    # Realistic voltage curve with slight variations (not perfectly linear)
-    voltage_series = []
-    for i in range(num_samples):
-        progress = i / num_samples  # 0 to 1
-        # Voltage drop with slight non-linearity
-        v = 13.2 - (progress * 2.7) - (0.1 * (progress**2))
-        voltage_series.append(v)
-
-    # Variable load: ~26% average with some realistic variations
-    # For 7.2Ah over 2800s: I_avg = 7.2 * 3600 / 2800 ≈ 9.26A
-    # In load percent: (9.26A * 12V / 425W) * 100 ≈ 26%
-    # Add variation: ±3% to simulate server load fluctuations
-    load_series = []
-    for i in range(num_samples):
-        # Base load ~26% with ±3% variation
-        base = 26.0
-        variation = 3.0 * (0.5 + 0.5 * (i % 10) / 10)  # Sinusoidal-ish variation
-        load_series.append(base + variation)
-
-    lut = [
-        {"v": 13.4, "soc": 1.0, "source": "standard"},
-        {"v": 12.8, "soc": 0.9, "source": "standard"},
-        {"v": 12.4, "soc": 0.64, "source": "standard"},
-        {"v": 12.0, "soc": 0.4, "source": "standard"},
-        {"v": 11.5, "soc": 0.2, "source": "standard"},
-        {"v": 10.5, "soc": 0.0, "source": "anchor"},
-    ]
-
-    return voltage_series, time_series, load_series, lut

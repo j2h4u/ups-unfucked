@@ -1,134 +1,124 @@
-"""Tests for scheduling configuration schema and validation."""
+"""Strict runtime configuration invariants."""
 
 import pytest
 
-import src.monitor_config as monitor_config
-from src.monitor_config import SchedulingConfig, get_scheduling_config
+from src.application.publication_freshness import telemetry_loss_grace_s
+from src.monitor_config import Config, ConfigError, load_config
 
 
-def test_production_load_config_uses_one_second_poll_and_sixty_second_reporting(
-    tmp_path, monkeypatch
-):
-    """Acquisition and human-reporting cadences remain separate production defaults."""
-    monkeypatch.setattr(monitor_config, "CONFIG_DIR", tmp_path / "missing-config")
-    monkeypatch.setattr(monitor_config, "REPO_ROOT", tmp_path / "missing-repo")
+@pytest.mark.parametrize(
+    ("overrides", "error_fragment"),
+    (
+        ({"ups_name": ""}, "non-empty NUT identifier"),
+        ({"ups_name": "two names"}, "non-empty NUT identifier"),
+        ({"shutdown_minutes": True}, "positive integer"),
+        ({"shutdown_minutes": 0}, "positive integer"),
+        ({"shutdown_minutes": 1}, "greater than the 2-minute safety floor"),
+        ({"shutdown_minutes": 2}, "greater than the 2-minute safety floor"),
+        ({"capacity_ah": True}, "capacity_ah must be positive"),
+        ({"capacity_ah": 0.0}, "capacity_ah must be positive"),
+        ({"polling_interval": 2}, "fixed at one second"),
+        ({"reporting_interval": 0}, "reporting_interval must be positive"),
+        ({"ema_window_sec": 0}, "ema_window_sec must be positive"),
+        ({"nut_port": 0}, "nut_port must be between 1 and 65535"),
+        ({"nut_port": 65536}, "nut_port must be between 1 and 65535"),
+        ({"nut_timeout": 0.0}, "nut_timeout must be positive"),
+    ),
+)
+def test_config_rejects_unsafe_runtime_values(
+    overrides: dict[str, object],
+    error_fragment: str,
+) -> None:
+    with pytest.raises(ConfigError) as error:
+        Config(**overrides)
 
-    config = monitor_config.load_config()
-
-    assert config.polling_interval == 1
-    assert config.reporting_interval == 60
+    assert error_fragment in str(error.value)
 
 
-class TestSchedulingConfigValidation:
-    """Test SchedulingConfig schema and range validation."""
+def test_default_config_derives_thirty_second_telemetry_grace() -> None:
+    config = Config()
 
-    def test_valid_config_with_all_defaults(self):
-        """Valid scheduling config with all default values passes validation."""
-        config = SchedulingConfig(
-            grid_stability_cooldown_hours=4.0,
-            scheduler_eval_hour_utc=8,
-            verbose_scheduling=False,
+    assert (
+        telemetry_loss_grace_s(
+            shutdown_minutes=config.shutdown_minutes,
+            nut_timeout_s=config.nut_timeout,
+            polling_interval_s=config.polling_interval,
         )
-        errors = config.validate()
-        assert errors == [], f"Expected no errors, got {errors}"
+        == 30.0
+    )
 
-    def test_grid_stability_cooldown_zero_valid(self):
-        """grid_stability_cooldown_hours=0 is valid (disables gate)."""
-        config = SchedulingConfig(grid_stability_cooldown_hours=0.0)
-        errors = config.validate()
-        assert not any("grid_stability_cooldown" in e for e in errors), (
-            f"0.0 should be valid, got {errors}"
+
+@pytest.mark.parametrize("shutdown_minutes", (1, 2))
+def test_telemetry_grace_rejects_threshold_at_or_below_safety_floor(
+    shutdown_minutes: int,
+) -> None:
+    with pytest.raises(ValueError, match="greater than"):
+        telemetry_loss_grace_s(
+            shutdown_minutes=shutdown_minutes,
+            nut_timeout_s=2.0,
+            polling_interval_s=1.0,
         )
 
-    def test_grid_stability_cooldown_negative_invalid(self):
-        """grid_stability_cooldown_hours <0 is invalid."""
-        config = SchedulingConfig(grid_stability_cooldown_hours=-1.0)
-        errors = config.validate()
-        assert any("grid_stability_cooldown" in e for e in errors), (
-            f"Negative value should be invalid, got {errors}"
-        )
 
-    def test_scheduler_eval_hour_range_valid(self):
-        """scheduler_eval_hour_utc must be in [0, 23]."""
-        for hour in [0, 8, 23]:
-            config = SchedulingConfig(scheduler_eval_hour_utc=hour)
-            errors = config.validate()
-            assert not any("scheduler_eval_hour" in e for e in errors)
+def test_load_config_uses_defaults_when_no_candidate_exists(tmp_path) -> None:
+    config = load_config(paths=(tmp_path / "missing.toml",))
 
-    def test_scheduler_eval_hour_range_invalid(self):
-        """scheduler_eval_hour_utc outside [0, 23] is invalid."""
-        for hour in [-1, 24]:
-            config = SchedulingConfig(scheduler_eval_hour_utc=hour)
-            errors = config.validate()
-            assert any("scheduler_eval_hour" in e for e in errors)
+    assert config.ups_name == "cyberpower"
+    assert config.shutdown_minutes == 5
 
 
-class TestSchedulingConfigDefaults:
-    """Test that defaults are applied correctly."""
+def test_load_config_rejects_malformed_toml(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("[broken", encoding="utf-8")
 
-    def test_defaults_applied_on_instantiation(self):
-        """All parameters get default values when not specified."""
-        config = SchedulingConfig()
-        assert config.grid_stability_cooldown_hours == 4.0
-        assert config.scheduler_eval_hour_utc == 8
-        assert config.verbose_scheduling is False
-
-    def test_partial_override_with_defaults(self):
-        """Specifying one parameter leaves others at defaults."""
-        config = SchedulingConfig(grid_stability_cooldown_hours=2.0)
-        assert config.grid_stability_cooldown_hours == 2.0
-        assert config.scheduler_eval_hour_utc == 8  # default
+    with pytest.raises(ConfigError, match="malformed configuration"):
+        load_config(paths=(path,))
 
 
-class TestGetSchedulingConfigFromDict:
-    """Test get_scheduling_config() helper function."""
+@pytest.mark.parametrize("shutdown_minutes", (1, 2))
+def test_load_config_rejects_shutdown_at_or_below_safety_floor(
+    tmp_path,
+    shutdown_minutes: int,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(f"shutdown_minutes = {shutdown_minutes}\n", encoding="utf-8")
 
-    def test_get_scheduling_config_with_full_dict(self):
-        """get_scheduling_config extracts and validates config dict."""
-        cfg_dict = {
-            "scheduling": {
-                "grid_stability_cooldown_hours": 3.0,
-                "scheduler_eval_hour_utc": 10,
-                "verbose_scheduling": True,
-            }
-        }
-        sched = get_scheduling_config(cfg_dict)
-        assert sched.grid_stability_cooldown_hours == 3.0
-        assert sched.scheduler_eval_hour_utc == 10
-        assert sched.verbose_scheduling is True
+    with pytest.raises(ConfigError, match="greater than the 2-minute safety floor"):
+        load_config(paths=(path,))
 
-    def test_get_scheduling_config_with_empty_section(self):
-        """get_scheduling_config applies defaults when section is empty."""
-        cfg_dict = {"scheduling": {}}
-        sched = get_scheduling_config(cfg_dict)
-        assert sched.grid_stability_cooldown_hours == 4.0
-        assert sched.scheduler_eval_hour_utc == 8
 
-    def test_get_scheduling_config_no_section(self):
-        """get_scheduling_config applies defaults when section missing."""
-        cfg_dict = {}
-        sched = get_scheduling_config(cfg_dict)
-        assert sched.grid_stability_cooldown_hours == 4.0
+@pytest.mark.parametrize(
+    ("contents", "error_fragment"),
+    (
+        ("ups_name = 7\n", "ups_name must be a string"),
+        ('shutdown_minutes = "5"\n', "shutdown_minutes must be a positive integer"),
+        ("capacity_ah = true\n", "capacity_ah must be a positive number"),
+    ),
+)
+def test_load_config_rejects_unsafe_toml_types(
+    tmp_path,
+    contents: str,
+    error_fragment: str,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(contents, encoding="utf-8")
 
-    def test_get_scheduling_config_invalid_raises_error(self):
-        """get_scheduling_config raises ValueError for invalid config."""
-        cfg_dict = {
-            "scheduling": {
-                "grid_stability_cooldown_hours": -1.0,  # invalid
-            }
-        }
-        with pytest.raises(ValueError) as exc_info:
-            get_scheduling_config(cfg_dict)
-        assert "grid_stability_cooldown" in str(exc_info.value)
+    with pytest.raises(ConfigError, match=error_fragment):
+        load_config(paths=(path,))
 
-    def test_get_scheduling_config_ignores_unknown_keys(self):
-        """Unknown keys in [scheduling] are filtered out with a warning, not crash."""
-        cfg_dict = {
-            "scheduling": {
-                "grid_stability_cooldown_hours": 4.0,
-                "soh_floor_threshold": 0.60,  # unknown key — filtered
-            }
-        }
-        result = get_scheduling_config(cfg_dict)
-        assert result.grid_stability_cooldown_hours == 4.0
-        assert not hasattr(result, "soh_floor_threshold")
+
+def test_load_config_accepts_known_values_and_warns_for_unknown(
+    tmp_path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'ups_name = "cyberpower"\nshutdown_minutes = 7\ncapacity_ah = 9.5\nextra = true\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(paths=(path,))
+
+    assert config.shutdown_minutes == 7
+    assert config.capacity_ah == 9.5
+    assert "extra" in caplog.text

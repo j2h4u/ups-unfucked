@@ -8,36 +8,8 @@ ups_name = "cyberpower"
 # Initiate shutdown when estimated runtime drops below this (minutes)
 shutdown_minutes = 5
 
-# Alert when battery health (SoH) drops below this (0.0-1.0)
-soh_alert = 0.80
-
 # Battery rated capacity in Ah. Default 7.2 matches the stock battery
 # in most 425-850W UPS units (CSB HR1234W, GP1272, etc.).
 # Change this if you swap in a higher-capacity battery of the same
 # form factor — e.g. 9.0 for a 9Ah cell.
 # capacity_ah = 7.2
-
-[scheduling]
-# Daemon-controlled test scheduling parameters.
-#
-# Internal constants (not configurable, for reference):
-#   SoH floor: 60% (no test below this)
-#   Rate limit: 7 days between tests
-#   Cycle budget critical: 5 cycles remaining → block
-#   Min discharge for model update: 300 seconds (shorter events track cycles only)
-#   Deep discharge threshold: >70% DoD (sets the days_since_deep metric)
-
-# Grid stability cooldown (hours)
-# Software default: 4.0 (skip test if blackout in last 4h)
-# Set to 0.0 to disable this gate (useful for grids with frequent short blackouts)
-grid_stability_cooldown_hours = 0.0  # disabled — frequent blackouts on this grid
-
-# Scheduling evaluation time (UTC hour)
-# Default: 8 (evaluate at 08:00 UTC daily)
-# Range: [0, 23]
-scheduler_eval_hour_utc = 8
-
-# Enable verbose scheduling logging
-# Default: false (only log decisions, not internal evaluations)
-# Set to true for detailed audit trail debugging
-verbose_scheduling = false

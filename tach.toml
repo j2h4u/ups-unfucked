@@ -1,0 +1,240 @@
+# Normative dependency map for the final module layout.
+#
+# ``src.ema_filter`` is pure filtering math and therefore belongs with
+# ``src.battery_math``.
+source_roots = ["."]
+layers = ["composition", "adapters", "application", "domain", "battery_math"]
+layers_explicit_depends_on = true
+exact = true
+
+[[modules]]
+path = "src.monitor"
+depends_on = [
+    "src.adapters.jsonl_event_store",
+    "src.adapters.model_owner",
+    "src.adapters.nut_telemetry",
+    "src.alerter",
+    "src.application",
+    "src.domain",
+    "src.ema_filter",
+    "src.monitor_config",
+    "src.nut_client",
+    "src.virtual_ups_exporter",
+]
+layer = "composition"
+
+[[modules]]
+path = "src.monitor_config"
+depends_on = ["src.battery_math", "src.domain"]
+layer = "composition"
+
+[[modules]]
+path = "src.ema_filter"
+depends_on = []
+layer = "battery_math"
+
+[[modules]]
+path = "src.adapters"
+depends_on = ["src.adapters.jsonl_index_merge", "src.adapters.jsonl_event_catalog", "src.adapters.jsonl_filesystem", "src.adapters.jsonl_index_metadata", "src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "src.application"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_errors"
+depends_on = ["src.application"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_event_store"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_event_catalog",
+    "src.adapters.jsonl_event_stream",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_health_report",
+    "src.adapters.jsonl_index",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_work_registry",
+    "src.application",
+    "src.domain", "src.adapters",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_event_catalog"
+depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_event_capacity"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.application",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_event_stream"
+depends_on = [
+    "src.adapters.jsonl_event_capacity",
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.application",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_filesystem"
+depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_health_inventory"
+depends_on = ["src.adapters.jsonl_event_catalog", "src.adapters.jsonl_filesystem"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_health_report"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_record_codec",
+    "src.application",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_index"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_event_catalog",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_health_inventory",
+    "src.adapters.jsonl_index_metadata",
+    "src.adapters.jsonl_index_merge",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.application", "src.adapters",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_index_metadata"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_index_merge"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.application", "src.adapters",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_record_codec"
+depends_on = ["src.adapters.jsonl_errors", "src.application"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_summary_codec"
+depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "src.application"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_work_registry"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_record_codec",
+    "src.application",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.model_owner"
+depends_on = [
+    "src.adapters.model_state_persistence",
+    "src.adapters.model_state_schema",
+    "src.application",
+    "src.battery_math",
+    "src.domain",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.model_state_persistence"
+depends_on = []
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.model_state_release_a"
+depends_on = ["src.adapters.model_state_schema", "src.domain"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.model_state_schema"
+depends_on = ["src.adapters.model_state_persistence", "src.battery_math", "src.domain"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.model_transform"
+depends_on = [
+    "src.adapters.model_state_persistence",
+    "src.adapters.model_state_release_a",
+    "src.adapters.model_state_schema",
+    "src.battery_math",
+    "src.domain",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.nut_telemetry"
+depends_on = ["src.domain", "src.nut_client"]
+layer = "adapters"
+
+[[modules]]
+path = "src.alerter"
+depends_on = ["src.application", "src.domain"]
+layer = "adapters"
+
+[[modules]]
+path = "src.motd_status"
+depends_on = []
+layer = "adapters"
+
+[[modules]]
+path = "src.nut_client"
+depends_on = []
+layer = "adapters"
+
+[[modules]]
+path = "src.virtual_ups_exporter"
+depends_on = ["src.application", "src.domain"]
+layer = "adapters"
+
+[[modules]]
+path = "src.application"
+depends_on = ["src.battery_math", "src.domain"]
+layer = "application"
+
+[[modules]]
+path = "src.domain"
+depends_on = ["src.battery_math"]
+layer = "domain"
+
+[[modules]]
+path = "src.battery_math"
+depends_on = []
+layer = "battery_math"
