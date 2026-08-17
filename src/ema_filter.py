@@ -18,7 +18,7 @@ class MetricEMA:
         Args:
             metric_name: Name of metric (for debugging/logging)
             window_sec: Smoothing window in seconds
-            poll_interval_sec: Time between polls (10s typical)
+            poll_interval_sec: Time between polls (one second in production)
             sensitivity: Threshold for adaptive alpha activation
         """
         self.metric_name = metric_name
@@ -92,12 +92,13 @@ class EMAFilter:
       near-zero load (no smoothing). Server runs 14-20% load — unreachable.
     - F3: IR compensation uses a linear model that is invalid during
       electrochemical discharge (OB). Error bounded ≤0.06V at typical loads
-      (cross-ref F8). Acceptable because RLS calibration at the actual
-      operating point absorbs systematic bias.
+      (cross-ref F8). No runtime RLS calibration remains; the safety policy
+      carries this bounded model error conservatively.
     - F4: First sample seeds EMA directly — a stale NUT reading biases
       the EMA for up to 120s (one window). Mitigated: NUT usbhid-ups
-      pollinterval=2s, daemon polls every 10s, so first reading is at
-      most 2s old.
+      pollinterval=2s, daemon samples once per second, so first reading is
+      at most 2s old (the interval is hard-pinned by
+      ``monitor_config.POLL_INTERVAL_SEC``).
     """
 
     def __init__(self, window_sec=120, poll_interval_sec=1, sensitivity=0.05):
@@ -143,28 +144,3 @@ class EMAFilter:
     def load(self) -> Optional[float]:
         """Current EMA load, or None if not initialized."""
         return self.load_ema.value
-
-
-def ir_compensate(
-    v_ema: Optional[float], l_ema: Optional[float], l_base: float = 20.0, k: float = 0.015
-) -> Optional[float]:
-    """Apply IR compensation to normalize voltage for load-independent SoC lookup.
-
-    Formula: V_norm = V_ema + k * (L_ema - L_base)
-
-    Args:
-        v_ema: EMA-smoothed voltage (V), or None if not yet initialized.
-        l_ema: EMA-smoothed load (%), or None if not yet initialized.
-        l_base: Reference load percent for normalization (default 20%).
-        k: IR coefficient (volts per load-percent). Calibrated by RLS (ir_k).
-
-    Returns:
-        Compensated voltage, or None if either input is None.
-
-    NOTE: Linear model valid at <50% load only. Above 50%, concentration
-    polarization effects make the approximation inaccurate.
-    """
-    if v_ema is None or l_ema is None:
-        return None
-
-    return v_ema + k * (l_ema - l_base)

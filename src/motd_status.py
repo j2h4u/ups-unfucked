@@ -1,144 +1,133 @@
-"""Read-only status renderer for MOTD login banners.
+"""Health-only CLI/MOTD projection for the running monitor."""
 
-This is the reporting/CLI side of the package, not the daemon: it never starts a
-poll loop or touches NUT. It loads the same state the daemon persists and emits a
-flat ``key=value`` block so the MOTD bash modules need neither ``jq`` nor embedded
-Python to read JSON.
-
-Field sources are split by where the data lives:
-  - model.json (via BatteryModel): SoH, replacement date, new-battery flags, and
-    capacity convergence (computed canonically by ``get_convergence_status`` — the
-    bash modules used to reimplement this).
-  - the daemon's runtime health endpoint: next-test timestamp,
-    which is a per-poll scheduler output not persisted in model.json.
-
-Invoke: ``python3 -m src.motd_status`` → one ``key=value`` line per field on stdout.
-Absent values render as an empty string so the bash side can skip lines cleanly.
-"""
+from __future__ import annotations
 
 import json
 import os
+import stat
+import sys
 from pathlib import Path
+from typing import Any
 
-from src.model import BatteryModel
+MAX_HEALTH_READ_BYTES = 64 * 1024
+MAX_FIELD_TEXT = 512
 
 
-def _load_health(health_path: Path) -> dict:
-    """Read the daemon's health endpoint JSON. Missing or invalid → empty dict."""
+def render_motd(*, health_path: Path) -> str:
+    """Render bounded key/value status without opening model or event history."""
+    health = _load_health(Path(health_path))
+    storage = _mapping(health.get("storage"))
+    capture = _mapping(health.get("capture_queue"))
+    report = _mapping(health.get("last_report"))
+    report_lines = report.get("lines")
+    if not isinstance(report_lines, list):
+        report_lines = []
+    decline = health.get("decline_evidence")
+    if not isinstance(decline, list):
+        decline = []
+    decline_by_metric = {
+        item.get("metric"): item
+        for item in decline[:3]
+        if isinstance(item, dict) and isinstance(item.get("metric"), str)
+    }
+    fields: tuple[tuple[str, object], ...] = (
+        ("physical_status", health.get("physical_status")),
+        ("virtual_status", health.get("virtual_status")),
+        ("raw_lb_observed", health.get("raw_lb_observed")),
+        ("virtual_lb", health.get("virtual_lb")),
+        ("virtual_lb_source", health.get("virtual_lb_source")),
+        ("event_class", health.get("event_class")),
+        ("modeled_runtime_minutes", health.get("modeled_runtime_minutes")),
+        ("model_scientific_fingerprint", health.get("model_scientific_fingerprint")),
+        (
+            "load_sag_coefficient_v_per_load_percent",
+            health.get("load_sag_coefficient_v_per_load_percent"),
+        ),
+        (
+            "load_sag_reference_load_percent",
+            health.get("load_sag_reference_load_percent"),
+        ),
+        ("capture_available", capture.get("capture_available")),
+        ("capture_maintenance_queued", capture.get("maintenance_queued")),
+        ("capture_max_busy_time_s", capture.get("max_busy_time_s")),
+        ("capture_oldest_queue_age_s", capture.get("oldest_queue_age_s")),
+        ("queued_observations", storage.get("queued_observations")),
+        ("active_event_phase", storage.get("active_phase")),
+        ("durability_lag_s", storage.get("durability_lag_s")),
+        ("storage_alarm", storage.get("alarm")),
+        ("index_available", storage.get("index_available")),
+        ("index_rebuild_in_progress", storage.get("rebuild_in_progress")),
+        ("index_rebuild_stalled", storage.get("rebuild_stalled")),
+        (
+            "consumed_evidence_budget_remaining",
+            storage.get("consumed_step_budget_remaining"),
+        ),
+        ("last_blackout_id", report.get("blackout_id")),
+        ("last_blackout_disposition", report.get("disposition")),
+        ("last_blackout_report", " | ".join(_text(line) for line in report_lines[:8])),
+        (
+            "decline_load_sag_trend",
+            _mapping(decline_by_metric.get("load_sag_trend")).get("verdict"),
+        ),
+        (
+            "decline_firmware_lb_reserve_proxy",
+            _mapping(decline_by_metric.get("firmware_lb_reserve_proxy")).get("verdict"),
+        ),
+        (
+            "decline_long_partial_curve",
+            _mapping(decline_by_metric.get("long_partial_curve")).get("verdict"),
+        ),
+        ("bounded_error", health.get("bounded_error")),
+        ("poll_error", _mapping(health.get("error_channels")).get("poll")),
+        ("capture_error", _mapping(health.get("error_channels")).get("capture")),
+        ("storage_error", _mapping(health.get("error_channels")).get("storage")),
+        ("report_error", _mapping(health.get("error_channels")).get("report")),
+        ("background_error", _mapping(health.get("error_channels")).get("background")),
+    )
+    return "\n".join(f"{key}={_text(value)}" for key, value in fields)
+
+
+def main() -> None:
+    """Write the bounded health projection to stdout."""
+    configured = os.environ.get("UPS_HEALTH_PATH")
+    health_path = (
+        Path(configured) if configured else Path("/run/ups-battery-monitor/ups-health.json")
+    )
+    sys.stdout.write(render_motd(health_path=health_path) + "\n")
+
+
+def _load_health(path: Path) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
     try:
-        with open(health_path) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
+        descriptor = os.open(path, flags)
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > MAX_HEALTH_READ_BYTES:
+            return {}
+        raw = os.read(descriptor, MAX_HEALTH_READ_BYTES + 1)
+        if len(raw) > MAX_HEALTH_READ_BYTES:
+            return {}
+        value = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return value if isinstance(value, dict) else {}
 
 
-def _fraction_to_pct(value: float | None) -> str:
-    """Render a [0.0, 1.0] fraction as an integer-percent string, or '' if absent."""
-    return str(round(value * 100)) if value is not None else ""
+def _mapping(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
-def _capacity_status(sample_count: int, converged: bool) -> str:
-    """'locked' once converged, 'measuring' while sampling, 'unknown' with no data."""
-    if sample_count <= 0:
-        return "unknown"
-    return "locked" if converged else "measuring"
-
-
-def _health_bool(value: object) -> str:
-    """Render an optional health boolean without treating missing data as healthy."""
+def _text(value: object) -> str:
+    if value is None:
+        return ""
     if value is True:
         return "true"
     if value is False:
         return "false"
-    return "unknown"
-
-
-def _health_text(value: object, *, limit: int = 256) -> str:
-    """Keep health values safe for the flat key=value MOTD protocol."""
-    if not isinstance(value, str):
-        return ""
-    return " ".join(value.replace("=", " ").split())[:limit]
-
-
-def _health_count(value: object) -> str:
-    """Render a non-negative counter, or empty when the endpoint did not provide one."""
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-        return str(value)
-    return ""
-
-
-def render_motd(*, model_path: Path, health_path: Path) -> str:
-    """Build the ``key=value`` block consumed by the MOTD modules.
-
-    Args:
-        model_path: Explicit path to model.json.
-        health_path: Explicit path to the health endpoint.
-
-    Returns:
-        Newline-joined ``key=value`` lines. Absent values render as empty strings.
-    """
-    health = _load_health(Path(health_path))
-    # Source soh_alert_threshold from the daemon's health endpoint so the MOTD replacement
-    # date matches the daemon for any configured value; 0.80 only when no daemon wrote it.
-    model = BatteryModel(Path(model_path), soh_threshold=health.get("soh_alert_threshold", 0.80))
-    state = model.state
-    convergence = model.get_convergence_status()
-
-    latest_ah = convergence.latest_ah
-
-    fields = {
-        # --- Battery health (model.json) ---
-        "soh_pct": _fraction_to_pct(state.get("soh")),
-        "replacement_due": model.compute_replacement_due() or "",
-        "new_battery_detected": "true" if state.get("new_battery_detected") else "false",
-        "new_battery_timestamp": state.get("new_battery_detected_timestamp") or "",
-        # --- Capacity estimation (model.json, computed by get_convergence_status) ---
-        "capacity_measured_ah": "" if latest_ah is None else str(latest_ah),
-        "capacity_rated_ah": str(convergence.rated_ah),
-        "capacity_samples": str(convergence.sample_count),
-        "capacity_status": _capacity_status(convergence.sample_count, convergence.converged),
-        "capacity_confidence_pct": str(round(convergence.confidence_percent)),
-        # --- Durable discharge journal (runtime health endpoint) ---
-        # These operational fields are deliberately separate from the authoritative
-        # model capacity/SoH fields above.  A partial/recovered event is evidence of
-        # observed runtime, not a capacity or SoH sample.
-        "journal_healthy": _health_bool(health.get("journal_healthy")),
-        "active_event_id": _health_text(health.get("active_event_id")),
-        "journal_last_synced_seq": _health_count(health.get("journal_last_synced_seq")),
-        "journal_last_error": _health_text(health.get("journal_last_error")),
-        "pending_replay": _health_bool(health.get("pending_replay")),
-        "recovered_partial_events": _health_count(health.get("recovered_partial_events")),
-        "capacity_evidence": "authoritative_model_only",
-        "operational_evidence_note": "partial_or_recovered_events_excluded_from_capacity_soh",
-        # --- Scheduling (runtime health endpoint) ---
-        "next_test_timestamp": health.get("next_test_timestamp") or "",
-    }
-    return "\n".join(f"{key}={value}" for key, value in fields.items())
-
-
-def main() -> None:
-    """Print the MOTD status block to stdout.
-
-    The CLI is the production composition root and is therefore the only place
-    that supplies the standard locations. UPS_MODEL_PATH / UPS_HEALTH_PATH
-    override them for local invocations and tests.
-    """
-    model_env = os.environ.get("UPS_MODEL_PATH")
-    health_env = os.environ.get("UPS_HEALTH_PATH")
-    model_path = (
-        Path(model_env)
-        if model_env
-        else Path.home() / ".config" / "ups-battery-monitor" / "model.json"
-    )
-    health_path = (
-        Path(health_env) if health_env else Path("/run/ups-battery-monitor/ups-health.json")
-    )
-    print(
-        render_motd(
-            model_path=model_path,
-            health_path=health_path,
-        )
-    )
+    return " ".join(str(value).replace("=", " ").split())[:MAX_FIELD_TEXT]
 
 
 if __name__ == "__main__":

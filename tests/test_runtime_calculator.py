@@ -1,6 +1,6 @@
 """Unit tests for runtime calculator module — physics-based Peukert formula."""
 
-from src.runtime_calculator import runtime_minutes
+from src.battery_math.peukert import PeukertParameters, runtime_minutes
 
 
 class TestPeukertFormula:
@@ -11,11 +11,13 @@ class TestPeukertFormula:
         result = runtime_minutes(
             soc=1.0,
             load_percent=17.0,
-            capacity_ah=7.2,
-            soh=1.0,
-            peukert_exponent=1.15,
-            nominal_voltage=12.0,
-            nominal_power_watts=425.0,
+            parameters=PeukertParameters(
+                capacity_ah=7.2,
+                soh=1.0,
+                peukert_exponent=1.15,
+                nominal_voltage=12.0,
+                nominal_power_watts=425.0,
+            ),
         )
         assert 45.0 < result < 49.0, f"Expected ~47 min, got {result:.1f} min"
 
@@ -41,15 +43,31 @@ class TestPeukertDegradation:
 
     def test_soh_80_scales_runtime(self):
         """SoH=0.8 scales runtime by 0.8."""
-        full = runtime_minutes(soc=1.0, load_percent=20.0, soh=1.0)
-        degraded = runtime_minutes(soc=1.0, load_percent=20.0, soh=0.8)
+        full = runtime_minutes(
+            soc=1.0,
+            load_percent=20.0,
+            parameters=PeukertParameters(soh=1.0),
+        )
+        degraded = runtime_minutes(
+            soc=1.0,
+            load_percent=20.0,
+            parameters=PeukertParameters(soh=0.8),
+        )
         ratio = degraded / full
         assert 0.78 < ratio < 0.82
 
     def test_soh_50_scales_runtime(self):
         """SoH=0.5 scales runtime by 0.5."""
-        full = runtime_minutes(soc=1.0, load_percent=20.0, soh=1.0)
-        half = runtime_minutes(soc=1.0, load_percent=20.0, soh=0.5)
+        full = runtime_minutes(
+            soc=1.0,
+            load_percent=20.0,
+            parameters=PeukertParameters(soh=1.0),
+        )
+        half = runtime_minutes(
+            soc=1.0,
+            load_percent=20.0,
+            parameters=PeukertParameters(soh=0.5),
+        )
         ratio = half / full
         assert 0.48 < ratio < 0.52
 
@@ -101,6 +119,4 @@ class TestRuntimeEdgeCases:
 
         sig = inspect.signature(runtime_minutes)
         assert "const" not in sig.parameters
-        assert "peukert_exponent" in sig.parameters
-        assert "nominal_voltage" in sig.parameters
-        assert "nominal_power_watts" in sig.parameters
+        assert "parameters" in sig.parameters

@@ -1,0 +1,343 @@
+{
+  "manifest_schema": "ups-battery-monitor/slice-0-fixture-manifest",
+  "manifest_revision": 1,
+  "manifest_purpose": "Exact Slice-0 regression identity for the current DDD/JSONL candidate.",
+  "authority": {
+    "product": "PRODUCT.md",
+    "plan": "docs/plans/unified-blackout-recharge-evidence-learning-plan.md#slice-0-correct-authority-and-freeze-current-safety"
+  },
+  "baseline": {
+    "branch": "feat/natural-blackout-learning",
+    "candidate_head": "77a84ca",
+    "candidate_head_is_clean_baseline": false,
+    "baseline_commit_sha": null,
+    "baseline_commit_status": "pending_exact_tree_commit"
+  },
+  "current_schema_and_model_identity": {
+    "target_model_schema_revision": "domain-jsonl-v2",
+    "target_model_evaluation_revision": "domain-jsonl-v2",
+    "jsonl_record_schema_version": 2,
+    "model_parameter_authorized_for_automatic_learning": "ir_k_v_per_pp",
+    "model_reference_load_percent": 0.0,
+    "target_model_scientific_fingerprint": {
+      "algorithm": "sha256",
+      "source": "src/adapters/model_state_schema.py::scientific_fingerprint",
+      "fields_source": "src/adapters/model_state_schema.py::SCIENTIFIC_FINGERPRINT_FIELDS",
+      "value": "state-dependent; no single live model file is present in this repository"
+    },
+    "release_a_source_schema": "Release-A",
+    "registered_release_a_fixture_scientific_fingerprint": "97a021ad753b4dabb166ce7599a5398b7fce08b41ddc4f4f60df3fd8e03fa0d8",
+    "legacy_safety_fixture_snapshot_values": {
+      "schema_revision": "2",
+      "evaluation_revision": "1",
+      "note": "Values used by the existing FrozenModelSnapshot safety/oracle fixtures; target persistence identity above is authoritative."
+    }
+  },
+  "terminal_policy": {
+    "current_terminal_dispositions": [
+      "learned",
+      "recorded_only",
+      "rejected"
+    ],
+    "superseded_global_terminal_authority": [
+      {
+        "termination": "power_restored",
+        "historical_global_science_authorized": true,
+        "status": "superseded",
+        "superseded_by": "Slice-1 consumer-specific fragment admission"
+      },
+      {
+        "termination": "service_stop",
+        "historical_global_science_authorized": false,
+        "status": "superseded",
+        "superseded_by": "Slice-1 consumer-specific fragment admission"
+      },
+      {
+        "termination": "closed_restart_gap",
+        "historical_global_science_authorized": false,
+        "status": "superseded",
+        "superseded_by": "Slice-1 consumer-specific fragment admission"
+      },
+      {
+        "termination": "capture_damaged",
+        "historical_global_science_authorized": false,
+        "status": "superseded",
+        "superseded_by": "Slice-1 consumer-specific fragment admission"
+      }
+    ],
+    "historical_policy_test_id": "tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"
+  },
+  "ir_output_freeze": {
+    "qualifying_scope": "Byte-identical current IR results are required only for fixtures whose complete cohort uses power_restored terminals.",
+    "byte_identity_required": true,
+    "qualifying_test_ids": [
+      "tests/application/test_close_blackout.py::test_safe_commit_persists_decision_before_model_receipt_and_outcome",
+      "tests/application/test_assessment_worker.py::test_real_current_plus_three_history_pipeline_commits_one_safe_decrease",
+      "tests/domain/test_ir_identification.py::test_known_raw_step_recovers_positive_settled_k",
+      "tests/test_vertical_blackout_learning.py::test_real_vertical_four_step_cohort_commits_seals_and_restarts"
+    ],
+    "nonqualifying_scope": "Fixtures containing service_stop, closed_restart_gap, or capture_damaged terminals are not byte-equivalence claims; Slice 1 records fragment-level expected values and rationale for them.",
+    "superseded_terminal_test_ids": [
+      "tests/application/test_assessment_worker.py::test_non_restored_terminal_is_operational_and_cannot_prepare_or_commit_learning",
+      "tests/application/test_close_jsonl_integration.py::test_gap_and_capture_damaged_end_refuse_science_even_at_end_durable_stage",
+      "tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"
+    ]
+  },
+  "historical_873_receipt": {
+    "path": "docs/plans/precommit-ddd-solid-product-remediation-2026-08-17.md",
+    "sha256": "0f8e631bb46a1b941e311356777e39e49c65a9d47255afe6b80585607bf9f9e6",
+    "test_count": 873,
+    "status": "historical_superseded",
+    "scope": "Evidence about the old exact dirty tree; not a substitute for this baseline.",
+    "premium_verdict_inherited": false
+  },
+  "premium_verdict": {
+    "status": "missing",
+    "path": "docs/reviews/cross-ai-precommit-final-2026-08-17/20260817T073533Z/claude-opus-5.md",
+    "sha256": "f828af2a67caea93678654631031bfee194ccd375eb8aaf5ccc139af87e0c2bd",
+    "provider": "Anthropic",
+    "reason": "Claude returned an HTTP 429 session-limit error; no verdict was produced.",
+    "counted_as_verdict": false,
+    "inherited": false
+  },
+  "entries": [
+    {
+      "path": "src/adapters/jsonl_record_codec.py",
+      "sha256": "b4dfa93d22350b1fde51a77d2976f99c0f0583f2293ec539afabf0ee60eeb62f",
+      "purpose": "Current JSONL schema, canonical bytes, hashes, and record-boundary contract.",
+      "expected_golden_ids": ["jsonl.canonical_record_bytes_and_hash"],
+      "expected_test_ids": ["tests/adapters/test_jsonl_event_store.py::test_canonical_record_golden_bytes_and_hash"]
+    },
+    {
+      "path": "src/adapters/model_state_schema.py",
+      "sha256": "675c4ad553602252873c7fc010404597095e8471ae5a17d556f02b94f403a4b3",
+      "purpose": "Current target model schema, identity fields, fingerprint algorithm, and IR policy bounds.",
+      "expected_golden_ids": ["model.target_schema_domain_jsonl_v2", "model.ir_reference_zero_frame"],
+      "expected_test_ids": ["tests/adapters/test_model_owner.py::test_target_validator_rejects_invalid_schema_and_policy"]
+    },
+    {
+      "path": "src/adapters/model_transform.py",
+      "sha256": "41a58fc0a45ed2828665217b7c4a4d7d5e972770c906a6ac8fba6a6df3a0a348",
+      "purpose": "Strict Release-A source identity and no-clobber target transform contract.",
+      "expected_golden_ids": ["model.registered_release_a_fingerprint", "model.dense_no_later_lb_oracle"],
+      "expected_test_ids": ["tests/test_model_transform.py::test_release_a_codec_reproduces_registered_legacy_fingerprint_without_writes", "tests/test_model_transform.py::test_dense_oracle_exercises_actual_source_and_target_float_frames"]
+    },
+    {
+      "path": "src/domain/evidence.py",
+      "sha256": "1b73fd189dd2f62331d1c43ac7923ba81d0b19f45e323d143943dc9f9e162fc9",
+      "purpose": "Historical global terminal-science policy and evidence admission boundary to be superseded in Slice 1.",
+      "expected_golden_ids": ["terminal.global_power_restored_only_historical"],
+      "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
+    },
+    {
+      "path": "src/domain/values.py",
+      "sha256": "3a50b5a2987104001bedd0ceb95e4898f64be5e3ae13d46b81e99f8fc71dc085",
+      "purpose": "Current terminal-disposition enum, terminal facts, and frozen model snapshot value contract.",
+      "expected_golden_ids": ["terminal.dispositions.learned_recorded_only_rejected"],
+      "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
+    },
+    {
+      "path": "tests/adapters/test_durability_fault_matrix.py",
+      "sha256": "18fb592e8a7f2f6fd600f79a92ebd3610df44d74cd39ae125493525f5a0e4a5e",
+      "purpose": "JSONL crash-window and decoder fault goldens for exact replay/convergence.",
+      "expected_golden_ids": ["jsonl.fault_matrix_exact_replay"],
+      "expected_test_ids": ["tests/adapters/test_durability_fault_matrix.py::test_open_fault_stages_recover_exact_start_bytes", "tests/adapters/test_durability_fault_matrix.py::test_seal_fault_stages_preserve_durable_outcome_for_retry", "tests/adapters/test_durability_fault_matrix.py::test_record_decoder_rejects_hash_and_canonicality_damage"]
+    },
+    {
+      "path": "tests/adapters/test_durability_faults.py",
+      "sha256": "f9db709ed3d8b2bdd5b3cf73d582752a3f1da63cd75893d7f5d727fbd2e111e1",
+      "purpose": "Filesystem and model atomic-write durability goldens.",
+      "expected_golden_ids": ["jsonl.atomic_replace_retry", "model.atomic_write_rollback"],
+      "expected_test_ids": ["tests/adapters/test_durability_faults.py::test_atomic_replace_orders_write_sync_rename_and_directory_sync", "tests/adapters/test_durability_faults.py::test_model_atomic_write_flush_failure_preserves_original_target"]
+    },
+    {
+      "path": "tests/adapters/test_jsonl_event_store.py",
+      "sha256": "adb09763e16a534616fbd4887c00276189dad7bfd674678462af68fb7abf035a",
+      "purpose": "Hash-linked JSONL store, canonical record, sealing, corruption, capacity, and bounded projection goldens.",
+      "expected_golden_ids": ["jsonl.canonical_record_bytes_and_hash", "jsonl.registry_recovery", "jsonl.capture_capacity_and_terminal_reserve"],
+      "expected_test_ids": ["tests/adapters/test_jsonl_event_store.py::test_canonical_record_golden_bytes_and_hash", "tests/adapters/test_jsonl_event_store.py::test_registry_first_crash_recreates_exact_frozen_start", "tests/adapters/test_jsonl_event_store.py::test_newline_middle_corruption_rotates_segment_and_seals_aggregate_rejection", "tests/adapters/test_jsonl_event_store.py::test_continuation_reserves_terminal_budget_across_restart"]
+    },
+    {
+      "path": "tests/adapters/test_jsonl_index_recovery.py",
+      "sha256": "686264f91d4cb13f2e97c9b1a960664d75f2993f8b290f36685c2a2703eceac0",
+      "purpose": "Index/rebuild cursor recovery and orphan cleanup goldens.",
+      "expected_golden_ids": ["jsonl.index_rebuild_idempotence"],
+      "expected_test_ids": ["tests/adapters/test_jsonl_index_recovery.py::test_merge_verification_rejects_equal_length_earlier_corruption", "tests/adapters/test_jsonl_index_recovery.py::test_sealed_replay_does_not_scan_growing_index"]
+    },
+    {
+      "path": "tests/adapters/test_model_owner.py",
+      "sha256": "922351eacdda1d2092814983bd664c0043ab92d2be9669d0c88e56526627da44",
+      "purpose": "Sole model-owner writer, schema validation, exact commit receipt, rollback, epoch, and idempotence goldens.",
+      "expected_golden_ids": ["model.owner_single_writer", "model.no_later_lb_oracle", "model.idempotent_receipt"],
+      "expected_test_ids": ["tests/adapters/test_model_owner.py::test_safety_oracle_refusal_is_byte_identical", "tests/adapters/test_model_owner.py::test_commit_backs_up_before_state_and_atomically_swaps_snapshot", "tests/adapters/test_model_owner.py::test_prepared_commit_applies_then_reconstructs_after_restart", "tests/adapters/test_model_owner.py::test_external_model_write_is_a_conflict_and_refusal_is_byte_identical"]
+    },
+    {
+      "path": "tests/application/test_assessment_worker.py",
+      "sha256": "9ba0f43d2c4e2469805548a43abf040360466fb9f65f4846b81c26b6016ec29a",
+      "purpose": "Frozen-snapshot assessment, terminal outcomes, no-write refusals, and qualifying IR pipeline goldens.",
+      "expected_golden_ids": ["assessment.frozen_snapshot", "assessment.non_restored_terminal_censored", "ir.qualifying_pipeline"],
+      "expected_test_ids": ["tests/application/test_assessment_worker.py::test_frozen_model_makes_assessment_deterministic_if_live_model_changes", "tests/application/test_assessment_worker.py::test_non_restored_terminal_is_operational_and_cannot_prepare_or_commit_learning", "tests/application/test_assessment_worker.py::test_real_current_plus_three_history_pipeline_commits_one_safe_decrease"]
+    },
+    {
+      "path": "tests/application/test_capture_blackout.py",
+      "sha256": "c44449bc7fa92848128836e6f64c186eef916c80906d336dce2e3998e849c351",
+      "purpose": "Blackout lifecycle, boundary ordering, restart, gap, and capture-damage goldens.",
+      "expected_golden_ids": ["capture.boundary_ordering", "capture.restart_gap", "capture.damage_is_explicit"],
+      "expected_test_ids": ["tests/application/test_capture_blackout.py::test_first_observation_lives_only_in_start_then_event_closes", "tests/application/test_capture_blackout.py::test_boot_change_records_gap_before_new_boot_observation", "tests/application/test_capture_blackout.py::test_restart_attach_continues_same_event_then_online_ends_it", "tests/application/test_capture_blackout.py::test_failed_observation_execution_closes_capture_damaged_and_discards_end"]
+    },
+    {
+      "path": "tests/application/test_capture_recovery_highs.py",
+      "sha256": "10b339c6cd5d3e5808ab555774ac92d4ceb128b6d83d6e6a91a97559a8b0c4d7",
+      "purpose": "Prestart overflow, exact provenance proof, residual delivery, and terminal reconciliation goldens.",
+      "expected_golden_ids": ["capture.prestart_overflow_exact_provenance", "capture.terminal_reconcile_exact_proof"],
+      "expected_test_ids": ["tests/application/test_capture_recovery_highs.py::test_prestart_overflow_keeps_exact_aggregate_provenance", "tests/application/test_capture_recovery_highs.py::test_terminal_reconcile_accepts_exact_overflow_gap", "tests/application/test_capture_recovery_highs.py::test_terminal_reconcile_requires_exact_overflow_provenance", "tests/application/test_capture_recovery_highs.py::test_service_stop_does_not_duplicate_inflight_prestart_online_recovery"]
+    },
+    {
+      "path": "tests/application/test_capture_writer.py",
+      "sha256": "ff3bb99be5b2ed630b2d6b9596097542f9071f90a75998d5cfc6de9d11aa795e",
+      "purpose": "Capture writer lane ordering, barriers, bounded shutdown, and failure visibility goldens.",
+      "expected_golden_ids": ["capture.writer_barrier", "capture.writer_bounded_shutdown"],
+      "expected_test_ids": ["tests/application/test_capture_writer.py::test_start_command_precedes_observation_backlog", "tests/application/test_capture_writer.py::test_end_is_a_barrier_after_already_accepted_observations", "tests/application/test_capture_writer.py::test_shutdown_boundary_waits_for_a_full_lifecycle_lane_to_drain"]
+    },
+    {
+      "path": "tests/application/test_close_blackout.py",
+      "sha256": "04e197751267f107dc07e4d243ede6d976734be04e781bacb8cbe144a80771d7",
+      "purpose": "Close transaction ordering, IR commit, exact sealing, and zero-write refusal goldens.",
+      "expected_golden_ids": ["close.commit_before_outcome", "close.zero_model_writes_on_missing_gate"],
+      "expected_test_ids": ["tests/application/test_close_blackout.py::test_safe_commit_persists_decision_before_model_receipt_and_outcome", "tests/application/test_close_blackout.py::test_missing_learning_gate_makes_zero_model_writes", "tests/application/test_close_blackout.py::test_upward_ir_observation_is_sealed_exactly_without_consuming_evidence"]
+    },
+    {
+      "path": "tests/application/test_close_jsonl_integration.py",
+      "sha256": "2e75e81d5b692e84b8e088e4451fa2159db7528f51792cd9bf524df9de26b92b",
+      "purpose": "Assessment/JSONL crash recovery and terminal refusal integration goldens.",
+      "expected_golden_ids": ["close.jsonl_recovery_exact_suffix", "close.non_restored_terminal_refusal"],
+      "expected_test_ids": ["tests/application/test_close_jsonl_integration.py::test_recovery_after_each_derived_checkpoint_appends_only_missing_suffix", "tests/application/test_close_jsonl_integration.py::test_gap_and_capture_damaged_end_refuse_science_even_at_end_durable_stage"]
+    },
+    {
+      "path": "tests/application/test_close_model_reconciliation_integration.py",
+      "sha256": "4a83816dfd232f95c4bf0074c07940effa85ad7585597fdb41f02e0e040aa05f",
+      "purpose": "Model receipt reconciliation and exactly-once restart integration goldens.",
+      "expected_golden_ids": ["model.reconcile_pending_commit_exactly_once"],
+      "expected_test_ids": ["tests/application/test_close_model_reconciliation_integration.py::test_close_propagates_reconciliation_failure_and_restart_commits_once"]
+    },
+    {
+      "path": "tests/application/test_decline_application_reporting.py",
+      "sha256": "5e13aea8f98a484b1a99ec3b2ef0da7e11e978c9ef8887e396862051396b988a",
+      "purpose": "Metric-specific current-raw recomputation and terminal/provenance exclusion goldens.",
+      "expected_golden_ids": ["decline.metric_specific_admission", "decline.non_restored_terminal_exclusion"],
+      "expected_test_ids": ["tests/application/test_decline_application_reporting.py::test_decline_excludes_non_restored_terminal_events_from_every_cohort", "tests/application/test_decline_application_reporting.py::test_decline_uses_current_raw_evidence_when_terminal_class_disagrees", "tests/application/test_decline_application_reporting.py::test_calibration_event_does_not_poison_six_later_natural_firmware_events"]
+    },
+    {
+      "path": "tests/application/test_safety.py",
+      "sha256": "c1ba1104ddba1e04ee4b19fc4a16f54fb30f1ac618c53d6d93be597afcdbe136",
+      "purpose": "Pinned Release-A safety statuses, frozen snapshot calculation, raw-LB separation, and latch goldens.",
+      "expected_golden_ids": ["safety.pinned_release_a_status_matrix", "safety.raw_lb_is_diagnostic"],
+      "expected_test_ids": ["tests/application/test_safety.py::test_safety_decision_matches_pinned_release_a_golden", "tests/application/test_safety.py::test_calculation_uses_one_frozen_snapshot", "tests/application/test_safety.py::test_publication_keeps_raw_lb_separate_from_modeled_decision"]
+    },
+    {
+      "path": "tests/application/test_safety_oracle.py",
+      "sha256": "9ef1b3e23dc92ef94ada96c26d57d8d646997689414c9fa86064c691064c1f8c",
+      "purpose": "Dense safety oracle direction and reference-frame rejection goldens.",
+      "expected_golden_ids": ["safety.no_later_lb_oracle"],
+      "expected_test_ids": ["tests/application/test_safety_oracle.py::test_downward_k_is_never_less_conservative_in_reference_zero_frame", "tests/application/test_safety_oracle.py::test_upward_k_is_rejected", "tests/application/test_safety_oracle.py::test_nonzero_reference_frame_is_rejected_before_grid"]
+    },
+    {
+      "path": "tests/domain/test_evidence_comparison.py",
+      "sha256": "f88f4ec97fc6bfbdfd52424705ac6a6154b52216ae8bc680fa98db8beeb5c041",
+      "purpose": "Raw-evidence comparison boundaries, gap/unknown refusal, and frozen-snapshot residual goldens.",
+      "expected_golden_ids": ["ir.comparison_frozen_snapshot", "ir.comparison_gap_boundaries"],
+      "expected_test_ids": ["tests/domain/test_evidence_comparison.py::test_comparison_uses_frozen_snapshot_and_signed_residual", "tests/domain/test_evidence_comparison.py::test_cal_and_raw_gap_fail_evidence_closed"]
+    },
+    {
+      "path": "tests/domain/test_ir_identification.py",
+      "sha256": "ab298cd4cd946368fb804cc8fd43cd5bcbcae6bf3ecf55e32d14e8dc672174ac",
+      "purpose": "Existing qualifying IR step, status/gap/boot boundaries, anti-feedback, and cohort goldens.",
+      "expected_golden_ids": ["ir.step_qualification", "ir.cohort_four_steps_two_events"],
+      "expected_test_ids": ["tests/domain/test_ir_identification.py::test_known_raw_step_recovers_positive_settled_k", "tests/domain/test_ir_identification.py::test_ir_signature_cannot_accept_model_outputs", "tests/domain/test_ir_identification.py::test_cohort_requires_four_steps_two_events_and_both_directions", "tests/domain/test_ir_identification.py::test_cohort_requires_three_steps_other_than_the_current_blackout"]
+    },
+    {
+      "path": "tests/domain/test_learning.py",
+      "sha256": "cbef99c21084c7bc7843accaf75c051fd3095053e56b5c6a963695bfef80a54e",
+      "purpose": "Bounded downward-only IR learning, independent evidence identity, policy, epoch, and refusal goldens.",
+      "expected_golden_ids": ["ir.learning_downward_bounded", "ir.learning_no_feedback"],
+      "expected_test_ids": ["tests/domain/test_learning.py::test_valid_decrease_is_bounded_to_twenty_percent", "tests/domain/test_learning.py::test_noise_floor_and_upward_estimate_never_commit", "tests/domain/test_learning.py::test_learning_policy_is_versioned_and_values_cannot_drift"]
+    },
+    {
+      "path": "tests/domain/test_terminal_science_policy.py",
+      "sha256": "13279dc3c728db04a5a75c7ceead1659b82ebc9efa77625e700092c2b14fdd9f",
+      "purpose": "Historical global terminal disposition matrix explicitly superseded by Slice 1.",
+      "expected_golden_ids": ["terminal.global_power_restored_only_historical"],
+      "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_application_alerter.py",
+      "sha256": "9edf56ab9a950b529d2b018d95710f4f174bfb6f1686bd344c44d78cd80bbcdc",
+      "purpose": "Architecture fixture forbidding application-to-journald adapter coupling.",
+      "expected_golden_ids": ["architecture.application_no_alerter_adapter"],
+      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_application_jsonl.py",
+      "sha256": "2df1cc2681e5c81c7986a8f767a6ff0753dbf6a8c75bd0da57a48b0b7c883374",
+      "purpose": "Architecture fixture forbidding application-to-concrete-JSONL coupling.",
+      "expected_golden_ids": ["architecture.application_no_jsonl_adapter"],
+      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_application_nut.py",
+      "sha256": "90c4c44f5c54d61be7b471ab5148f3aec2a786cf8e9fcc07c9c0756603fd84f8",
+      "purpose": "Architecture fixture forbidding application-to-concrete-NUT coupling.",
+      "expected_golden_ids": ["architecture.application_no_nut_adapter"],
+      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_capture_private_state.py",
+      "sha256": "e4dcd57c4296abf103b5bccf8b2c66cf3073dcf3307bfc58de8fe9519b0e9b35",
+      "purpose": "Architecture fixture forbidding cross-module access to BlackoutCapture private state.",
+      "expected_golden_ids": ["architecture.capture_private_state_guard"],
+      "expected_test_ids": ["tests/test_architecture_boundaries.py::test_blackout_capture_private_guard_rejects_holder_fixture"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_domain_adapter.py",
+      "sha256": "d1bbc1003340f90ec782a7cde8f8851ad501baea0da16636ac7d50f495615f6c",
+      "purpose": "Architecture fixture forbidding domain-to-adapter imports.",
+      "expected_golden_ids": ["architecture.domain_no_adapter"],
+      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_jsonl_model_peer.py",
+      "sha256": "bd02bc71b6eca6902eefc5c650db7ce8e20b5173f3d6287850a816e389cf87fb",
+      "purpose": "Architecture fixture forbidding JSONL adapter internals from reaching model peers.",
+      "expected_golden_ids": ["architecture.jsonl_no_model_peer"],
+      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
+    },
+    {
+      "path": "tests/fixtures/architecture/forbidden_math_application.py",
+      "sha256": "5b10e664c2e48e65cbaaa320911d1267d5a8b0e14a7c3d317e01d90db18185fa",
+      "purpose": "Architecture fixture forbidding battery math from importing application code.",
+      "expected_golden_ids": ["architecture.math_no_application"],
+      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
+    },
+    {
+      "path": "tests/test_model_transform.py",
+      "sha256": "b92c4e13500f456a61eef221817e5c7be25ebe12ec940b5f9f021a657214c6c5",
+      "purpose": "Release-A fingerprint, target transform, dense oracle, no-clobber, rollback, and CLI goldens.",
+      "expected_golden_ids": ["model.registered_release_a_fingerprint", "model.transform_exact_backup", "model.dense_no_later_lb_oracle"],
+      "expected_test_ids": ["tests/test_model_transform.py::test_release_a_codec_reproduces_registered_legacy_fingerprint_without_writes", "tests/test_model_transform.py::test_transform_shifts_every_lut_row_drops_rls_and_keeps_exact_backup", "tests/test_model_transform.py::test_post_write_verification_failure_restores_exact_source"]
+    },
+    {
+      "path": "tests/test_safety_freshness.py",
+      "sha256": "3e083daebf94f7efa4f3d679bcd9706aa18d3e6d8db29aaf3430d107f30e15b6",
+      "purpose": "Safety publication freshness, fail-safe deadline, exact temporary ownership, and signal cleanup goldens.",
+      "expected_golden_ids": ["safety.freshness_fail_safe", "safety.atomic_cleanup_ownership"],
+      "expected_test_ids": ["tests/test_safety_freshness.py::test_poll_loss_uses_grace_then_explicit_lb_fail_safe", "tests/test_safety_freshness.py::test_stale_previous_output_is_replaced_by_explicit_fail_safe", "tests/test_safety_freshness.py::test_both_identity_inspections_fail_and_leave_temp_unlinked"]
+    },
+    {
+      "path": "tests/test_vertical_blackout_learning.py",
+      "sha256": "bb2cd9748b011f6ed2ad920b47cf0295dcbdcab7e6243c15af5b28ec0aa1bd0b",
+      "purpose": "Existing end-to-end qualifying IR output and exact insufficient-evidence refusal goldens.",
+      "expected_golden_ids": ["ir.vertical_four_step_commit", "ir.vertical_missing_direction_refusal"],
+      "expected_test_ids": ["tests/test_vertical_blackout_learning.py::test_real_vertical_four_step_cohort_commits_seals_and_restarts", "tests/test_vertical_blackout_learning.py::test_missing_step_direction_has_exact_refusal_and_zero_model_writes"]
+    }
+  ]
+}

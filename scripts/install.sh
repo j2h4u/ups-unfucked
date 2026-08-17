@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # UPS Battery Monitor Installation Script
 # Installs systemd service and configures NUT dummy-ups for virtual UPS proxy
 # Requires: root, Python 3, systemd, NUT daemon
@@ -71,6 +71,10 @@ if ! command -v python3 &>/dev/null; then
     log_error "Python 3 not found. Install with: apt install python3"
     exit 1
 fi
+if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 13))'; then
+    log_error "Python 3.13 or newer is required"
+    exit 1
+fi
 log_ok "Python 3 found: $(python3 --version)"
 
 # Check systemd
@@ -108,6 +112,51 @@ INSTALL_HOME=$(getent passwd "$RUN_USER" | cut -d: -f6)
 UPS_NAME="cyberpower"
 UPS_VIRTUAL_NAME="${UPS_NAME}-virtual"
 RUNTIME_DIR="/run/ups-battery-monitor"
+SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
+SERVICE_DST="/etc/systemd/system/ups-battery-monitor.service"
+VIRTUAL_DRIVER_SRC="$REPO_ROOT/systemd/nut-driver@${UPS_VIRTUAL_NAME}.service"
+VIRTUAL_DRIVER_DST="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service"
+LEGACY_DROPIN_DIR="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service.d"
+LEGACY_DROPIN_DST="$LEGACY_DROPIN_DIR/nut-driver-virtual.conf"
+TARGET_WANTS_LINK="/etc/systemd/system/nut-driver.target.wants/nut-driver@${UPS_VIRTUAL_NAME}.service"
+MONITOR_WANTS_DIR="/etc/systemd/system/ups-battery-monitor.service.wants"
+MONITOR_WANTS_LINK="$MONITOR_WANTS_DIR/nut-driver@${UPS_VIRTUAL_NAME}.service"
+DUMMY_UPS_CONFIG="$REPO_ROOT/config/dummy-ups.conf"
+NUT_CONFIG="/etc/nut/ups.conf"
+UPSMON_CONF="/etc/nut/upsmon.conf"
+
+if [[ -f /usr/lib/systemd/system/nut-driver@.service ]]; then
+    NUT_DRIVER_TEMPLATE="/usr/lib/systemd/system/nut-driver@.service"
+elif [[ -f /lib/systemd/system/nut-driver@.service ]]; then
+    NUT_DRIVER_TEMPLATE="/lib/systemd/system/nut-driver@.service"
+else
+    NUT_DRIVER_TEMPLATE=""
+fi
+
+if [[ -f /usr/lib/systemd/system/nut-driver.target ]]; then
+    NUT_DRIVER_TARGET_UNIT="/usr/lib/systemd/system/nut-driver.target"
+elif [[ -f /lib/systemd/system/nut-driver.target ]]; then
+    NUT_DRIVER_TARGET_UNIT="/lib/systemd/system/nut-driver.target"
+else
+    NUT_DRIVER_TARGET_UNIT=""
+fi
+
+if [[ -f /usr/lib/systemd/system/nut-server.service ]]; then
+    NUT_SERVER_UNIT="/usr/lib/systemd/system/nut-server.service"
+elif [[ -f /lib/systemd/system/nut-server.service ]]; then
+    NUT_SERVER_UNIT="/lib/systemd/system/nut-server.service"
+else
+    NUT_SERVER_UNIT=""
+fi
+
+TRANSACTION_ROOT=""
+TRANSACTION_ACTIVE="no"
+MONITOR_WANTS_DIR_CREATED="no"
+NUT_SERVER_ACTIVE_BEFORE="no"
+NUT_MONITOR_ACTIVE_BEFORE="no"
+MONITOR_ACTIVE_BEFORE="no"
+NUT_DRIVER_ACTIVE_BEFORE="no"
+MONITOR_ENABLED_BEFORE="unchanged"
 
 if [[ -z "$INSTALL_HOME" || "$INSTALL_HOME" == "/" ]]; then
     log_error "Could not resolve a safe home directory for $RUN_USER"
@@ -127,18 +176,353 @@ if [[ ! -f "$REPO_ROOT/config/dummy-ups.conf" ]]; then
     exit 1
 fi
 
+if [[ ! -x "$(command -v systemd-analyze 2>/dev/null || true)" ]]; then
+    log_error "systemd-analyze not found"
+    exit 1
+fi
+
+if [[ -z "$NUT_DRIVER_TEMPLATE" ]]; then
+    log_error "NUT driver template unit not found"
+    exit 1
+fi
+
+if [[ -z "$NUT_DRIVER_TARGET_UNIT" || -z "$NUT_SERVER_UNIT" ]]; then
+    log_error "NUT target/server unit files not found"
+    exit 1
+fi
+
+if [[ ! -f "$VIRTUAL_DRIVER_SRC" ]]; then
+    log_error "Virtual driver unit not found at $VIRTUAL_DRIVER_SRC"
+    exit 1
+fi
+
+# === STAGED UNIT AND CONFIG TRANSACTION ===
+
+assert_restore_target_safe() {
+    local target="$1"
+    if [[ -L "$target" ]]; then
+        log_error "Refusing symlink target in installation transaction: $target"
+        return 1
+    fi
+    if [[ -e "$target" && ! -f "$target" ]]; then
+        log_error "Installation target is not a regular file: $target"
+        return 1
+    fi
+}
+
+backup_transaction_file() {
+    local target="$1"
+    local name="$2"
+    assert_restore_target_safe "$target"
+    if [[ -f "$target" ]]; then
+        cp -a -- "$target" "$TRANSACTION_ROOT/$name"
+    else
+        : > "$TRANSACTION_ROOT/$name.absent"
+    fi
+}
+
+# shellcheck disable=SC2317 # Called from the installation transaction and tests.
+backup_transaction_link() {
+    local target="$1"
+    local name="$2"
+    local link_target
+
+    if [[ -L "$target" ]]; then
+        link_target="$(readlink -- "$target")"
+        if [[ -z "$link_target" ]]; then
+            log_error "Could not read transaction symlink: $target"
+            return 1
+        fi
+        printf '%s\n' "$link_target" > "$TRANSACTION_ROOT/$name.link"
+    elif [[ -e "$target" ]]; then
+        log_error "Expected a symlink or absent path, found another file: $target"
+        return 1
+    else
+        : > "$TRANSACTION_ROOT/$name.absent"
+    fi
+}
+
+# shellcheck disable=SC2317 # Called from the installation transaction and rollback.
+remove_owned_link() {
+    local target="$1"
+    if [[ -L "$target" ]]; then
+        rm -- "$target"
+    elif [[ -e "$target" ]]; then
+        log_error "Refusing to replace non-symlink path: $target"
+        return 1
+    fi
+}
+
+# shellcheck disable=SC2317 # Called from the EXIT trap through rollback_transaction.
+restore_transaction_link() {
+    local target="$1"
+    local name="$2"
+    local backup="$TRANSACTION_ROOT/$name.link"
+    local absent="$TRANSACTION_ROOT/$name.absent"
+    local link_target
+
+    if [[ -f "$backup" ]]; then
+        link_target="$(<"$backup")"
+        if [[ -z "$link_target" ]]; then
+            log_error "Empty transaction symlink backup for $target"
+            return 1
+        fi
+        remove_owned_link "$target"
+        mkdir --parents -- "$(dirname -- "$target")"
+        ln -s -- "$link_target" "$target"
+    elif [[ -f "$absent" ]]; then
+        remove_owned_link "$target"
+    else
+        log_error "Missing transaction symlink backup for $target"
+        return 1
+    fi
+}
+
+render_staged_units() {
+    local stage_root="$TRANSACTION_ROOT/staged"
+    local stage_service="$stage_root/ups-battery-monitor.service"
+    local stage_driver="$stage_root/nut-driver@${UPS_VIRTUAL_NAME}.service"
+    local stage_target="$stage_root/nut-driver.target"
+    local stage_server="$stage_root/nut-server.service"
+    local stage_physical="$stage_root/nut-driver@.service"
+    local stage_target_wants="$stage_root/nut-driver.target.wants"
+
+    mkdir --parents -- "$stage_target_wants"
+    sed -e "s|@RUN_USER@|$RUN_USER|g" \
+        -e "s|@INSTALL_DIR@|$REPO_ROOT|g" \
+        -e "s|@INSTALL_HOME@|$INSTALL_HOME|g" \
+        "$SERVICE_SRC" > "$stage_service"
+    cp -- "$VIRTUAL_DRIVER_SRC" "$stage_driver"
+    cp -- "$NUT_DRIVER_TARGET_UNIT" "$stage_target"
+    cp -- "$NUT_SERVER_UNIT" "$stage_server"
+    cp -- "$NUT_DRIVER_TEMPLATE" "$stage_physical"
+    ln -s -- "$stage_physical" "$stage_target_wants/nut-driver@cyberpower.service"
+    chmod 600 -- "$stage_service" "$stage_driver" "$stage_target" \
+        "$stage_server" "$stage_physical"
+
+    if ! SYSTEMD_UNIT_PATH="$stage_root:/usr/lib/systemd/system:/lib/systemd/system" \
+        systemd-analyze verify "$stage_service" "$stage_driver" "$stage_target" \
+        "$stage_server" "$stage_physical"; then
+        log_error "Rendered systemd units failed verification; no installation changes made"
+        return 1
+    fi
+    STAGED_SERVICE="$stage_service"
+    STAGED_DRIVER="$stage_driver"
+    # The staged topology paths are consumed by tests and by the verify receipt.
+    # shellcheck disable=SC2034
+    STAGED_TARGET="$stage_target"
+    # shellcheck disable=SC2034
+    STAGED_SERVER="$stage_server"
+}
+
+snapshot_runtime_state() {
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        return
+    fi
+    NUT_SERVER_ACTIVE_BEFORE="no"
+    NUT_MONITOR_ACTIVE_BEFORE="no"
+    MONITOR_ACTIVE_BEFORE="no"
+    NUT_DRIVER_ACTIVE_BEFORE="no"
+    if systemctl is-active --quiet nut-server 2>/dev/null; then
+        NUT_SERVER_ACTIVE_BEFORE="yes"
+    fi
+    if systemctl is-active --quiet nut-monitor 2>/dev/null; then
+        NUT_MONITOR_ACTIVE_BEFORE="yes"
+    fi
+    if systemctl is-active --quiet ups-battery-monitor 2>/dev/null; then
+        MONITOR_ACTIVE_BEFORE="yes"
+    fi
+    if systemctl is-active --quiet "nut-driver@${UPS_VIRTUAL_NAME}" 2>/dev/null; then
+        NUT_DRIVER_ACTIVE_BEFORE="yes"
+    fi
+
+    local enabled_state
+    enabled_state="$(systemctl is-enabled ups-battery-monitor 2>/dev/null || true)"
+    case "$enabled_state" in
+        enabled|enabled-runtime|disabled|not-found)
+            MONITOR_ENABLED_BEFORE="$enabled_state"
+            ;;
+        *)
+            log_error "Could not snapshot ups-battery-monitor enabled state: $enabled_state"
+            return 1
+            ;;
+    esac
+}
+
+# shellcheck disable=SC2317 # These helpers are reached indirectly by the EXIT trap.
+restore_transaction_file() {
+    local target="$1"
+    local name="$2"
+    local backup="$TRANSACTION_ROOT/$name"
+    local absent="$TRANSACTION_ROOT/$name.absent"
+
+    if [[ -f "$backup" ]]; then
+        local restored
+        restored="$(mktemp "$(dirname "$target")/.$(basename "$target").rollback.XXXXXX")"
+        cp -a -- "$backup" "$restored"
+        mv -- "$restored" "$target"
+    elif [[ -f "$absent" ]]; then
+        if [[ -e "$target" || -L "$target" ]]; then
+            rm -f -- "$target"
+        fi
+    else
+        log_error "Missing transaction backup for $target"
+        return 1
+    fi
+}
+
+# shellcheck disable=SC2317 # Called from the EXIT trap through rollback_transaction.
+restore_enabled_state() {
+    case "$MONITOR_ENABLED_BEFORE" in
+        enabled)
+            systemctl enable ups-battery-monitor >/dev/null 2>&1
+            ;;
+        enabled-runtime)
+            systemctl disable ups-battery-monitor >/dev/null 2>&1 &&
+                systemctl enable --runtime ups-battery-monitor >/dev/null 2>&1
+            ;;
+        disabled|not-found)
+            systemctl disable ups-battery-monitor >/dev/null 2>&1
+            ;;
+        unchanged)
+            return 0
+            ;;
+        *)
+            log_error "Unknown saved enabled state: $MONITOR_ENABLED_BEFORE"
+            return 1
+            ;;
+    esac
+}
+
+# shellcheck disable=SC2317 # Called from the EXIT trap through rollback_transaction.
+restore_active_state() {
+    local restore_status=0
+    local server_ready="yes"
+    local monitor_ready="yes"
+
+    if [[ "$NUT_SERVER_ACTIVE_BEFORE" == "yes" ]]; then
+        if ! systemctl restart nut-server >/dev/null 2>&1; then
+            log_error "Rollback could not restart previously active nut-server"
+            restore_status=1
+            server_ready="no"
+        fi
+    fi
+    if [[ "$MONITOR_ACTIVE_BEFORE" == "yes" ]]; then
+        if [[ "$server_ready" == "yes" ]]; then
+            if ! systemctl restart ups-battery-monitor >/dev/null 2>&1; then
+                log_error "Rollback could not restart previously active ups-battery-monitor"
+                restore_status=1
+                monitor_ready="no"
+            fi
+        else
+            log_error "Rollback skipped ups-battery-monitor because nut-server restore failed"
+            restore_status=1
+            monitor_ready="no"
+        fi
+    fi
+    if [[ "$NUT_DRIVER_ACTIVE_BEFORE" == "yes" ]]; then
+        if [[ "$monitor_ready" == "yes" ]]; then
+            if ! systemctl restart "nut-driver@${UPS_VIRTUAL_NAME}" >/dev/null 2>&1; then
+                log_error "Rollback could not restart previously active virtual NUT driver"
+                restore_status=1
+            fi
+        else
+            log_error "Rollback skipped the virtual NUT driver because monitor restore failed"
+            restore_status=1
+        fi
+    fi
+    if [[ "$NUT_MONITOR_ACTIVE_BEFORE" == "yes" ]]; then
+        if [[ "$server_ready" == "yes" ]]; then
+            if ! systemctl restart nut-monitor >/dev/null 2>&1; then
+                log_error "Rollback could not restart previously active nut-monitor"
+                restore_status=1
+            fi
+        else
+            log_error "Rollback skipped nut-monitor because nut-server restore failed"
+            restore_status=1
+        fi
+    fi
+    return "$restore_status"
+}
+
+# shellcheck disable=SC2317 # Called from the EXIT trap through finish_transaction.
+rollback_transaction() {
+    local rollback_status=0
+    log_error "Installation failed; restoring exact pre-install unit and NUT files"
+    set +e
+    if [[ "$DRY_RUN" != "yes" ]]; then
+        systemctl stop "nut-driver@${UPS_VIRTUAL_NAME}" ups-battery-monitor nut-monitor nut-server \
+            >/dev/null 2>&1 || rollback_status=1
+    fi
+    restore_transaction_file "$SERVICE_DST" service || rollback_status=1
+    restore_transaction_file "$VIRTUAL_DRIVER_DST" virtual-driver || rollback_status=1
+    restore_transaction_file "$LEGACY_DROPIN_DST" legacy-dropin || rollback_status=1
+    restore_transaction_file "$NUT_CONFIG" nut-config || rollback_status=1
+    restore_transaction_file "$UPSMON_CONF" upsmon || rollback_status=1
+    restore_transaction_link "$TARGET_WANTS_LINK" target-wants || rollback_status=1
+    restore_transaction_link "$MONITOR_WANTS_LINK" monitor-wants || rollback_status=1
+    if [[ "$MONITOR_WANTS_DIR_CREATED" == "yes" && -e "$MONITOR_WANTS_DIR" ]]; then
+        rmdir -- "$MONITOR_WANTS_DIR" 2>/dev/null || rollback_status=1
+    fi
+    if [[ "$DRY_RUN" != "yes" ]]; then
+        systemctl daemon-reload >/dev/null 2>&1 || rollback_status=1
+        restore_enabled_state || rollback_status=1
+        restore_active_state || rollback_status=1
+    fi
+    set -e
+    TRANSACTION_ACTIVE="no"
+    if [[ "$rollback_status" -ne 0 ]]; then
+        log_error "Rollback was incomplete; inspect the installation targets before retrying"
+    else
+        log_ok "Installation targets restored exactly"
+    fi
+    return "$rollback_status"
+}
+
+# shellcheck disable=SC2317 # Called from the EXIT trap through finish_transaction.
+cleanup_transaction() {
+    if [[ -z "$TRANSACTION_ROOT" || ! -d "$TRANSACTION_ROOT" || -L "$TRANSACTION_ROOT" ]]; then
+        return
+    fi
+    case "$TRANSACTION_ROOT" in
+        "${TMPDIR:-/tmp}"/ups-battery-monitor-install.*) ;;
+        *) log_error "Refusing to clean an unexpected transaction path: $TRANSACTION_ROOT"; return ;;
+    esac
+    find -P "$TRANSACTION_ROOT" -depth -type f -delete
+    find -P "$TRANSACTION_ROOT" -depth -type l -delete
+    find -P "$TRANSACTION_ROOT" -depth -type d -empty -delete
+}
+
+# shellcheck disable=SC2317 # Registered as an EXIT trap below.
+finish_transaction() {
+    local status=$?
+    if [[ "$status" -ne 0 && "$TRANSACTION_ACTIVE" == "yes" ]]; then
+        rollback_transaction || true
+    fi
+    cleanup_transaction
+    exit "$status"
+}
+
+trap finish_transaction EXIT
+
 # === PRIVATE BATTERY STATE ===
-# The daemon writes model.json and its append-only discharge journal below this
-# directory.  Refuse symlinks before any chmod/chown/touch so reinstall cannot
-# redirect state writes outside the configured home.  Existing journal contents
-# are never replaced; only its ownership and mode are repaired.
+# The daemon writes one strict model and per-blackout JSONL files below this
+# directory. Refuse symlinks before mutation. A Release-A global journal, when
+# present, is archived byte-for-byte but never created or opened by the candidate.
 
 ensure_private_state() {
-    local config_dir="$INSTALL_HOME/.config"
-    local state_dir="$config_dir/ups-battery-monitor"
-    local journal="$state_dir/discharge-events-v1.jsonl"
+    # consts
+    local -r config_dir="$INSTALL_HOME/.config"
+    local -r state_dir="$config_dir/ups-battery-monitor"
+    local -r events_dir="$state_dir/events"
+    local -r model="$state_dir/model.json"
+    local -r legacy_journal="$state_dir/discharge-events-v1.jsonl"
 
-    for path in "$INSTALL_HOME" "$config_dir" "$state_dir" "$journal"; do
+    # vars
+    local path
+
+    # code
+    for path in "$INSTALL_HOME" "$config_dir" "$state_dir" "$events_dir" "$model" "$legacy_journal"; do
         if [[ -L "$path" ]]; then
             log_error "Refusing symlink in battery state path: $path"
             exit 1
@@ -153,8 +537,16 @@ ensure_private_state() {
         log_error "Battery state path is not a directory: $state_dir"
         exit 1
     fi
-    if [[ -e "$journal" && ! -f "$journal" ]]; then
-        log_error "Discharge journal is not a regular file: $journal"
+    if [[ -e "$events_dir" && ! -d "$events_dir" ]]; then
+        log_error "Per-blackout event path is not a directory: $events_dir"
+        exit 1
+    fi
+    if [[ -e "$model" && ! -f "$model" ]]; then
+        log_error "Battery model is not a regular file: $model"
+        exit 1
+    fi
+    if [[ -e "$legacy_journal" && ! -f "$legacy_journal" ]]; then
+        log_error "Archived legacy journal is not a regular file: $legacy_journal"
         exit 1
     fi
 
@@ -172,27 +564,69 @@ ensure_private_state() {
     fi
 
     if [[ "$DRY_RUN" == "yes" ]]; then
-        echo "[DRY-RUN] Would ensure private model directory: $state_dir (owner=$RUN_USER, mode=0700)"
-        if [[ -e "$journal" ]]; then
-            echo "[DRY-RUN] Would preserve and secure existing journal: $journal (owner=$RUN_USER, mode=0600)"
-        else
-            echo "[DRY-RUN] Would create journal: $journal (owner=$RUN_USER, mode=0600)"
+        echo "[DRY-RUN] Would ensure private state directory: $state_dir (owner=$RUN_USER, mode=0700)"
+        echo "[DRY-RUN] Would ensure per-blackout event directory: $events_dir (owner=$RUN_USER, mode=0700)"
+        if [[ ! -e "$model" ]]; then
+            echo "[DRY-RUN] Would explicitly provision strict target model: $model (owner=$RUN_USER, mode=0600)"
+        fi
+        if [[ -e "$legacy_journal" ]]; then
+            echo "[DRY-RUN] Would preserve archived legacy journal byte-for-byte: $legacy_journal"
         fi
         return
     fi
 
-    mkdir -p -- "$state_dir"
-    chmod 700 -- "$state_dir"
-    chown --no-dereference "$RUN_USER:$RUN_USER" "$state_dir"
+    mkdir --parents -- "$state_dir" "$events_dir"
+    chmod 700 -- "$state_dir" "$events_dir"
+    chown --no-dereference "$RUN_USER:$RUN_USER" "$state_dir" "$events_dir"
 
-    if [[ ! -e "$journal" ]]; then
-        # touch is safe here because the symlink check above rejected the path.
-        touch -- "$journal"
+    if [[ ! -e "$model" ]]; then
+        PYTHONPATH="$REPO_ROOT" python3 -c '
+import sys
+from pathlib import Path
+
+from src.adapters.model_owner import ModelOwner
+from src.application.safety_oracle import no_later_lb_oracle
+
+ModelOwner(
+    Path(sys.argv[1]),
+    safety_oracle=no_later_lb_oracle,
+    create_if_missing=True,
+)
+' "$model"
     fi
-    chmod 600 -- "$journal"
-    chown --no-dereference "$RUN_USER:$RUN_USER" "$journal"
-    log_ok "Private battery state ready: $state_dir (0700), journal preserved at $journal (0600)"
+    chmod 600 -- "$model"
+    chown --no-dereference "$RUN_USER:$RUN_USER" "$model"
+    if [[ -e "$legacy_journal" ]]; then
+        chmod 600 -- "$legacy_journal"
+        chown --no-dereference "$RUN_USER:$RUN_USER" "$legacy_journal"
+        log_ok "Archived legacy journal preserved byte-for-byte: $legacy_journal"
+    fi
+    log_ok "Private target model and per-blackout event state ready: $state_dir"
 }
+
+TRANSACTION_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ups-battery-monitor-install.XXXXXX")"
+chmod 700 -- "$TRANSACTION_ROOT"
+backup_transaction_file "$SERVICE_DST" service
+backup_transaction_file "$VIRTUAL_DRIVER_DST" virtual-driver
+backup_transaction_file "$LEGACY_DROPIN_DST" legacy-dropin
+backup_transaction_file "$NUT_CONFIG" nut-config
+backup_transaction_file "$UPSMON_CONF" upsmon
+backup_transaction_link "$TARGET_WANTS_LINK" target-wants
+backup_transaction_link "$MONITOR_WANTS_LINK" monitor-wants
+if [[ -L "$LEGACY_DROPIN_DIR" || ( -e "$LEGACY_DROPIN_DIR" && ! -d "$LEGACY_DROPIN_DIR" ) ]]; then
+    log_error "Legacy drop-in parent is not a directory: $LEGACY_DROPIN_DIR"
+    exit 1
+fi
+if [[ -L "$MONITOR_WANTS_DIR" || ( -e "$MONITOR_WANTS_DIR" && ! -d "$MONITOR_WANTS_DIR" ) ]]; then
+    log_error "Monitor wants parent is not a directory: $MONITOR_WANTS_DIR"
+    exit 1
+fi
+if [[ ! -e "$MONITOR_WANTS_DIR" ]]; then
+    MONITOR_WANTS_DIR_CREATED="yes"
+fi
+render_staged_units
+snapshot_runtime_state
+TRANSACTION_ACTIVE="yes"
 
 ensure_private_state
 
@@ -200,47 +634,57 @@ ensure_private_state
 
 log_info "Installing systemd service file..."
 
-SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
-SERVICE_DST="/etc/systemd/system/ups-battery-monitor.service"
-
-DROPIN_SRC="$REPO_ROOT/systemd/nut-driver-virtual.conf"
-DROPIN_DIR="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service.d"
-
 if [[ "$DRY_RUN" == "yes" ]]; then
     echo "[DRY-RUN] Would install: $SERVICE_SRC -> $SERVICE_DST (User=$RUN_USER, Dir=$REPO_ROOT)"
-    echo "[DRY-RUN] Would install: $DROPIN_SRC -> $DROPIN_DIR/"
+    echo "[DRY-RUN] Would install: $VIRTUAL_DRIVER_SRC -> $VIRTUAL_DRIVER_DST"
+    echo "[DRY-RUN] Would remove target membership: $TARGET_WANTS_LINK"
+    echo "[DRY-RUN] Would enable virtual driver under: $MONITOR_WANTS_LINK"
 else
-    sed -e "s|@RUN_USER@|$RUN_USER|g" \
-        -e "s|@INSTALL_DIR@|$REPO_ROOT|g" \
-        -e "s|@INSTALL_HOME@|$INSTALL_HOME|g" \
-        "$SERVICE_SRC" > "$SERVICE_DST"
-    chmod 644 "$SERVICE_DST"
+    install --owner=root --group=root --mode=0644 -- "$STAGED_SERVICE" "$SERVICE_DST"
     log_ok "Service file installed to $SERVICE_DST (User=$RUN_USER, Dir=$REPO_ROOT)"
-    mkdir -p "$DROPIN_DIR"
-    cp "$DROPIN_SRC" "$DROPIN_DIR/"
-    chmod 644 "$DROPIN_DIR/$(basename "$DROPIN_SRC")"
-    log_ok "NUT driver drop-in installed to $DROPIN_DIR/"
+    install --owner=root --group=root --mode=0644 -- "$STAGED_DRIVER" "$VIRTUAL_DRIVER_DST"
+    log_ok "Exact virtual NUT driver installed to $VIRTUAL_DRIVER_DST"
+    remove_owned_link "$TARGET_WANTS_LINK"
+    if [[ -L "$LEGACY_DROPIN_DST" || ( -e "$LEGACY_DROPIN_DST" && ! -f "$LEGACY_DROPIN_DST" ) ]]; then
+        log_error "Legacy NUT drop-in is not a regular file: $LEGACY_DROPIN_DST"
+        exit 1
+    fi
+    rm -f -- "$LEGACY_DROPIN_DST"
+    log_ok "Legacy enumerator-owned virtual driver drop-in retired"
 fi
 
 log_info "Reloading systemd daemon..."
 run_cmd systemctl daemon-reload
 log_ok "systemd daemon reloaded"
 
+log_info "Enabling the exact virtual driver under the monitor service..."
+if [[ "$DRY_RUN" != "yes" ]]; then
+    remove_owned_link "$MONITOR_WANTS_LINK"
+fi
+run_cmd systemctl enable "nut-driver@${UPS_VIRTUAL_NAME}"
+log_ok "Virtual NUT driver enabled via $MONITOR_WANTS_DIR"
+
 # === NUT DUMMY-UPS CONFIG MERGE (IDEMPOTENT) ===
 
 log_info "Configuring NUT dummy-ups..."
-
-NUT_CONFIG="/etc/nut/ups.conf"
-DUMMY_UPS_CONFIG="$REPO_ROOT/config/dummy-ups.conf"
 
 EXPECTED_PORT="port = ${RUNTIME_DIR}/ups-virtual.dev"
 if grep -qF "$EXPECTED_PORT" "$NUT_CONFIG" 2>/dev/null && ! grep -q "dummy-once" "$NUT_CONFIG" 2>/dev/null; then
     log_ok "Dummy-ups already configured correctly in $NUT_CONFIG (skipped)"
 else
-    # Remove any stale [cyberpower-virtual] block before appending fresh config
-    if grep -q "cyberpower-virtual" "$NUT_CONFIG" 2>/dev/null; then
-        log_info "Removing stale [cyberpower-virtual] block from $NUT_CONFIG..."
-        if [[ "$DRY_RUN" != "yes" ]]; then
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would replace the cyberpower-virtual block in $NUT_CONFIG"
+    else
+        NUT_CONFIG_CANDIDATE="$TRANSACTION_ROOT/ups.conf.candidate"
+        if [[ -f "$NUT_CONFIG" ]]; then
+            cp -a -- "$NUT_CONFIG" "$NUT_CONFIG_CANDIDATE"
+        else
+            : > "$NUT_CONFIG_CANDIDATE"
+            chmod 600 -- "$NUT_CONFIG_CANDIDATE"
+        fi
+        # Remove any stale [cyberpower-virtual] block before appending fresh config.
+        if grep -q "cyberpower-virtual" "$NUT_CONFIG_CANDIDATE" 2>/dev/null; then
+            log_info "Removing stale [cyberpower-virtual] block from $NUT_CONFIG..."
             python3 -c '
 import re, sys
 path = sys.argv[1]
@@ -248,14 +692,11 @@ content = open(path).read()
 content = re.sub(r"\n*# [^\n]*[Vv]irtual UPS[^\n]*\n", "\n", content)
 content = re.sub(r"\n\[cyberpower-virtual\].*?(?=\n\[|\Z)", "", content, flags=re.DOTALL)
 open(path, "w").write(content.rstrip("\n") + "\n")
-' "$NUT_CONFIG"
+' "$NUT_CONFIG_CANDIDATE"
         fi
-    fi
-    if [[ "$DRY_RUN" == "yes" ]]; then
-        echo "[DRY-RUN] Would append config from $DUMMY_UPS_CONFIG to $NUT_CONFIG"
-    else
-        printf '\n' >> "$NUT_CONFIG"
-        cat "$DUMMY_UPS_CONFIG" >> "$NUT_CONFIG"
+        printf '\n' >> "$NUT_CONFIG_CANDIDATE"
+        cat "$DUMMY_UPS_CONFIG" >> "$NUT_CONFIG_CANDIDATE"
+        mv -- "$NUT_CONFIG_CANDIDATE" "$NUT_CONFIG"
         log_ok "Dummy-ups config written to $NUT_CONFIG"
     fi
 fi
@@ -278,8 +719,6 @@ log_ok "Services settled"
 
 # === UPSMON SWITCHOVER TO VIRTUAL UPS ===
 
-UPSMON_CONF="/etc/nut/upsmon.conf"
-
 if grep -q "cyberpower-virtual@localhost" "$UPSMON_CONF" 2>/dev/null; then
     log_ok "upsmon already points to cyberpower-virtual (skipped)"
 elif grep -q "cyberpower@localhost" "$UPSMON_CONF" 2>/dev/null; then
@@ -287,7 +726,11 @@ elif grep -q "cyberpower@localhost" "$UPSMON_CONF" 2>/dev/null; then
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would sed 's/cyberpower@localhost/cyberpower-virtual@localhost/' in $UPSMON_CONF"
     else
-        sed -i.bak 's/cyberpower@localhost/cyberpower-virtual@localhost/' "$UPSMON_CONF"
+        UPSMON_CANDIDATE="$TRANSACTION_ROOT/upsmon.conf.candidate"
+        cp -a -- "$UPSMON_CONF" "$UPSMON_CANDIDATE"
+        sed -i 's/cyberpower@localhost/cyberpower-virtual@localhost/' \
+            "$UPSMON_CANDIDATE"
+        mv -- "$UPSMON_CANDIDATE" "$UPSMON_CONF"
         log_ok "upsmon.conf updated: cyberpower → cyberpower-virtual"
         systemctl restart nut-monitor
         log_ok "nut-monitor restarted with new config"
@@ -325,13 +768,10 @@ fi
 
 log_info "Enabling and starting ups-battery-monitor service..."
 
-run_cmd systemctl enable ups-battery-monitor
-log_ok "Service enabled (will auto-start on boot)"
-
 run_cmd systemctl restart ups-battery-monitor
 log_ok "Monitor service (re)started"
 
-# NUT driver drop-in handles dependency — restart dummy-ups after daemon is ready
+# Restart the exact virtual driver after NUT has reloaded its configuration.
 run_cmd systemctl restart "nut-driver@${UPS_VIRTUAL_NAME}"
 log_ok "NUT dummy-ups driver (re)started"
 
@@ -382,6 +822,11 @@ else
     journalctl -u ups-battery-monitor -n 20 --no-pager >&2
     exit 1
 fi
+
+# Enable only after all staged files and runtime verification have succeeded;
+# rollback still restores the pre-install enabled state if this command fails.
+run_cmd systemctl enable ups-battery-monitor
+log_ok "Service enabled (will auto-start on boot)"
 
 # === SUCCESS ===
 

@@ -1,14 +1,25 @@
 [project]
 name = "ups-unfucked"
 version = "1.1.0"
-description = "Datacenter-grade battery telemetry for your $30 UPS. SoH, SoC, runtime prediction, self-calibration — everything the firmware gets wrong, unfucked."
+description = "Safety-first UPS runtime prediction with durable blackout evidence and conservative automatic load-sag learning."
 requires-python = ">=3.13"
 dependencies = [
     "python-systemd",
 ]
 
 [dependency-groups]
-dev = ["pytest", "pytest-timeout", "pyright", "ruff", "vulture", "pytest-cov"]
+dev = [
+    "pytest",
+    "pytest-timeout",
+    "pyright",
+    "ruff",
+    "vulture",
+    "pytest-cov",
+    "import-linter>=2.13",
+    "tach>=0.35.0",
+    "pytest-crap>=0.3.0",
+    "radon>=6.0.1",
+]
 
 [project.scripts]
 ups-battery-monitor = "src.monitor:main"
@@ -19,11 +30,139 @@ target-version = "py313"
 
 [tool.ruff.lint]
 # E4/E7/E9: essential pycodestyle; F: pyflakes (real bugs); I: import order
-select = ["E4", "E7", "E9", "F", "I"]
-ignore = [
-    "E402",   # module-level imports not at top (monitor_config.py has intentional late imports)
+# C90: McCabe cyclomatic complexity.
+# PLR09/PLR17: upstream default structural limits for classes and functions.
+# No threshold overrides: every enabled rule uses Ruff's default.
+preview = true
+explicit-preview-rules = true
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "C90",
+    "PLR0904",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0914",
+    "PLR0915",
+    "PLR0916",
+    "PLR0917",
+    "PLR1702",
+]
+[tool.importlinter]
+root_package = "src"
+
+# Normative layer map for the final module layout. Tach is the exact dependency
+# declaration; Import Linter keeps the same human-readable direction and
+# forbidden boundaries.
+[[tool.importlinter.contracts]]
+name = "Production dependencies point inward"
+type = "layers"
+layers = [
+    "src.monitor : src.monitor_config",
+    "src.adapters : src.alerter : src.motd_status : src.nut_client : src.virtual_ups_exporter",
+    "src.application",
+    "src.domain",
+    "src.ema_filter : src.battery_math",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Domain and application do not depend on concrete adapters"
+type = "forbidden"
+source_modules = ["src.domain", "src.application"]
+forbidden_modules = [
+    "src.adapters",
+    "src.alerter",
+    "src.motd_status",
+    "src.nut_client",
+    "src.virtual_ups_exporter",
+]
+
+[[tool.importlinter.contracts]]
+name = "Battery math is independent of higher layers"
+type = "forbidden"
+source_modules = ["src.battery_math"]
+forbidden_modules = [
+    "src.domain",
+    "src.application",
+    "src.adapters",
+    "src.monitor",
+    "src.monitor_config",
+    "src.virtual_ups_exporter",
+    "src.alerter",
+]
+
+[[tool.importlinter.contracts]]
+name = "Top-level adapters do not import peer adapters"
+type = "forbidden"
+source_modules = [
+    "src.alerter",
+    "src.motd_status",
+    "src.nut_client",
+    "src.virtual_ups_exporter",
+]
+forbidden_modules = [
+    "src.alerter",
+    "src.motd_status",
+    "src.nut_client",
+    "src.virtual_ups_exporter",
+]
+
+[[tool.importlinter.contracts]]
+name = "JSONL adapter internals do not reach model or NUT adapters"
+type = "forbidden"
+source_modules = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_event_catalog",
+    "src.adapters.jsonl_event_capacity",
+    "src.adapters.jsonl_event_store",
+    "src.adapters.jsonl_event_stream",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_health_inventory",
+    "src.adapters.jsonl_health_report",
+    "src.adapters.jsonl_index",
+    "src.adapters.jsonl_index_merge",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.adapters.jsonl_work_registry",
+]
+forbidden_modules = [
+    "src.adapters.model_owner",
+    "src.adapters.model_state_persistence",
+    "src.adapters.model_state_release_a",
+    "src.adapters.model_state_schema",
+    "src.adapters.model_transform",
+    "src.adapters.nut_telemetry",
+]
+
+[[tool.importlinter.contracts]]
+name = "Model and NUT adapter internals do not reach JSONL adapters"
+type = "forbidden"
+source_modules = [
+    "src.adapters.model_owner",
+    "src.adapters.model_state_persistence",
+    "src.adapters.model_state_release_a",
+    "src.adapters.model_state_schema",
+    "src.adapters.model_transform",
+    "src.adapters.nut_telemetry",
+]
+forbidden_modules = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_event_catalog",
+    "src.adapters.jsonl_event_store",
+    "src.adapters.jsonl_event_stream",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_health_inventory",
+    "src.adapters.jsonl_health_report",
+    "src.adapters.jsonl_index",
+    "src.adapters.jsonl_index_merge",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.adapters.jsonl_work_registry",
+]
 [tool.pyright]
 include = ["src", "scripts"]
 pythonVersion = "3.13"
@@ -33,8 +172,9 @@ typeCheckingMode = "basic"
 quote-style = "double"
 
 [tool.vulture]
-# vulture_whitelist.py lists reviewed false positives / intentionally-kept symbols.
-paths = ["src", "vulture_whitelist.py"]
+# Include the offline entrypoint so its call to transform_model_file is visible
+# to the hard gate. vulture_whitelist.py contains only reviewed false positives.
+paths = ["src", "scripts", "scripts/reparameterize-ir-reference", "vulture_whitelist.py"]
 min_confidence = 60
 # Signature-required params flagged as unused (e.g. signal-handler `frame`).
 ignore_names = ["frame"]

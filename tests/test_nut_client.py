@@ -43,7 +43,7 @@ class TestNUTClientCommunication:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        responses = [client.get_ups_vars() for _ in range(100)]
+        responses = [client.get_ups_vars_with_tokens()[0] for _ in range(100)]
 
         assert len(responses) == 100
         assert all("battery.voltage" in r for r in responses)
@@ -54,7 +54,7 @@ class TestNUTClientCommunication:
 
         client = NUTClient(timeout=2.0)
         with pytest.raises(socket.timeout):
-            client.get_ups_vars()
+            client.get_ups_vars_with_tokens()
 
     def test_connection_refused(self, mock_nut_socket):
         """Socket errors are raised, not silently ignored."""
@@ -62,18 +62,18 @@ class TestNUTClientCommunication:
 
         client = NUTClient()
         with pytest.raises(socket.error):
-            client.get_ups_vars()
+            client.get_ups_vars_with_tokens()
 
 
 class TestListVar:
     """Tests for LIST VAR single-connection optimization."""
 
     def test_list_var_single_connection(self, mock_nut_socket):
-        """Only 1 socket.connect() per get_ups_vars()."""
+        """Only 1 socket.connect() per read-only LIST VAR poll."""
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        client.get_ups_vars()
+        client.get_ups_vars_with_tokens()
 
         mock_nut_socket.connect.assert_called_once()
 
@@ -82,7 +82,7 @@ class TestListVar:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        result = client.get_ups_vars()
+        result, _ = client.get_ups_vars_with_tokens()
 
         assert result["battery.voltage"] == 13.40
         assert result["ups.load"] == 16.0
@@ -97,9 +97,17 @@ class TestListVar:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        result = client.get_ups_vars()
+        result, _ = client.get_ups_vars_with_tokens()
 
         assert isinstance(result["ups.status"], str)
+
+    def test_list_var_can_preserve_exact_tokens(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
+
+        values, tokens = NUTClient().get_ups_vars_with_tokens()
+
+        assert values["battery.voltage"] == 13.4
+        assert tokens["battery.voltage"] == "13.40"
 
     def test_list_var_timeout(self, mock_nut_socket):
         """socket.timeout raised correctly from LIST VAR."""
@@ -107,7 +115,7 @@ class TestListVar:
 
         client = NUTClient()
         with pytest.raises(socket.timeout):
-            client.get_ups_vars()
+            client.get_ups_vars_with_tokens()
 
     def test_recv_until_multi_chunk(self, mock_nut_socket):
         """Response split across multiple recv calls assembled correctly."""
@@ -116,17 +124,30 @@ class TestListVar:
         mock_nut_socket.recv.side_effect = [full[:mid], full[mid:]]
 
         client = NUTClient()
-        result = client.get_ups_vars()
+        result, _ = client.get_ups_vars_with_tokens()
 
         assert len(result) == 6
         assert result["battery.voltage"] == 13.40
+
+    def test_end_sentinel_inside_value_is_not_accepted(self, mock_nut_socket):
+        deceptive_prefix = (
+            'BEGIN LIST VAR cyberpower\nVAR cyberpower device.note "END LIST VAR cyberpower"\n'
+        ).encode()
+        completed = ('VAR cyberpower battery.voltage "13.40"\nEND LIST VAR cyberpower\n').encode()
+        mock_nut_socket.recv.side_effect = [deceptive_prefix, completed]
+
+        result, _ = NUTClient().get_ups_vars_with_tokens()
+
+        assert result["device.note"] == "END LIST VAR cyberpower"
+        assert result["battery.voltage"] == 13.4
+        assert mock_nut_socket.recv.call_count == 2
 
     def test_socket_cleanup_on_success(self, mock_nut_socket):
         """Socket is closed after successful LIST VAR."""
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        client.get_ups_vars()
+        client.get_ups_vars_with_tokens()
 
         mock_nut_socket.close.assert_called_once()
 
@@ -136,93 +157,9 @@ class TestListVar:
 
         client = NUTClient()
         with pytest.raises(socket.timeout):
-            client.get_ups_vars()
+            client.get_ups_vars_with_tokens()
 
         mock_nut_socket.close.assert_called_once()
-
-
-class TestINSTCMD:
-    """Tests for INSTCMD (instant command) protocol support (RFC 9271)."""
-
-    def test_send_instcmd_quick_test_success(self, mock_nut_socket):
-        """INSTCMD test.battery.start.quick succeeds with full RFC 9271 auth sequence."""
-        # Mock socket responses for full RFC 9271 sequence:
-        # 1. USERNAME upsmon → OK
-        # 2. PASSWORD → OK
-        # 3. LOGIN cyberpower → OK
-        # 4. INSTCMD cyberpower test.battery.start.quick → OK TRACKING 12345
-        responses = [
-            b"OK\n",  # USERNAME response
-            b"OK\n",  # PASSWORD response
-            b"OK\n",  # LOGIN response
-            b"OK TRACKING 12345\n",  # INSTCMD response
-        ]
-        mock_nut_socket.recv.side_effect = responses
-
-        client = NUTClient()
-        success, msg = client.send_instcmd("test.battery.start.quick")
-
-        assert success is True, f"Expected success=True, got {success}"
-        assert "OK" in msg or "TRACKING" in msg, f"Expected OK or TRACKING in message, got {msg}"
-
-    def test_send_instcmd_command_not_supported(self, mock_nut_socket):
-        """INSTCMD with unsupported command returns error after auth succeeds."""
-        responses = [
-            b"OK\n",  # USERNAME response
-            b"OK\n",  # PASSWORD response
-            b"OK\n",  # LOGIN response
-            b"ERR CMD-NOT-SUPPORTED\n",  # INSTCMD response (unsupported)
-        ]
-        mock_nut_socket.recv.side_effect = responses
-
-        client = NUTClient()
-        success, msg = client.send_instcmd("fake.command.invalid")
-
-        assert success is False, f"Expected success=False, got {success}"
-        assert "CMD-NOT-SUPPORTED" in msg, f"Expected CMD-NOT-SUPPORTED in message, got {msg}"
-
-    def test_send_instcmd_access_denied(self, mock_nut_socket):
-        """INSTCMD returns access denied if LOGIN fails."""
-        responses = [
-            b"OK\n",  # USERNAME response
-            b"OK\n",  # PASSWORD response
-            b"ERR ACCESS-DENIED\n",  # LOGIN response (access denied)
-        ]
-        mock_nut_socket.recv.side_effect = responses
-
-        client = NUTClient()
-        success, msg = client.send_instcmd("test.battery.start.deep")
-
-        assert success is False, f"Expected success=False, got {success}"
-        assert "ACCESS-DENIED" in msg, f"Expected ACCESS-DENIED in message, got {msg}"
-
-    def test_send_instcmd_with_param(self, mock_nut_socket):
-        """INSTCMD with optional parameter includes param in command."""
-        responses = [
-            b"OK\n",  # USERNAME response
-            b"OK\n",  # PASSWORD response
-            b"OK\n",  # LOGIN response
-            b"OK\n",  # INSTCMD with param response
-        ]
-        mock_nut_socket.recv.side_effect = responses
-
-        client = NUTClient()
-        success, msg = client.send_instcmd("load.off.delay", "120")
-
-        assert success is True, f"Expected success=True, got {success}"
-
-    def test_send_instcmd_username_fails(self, mock_nut_socket):
-        """INSTCMD returns error if USERNAME step fails."""
-        responses = [
-            b"ERR UNKNOWN-COMMAND\n",  # USERNAME response (unexpected error)
-        ]
-        mock_nut_socket.recv.side_effect = responses
-
-        client = NUTClient()
-        success, msg = client.send_instcmd("test.battery.start.quick")
-
-        assert success is False, f"Expected success=False, got {success}"
-        assert "USERNAME failed" in msg, f"Expected 'USERNAME failed' in message, got {msg}"
 
 
 class TestTruncatedListVar:
@@ -251,9 +188,20 @@ class TestTruncatedListVar:
 
         client = NUTClient(timeout=0.1)
         with pytest.raises(socket.timeout):
-            client.get_ups_vars()
+            client.get_ups_vars_with_tokens()
 
         # Socket must still be cleaned up
+        mock_nut_socket.close.assert_called_once()
+
+    def test_eof_before_end_sentinel_is_not_accepted(self, mock_nut_socket):
+        truncated_response = (
+            'BEGIN LIST VAR cyberpower\nVAR cyberpower battery.voltage "13.40"\n'
+        ).encode()
+        mock_nut_socket.recv.side_effect = [truncated_response, b""]
+
+        with pytest.raises(ConnectionError, match="closed before END sentinel"):
+            NUTClient().get_ups_vars_with_tokens()
+
         mock_nut_socket.close.assert_called_once()
 
 
@@ -276,46 +224,3 @@ class TestNUTProtocolValidation:
         """NUTClient rejects ups_name with injection characters."""
         with pytest.raises(ValueError, match="Invalid NUT"):
             NUTClient(ups_name=bad_name)
-
-    @pytest.mark.parametrize(
-        "bad_cmd",
-        [
-            "test battery",  # space
-            "cmd\nnewline",  # newline
-            "cmd;inject",  # semicolon
-        ],
-    )
-    def test_invalid_cmd_name_rejected(self, mock_nut_socket, bad_cmd):
-        """send_instcmd rejects command names with injection characters."""
-        client = NUTClient()
-        with pytest.raises(ValueError, match="Invalid NUT"):
-            client.send_instcmd(bad_cmd)
-
-    @pytest.mark.parametrize(
-        "bad_param",
-        [
-            "param space",  # space
-            "param\nnewline",  # newline
-            "param;inject",  # semicolon
-        ],
-    )
-    def test_invalid_cmd_param_rejected(self, mock_nut_socket, bad_param):
-        """send_instcmd rejects cmd_param with injection characters."""
-        client = NUTClient()
-        with pytest.raises(ValueError, match="Invalid NUT"):
-            client.send_instcmd("test.battery.start.quick", cmd_param=bad_param)
-
-    @pytest.mark.parametrize(
-        "bad_command",
-        [
-            "USERNAME upsmon\r\nINSTCMD cyberpower test.battery.start.deep",  # CRLF injection
-            "PASSWORD\rINSTCMD cyberpower test.battery.start.deep",  # CR injection
-            "GET VAR cyberpower\rbattery.voltage",  # CR mid-command
-        ],
-    )
-    def test_cr_injection_rejected(self, mock_nut_socket, bad_command):
-        """send_command rejects commands containing carriage return."""
-        client = NUTClient()
-        client.connect()
-        with pytest.raises(ValueError, match="control char"):
-            client.send_command(bad_command)

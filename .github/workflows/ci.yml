@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # Format, lint, type-check, dead-code — single Python version (these don't vary by runtime).
+  # Format, lint, architecture, and type checks — single Python version.
   analysis:
     runs-on: ubuntu-latest
     steps:
@@ -19,15 +19,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
       - name: Format check
-        run: uv run ruff format --check src tests
-      - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff format --check src tests scripts
+      - name: Lint and structural complexity
+        run: uv run ruff check src tests scripts
+      - name: Complexity suppression policy
+        run: uv run python scripts/check_complexity_suppressions.py
+      - name: Source-span budget
+        run: uv run python scripts/check_source_spans.py
+      - name: Architecture boundaries
+        run: |
+          uv run lint-imports
+          uv run tach check
+          uv run tach check --exact
       - name: Type check
         run: uv run pyright
-      - name: Dead-code (vulture, whitelist-gated)
+      - name: Dead-code check
         run: uv run vulture
-
-  # Tests + coverage gate, across supported Python versions.
+  # Tests + CRAP gate, across supported Python versions.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -41,5 +49,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: uv sync --extra dev --frozen
-      - name: Tests with coverage
-        run: uv run pytest --cov=src --cov-fail-under=80
+      - name: Tests with CRAP score
+        run: |
+          uv run pytest --cov=src --crap --crap-threshold=30
+          uv run python scripts/check_crap.py --threshold 30
