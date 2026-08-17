@@ -1,0 +1,13 @@
+BEGIN LIST VAR cyberpower
+VAR cyberpower battery.charge "100"
+VAR cyberpower battery.runtime "1500"
+VAR cyberpower battery.voltage "13.40"
+VAR cyberpower device.model "UT850EG"
+VAR cyberpower device.serial "ABC123456"
+VAR cyberpower driver.name "usbhid-ups"
+VAR cyberpower driver.version "2.8.1"
+VAR cyberpower driver.version.data "CyberPower HID 0.6"
+VAR cyberpower input.voltage "222.0"
+VAR cyberpower ups.load "16"
+VAR cyberpower ups.status "OL"
+END LIST VAR cyberpower

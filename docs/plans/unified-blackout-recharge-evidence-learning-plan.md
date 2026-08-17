@@ -523,21 +523,21 @@ Before code may enable a model target other than the existing `ir_k`, a target-s
 
 ### Slice 0 — correct authority and freeze current safety
 
-- [ ] Mark the previous pre-commit RC receipt historical/superseded for product completeness.
-- [ ] Write ADR 0004 for unified fragment capabilities and recharge linkage; explicitly supersede ADR 0003's
+- [x] Mark the previous pre-commit RC receipt historical/superseded for product completeness.
+- [x] Write ADR 0004 for unified fragment capabilities and recharge linkage; explicitly supersede ADR 0003's
   `POWER_RESTORED`-only science and IR-only product boundary while retaining its storage/safety decisions.
-- [ ] Before implementation edits, create one baseline commit on the feature branch and record its SHA plus an
+- [x] Before implementation edits, create one baseline commit on the feature branch and record its SHA plus an
   exact fixture manifest. Freeze safety/capture/model-owner/JSONL goldens and existing qualifying IR outputs;
   explicitly mark global terminal dispositions as intentionally superseded. The historical 873-test receipt
   is evidence about its old dirty tree, not a substitute for this baseline. Its missing premium verdict stays
   recorded as missing and is not inherited.
-- [ ] Register exact available NUT fields from the daemon's ordinary read-only physical NUT reply and a saved
+- [x] Register exact available NUT fields from the daemon's ordinary read-only physical NUT reply and a saved
   fixture; never issue a UPS command. Unregistered returned fields remain preserved raw-only, while a
   registered field that is absent disables only dependent assessments.
-- [ ] Implement the named read-only Slice-0 producer
+- [x] Implement the named read-only Slice-0 producer
   `scripts/record-telemetry-capability-baseline`. It connects only to the configured physical NUT data socket,
-  issues no UPS command, records exactly 60 consecutive complete replies plus UPS model/serial/firmware and
-  NUT driver identity/version, and atomically writes owner-only
+  issues no UPS command, records exactly 60 consecutive complete replies plus UPS model/serial, explicit UPS
+  firmware presence/value when exposed, and NUT driver identity/version, and atomically writes owner-only
   `telemetry-capability-baseline-v1.json`. It refuses concurrent runs, incomplete replies, identity changes,
   unsafe file ownership/mode, and output replacement without an explicit no-clobber destination. Its codec,
   permissions, restart, and absent/unstable-field behavior are deterministic Slice-0 tests. The artifact
@@ -553,11 +553,13 @@ Before code may enable a model target other than the existing `ir_k`, a target-s
   scientific evidence. Before policy freezes, the existing read-only NUT path records 60 consecutive ordinary
   physical replies into owner-only `telemetry-capability-baseline-v1.json`; that live-host artifact, not a test
   fixture, is the authority for optional fields in v3 policies. The v3 manifest is seeded only when UPS
-  model/serial/firmware and NUT driver identity/version match the baseline. A hardware/driver identity change
+  model/serial, explicit firmware presence/value, and NUT driver identity/version match the baseline. A hardware/driver identity change
   disables dependent typed capabilities while the v3 daemon automatically collects a new state-scoped
   60-reply candidate baseline through ordinary read-only polling; it issues no UPS command and never blocks
-  safety/capture. Before Slice 1, freeze `CapabilityIdentityPolicy`: exact hardware model/serial/firmware and
-  NUT driver name/version identity fields; status-scoped raw-key/token/parse/missing signatures; and one rule
+  safety/capture. Before Slice 1, freeze `CapabilityIdentityPolicy`: exact hardware model/serial, exact UPS
+  firmware presence/value without substituting a driver version, and
+  NUT driver name/version identity fields; status-scoped raw-key/token/parse/missing signatures, including
+  bounded string-vocabulary fingerprints while excluding dynamic numeric values; and one rule
   that automatic re-enablement is permitted only for an already reviewed field whose new 60-reply signature
   exactly matches its prior registered signature in each state observed by the new window. A previously known
   but not-yet-reobserved state remains capability-unavailable, not mismatched; background read-only collection

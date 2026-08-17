@@ -24,6 +24,11 @@ depends_on = [
 layer = "composition"
 
 [[modules]]
+path = "src.telemetry_capability_cli"
+depends_on = ["src.adapters.telemetry_capability_baseline", "src.monitor_config", "src.nut_client"]
+layer = "composition"
+
+[[modules]]
 path = "src.monitor_config"
 depends_on = ["src.battery_math", "src.domain"]
 layer = "composition"
@@ -205,6 +210,11 @@ depends_on = ["src.domain", "src.nut_client"]
 layer = "adapters"
 
 [[modules]]
+path = "src.adapters.telemetry_capability_baseline"
+depends_on = ["src.domain.telemetry_capability", "src.nut_client"]
+layer = "adapters"
+
+[[modules]]
 path = "src.alerter"
 depends_on = ["src.application", "src.domain"]
 layer = "adapters"
@@ -232,6 +242,11 @@ layer = "application"
 [[modules]]
 path = "src.domain"
 depends_on = ["src.battery_math"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.telemetry_capability"
+depends_on = []
 layer = "domain"
 
 [[modules]]
