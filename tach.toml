@@ -165,6 +165,21 @@ depends_on = []
 layer = "adapters"
 
 [[modules]]
+path = "src.adapters.jsonl_v3_registry_codec"
+depends_on = ["src.adapters"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_registry"
+depends_on = ["src.adapters", "src.adapters.jsonl_v3_registry_codec", "src.adapters.jsonl_v3_registry_values", "src.application.blackout_storage_values"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_registry_values"
+depends_on = ["src.adapters", "src.application.blackout_storage_values"]
+layer = "adapters"
+
+[[modules]]
 path = "src.adapters.jsonl_v3_blackout_start_codec"
 depends_on = [
     "src.adapters.jsonl_v3_canonical",

@@ -1143,3 +1143,37 @@ def test_production_nut_boundary_is_read_only() -> None:
 
     assert command_definitions == []
     assert command_calls == []
+
+
+def test_v3_transaction_construction_is_factory_local() -> None:
+    source = Path("src/adapters/jsonl_v3_filesystem.py").read_text()
+    tree = ast.parse(source)
+    constructions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "object"
+        and node.func.attr == "__new__"
+    ]
+    assert len(constructions) == 1
+    assert any(
+        isinstance(node, ast.ClassDef) and node.name == "V3WriteTransaction"
+        for node in ast.walk(tree)
+    )
+    factory = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "write_transaction"
+    )
+    assert any(node in ast.walk(factory) for node in constructions)
+    forbidden = {"getattr", "setattr", "vars", "dir", "__getattribute__"}
+    assert not [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in forbidden
+    ]
