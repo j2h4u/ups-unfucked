@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 
 from src.domain.blackout_capture import BlackoutStart, DischargeGap, DischargeSample
-from src.domain.blackout_terminal import BlackoutEnd, BlackoutTermination
+from src.domain.blackout_terminal import BlackoutTermination
 from src.domain.curve_assessment import CurveAssessment, CurveDisposition
 from src.domain.firmware_lb_assessment import FirmwareLbAssessment, FirmwareLbDisposition
 from src.domain.fragments import DischargeFragmentProfile, EndpointAnchor, ObservationOrigin
@@ -50,6 +50,13 @@ class BlackoutRecordType(StrEnum):
     TERMINAL_OUTCOME = "terminal_outcome"
 
 
+class BlackoutChainKind(StrEnum):
+    """Closed durable chain vocabulary shared by cursors and record refs."""
+
+    PHYSICAL = "physical"
+    TERMINAL = "terminal"
+
+
 class BlackoutProcessingStage(StrEnum):
     """Closed, resume-relevant stages of the durable handoff."""
 
@@ -73,7 +80,7 @@ class BlackoutRef:
 
 @dataclass(frozen=True, slots=True)
 class BlackoutCaptureCursor:
-    """Compare-and-append position for one physical chain.
+    """Compare-and-append position for one independently-owned chain.
 
     ``next_sequence=None`` is the explicit exhausted state after sequence
     ``MAX_CHAIN_SEQUENCE`` has been durably appended.
@@ -81,12 +88,14 @@ class BlackoutCaptureCursor:
 
     blackout_id: str
     segment_id: str
+    chain: BlackoutChainKind
     next_sequence: int | None
     last_record_sha256: str | None
 
     def __post_init__(self) -> None:
         _text(self.blackout_id, "blackout ID")
         _text(self.segment_id, "segment ID")
+        _require_chain_kind(self.chain)
         if self.next_sequence is not None:
             _chain_sequence(self.next_sequence, "next sequence")
         if self.last_record_sha256 is not None:
@@ -106,6 +115,8 @@ class BlackoutCaptureOpened:
             raise TypeError("opened capture ref must be BlackoutRef")
         if not isinstance(self.cursor, BlackoutCaptureCursor):
             raise TypeError("opened capture cursor must be BlackoutCaptureCursor")
+        if self.cursor.chain is not BlackoutChainKind.PHYSICAL:
+            raise ValueError("opened capture cursor must belong to the physical chain")
         if (
             self.ref.blackout_id != self.cursor.blackout_id
             or self.ref.segment_id != self.cursor.segment_id
@@ -118,6 +129,7 @@ class StoredRecordRef:
     """Immutable identity and bounded size of one durable record."""
 
     ref: BlackoutRef
+    chain: BlackoutChainKind
     record_type: BlackoutRecordType
     sequence: int
     record_sha256: str
@@ -125,7 +137,9 @@ class StoredRecordRef:
 
     def __post_init__(self) -> None:
         _require_stored_record_ref(self.ref)
+        _require_chain_kind(self.chain)
         _require_record_type(self.record_type)
+        _validate_record_chain(self.chain, self.record_type)
         _chain_sequence(self.sequence, "record sequence")
         _hash(self.record_sha256, "record hash")
         _validate_record_size(self.byte_length)
@@ -151,6 +165,8 @@ class ProfileChainRef:
             raise TypeError("profile chain records must be StoredRecordRef values")
         if any(item.ref != self.ref for item in self.records):
             raise ValueError("profile chain record scope differs from its aggregate")
+        if any(item.chain is not BlackoutChainKind.TERMINAL for item in self.records):
+            raise ValueError("profile chain records must belong to the terminal chain")
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +174,7 @@ class StoredPhysicalRecord:
     """One ordered physical record paired with its immutable durable identity."""
 
     ref: StoredRecordRef
-    value: BlackoutStart | DischargeSample | DischargeGap | EndpointAnchor | BlackoutEnd
+    value: BlackoutStart | DischargeSample | DischargeGap | EndpointAnchor
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, StoredRecordRef):
@@ -171,9 +187,10 @@ class StoredPhysicalRecord:
 class RawEvidencePage:
     """A bounded, verified page of typed physical evidence.
 
-    The ordered tuple preserves exact chain order, including START/END.  Each
-    item pairs a closed domain union with immutable durable identity and hash;
-    canonical JSONL bytes never cross this boundary.
+    The ordered tuple preserves exact physical-chain order, including START
+    and intermediate anchors. Each item pairs a closed domain union with
+    immutable durable identity and hash; canonical JSONL bytes never cross
+    this boundary.
     """
 
     ref: BlackoutRef
@@ -217,6 +234,8 @@ class RecoveredCaptureWork:
             raise TypeError("recovered capture ref must be BlackoutRef")
         if not isinstance(self.cursor, BlackoutCaptureCursor):
             raise TypeError("recovered capture cursor must be BlackoutCaptureCursor")
+        if self.cursor.chain is not BlackoutChainKind.PHYSICAL:
+            raise ValueError("recovered capture cursor must belong to the physical chain")
         if (
             self.ref.blackout_id != self.cursor.blackout_id
             or self.ref.segment_id != self.cursor.segment_id
@@ -387,6 +406,30 @@ def _require_record_type(value: object) -> None:
         raise TypeError("record type must be BlackoutRecordType")
 
 
+def _require_chain_kind(value: object) -> None:
+    if not isinstance(value, BlackoutChainKind):
+        raise TypeError("chain must be BlackoutChainKind")
+
+
+def _validate_record_chain(chain: BlackoutChainKind, record_type: BlackoutRecordType) -> None:
+    physical_only_types = {
+        BlackoutRecordType.START,
+        BlackoutRecordType.SAMPLE,
+        BlackoutRecordType.GAP,
+    }
+    if record_type is BlackoutRecordType.ANCHOR:
+        return
+    expected_chain = (
+        BlackoutChainKind.PHYSICAL
+        if record_type in physical_only_types
+        else BlackoutChainKind.TERMINAL
+    )
+    if chain is not expected_chain:
+        raise ValueError(
+            f"{record_type.value} record must belong to the {expected_chain.value} chain"
+        )
+
+
 def _validate_record_size(value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError("record byte length must be an integer")
@@ -467,6 +510,12 @@ def _validate_page_cursor_type_and_scope(value: RawEvidencePage) -> None:
             or value.next_cursor.segment_id != value.ref.segment_id
         ):
             raise ValueError("evidence page cursor scope differs from its page")
+        if value.records:
+            record_chain = value.records[0].ref.chain
+            if any(item.ref.chain is not record_chain for item in value.records):
+                raise ValueError("evidence page records must belong to one chain")
+            if value.next_cursor.chain is not record_chain:
+                raise ValueError("evidence page cursor must remain on one chain")
 
 
 def _validate_page_cursor_completion(value: RawEvidencePage) -> None:
@@ -488,6 +537,8 @@ def _validate_nonempty_incomplete_cursor(value: RawEvidencePage) -> None:
     if value.next_cursor is None:
         raise ValueError("incomplete evidence page requires its final-record cursor")
     final = value.records[-1].ref
+    if value.next_cursor.chain is not final.chain:
+        raise ValueError("evidence page cursor must remain on one chain")
     expected_next = None if final.sequence == MAX_CHAIN_SEQUENCE else final.sequence + 1
     if value.next_cursor.next_sequence != expected_next:
         raise ValueError("evidence page cursor does not follow its final record")
@@ -521,6 +572,8 @@ def _validate_physical_record_link(
 ) -> None:
     if value.ref.record_type is not expected_type:
         raise ValueError("physical record type does not match its immutable reference")
+    if value.ref.chain is not BlackoutChainKind.PHYSICAL:
+        raise ValueError("physical record must belong to the physical chain")
     if (
         value.value.blackout_id != value.ref.ref.blackout_id
         or value.value.segment_id != value.ref.ref.segment_id
@@ -558,7 +611,7 @@ def _validate_tail_batch_values(value: BlackoutTailBatch) -> None:
 
 
 def _physical_record_type(
-    value: BlackoutStart | DischargeSample | DischargeGap | EndpointAnchor | BlackoutEnd,
+    value: BlackoutStart | DischargeSample | DischargeGap | EndpointAnchor,
 ) -> BlackoutRecordType:
     if isinstance(value, BlackoutStart):
         return BlackoutRecordType.START
@@ -568,8 +621,6 @@ def _physical_record_type(
         return BlackoutRecordType.GAP
     if isinstance(value, EndpointAnchor):
         return BlackoutRecordType.ANCHOR
-    if isinstance(value, BlackoutEnd):
-        return BlackoutRecordType.END
     raise TypeError("physical record must be a closed domain record")
 
 
@@ -580,6 +631,7 @@ __all__ = [
     "MAX_RECOVERY_PAGE_SIZE",
     "MAX_STORED_RECORD_BYTES",
     "MAX_SUMMARY_PAGE_SIZE",
+    "BlackoutChainKind",
     "BlackoutCaptureCursor",
     "BlackoutCaptureOpened",
     "BlackoutProcessingRef",

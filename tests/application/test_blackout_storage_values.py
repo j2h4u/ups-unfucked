@@ -11,6 +11,7 @@ from src.application.blackout_storage_values import (
     MAX_RECOVERY_PAGE_SIZE,
     BlackoutCaptureCursor,
     BlackoutCaptureOpened,
+    BlackoutChainKind,
     BlackoutProcessingRef,
     BlackoutProcessingStage,
     BlackoutRecordType,
@@ -37,7 +38,7 @@ from src.domain.blackout_capture import (
     FrozenModelCapture,
     RawNutToken,
 )
-from src.domain.blackout_terminal import BlackoutEnd, BlackoutTermination
+from src.domain.blackout_terminal import BlackoutTermination
 from src.domain.curve_assessment import CurveDisposition
 from src.domain.firmware_lb_assessment import FirmwareLbDisposition
 from src.domain.fragments import AnchorKind, AnchorProvenance, EndpointAnchor, ObservationOrigin
@@ -59,6 +60,7 @@ def _cursor(**changes: object) -> BlackoutCaptureCursor:
     values: dict[str, object] = {
         "blackout_id": "blackout-1",
         "segment_id": "segment-1",
+        "chain": BlackoutChainKind.PHYSICAL,
         "next_sequence": 2,
         "last_record_sha256": H,
     }
@@ -118,21 +120,6 @@ def _start() -> BlackoutStart:
     )
 
 
-def _end() -> BlackoutEnd:
-    return BlackoutEnd(
-        "blackout-1",
-        "episode-1",
-        "epoch-1",
-        "segment-1",
-        BlackoutTermination.POWER_RESTORED,
-        ObservationOrigin.NATURAL,
-        UTC,
-        6,
-        "boot-1",
-        H,
-    )
-
-
 def _gap() -> DischargeGap:
     return DischargeGap(
         "blackout-1",
@@ -169,8 +156,25 @@ def _anchor() -> EndpointAnchor:
     )
 
 
-def _record(ref: BlackoutRef, kind: BlackoutRecordType, sequence: int = 2) -> StoredRecordRef:
-    return StoredRecordRef(ref, kind, sequence, H, 100)
+def _record(
+    ref: BlackoutRef,
+    kind: BlackoutRecordType,
+    sequence: int = 2,
+    chain: BlackoutChainKind | None = None,
+) -> StoredRecordRef:
+    if chain is None:
+        chain = (
+            BlackoutChainKind.PHYSICAL
+            if kind
+            in {
+                BlackoutRecordType.START,
+                BlackoutRecordType.SAMPLE,
+                BlackoutRecordType.GAP,
+                BlackoutRecordType.ANCHOR,
+            }
+            else BlackoutChainKind.TERMINAL
+        )
+    return StoredRecordRef(ref, chain, kind, sequence, H, 100)
 
 
 def _summary(**changes: object) -> BlackoutSummary:
@@ -229,6 +233,8 @@ def test_storage_values_are_frozen_and_slot_based() -> None:
 
 def test_chain_sequence_and_physical_record_bounds_are_named_and_strict() -> None:
     ref = _ref()
+    with pytest.raises(TypeError, match="BlackoutChainKind"):
+        _cursor(chain="physical")
     assert _cursor(next_sequence=MAX_CHAIN_SEQUENCE).next_sequence == MAX_CHAIN_SEQUENCE
     exhausted = _cursor(next_sequence=None)
     assert exhausted.next_sequence is None
@@ -238,7 +244,14 @@ def test_chain_sequence_and_physical_record_bounds_are_named_and_strict() -> Non
     with pytest.raises((TypeError, ValueError)):
         _record(ref, BlackoutRecordType.END, MAX_CHAIN_SEQUENCE + 1)
     with pytest.raises(ValueError):
-        StoredRecordRef(ref, BlackoutRecordType.SAMPLE, 1, H, 20 * 1024 + 1)
+        StoredRecordRef(
+            ref,
+            BlackoutChainKind.PHYSICAL,
+            BlackoutRecordType.SAMPLE,
+            1,
+            H,
+            20 * 1024 + 1,
+        )
 
 
 def test_exhausted_cursor_requires_the_final_record_hash() -> None:
@@ -267,14 +280,14 @@ def test_raw_page_contains_typed_records_and_only_immutable_refs() -> None:
         RawEvidencePage(ref, cast(Any, (b"wire\n",)), None, True)
 
 
-def test_raw_page_preserves_start_and_end_in_exact_chain_order() -> None:
+def test_raw_page_preserves_physical_records_in_exact_chain_order() -> None:
     ref = _ref()
     page = RawEvidencePage(
         ref,
         (
             StoredPhysicalRecord(_record(ref, BlackoutRecordType.START, 0), _start()),
             StoredPhysicalRecord(_record(ref, BlackoutRecordType.SAMPLE, 1), _sample(2)),
-            StoredPhysicalRecord(_record(ref, BlackoutRecordType.END, 2), _end()),
+            StoredPhysicalRecord(_record(ref, BlackoutRecordType.ANCHOR, 2), _anchor()),
         ),
         None,
         True,
@@ -282,7 +295,7 @@ def test_raw_page_preserves_start_and_end_in_exact_chain_order() -> None:
     assert [item.ref.record_type for item in page.records] == [
         BlackoutRecordType.START,
         BlackoutRecordType.SAMPLE,
-        BlackoutRecordType.END,
+        BlackoutRecordType.ANCHOR,
     ]
 
 
@@ -310,6 +323,81 @@ def test_raw_page_requires_cursor_to_follow_final_sequence_and_hash() -> None:
             _cursor(next_sequence=3, last_record_sha256="b" * 64),
             False,
         )
+
+
+def test_physical_and_terminal_pages_have_independent_cursors() -> None:
+    ref = _ref()
+    physical_cursor = _cursor(
+        chain=BlackoutChainKind.PHYSICAL, next_sequence=3, last_record_sha256=H
+    )
+    physical_page = RawEvidencePage(
+        ref,
+        (
+            StoredPhysicalRecord(_record(ref, BlackoutRecordType.START, 0), _start()),
+            StoredPhysicalRecord(_record(ref, BlackoutRecordType.SAMPLE, 1), _sample(1)),
+            StoredPhysicalRecord(_record(ref, BlackoutRecordType.ANCHOR, 2), _anchor()),
+        ),
+        physical_cursor,
+        False,
+    )
+    terminal_root = _cursor(
+        chain=BlackoutChainKind.TERMINAL, next_sequence=0, last_record_sha256=None
+    )
+    terminal_page = RawEvidencePage(ref, (), terminal_root, False)
+    assert physical_page.next_cursor is physical_cursor
+    assert physical_page.next_cursor is not None
+    assert physical_page.next_cursor.chain is BlackoutChainKind.PHYSICAL
+    assert terminal_page.next_cursor is terminal_root
+    assert terminal_page.next_cursor is not None
+    assert terminal_page.next_cursor.chain is BlackoutChainKind.TERMINAL
+
+
+def test_raw_page_rejects_mixed_chain_cursor_and_nonroot_terminal_page() -> None:
+    ref = _ref()
+    sample = StoredPhysicalRecord(_record(ref, BlackoutRecordType.SAMPLE, 2), _sample())
+    terminal_root = _cursor(
+        chain=BlackoutChainKind.TERMINAL, next_sequence=0, last_record_sha256=None
+    )
+    with pytest.raises(ValueError, match="one chain"):
+        RawEvidencePage(ref, (sample,), terminal_root, False)
+
+    terminal_non_root = _cursor(
+        chain=BlackoutChainKind.TERMINAL, next_sequence=1, last_record_sha256=H
+    )
+    with pytest.raises(ValueError, match="initial cursor"):
+        RawEvidencePage(ref, (), terminal_non_root, False)
+
+
+def test_record_refs_reject_wrong_chain_and_profile_mixing() -> None:
+    ref = _ref()
+    assert _record(ref, BlackoutRecordType.ANCHOR, chain=BlackoutChainKind.TERMINAL).chain is (
+        BlackoutChainKind.TERMINAL
+    )
+    assert _record(ref, BlackoutRecordType.END, chain=BlackoutChainKind.TERMINAL).chain is (
+        BlackoutChainKind.TERMINAL
+    )
+    with pytest.raises(ValueError, match="terminal chain"):
+        _record(ref, BlackoutRecordType.END, chain=BlackoutChainKind.PHYSICAL)
+    with pytest.raises(ValueError, match="terminal chain"):
+        _record(ref, BlackoutRecordType.PROFILE, chain=BlackoutChainKind.PHYSICAL)
+    with pytest.raises(ValueError, match="physical chain"):
+        _record(ref, BlackoutRecordType.SAMPLE, chain=BlackoutChainKind.TERMINAL)
+
+    terminal_profile = _record(ref, BlackoutRecordType.PROFILE)
+    physical_sample = _record(ref, BlackoutRecordType.SAMPLE)
+    with pytest.raises(ValueError, match="terminal chain"):
+        ProfileChainRef(ref, H, (terminal_profile, physical_sample))
+
+
+def test_capture_open_and_recovery_require_physical_cursor() -> None:
+    ref = _ref()
+    terminal_root = _cursor(
+        chain=BlackoutChainKind.TERMINAL, next_sequence=0, last_record_sha256=None
+    )
+    with pytest.raises(ValueError, match="physical chain"):
+        BlackoutCaptureOpened(ref, terminal_root)
+    with pytest.raises(ValueError, match="physical chain"):
+        RecoveredCaptureWork(ref, terminal_root)
 
 
 def test_raw_page_empty_semantics_are_initial_incomplete_or_complete_only() -> None:

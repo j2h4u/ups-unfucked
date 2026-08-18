@@ -624,13 +624,16 @@ class V3WriteTransaction:
     ) -> SegmentIndexPage: ...
 ```
 
-`V3WriteTransaction` is a final, slots-only object constructed only by `write_transaction`; its constructor
-is module-private. It owns every writable fd opened during the context and exposes no fd, fileno, opener,
-dynamic dispatch, generic path, or attribute-probing API. It performs only typed-token, dirfd-relative
+`V3WriteTransaction` is a final, slots-only coordination object constructed only by `write_transaction`; its
+constructor is repository-internal. The threat model trusts conforming repository code and the service UID,
+while treating persisted bytes, token values, unexpected filesystem objects, and same-UID hostile processes as
+untrusted. Arbitrary same-process reflection, monkeypatching, direct `os`/`ctypes`, or root access are outside
+this boundary. Production implementations receive the transaction only from `write_transaction`, call only
+the declared methods, and expose no public fd, fileno, opener, generic path, or dynamic dispatch. It performs only typed-token, dirfd-relative
 operations. All reads used to authorize mutation, replacements, seals, and promotions occur while the lease
 is held and are bounded by their explicit limits. Context exit closes every owned fd and invalidates the
 object; every later call raises `V3TransactionClosed`. Implementations may call only these declared methods,
-never `getattr`, reflection, name probing, or a private escape hatch. There is no default/nullable lease and
+never dynamic probing in conforming production callers. There is no default/nullable lease and
 no filesystem method for acquiring a lock. `append_and_sync` hashes/readbacks only the supplied bounded
 append and returns its receipt; it never computes a whole-file digest. `seal` is the only facade operation
 that computes a complete mutable-file digest and refuses a file above the explicit Wave 1/Wave 2 bound passed
@@ -861,8 +864,9 @@ yield the opaque `ValidatedWriterLease` carrying the cached root identity. While
 `write_transaction` validates `lstat(STATE_ROOT)` against the cached private-directory identity, opens the
 verified v3 dirfd chain, and yields `V3WriteTransaction`. Exit invalidates the transaction and closes its fds
 before `hold()` releases the owner lock. `hold()` performs no `flock`: continued ownership of the exact fd is
-the capability proof. `ValidatedWriterLease` has no public constructor or methods and storage never inspects
-it through reflection or attribute-name probing. Thus:
+the capability proof. `ValidatedWriterLease` has no public constructor; storage consumes it only as the
+linear, root-bound proof returned by `hold()`. Same-process reflection or monkeypatching is outside this
+boundary. Thus:
 
 - storage never opens, creates, acquires, re-flocks, unlocks, or releases `monitor.lock`;
 - storage never creates `STATE_ROOT` or its parent; it may create only verified v3 descendants;
