@@ -174,8 +174,10 @@ storage IDs never cross an application port. Therefore every `StoredPhysicalReco
 
 ## 5. Exact filesystem contract
 
-`STATE_ROOT` is the existing model directory. Components accept it as a `Path`; they do not infer it from
-environment variables.
+`STATE_ROOT` is the already-existing model directory. Components accept it together with the injected
+ModelOwner writer lease; they do not infer it from environment variables. V3 storage validates the existing
+directory against the lease and may create only descendants beginning at `events-v3/`. It never creates
+`STATE_ROOT`, its parent, or `monitor.lock`.
 
 ```text
 STATE_ROOT/                                      0700, existing
@@ -189,8 +191,8 @@ STATE_ROOT/                                      0700, existing
       segments/                                 0700
         blk-<utc>-<blackout>-p<ordinal>-<storage>.jsonl
         blk-<utc>-<blackout>-p<ordinal>-<storage>.offsets
-        damaged-p<ordinal>-<file_sha256>.jsonl   0400
-        damaged-p<ordinal>-<file_sha256>.offsets 0400
+        damaged-<blackout>-<logical>-p<ordinal>-<storage>-<file_sha256>.jsonl    0400
+        damaged-<blackout>-<logical>-p<ordinal>-<storage>-<file_sha256>.offsets 0400
       terminal-chains/                          0700
         <blackout>.jsonl                         0400 after seal
       transactions/                             0700
@@ -212,10 +214,17 @@ STATE_ROOT/                                      0700, existing
   `[0-9a-f]{32}` with version nibble `4` and RFC-4122 variant. Supplied IDs are validated to this grammar at
   the storage edge even though the reusable domain values accept bounded text.
 - `<utc>` is the START UTC rendered as `YYYYMMDDTHHMMSSffffffZ`.
-- `<ordinal>` is six decimal digits `000000..000063`. Ordinal 63 (reference 64) is admitted only for typed
-  terminal damage/rollover continuation.
+- `<ordinal>` is six decimal digits `000000..000063`. Ordinal 63 (physical reference 64) is admitted only for
+  the terminal damage-continuation receipt inside the same logical blackout. Size rollover starts a new
+  aggregate at ordinal `000000`; it never consumes another physical reference in the old aggregate.
 - The complete active filename regex is
   `\Ablk-\d{8}T\d{12}Z-[0-9a-f]{32}-p\d{6}-[0-9a-f]{32}\.jsonl\Z`.
+- The complete damaged JSONL filename regex is
+  `\Adamaged-[0-9a-f]{32}-[0-9a-f]{32}-p\d{6}-[0-9a-f]{32}-[0-9a-f]{64}\.jsonl\Z`;
+  fields are respectively blackout ID, logical segment ID, ordinal, private storage ID, and the immutable
+  damaged JSONL SHA-256. Its paired offset filename replaces only `.jsonl` with `.offsets`. Including all
+  three identities makes equal damaged bytes in different aggregates/segments collision-free. The longer
+  damaged offset basename is 187 ASCII bytes, below the closed 255-byte component bound.
 - Only the resolver creates paths. IDs and cursor strings are never concatenated without grammar validation;
   `..`, separators, control characters, absolute paths, symlinks, devices, sockets, and hard links with
   `st_nlink != 1` fail closed.
@@ -255,7 +264,7 @@ most 256 KiB.
 `observation_origin`, nullable `uat_intent_id`, `physical_next_seq`, `physical_last_record_sha256`,
 nullable `terminal_next_seq`, nullable `terminal_last_record_sha256`, `capture_bytes`,
 `capture_record_count`, `sample_count` (uint64), `gap_count` (uint64), ordered `storage_segments` (maximum
-64), nullable `append_intent`, nullable `last_append`, and nullable `rollover`.
+64), nullable `append_intent`, nullable `last_append`, nullable `damage_continuation`, and nullable `rollover`.
 
 Each `storage_segments` item has exactly `ordinal`, `storage_id`, `path_token`, `offset_token`, `trusted_bytes`,
 `first_seq`, `last_seq`, `last_record_sha256`, nullable `damaged_file_sha256`, and `terminal_only`.
@@ -266,11 +275,19 @@ Each `storage_segments` item has exactly `ordinal`, `storage_id`, `path_token`, 
 the file write. `last_append` repeats the operation, prior cursor hash, line hash, and resulting cursor. It
 makes an immediate exact retry idempotent; any different bytes or older cursor are a typed conflict.
 
-`rollover` is a subtransaction, not a second capture. It contains exact `phase` (`reserved`,
-`successor_started`, or `carrier_ended`), old and successor IDs/paths, the encoded successor START,
-encoded carrier END, `continuation_kind=size_rollover`, and hashes/lengths. This is the only representation of
-a preparing successor; it does not consume a pending slot and cannot become capture-active until registry
-swap.
+`damage_continuation` is distinct from rollover and has exactly `phase` (`reserved`, `old_renamed`,
+`successor_created`, or `gap_durable`), unchanged `blackout_id`/`logical_segment_id`, old/new storage IDs and
+ordinals, old active path tokens, exact damaged path tokens, trusted byte length/sequence/hash, damaged file
+SHA-256, exact first continuation gap line/hash/length, and new physical cursor. It never contains
+`continued_from`, `continued_by`, or a successor START.
+
+`rollover` is a subtransaction preparing a new aggregate, not a second concurrently active capture. It
+contains exact `phase` (`reserved`,
+`successor_started`, or `carrier_ended`), `budget_kind` (`bytes|segment_refs`), old/new blackout IDs,
+old/new logical segment IDs, shared physical episode ID, old/new path and storage IDs, exact encoded successor
+START and carrier END with hashes/lengths, and `continuation_kind=size_rollover`. This is the only
+representation of a preparing successor aggregate; it does not consume a pending slot and cannot become
+capture-active until registry swap.
 
 Each `pending` entry has `tag=processing|tail`, aggregate identities, frozen policy revision, exact physical
 and terminal cursors, ordered storage-segment receipts, terminal anchor/end hashes, counters, and one
@@ -287,13 +304,28 @@ preparing -> capturing -> processing -> tail -> sealed (registry entry removed)
 
 ### 6.2 Offset table
 
-Each `.offsets` file is a private derived accelerator with an eight-byte magic/version header followed by
-fixed 56-byte big-endian entries:
+Each `.offsets` file is a private derived accelerator. Its exact eight-byte header literal is
+`OFFSET_MAGIC_VERSION = b"UBMV3OF\x01"`: seven ASCII magic bytes `UBMV3OF` followed by binary format version
+`0x01`. Any other byte or length fails closed. The header is followed by fixed 56-byte big-endian entries:
 
 ```text
 seq:u32 | file_offset:u64 | line_length:u32 | record_sha256:32 bytes | record_kind:u8 |
 reserved:7 zero bytes
 ```
+
+`record_kind:u8` is permanently mapped as follows; `0x00` and `0x06..0xff` are invalid:
+
+| Value | Wave 1 physical record type |
+|---:|---|
+| `0x01` | `blackout_start` |
+| `0x02` | `discharge_sample` |
+| `0x03` | `discharge_gap` |
+| `0x04` | `endpoint_anchor` |
+| `0x05` | `blackout_end` |
+
+The production physical-segment table uses `0x01..0x04`; `blackout_end` lives in the independent terminal
+chain and therefore has no production offset-table entry. Its `0x05` assignment is nevertheless frozen so
+all Wave 1 physical types have one stable binary vocabulary and strict decoders cannot reinterpret it later.
 
 The first physical segment starts at sequence zero with previous hash null. Later damage segments continue
 the same logical sequence/hash scope. An offset entry becomes visible only after its JSONL line is durable.
@@ -379,7 +411,112 @@ generation rather than changing the bytes underneath an active page cursor.
 
 No configuration file changes.
 
-### 7.3 Public port behavior
+### 7.3 Minimal Cluster A APIs
+
+Cluster A exposes only typed persistence primitives; capture lifecycle decisions remain in Cluster B.
+
+```python
+class JsonlV3Filesystem:
+    def __init__(
+        self,
+        state_root: Path,
+        *,
+        writer_lease: ModelOwnerWriterLease,
+        fault_hook: Callable[[V3FaultPoint], None] | None,
+        monotonic_clock_ns: Callable[[], int],
+    ) -> None: ...
+```
+
+Construction validates the already-existing root through the injected lease before exposing any mutator.
+There is no default/nullable lease and no filesystem method for acquiring a lock.
+
+```python
+@dataclass(frozen=True, slots=True)
+class RegistrySnapshot:
+    state: V3WorkRegistry
+    canonical_sha256: str
+
+class JsonlV3WorkRegistry:
+    def __init__(
+        self,
+        path: Path,
+        filesystem: JsonlV3Filesystem,
+    ) -> None: ...
+
+    def open_or_create(self) -> RegistrySnapshot: ...
+    def read(self) -> RegistrySnapshot: ...
+    def compare_and_replace(
+        self,
+        *,
+        expected_sha256: str,
+        replacement: V3WorkRegistry,
+    ) -> RegistrySnapshot: ...
+```
+
+`V3WorkRegistry` and its preparing/capturing/pending variants are private frozen dataclasses matching §6.1;
+no `dict[str, object]` crosses this API. `open_or_create` creates only the exact empty schema. CAS reads and
+hashes the current canonical file under the writer lease, conflicts on a different hash, atomically replaces
+the bytes, readbacks/rehashes them, and returns the new snapshot. The registry class has no `start`, `append`,
+`rollover`, or `seal` convenience methods; those state-machine decisions belong to their owning adapters.
+
+```python
+@dataclass(frozen=True, slots=True)
+class SegmentIndexEntry:
+    sequence: int
+    file_offset: int
+    line_length: int
+    record_sha256: str
+    record_kind: V3PhysicalRecordKind
+
+@dataclass(frozen=True, slots=True)
+class SegmentIndexSnapshot:
+    entry_count: int
+    first_sequence: int | None
+    last_sequence: int | None
+    byte_length: int
+    file_sha256: str
+
+@dataclass(frozen=True, slots=True)
+class SegmentIndexPage:
+    entries: tuple[SegmentIndexEntry, ...]
+    next_entry_ordinal: int | None
+    complete: bool
+
+class JsonlV3SegmentIndex:
+    def __init__(
+        self,
+        path: Path,
+        filesystem: JsonlV3Filesystem,
+    ) -> None: ...
+
+    def create(self) -> SegmentIndexSnapshot: ...
+    def snapshot(self) -> SegmentIndexSnapshot: ...
+    def append(
+        self,
+        *,
+        expected: SegmentIndexSnapshot,
+        entry: SegmentIndexEntry,
+    ) -> SegmentIndexSnapshot: ...
+    def get(self, sequence: int) -> SegmentIndexEntry | None: ...
+    def page(
+        self,
+        *,
+        entry_ordinal: int = 0,
+        limit: int = 1_024,
+    ) -> SegmentIndexPage: ...
+```
+
+`create` writes only `b"UBMV3OF\x01"`; `append` requires exact snapshot length/hash, contiguous sequence,
+nonoverlapping increasing file offsets, a 1..20 KiB line, and the closed kind mapping. It appends one 56-byte
+entry, fdatasyncs/readbacks it, and returns a new snapshot. `get` uses the first sequence plus fixed-width
+arithmetic, not a scan. `page` returns at most 1,024 entries. Bounded index rebuild needs no extra API: its
+owner creates a temporary `JsonlV3SegmentIndex` and feeds verified decoded records through `append`, then
+promotes it with the filesystem primitive.
+
+These are the complete public APIs of the two Cluster A storage classes; codecs and validation helpers remain
+module-private.
+
+### 7.4 Public port behavior
 
 Existing Wave 1 signatures remain authoritative.
 
@@ -458,7 +595,7 @@ physical samples with its retained physical cursor after a modeled-safe-shutdown
 - it returns ascending `(started_at_utc, blackout_id)` order. `complete=true` means end of that immutable
   generation; new events appear only in a later null-cursor query.
 
-### 7.4 Atomic model capture and writer ownership
+### 7.5 Atomic model capture and writer ownership
 
 `ModelOwner` adds:
 
@@ -472,13 +609,22 @@ its hash still equals `_persisted_hash`, and constructs `FrozenModelCapture(self
 self._persisted_hash)` before releasing the lock. The adapter's `capture()` only calls this method; it may not
 read/hash the file itself.
 
-`ModelOwner.open_runtime` continues to acquire `STATE_ROOT/monitor.lock` before model load and owns the fd
-until `close`. `ModelOwnerWriterLease` exposes an adapter-private context manager backed by that same owner
-lock and validates the held fd/device/inode. Every v3 mutation runs inside the lease. Thus:
+`ModelOwner.open_runtime` alone acquires `STATE_ROOT/monitor.lock` before model load and owns the fd until
+`close`. `writer_lease()` returns a ModelOwner-created object capability bound to that exact open fd, the
+cached `(st_dev, st_ino)` of `monitor.lock`, the cached `(st_dev, st_ino)` of the already-existing
+`STATE_ROOT`, the service uid, and the owner's in-process `RLock`. Composition must inject this capability
+into `JsonlV3Filesystem`; construction without it fails before layout access.
 
-- no storage collaborator acquires or releases a second process lock;
+`ModelOwnerWriterLease.transaction(state_root)` is the only mutation guard. Inside ModelOwner code it
+acquires the owner's `RLock`, verifies the owner has not closed/replaced the fd, `fstat(fd)` is the cached
+regular lock inode owned by the service uid, and `lstat(state_root)` is the cached existing private directory,
+then yields. It performs no `flock` operation: the fact that the exact fd remains held is the capability proof.
+Every v3 mutation enters this method before touching disk. Thus:
+
+- storage never opens, creates, acquires, re-flocks, unlocks, or releases `monitor.lock`;
+- storage never creates `STATE_ROOT` or its parent; it may create only verified v3 descendants;
 - model commits and v3 durable transitions cannot interleave inside one process;
-- a second process fails the existing nonblocking flock; and
+- a second process fails the existing nonblocking flock in `ModelOwner.open_runtime`; and
 - read-only evidence/history methods need no writer authority, but snapshot mutable registry/index metadata
   under the lease before reading.
 
@@ -594,11 +740,23 @@ readback.
 
 ### 8.6 Rollover
 
-For bytes/sequence reservation:
+The two continuation mechanisms are disjoint:
+
+| Mechanism | Aggregate identity | Wire continuation | Physical references |
+|---|---|---|---|
+| Damage continuation | same `blackout_id`, logical `segment_id`, and `physical_episode_id` | next physical `seq`, previous trusted record hash; no START or `continued_*` link | adds one private storage segment |
+| Size/reference rollover | new `blackout_id` and new logical `segment_id`, same `physical_episode_id` | successor START at physical `seq=0`/`prev=null`; exact `continued_from`/`continued_by`, `continuation_kind=size_rollover` | successor begins at private ordinal 0; old aggregate gains no ordinary rollover segment |
+
+Thus “continue after damaged bytes” never creates an aggregate, while “roll over a bounded aggregate” always
+creates one. If damage exhausts physical references, reference 64 first records the final same-aggregate loss;
+only then does the separate `budget_kind=segment_refs` aggregate rollover begin.
+
+For a bytes, physical-sequence, or segment-reference aggregate rollover:
 
 1. Persist old/new UUIDs, exact link, successor START, and carrier END in `capture.rollover.phase=reserved`.
-2. Create and sync successor START under a new `blackout_id`, same `physical_episode_id`, copied epoch/origin/
-   intent, and `continued_from`/`size_rollover`.
+2. Create and sync successor START under a new `blackout_id` and logical `segment_id`, same
+   `physical_episode_id`, copied epoch/origin/intent, and `continued_from`/`size_rollover`; its physical chain
+   and private storage ordinal both restart at zero.
 3. Append and sync old carrier END with `continued_by`; no dangling link is allowed before successor START.
 4. Atomically swap registry active capture to successor and clear rollover.
 
@@ -797,10 +955,10 @@ accepts silent omission.
 
 | Test file | Required coverage |
 |---|---|
-| `tests/adapters/test_jsonl_v3_storage_paths.py` | grammar, UUID4, traversal, modes, uid/link/type, temp ownership |
-| `tests/adapters/test_jsonl_v3_filesystem.py` | write-all, EINTR/short/zero, sync/replace/readback ordering, fd lifetime |
+| `tests/adapters/test_jsonl_v3_storage_paths.py` | active/damaged grammar, damaged cross-aggregate/hash collision resistance, 187-byte bound, UUID4, traversal, modes, links |
+| `tests/adapters/test_jsonl_v3_filesystem.py` | required injected ModelOwner lease, existing-root validation, proof storage never calls flock/opens monitor.lock, write/sync/readback/fd lifetime |
 | `tests/adapters/test_jsonl_v3_registry.py` | strict schemas, one active/eight pending, all legal/illegal transitions, 32-page recovery |
-| `tests/adapters/test_jsonl_v3_segment_index.py` | binary entries, sequence lookup, rebuild, damage, 4 MiB page support |
+| `tests/adapters/test_jsonl_v3_segment_index.py` | exact `b"UBMV3OF\x01"` golden, complete u8 mapping/rejections, 56-byte entries, CAS append/get/page/rebuild feed |
 | `tests/application/test_blackout_storage_values.py` | independent chain cursors/refs, one-chain pages, physical-to-terminal cursor transition |
 | `tests/application/test_active_capture_session_chains.py` | retained physical cursor plus nullable terminal cursor; interleaved modeled marker/sample/final close |
 | `tests/adapters/test_jsonl_v3_capture_store.py` | open/append/close idempotency, conflict, uint64 counters, 16/20 KiB, root/chain |
@@ -855,8 +1013,10 @@ edit another cluster's files.
 `src/application/blackout_storage_values.py`, and their same-named tests plus
 `tests/application/test_blackout_storage_values.py`.
 
-**Completion:** schemas, modes, typed independent-chain cursors, lease checks, exact writes/intents, offset
-lookup, and registry transition tests pass. No capture/tail/history behavior is implemented here.
+**Completion:** schemas, active/damaged path bounds, typed independent-chain cursors, required ModelOwner lease
+with zero storage-side flock calls, exact writes/intents, registry CAS, `b"UBMV3OF\x01"`, the full u8 kind
+mapping, and segment-index CAS/get/page tests pass. Tests distinguish same-aggregate damage continuation from
+new-aggregate rollover. No capture/tail/history policy is implemented here.
 
 **Targeted gate:**
 
