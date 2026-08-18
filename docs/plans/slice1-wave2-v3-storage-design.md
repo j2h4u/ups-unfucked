@@ -225,6 +225,15 @@ STATE_ROOT/                                      0700, existing
   damaged JSONL SHA-256. Its paired offset filename replaces only `.jsonl` with `.offsets`. Including all
   three identities makes equal damaged bytes in different aggregates/segments collision-free. The longer
   damaged offset basename is 187 ASCII bytes, below the closed 255-byte component bound.
+- Persisted path tokens are typed resolver capabilities, never filesystem paths. An active segment token has
+  exact grammar
+  `v3seg1:<blackout_id>:<logical_segment_id>:<utc>:p<ordinal>:<storage_id>:jsonl`; its offset token is the
+  identical fields with final component `offsets`. A damaged token has exact grammar
+  `v3dam1:<blackout_id>:<logical_segment_id>:p<ordinal>:<storage_id>:<file_sha256>:jsonl|offsets`.
+  Parsing validates every field, requires the two active tokens to differ only in their final component, and
+  requires their blackout/logical/storage/ordinal fields to equal the containing registry variant and segment
+  receipt before the resolver derives a basename. A token from another aggregate or segment is a typed
+  `V3PathBindingConflict`, even if its rendered basename exists.
 - Only the resolver creates paths. IDs and cursor strings are never concatenated without grammar validation;
   `..`, separators, control characters, absolute paths, symlinks, devices, sockets, and hard links with
   `st_nlink != 1` fail closed.
@@ -256,15 +265,102 @@ There is at most one `capture` value and at most eight `pending` entries. A STAR
 when eight entries are already pending, so every accepted START has a processing slot. The registry is at
 most 256 KiB.
 
-`capture.tag=preparing` contains exactly `blackout_id`, `logical_segment_id`, `storage_id`, `path_token`,
-`offset_token`, `start_line_utf8`, `start_sha256`, `start_length`, `started_utc`, and
-`frozen_policy_revision`.
+The private variants are frozen dataclasses with the following exact fields; the JSON field names are the
+snake-case names shown here and no inheritance discriminator is serialized beyond `tag`:
 
-`capture.tag=capturing` contains those identities plus `physical_episode_id`, `battery_epoch_id`,
-`observation_origin`, nullable `uat_intent_id`, `physical_next_seq`, `physical_last_record_sha256`,
-nullable `terminal_next_seq`, nullable `terminal_last_record_sha256`, `capture_bytes`,
-`capture_record_count`, `sample_count` (uint64), `gap_count` (uint64), ordered `storage_segments` (maximum
-64), nullable `append_intent`, nullable `last_append`, nullable `damage_continuation`, and nullable `rollover`.
+```python
+@dataclass(frozen=True, slots=True)
+class PreparingCaptureState:
+    tag: Literal["preparing"]
+    blackout_id: str
+    logical_segment_id: str
+    storage_id: str
+    path_token: V3SegmentPathToken
+    offset_token: V3OffsetPathToken
+    start_line_utf8: str
+    start_sha256: str
+    start_length: int
+    started_utc: str
+    frozen_policy_revision: str
+
+@dataclass(frozen=True, slots=True)
+class CapturingState:
+    tag: Literal["capturing"]
+    blackout_id: str
+    logical_segment_id: str
+    physical_episode_id: str
+    battery_epoch_id: str
+    observation_origin: str
+    uat_intent_id: str | None
+    frozen_policy_revision: str
+    physical_cursor: BlackoutCaptureCursor
+    terminal_cursor: BlackoutCaptureCursor | None
+    capture_bytes: int
+    capture_record_count: int
+    sample_count: int
+    gap_count: int
+    storage_segments: tuple[V3StorageSegmentReceipt, ...]
+    append_intent: V3AppendIntent | None
+    last_append: V3LastAppend | None
+    damage_continuation: V3DamageContinuation | None
+    rollover: V3RolloverReservation | None
+
+@dataclass(frozen=True, slots=True)
+class ProcessingState:
+    tag: Literal["processing"]
+    blackout_id: str
+    logical_segment_id: str
+    physical_episode_id: str
+    battery_epoch_id: str
+    observation_origin: str
+    uat_intent_id: str | None
+    frozen_policy_revision: str
+    physical_cursor: BlackoutCaptureCursor
+    terminal_cursor_after_end: BlackoutCaptureCursor
+    terminal_root_sha256: str
+    terminal_closing_anchor_sha256: str | None
+    terminal_end_sha256: str
+    capture_bytes: int
+    capture_record_count: int
+    sample_count: int
+    gap_count: int
+    storage_segments: tuple[V3StorageSegmentReceipt, ...]
+    tail_build_intent: V3TailBuildIntent | None
+
+@dataclass(frozen=True, slots=True)
+class TailState:
+    tag: Literal["tail"]
+    blackout_id: str
+    logical_segment_id: str
+    physical_episode_id: str
+    battery_epoch_id: str
+    observation_origin: str
+    uat_intent_id: str | None
+    frozen_policy_revision: str
+    physical_cursor: BlackoutCaptureCursor
+    terminal_cursor_after_outcome: BlackoutCaptureCursor
+    terminal_root_sha256: str
+    terminal_closing_anchor_sha256: str | None
+    terminal_end_sha256: str
+    terminal_outcome_sha256: str
+    capture_bytes: int
+    capture_record_count: int
+    sample_count: int
+    gap_count: int
+    storage_segments: tuple[V3StorageSegmentReceipt, ...]
+    tail_path_token: V3TerminalStagingToken
+    tail_length: int
+    tail_sha256: str
+    tail_records: tuple[V3TailRecordReceipt, ...]
+    seal_intent: V3SealIntent | None
+```
+
+`V3TailBuildIntent` has exactly `tail_path_token`, `expected_terminal_cursor`, `batch_sha256`,
+`encoded_length`, and `encoded_sha256`. `V3SealIntent` has exactly `phase`
+(`reserved|files_sealed|locator_durable|catalog_durable`), `locator_seq`, `catalog_offset`, nullable
+`locator_sha256`, and nullable `catalog_line_sha256`. `V3WorkRegistry.capture` is
+`PreparingCaptureState|CapturingState|None`; `pending` is an ordered tuple of
+`ProcessingState|TailState`. These four unions are closed.
 
 Each `storage_segments` item has exactly `ordinal`, `storage_id`, `path_token`, `offset_token`, `trusted_bytes`,
 `first_seq`, `last_seq`, `last_record_sha256`, nullable `damaged_file_sha256`, and `terminal_only`.
@@ -289,12 +385,13 @@ START and carrier END with hashes/lengths, and `continuation_kind=size_rollover`
 representation of a preparing successor aggregate; it does not consume a pending slot and cannot become
 capture-active until registry swap.
 
-Each `pending` entry has `tag=processing|tail`, aggregate identities, frozen policy revision, exact physical
-and terminal cursors, ordered storage-segment receipts, terminal anchor/end hashes, counters, and one
-stage-specific intent.
-`tag=tail` additionally has the tail staging path/hash/length, ordered record `(offset,length,hash,type)`
-receipts, terminal-outcome hash, and sealing transaction fields `locator_seq`, `catalog_offset`, nullable
-`locator_hash`, and `seal_phase`.
+Every token nested in these variants is cross-bound by §5.1. Both cursors carry their closed chain kind.
+`ProcessingState.terminal_cursor_after_end.previous_record_sha256` must equal mandatory
+`terminal_end_sha256`; `terminal_closing_anchor_sha256` is null only for the codec-authorized anchorless
+budget END, otherwise END must link it. `TailState` retains that same mandatory END hash and requires
+`terminal_cursor_after_outcome.previous_record_sha256 == terminal_outcome_sha256`; its ordered receipts start
+strictly after the END cursor and end at the outcome. Capturing cannot contain an END hash, processing cannot
+contain an outcome hash, and tail cannot have a cursor at or before END.
 
 Registry transition is exactly:
 
@@ -413,9 +510,34 @@ No configuration file changes.
 
 ### 7.3 Minimal Cluster A APIs
 
-Cluster A exposes only typed persistence primitives; capture lifecycle decisions remain in Cluster B.
+Cluster A exposes only typed persistence primitives; capture lifecycle decisions remain in Cluster B. There
+is exactly one mutable filesystem boundary and it is transaction-scoped:
 
 ```python
+type V3ReadableFileToken = (
+    V3RegistryToken | V3SegmentPathToken | V3OffsetPathToken
+    | V3TerminalStagingToken | V3TerminalChainToken | V3TerminalLocatorToken
+    | V3CatalogToken | V3CatalogHeadToken | V3CatalogIntentToken
+    | V3HistoryFileToken | V3TemporaryFileToken
+)
+type V3MutableFileToken = (
+    V3RegistryToken | V3SegmentPathToken | V3OffsetPathToken
+    | V3TerminalStagingToken | V3CatalogToken | V3CatalogHeadToken
+    | V3CatalogIntentToken | V3HistoryFileToken | V3TemporaryFileToken
+)
+type V3AppendableFileToken = (
+    V3SegmentPathToken | V3TerminalStagingToken | V3CatalogToken
+    | V3HistoryFileToken | V3TemporaryFileToken
+)
+type V3SealableFileToken = (
+    V3SegmentPathToken | V3OffsetPathToken | V3TerminalStagingToken
+    | V3TerminalLocatorToken | V3HistoryFileToken | V3TemporaryFileToken
+)
+type V3PromotedFileToken = (
+    V3TerminalChainToken | V3TerminalLocatorToken | V3HistoryFileToken
+    | V3SegmentPathToken | V3OffsetPathToken
+)
+
 class JsonlV3Filesystem:
     def __init__(
         self,
@@ -425,39 +547,125 @@ class JsonlV3Filesystem:
         fault_hook: Callable[[V3FaultPoint], None] | None,
         monotonic_clock_ns: Callable[[], int],
     ) -> None: ...
+
+    def write_transaction(
+        self,
+    ) -> AbstractContextManager[V3WriteTransaction]: ...
+
+@dataclass(frozen=True, slots=True)
+class V3FileSnapshot:
+    byte_length: int
+    content_sha256: str
+
+@dataclass(frozen=True, slots=True)
+class V3AppendReceipt:
+    previous_length: int
+    appended_length: int
+    resulting_length: int
+    appended_sha256: str
+
+class V3WriteTransaction:
+    def read_bounded(
+        self, token: V3ReadableFileToken, *, max_bytes: int
+    ) -> tuple[bytes, V3FileSnapshot]: ...
+    def replace_bounded(
+        self,
+        token: V3MutableFileToken,
+        *,
+        expected: V3FileSnapshot | None,
+        contents: bytes,
+        max_bytes: int,
+    ) -> V3FileSnapshot: ...
+    def append_and_sync(
+        self,
+        token: V3AppendableFileToken,
+        *,
+        expected_offset: int,
+        contents: bytes,
+        max_result_bytes: int,
+    ) -> V3AppendReceipt: ...
+    def seal(
+        self,
+        token: V3SealableFileToken,
+        *,
+        expected_length: int,
+        max_bytes: int,
+    ) -> V3FileSnapshot: ...
+    def promote(
+        self,
+        source: V3TemporaryFileToken,
+        target: V3PromotedFileToken,
+        *,
+        expected_source: V3FileSnapshot,
+        require_target_absent: bool,
+    ) -> V3FileSnapshot: ...
+    def create_offset_index(
+        self, token: V3OffsetPathToken
+    ) -> SegmentIndexSnapshot: ...
+    def snapshot_offset_index(
+        self, token: V3OffsetPathToken
+    ) -> SegmentIndexSnapshot: ...
+    def append_offset_index(
+        self,
+        token: V3OffsetPathToken,
+        *,
+        expected: SegmentIndexSnapshot,
+        entry: SegmentIndexEntry,
+    ) -> SegmentIndexSnapshot: ...
+    def get_offset_index(
+        self, token: V3OffsetPathToken, *, sequence: int
+    ) -> SegmentIndexEntry | None: ...
+    def page_offset_index(
+        self,
+        token: V3OffsetPathToken,
+        *,
+        entry_ordinal: int,
+        limit: int,
+    ) -> SegmentIndexPage: ...
 ```
 
-Construction validates the already-existing root through the injected lease before exposing any mutator.
-There is no default/nullable lease and no filesystem method for acquiring a lock.
+`V3WriteTransaction` is a final, slots-only object constructed only by `write_transaction`; its constructor
+is module-private. It owns every writable fd opened during the context and exposes no fd, fileno, opener,
+dynamic dispatch, generic path, or attribute-probing API. It performs only typed-token, dirfd-relative
+operations. All reads used to authorize mutation, replacements, seals, and promotions occur while the lease
+is held and are bounded by their explicit limits. Context exit closes every owned fd and invalidates the
+object; every later call raises `V3TransactionClosed`. Implementations may call only these declared methods,
+never `getattr`, reflection, name probing, or a private escape hatch. There is no default/nullable lease and
+no filesystem method for acquiring a lock. `append_and_sync` hashes/readbacks only the supplied bounded
+append and returns its receipt; it never computes a whole-file digest. `seal` is the only facade operation
+that computes a complete mutable-file digest and refuses a file above the explicit Wave 1/Wave 2 bound passed
+as `max_bytes`.
 
 ```python
 @dataclass(frozen=True, slots=True)
 class RegistrySnapshot:
     state: V3WorkRegistry
+    byte_length: int
     canonical_sha256: str
 
 class JsonlV3WorkRegistry:
     def __init__(
         self,
-        path: Path,
         filesystem: JsonlV3Filesystem,
     ) -> None: ...
 
-    def open_or_create(self) -> RegistrySnapshot: ...
-    def read(self) -> RegistrySnapshot: ...
+    def open_or_create(self, transaction: V3WriteTransaction) -> RegistrySnapshot: ...
+    def read(self, transaction: V3WriteTransaction) -> RegistrySnapshot: ...
     def compare_and_replace(
         self,
+        transaction: V3WriteTransaction,
         *,
-        expected_sha256: str,
+        expected: RegistrySnapshot,
         replacement: V3WorkRegistry,
     ) -> RegistrySnapshot: ...
 ```
 
-`V3WorkRegistry` and its preparing/capturing/pending variants are private frozen dataclasses matching §6.1;
-no `dict[str, object]` crosses this API. `open_or_create` creates only the exact empty schema. CAS reads and
-hashes the current canonical file under the writer lease, conflicts on a different hash, atomically replaces
-the bytes, readbacks/rehashes them, and returns the new snapshot. The registry class has no `start`, `append`,
-`rollover`, or `seal` convenience methods; those state-machine decisions belong to their owning adapters.
+The registry token is the closed singleton `V3RegistryToken.WORK_REGISTRY`; callers cannot supply a path.
+The variants are the exact private frozen dataclasses in §6.1; no `dict[str, object]` crosses this API.
+`open_or_create` creates only the exact empty schema. CAS uses `transaction.read_bounded(..., max_bytes=256
+KiB)`, requires both expected byte length and canonical hash, and uses `replace_bounded` for atomic replace,
+readback, and result receipt. All three methods reject a transaction from another filesystem or an invalidated context.
+The registry class has no lifecycle convenience methods.
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -474,7 +682,7 @@ class SegmentIndexSnapshot:
     first_sequence: int | None
     last_sequence: int | None
     byte_length: int
-    file_sha256: str
+    append_state_sha256: str
 
 @dataclass(frozen=True, slots=True)
 class SegmentIndexPage:
@@ -484,34 +692,59 @@ class SegmentIndexPage:
 
 class JsonlV3SegmentIndex:
     def __init__(
-        self,
-        path: Path,
-        filesystem: JsonlV3Filesystem,
+        self, filesystem: JsonlV3Filesystem, token: V3OffsetPathToken
     ) -> None: ...
 
-    def create(self) -> SegmentIndexSnapshot: ...
-    def snapshot(self) -> SegmentIndexSnapshot: ...
+    def create(self, transaction: V3WriteTransaction) -> SegmentIndexSnapshot: ...
+    def snapshot(self, transaction: V3WriteTransaction) -> SegmentIndexSnapshot: ...
     def append(
         self,
+        transaction: V3WriteTransaction,
         *,
         expected: SegmentIndexSnapshot,
         entry: SegmentIndexEntry,
     ) -> SegmentIndexSnapshot: ...
-    def get(self, sequence: int) -> SegmentIndexEntry | None: ...
+    def get(
+        self, transaction: V3WriteTransaction, sequence: int
+    ) -> SegmentIndexEntry | None: ...
     def page(
         self,
+        transaction: V3WriteTransaction,
         *,
         entry_ordinal: int = 0,
         limit: int = 1_024,
     ) -> SegmentIndexPage: ...
 ```
 
-`create` writes only `b"UBMV3OF\x01"`; `append` requires exact snapshot length/hash, contiguous sequence,
-nonoverlapping increasing file offsets, a 1..20 KiB line, and the closed kind mapping. It appends one 56-byte
-entry, fdatasyncs/readbacks it, and returns a new snapshot. `get` uses the first sequence plus fixed-width
-arithmetic, not a scan. `page` returns at most 1,024 entries. Bounded index rebuild needs no extra API: its
-owner creates a temporary `JsonlV3SegmentIndex` and feeds verified decoded records through `append`, then
-promotes it with the filesystem primitive.
+The constructor accepts only a validated token whose final component is `offsets`; the resolver derives the
+exact paired `.offsets` basename from §5.1, and no arbitrary `Path` overload exists. `create`, `snapshot`, and
+`append` delegate to the correspondingly named typed transaction methods. Each operation resolves through
+the verified `segments/` dirfd and opens at most one descriptor. In particular `append_offset_index` opens
+one `O_RDWR|O_NOFOLLOW|O_CLOEXEC` descriptor and uses that same descriptor for `fstat`, header/tail `pread`,
+expected-snapshot comparison, one 56-byte append, `fdatasync`, exact appended-entry readback, and the result
+snapshot; it neither closes/reopens nor resolves the name again in the operation.
+
+`append_state_sha256` is deliberately not a whole-file digest. It is the restart-reconstructible CAS token
+
+```text
+SHA256("UBMV3-IDX-CAS-v1\0" || header_8 || u64be(byte_length) ||
+       (first_entry_56 || last_entry_56 if entry_count > 0 else empty))
+```
+
+`snapshot` obtains it with bounded reads of exactly the header and, when present, the first and final entries
+after validating `(byte_length - 8) % 56 == 0`; normal append therefore never scans the index. Expected CAS
+comparison covers every snapshot field: first/last sequence, length, count, and this token. Exclusive writer
+ownership plus exact byte length and boundary-entry receipts prevents lost append updates. Middle accelerator
+corruption is detected by bounded `page` verification against JSONL record receipts and causes typed rebuild;
+the `.offsets` file is derived, never evidence authority. No head sidecar is added.
+
+`append` additionally requires contiguous sequence, nonoverlapping increasing file offsets, a 1..20 KiB
+line, and the closed kind mapping. `get` uses the first sequence plus fixed-width arithmetic. `page` returns
+at most 1,024 entries. Bounded rebuild creates a temporary typed offset token, feeds verified records through
+`append`, seals it, and promotes it through the same transaction; there is no extra public rebuild API.
+
+These index methods are the mutable active/rebuild API. Cluster B's sealed evidence reader opens only
+immutable `0400` offset files through its read-only typed resolver and exposes no mutation or writable fd.
 
 These are the complete public APIs of the two Cluster A storage classes; codecs and validation helpers remain
 module-private.
@@ -613,20 +846,30 @@ read/hash the file itself.
 `close`. `writer_lease()` returns a ModelOwner-created object capability bound to that exact open fd, the
 cached `(st_dev, st_ino)` of `monitor.lock`, the cached `(st_dev, st_ino)` of the already-existing
 `STATE_ROOT`, the service uid, and the owner's in-process `RLock`. Composition must inject this capability
-into `JsonlV3Filesystem`; construction without it fails before layout access.
+into `JsonlV3Filesystem`; construction without it fails without performing `lstat`, opening a directory, or
+touching layout.
 
-`ModelOwnerWriterLease.transaction(state_root)` is the only mutation guard. Inside ModelOwner code it
-acquires the owner's `RLock`, verifies the owner has not closed/replaced the fd, `fstat(fd)` is the cached
-regular lock inode owned by the service uid, and `lstat(state_root)` is the cached existing private directory,
-then yields. It performs no `flock` operation: the fact that the exact fd remains held is the capability proof.
-Every v3 mutation enters this method before touching disk. Thus:
+```python
+class ModelOwnerWriterLease:
+    def hold(self) -> AbstractContextManager[ValidatedWriterLease]: ...
+```
+
+`hold()` is the first operation in `JsonlV3Filesystem.write_transaction`. Inside ModelOwner code it acquires
+the owner's `RLock` and, before any root or path `lstat`, verifies that the owner is open, the exact cached lock
+fd is still held, and `fstat(fd)` is the cached regular lock inode owned by the service uid. Only then does it
+yield the opaque `ValidatedWriterLease` carrying the cached root identity. While that guard remains held,
+`write_transaction` validates `lstat(STATE_ROOT)` against the cached private-directory identity, opens the
+verified v3 dirfd chain, and yields `V3WriteTransaction`. Exit invalidates the transaction and closes its fds
+before `hold()` releases the owner lock. `hold()` performs no `flock`: continued ownership of the exact fd is
+the capability proof. `ValidatedWriterLease` has no public constructor or methods and storage never inspects
+it through reflection or attribute-name probing. Thus:
 
 - storage never opens, creates, acquires, re-flocks, unlocks, or releases `monitor.lock`;
 - storage never creates `STATE_ROOT` or its parent; it may create only verified v3 descendants;
 - model commits and v3 durable transitions cannot interleave inside one process;
 - a second process fails the existing nonblocking flock in `ModelOwner.open_runtime`; and
-- read-only evidence/history methods need no writer authority, but snapshot mutable registry/index metadata
-  under the lease before reading.
+- read-only immutable evidence/history methods need no writer authority; any read of mutable registry or
+  offset-index state uses `write_transaction` and finishes before the lease is released.
 
 ## 8. State and durability sequences
 
@@ -956,9 +1199,9 @@ accepts silent omission.
 | Test file | Required coverage |
 |---|---|
 | `tests/adapters/test_jsonl_v3_storage_paths.py` | active/damaged grammar, damaged cross-aggregate/hash collision resistance, 187-byte bound, UUID4, traversal, modes, links |
-| `tests/adapters/test_jsonl_v3_filesystem.py` | required injected ModelOwner lease, existing-root validation, proof storage never calls flock/opens monitor.lock, write/sync/readback/fd lifetime |
-| `tests/adapters/test_jsonl_v3_registry.py` | strict schemas, one active/eight pending, all legal/illegal transitions, 32-page recovery |
-| `tests/adapters/test_jsonl_v3_segment_index.py` | exact `b"UBMV3OF\x01"` golden, complete u8 mapping/rejections, 56-byte entries, CAS append/get/page/rebuild feed |
+| `tests/adapters/test_jsonl_v3_filesystem.py` | capability validation before root/path lstat, required lease, one typed write context, bounded methods, owned-fd closure/invalidation, no fd/reflection/name-probing escape, no storage flock/open of monitor.lock |
+| `tests/adapters/test_jsonl_v3_registry.py` | exact four frozen variants, token/ID cross-binding, mandatory END/outcome cursor relations, one active/eight pending, CAS and 32-page recovery |
+| `tests/adapters/test_jsonl_v3_segment_index.py` | exact `b"UBMV3OF\x01"` golden, complete u8 mapping, 56-byte entries, one O_RDWR descriptor per CAS, restart-rebuilt append-state token, no normal full scan, get/page/rebuild feed |
 | `tests/application/test_blackout_storage_values.py` | independent chain cursors/refs, one-chain pages, physical-to-terminal cursor transition |
 | `tests/application/test_active_capture_session_chains.py` | retained physical cursor plus nullable terminal cursor; interleaved modeled marker/sample/final close |
 | `tests/adapters/test_jsonl_v3_capture_store.py` | open/append/close idempotency, conflict, uint64 counters, 16/20 KiB, root/chain |
@@ -1013,10 +1256,13 @@ edit another cluster's files.
 `src/application/blackout_storage_values.py`, and their same-named tests plus
 `tests/application/test_blackout_storage_values.py`.
 
-**Completion:** schemas, active/damaged path bounds, typed independent-chain cursors, required ModelOwner lease
-with zero storage-side flock calls, exact writes/intents, registry CAS, `b"UBMV3OF\x01"`, the full u8 kind
-mapping, and segment-index CAS/get/page tests pass. Tests distinguish same-aggregate damage continuation from
-new-aggregate rollover. No capture/tail/history policy is implemented here.
+**Completion:** exact four-variant schemas and token bindings, active/damaged path bounds, typed
+independent-chain cursors, capability validation before path inspection, one invalidating transaction facade
+with zero fd/reflection/flock escape, exact writes/intents, registry CAS, `b"UBMV3OF\x01"`, the full u8 kind
+mapping, and single-descriptor segment-index CAS/get/page tests pass. The index golden proves the bounded
+restart-reconstructible append-state token and that normal append performs no full scan. Tests distinguish
+same-aggregate damage continuation from new-aggregate rollover. No capture/tail/history policy is implemented
+here.
 
 **Targeted gate:**
 
