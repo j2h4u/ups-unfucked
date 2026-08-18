@@ -1,0 +1,289 @@
+{
+  "schema": "slice1-ir-golden-v1",
+  "event": {
+    "observation_origin": "natural",
+    "termination": "power_restored",
+    "battery_epoch_id": "00000000-0000-4000-8000-000000000001",
+    "evaluation_revision": "domain-jsonl-v2",
+    "blackout_ids": [
+      "10000000000040008000000000000001",
+      "10000000000040008000000000000002",
+      "10000000000040008000000000000003",
+      "10000000000040008000000000000004"
+    ],
+    "segment_ids": [
+      "20000000000040008000000000000001",
+      "20000000000040008000000000000002",
+      "20000000000040008000000000000003",
+      "20000000000040008000000000000004"
+    ],
+    "step_directions": ["up", "down", "up", "down"],
+    "step_record_hashes": [
+      "1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84",
+      "a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8",
+      "e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760",
+      "3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e"
+    ],
+    "event_started_utc": "2026-08-01T00:00:00Z"
+  },
+  "synthetic_raw": {
+    "sample_count": 240,
+    "transition_second": 30,
+    "pre_load_percent": 20.0,
+    "post_load_percent": 40.0,
+    "k_v_per_pp": 0.01,
+    "drift_v_per_s": 0.00005,
+    "voltage_token_quantum_v": 0.01,
+    "boot_id": "boot",
+    "raw_status": "OB DISCHRG"
+  },
+  "fragment": {
+    "policy_revision": "discharge-fragments-v1",
+    "parents": [
+      {
+        "blackout_id": "10000000000040008000000000000001",
+        "segment_id": "20000000000040008000000000000001",
+        "boot_id": "boot-0",
+        "sample_count": 240,
+        "first_sequence": 0,
+        "last_sequence": 239,
+        "first_sample_hash": "281c57e6925566ecd303e362d18068b9ce60316f567437d193e36d41ef1ac061",
+        "last_sample_hash": "10a60fee6bfd2e2328cce15fadf3351cf18c18e84b2a53804ed1d3e064306656",
+        "ordered_sample_hashes_sha256": "3304a67c2899370a216d97c347ce44b945bb70db9793a8151e7e979388426b3f",
+        "slice_id": "7bf71ce4aca2061075a6a2c655f84cfdec31a2168db04bcdf4ea39fb4939e9ec",
+        "step_record_hash": "c2a0e93473da30e220ec17999354329871c951adc6745b4648b2f6a264d53b1c"
+      },
+      {
+        "blackout_id": "10000000000040008000000000000002",
+        "segment_id": "20000000000040008000000000000002",
+        "boot_id": "boot-1",
+        "sample_count": 240,
+        "first_sequence": 0,
+        "last_sequence": 239,
+        "first_sample_hash": "a094efca2de0ee5f949c26df39db50dd54cbec8425315d1d6903e2d5abf6f7c7",
+        "last_sample_hash": "3ec060d26dd2d1147fe6139b77bdaa0d6bd5deae1326ca6b225367c99b4fd396",
+        "ordered_sample_hashes_sha256": "0253a9ca39721f85b153a2b9e55fa47e7880d0f16f3e2f28febdc5977e697669",
+        "slice_id": "3fed3e19ee7c56e021b82828a140bf2b7cd91b098b2b1e2e868b99b900b4eab0",
+        "step_record_hash": "0128956d6f1129acf794d19863e91fb2d2b93782ee2468ff1191145d3814ac4c"
+      },
+      {
+        "blackout_id": "10000000000040008000000000000003",
+        "segment_id": "20000000000040008000000000000003",
+        "boot_id": "boot-2",
+        "sample_count": 240,
+        "first_sequence": 0,
+        "last_sequence": 239,
+        "first_sample_hash": "79b42595298e9326c2564be07e5c0ca2c4adffa534d0e1638d680d607989cdb5",
+        "last_sample_hash": "f8dbad683177df912dc0af2505b4367e50eed5e54de91bab685e10ce3fa32d02",
+        "ordered_sample_hashes_sha256": "cea0adcd37320623448624424219825dec4922fb0504979112787028d043c79f",
+        "slice_id": "5cebcce61c8d2ea0aa4c6849f6d2eebfa1d1c023ce50aca5bf0baf1002e8481e",
+        "step_record_hash": "daad07dc2286e0f5b4e95f7c32cff555162f3d2f793fd58d3703472bb11cf5bf"
+      },
+      {
+        "blackout_id": "10000000000040008000000000000004",
+        "segment_id": "20000000000040008000000000000004",
+        "boot_id": "boot-3",
+        "sample_count": 240,
+        "first_sequence": 0,
+        "last_sequence": 239,
+        "first_sample_hash": "9824427ad784577e00100223b9264e953ac4a1bb611de7cb198801ec5c62cfa1",
+        "last_sample_hash": "17f3466424eeac4d2b955e20f820ae41e4f9979d8f00ed499645eb28b9f5df7d",
+        "ordered_sample_hashes_sha256": "aec09aedc78052f106d313f5647b00b56d2ea79f6e54d271f90e2d95ffef9275",
+        "slice_id": "d9c51ca634bfc23fb79f31f9f9c98f5a09bba6e2951fb1392c1f2d80c051b8ba",
+        "step_record_hash": "c11f84267519ae44d73da3bf6227d17c070833d83eb589487655b80e33ec84df"
+      }
+    ]
+  },
+  "steps": {
+    "step_ids": [
+      "9c363fdfc293b24e6e413c43b5d2bec5a9d09ec164170c73ac9adc778671b573",
+      "af569c113da35835abe3443bf21a8bbfd541664b47db12ee7d4884efe1336457",
+      "e2704dd59181b95939bff3af7afe0165ab77ac8cd468b3fd51b1067c2c6e4cfa",
+      "abc5db680115de6ad35da657c47ea75717acc018c6fa8ae9c5a32fe6e203c253"
+    ],
+    "pre_sequences": [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29],
+    "post_sequences": [
+      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+      90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104,
+      105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117,
+      118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130,
+      131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143,
+      144, 145, 146, 147, 148, 149, 150
+    ],
+    "transition_monotonic_ns": 30000000000,
+    "delta_load_pp": [20.0, -20.0, 20.0, -20.0],
+    "pre_slope_v_per_s": [
+      -0.000050000000000061104,
+      -0.000050000000000061104,
+      -0.000050000000000061104,
+      -0.000050000000000061104
+    ],
+    "early_post_slope_v_per_s": [
+      -0.000049999999999956614,
+      -0.000049999999999956614,
+      -0.000049999999999956614,
+      -0.000049999999999956614
+    ],
+    "late_post_slope_v_per_s": [
+      -0.00005000000000000465,
+      -0.00005000000000000465,
+      -0.00005000000000000465,
+      -0.00005000000000000465
+    ],
+    "early_delta_voltage_at_transition_v": [
+      -0.20000000000000284,
+      0.20000000000000107,
+      -0.20000000000000284,
+      0.20000000000000107
+    ],
+    "settled_delta_voltage_at_transition_v": [
+      -0.20000000000000107,
+      0.20000000000000284,
+      -0.20000000000000107,
+      0.20000000000000284
+    ],
+    "voltage_quantum_v": 0.01,
+    "k_transition_v_per_pp": [
+      0.010000000000000142,
+      0.010000000000000054,
+      0.010000000000000142,
+      0.010000000000000054
+    ],
+    "k_settled_v_per_pp": [
+      0.010000000000000054,
+      0.010000000000000142,
+      0.010000000000000054,
+      0.010000000000000142
+    ],
+    "quality": "qualifying",
+    "reasons": []
+  },
+  "cohort": {
+    "blackout_ids": [
+      "10000000000040008000000000000001",
+      "10000000000040008000000000000002",
+      "10000000000040008000000000000003",
+      "10000000000040008000000000000004"
+    ],
+    "step_count": 4,
+    "up_step_count": 2,
+    "down_step_count": 2,
+    "median_k_v_per_pp": 0.010000000000000099,
+    "mad_ratio": 4.423544863740814e-15,
+    "reasons": [],
+    "consumed_step_hashes": [
+      "1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84",
+      "3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e",
+      "a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8",
+      "e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760"
+    ]
+  },
+  "learning": {
+    "current_utc": "2026-08-18T00:00:00Z",
+    "evidence_set_id": "7350fc0a85b85131d81d91e6a28143ad36ea70117e4fdac36a67bcadd1828fea",
+    "reasons": [],
+    "change": {
+      "parameter": "ir_k_v_per_pp",
+      "value_before": 0.015,
+      "measured_estimate": 0.010000000000000099,
+      "value_after": 0.012,
+      "evidence_hashes": [
+        "1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84",
+        "3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e",
+        "a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8",
+        "e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760"
+      ],
+      "bound_applied": true
+    }
+  },
+  "serialized": {
+  "change": {
+    "bytes": "{\"bound_applied\":true,\"evidence_hashes\":[\"1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84\",\"3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e\",\"a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8\",\"e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760\"],\"measured_estimate\":0.010000000000000099,\"parameter\":\"ir_k_v_per_pp\",\"value_after\":0.012,\"value_before\":0.015}",
+    "sha256": "56e2bfac43b6662512de20a07d84ca45c67c82bd8bbe11e2d46bdd7871ed39f1"
+  },
+  "cohort": {
+    "bytes": "{\"battery_epoch_id\":\"00000000-0000-4000-8000-000000000001\",\"blackout_ids\":[\"10000000000040008000000000000001\",\"10000000000040008000000000000002\",\"10000000000040008000000000000003\",\"10000000000040008000000000000004\"],\"down_step_count\":2,\"mad_ratio\":4.423544863740814e-15,\"median_k_v_per_pp\":0.010000000000000099,\"reason_codes\":[],\"reason_overflow\":0,\"step_count\":4,\"up_step_count\":2}",
+    "sha256": "9ef9de04e3d3b2009d8d346f1b6c35471facc19d5696213462e7709a0a2906fb"
+  },
+  "estimates": [
+    {
+      "bytes": "{\"blackout_id\":\"10000000000040008000000000000001\",\"delta_load_pp\":20.0,\"early_delta_voltage_at_transition_v\":-0.20000000000000284,\"early_post_slope_v_per_s\":-4.9999999999956614e-05,\"k_settled_v_per_pp\":0.010000000000000054,\"k_transition_v_per_pp\":0.010000000000000142,\"late_post_slope_v_per_s\":-5.000000000000465e-05,\"post_sequences\":[40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150],\"pre_sequences\":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],\"pre_slope_v_per_s\":-5.0000000000061104e-05,\"quality\":\"qualifying\",\"reason_codes\":[],\"reason_overflow\":0,\"segment_id\":\"20000000000040008000000000000001\",\"settled_delta_voltage_at_transition_v\":-0.20000000000000107,\"step_id\":\"9c363fdfc293b24e6e413c43b5d2bec5a9d09ec164170c73ac9adc778671b573\",\"transition_monotonic_ns\":30000000000,\"voltage_quantum_v\":0.01}",
+      "sha256": "1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84"
+    },
+    {
+      "bytes": "{\"blackout_id\":\"10000000000040008000000000000002\",\"delta_load_pp\":-20.0,\"early_delta_voltage_at_transition_v\":0.20000000000000107,\"early_post_slope_v_per_s\":-4.9999999999956614e-05,\"k_settled_v_per_pp\":0.010000000000000142,\"k_transition_v_per_pp\":0.010000000000000054,\"late_post_slope_v_per_s\":-5.000000000000465e-05,\"post_sequences\":[40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150],\"pre_sequences\":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],\"pre_slope_v_per_s\":-5.0000000000061104e-05,\"quality\":\"qualifying\",\"reason_codes\":[],\"reason_overflow\":0,\"segment_id\":\"20000000000040008000000000000002\",\"settled_delta_voltage_at_transition_v\":0.20000000000000284,\"step_id\":\"af569c113da35835abe3443bf21a8bbfd541664b47db12ee7d4884efe1336457\",\"transition_monotonic_ns\":30000000000,\"voltage_quantum_v\":0.01}",
+      "sha256": "a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8"
+    },
+    {
+      "bytes": "{\"blackout_id\":\"10000000000040008000000000000003\",\"delta_load_pp\":20.0,\"early_delta_voltage_at_transition_v\":-0.20000000000000284,\"early_post_slope_v_per_s\":-4.9999999999956614e-05,\"k_settled_v_per_pp\":0.010000000000000054,\"k_transition_v_per_pp\":0.010000000000000142,\"late_post_slope_v_per_s\":-5.000000000000465e-05,\"post_sequences\":[40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150],\"pre_sequences\":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],\"pre_slope_v_per_s\":-5.0000000000061104e-05,\"quality\":\"qualifying\",\"reason_codes\":[],\"reason_overflow\":0,\"segment_id\":\"20000000000040008000000000000003\",\"settled_delta_voltage_at_transition_v\":-0.20000000000000107,\"step_id\":\"e2704dd59181b95939bff3af7afe0165ab77ac8cd468b3fd51b1067c2c6e4cfa\",\"transition_monotonic_ns\":30000000000,\"voltage_quantum_v\":0.01}",
+      "sha256": "e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760"
+    },
+    {
+      "bytes": "{\"blackout_id\":\"10000000000040008000000000000004\",\"delta_load_pp\":-20.0,\"early_delta_voltage_at_transition_v\":0.20000000000000107,\"early_post_slope_v_per_s\":-4.9999999999956614e-05,\"k_settled_v_per_pp\":0.010000000000000142,\"k_transition_v_per_pp\":0.010000000000000054,\"late_post_slope_v_per_s\":-5.000000000000465e-05,\"post_sequences\":[40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150],\"pre_sequences\":[15,16,17,18,19,20,21,22,23,24,25,26,27,28,29],\"pre_slope_v_per_s\":-5.0000000000061104e-05,\"quality\":\"qualifying\",\"reason_codes\":[],\"reason_overflow\":0,\"segment_id\":\"20000000000040008000000000000004\",\"settled_delta_voltage_at_transition_v\":0.20000000000000284,\"step_id\":\"abc5db680115de6ad35da657c47ea75717acc018c6fa8ae9c5a32fe6e203c253\",\"transition_monotonic_ns\":30000000000,\"voltage_quantum_v\":0.01}",
+      "sha256": "3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e"
+    }
+  ],
+  "learning": {
+    "bytes": "{\"change\":{\"bound_applied\":true,\"evidence_hashes\":[\"1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84\",\"3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e\",\"a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8\",\"e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760\"],\"measured_estimate\":0.010000000000000099,\"parameter\":\"ir_k_v_per_pp\",\"value_after\":0.012,\"value_before\":0.015},\"evidence_set_id\":\"7350fc0a85b85131d81d91e6a28143ad36ea70117e4fdac36a67bcadd1828fea\",\"observed_load_sag_increase\":null,\"reason_codes\":[],\"reason_overflow\":0}",
+    "sha256": "9d03c6bca8fd474a36f26b8d31d6279e54529d028765bcf77e994d8165197576"
+  },
+  "prepared": {
+    "bytes": "{\"blackout_id\":\"10000000000040008000000000000004\",\"change\":{\"bound_applied\":true,\"evidence_hashes\":[\"1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84\",\"3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e\",\"a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8\",\"e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760\"],\"measured_estimate\":0.010000000000000099,\"parameter\":\"ir_k_v_per_pp\",\"value_after\":0.012,\"value_before\":0.015},\"committed_at\":\"2026-08-04T00:04:00Z\",\"expected_model_hash_after\":\"1f09ebfb84bcc4dbd8eb5bbee6dbeb43919a97928931c093a8c5000e7d00bf32\",\"expected_scientific_fingerprint_after\":\"2f97f9ad8d6a33134581268a40dc9ec660012cc26c68cae266732bfb5fcd16aa\",\"learning_policy\":{\"deadband_v_per_pp\":0.001,\"max_consumed_step_hashes\":256,\"max_epoch_decrease_fraction\":0.5,\"max_k_v_per_pp\":0.04,\"max_single_commit_fraction\":0.2,\"min_commit_interval_days\":30,\"min_k_v_per_pp\":0.005,\"revision\":\"ir-learning-v1\"},\"model_hash_before\":\"28bdb3afd8fd2e59a4770ef6ae8402f42b8e217157ea2898c936c562eceff47f\"}",
+    "sha256": "52760c8e9a0ba82df837fc5120f557159b5d57281088a8d8c4a966c22dab730e"
+  },
+  "receipt": {
+    "bytes": "{\"blackout_id\":\"10000000000040008000000000000004\",\"consumed_step_hashes\":[\"1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84\",\"3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e\",\"a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8\",\"e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760\"],\"evidence_set_id\":\"7350fc0a85b85131d81d91e6a28143ad36ea70117e4fdac36a67bcadd1828fea\",\"measured_estimate\":0.010000000000000099,\"model_hash_after\":\"1f09ebfb84bcc4dbd8eb5bbee6dbeb43919a97928931c093a8c5000e7d00bf32\",\"model_hash_before\":\"28bdb3afd8fd2e59a4770ef6ae8402f42b8e217157ea2898c936c562eceff47f\",\"parameter\":\"ir_k_v_per_pp\",\"reference_reparameterization\":false,\"safety_oracle\":\"golden-oracle\",\"scientific_fingerprint_after\":\"2f97f9ad8d6a33134581268a40dc9ec660012cc26c68cae266732bfb5fcd16aa\",\"scientific_fingerprint_before\":\"37f24881ceeefd94908a4de4629fa8a4ad9acfff115767dd4ccd8e428a5f544c\",\"value_after\":0.012,\"value_before\":0.015}",
+    "sha256": "62f3fba53b72af97b2c6f8961eb2ab699f4d004ed8240ace12153cf3729868b2"
+  },
+  "refusal_cohort": {
+    "bytes": "{\"battery_epoch_id\":\"00000000-0000-4000-8000-000000000001\",\"blackout_ids\":[\"10000000000040008000000000000001\",\"10000000000040008000000000000002\",\"10000000000040008000000000000003\",\"10000000000040008000000000000004\"],\"down_step_count\":2,\"mad_ratio\":2.2551405187698524e-15,\"median_k_v_per_pp\":0.019999999999999973,\"reason_codes\":[],\"reason_overflow\":0,\"step_count\":4,\"up_step_count\":2}",
+    "sha256": "381d78ee421072501f337b75e822741b23ea02f69f7babbc01f4a79e75e4c118"
+  },
+  "refusal_learning": {
+    "bytes": "{\"change\":null,\"evidence_set_id\":\"e19a82a737909530b0af5f76e0afa74a9a8cad8ca487462a209df39007f56a23\",\"observed_load_sag_increase\":{\"evidence_hashes\":[\"3a7cd9df0fe734bcda36c4f8ad0253f057ec61959125ae5c58cdcc4959a95165\",\"7db30e61471ceefe4e79391bfa9fccce3cc7620f6a8cef2c1a074b48680cf287\",\"ba1ac1875cc19f2c79743ca5957cb40481e95246e8093bc85692181ed5d27ff2\",\"cc3447f6189080fae8777c9bb7b3d3cad7b8c3ea1d14af39ffa02d64c04d9167\"],\"evidence_set_id\":\"e19a82a737909530b0af5f76e0afa74a9a8cad8ca487462a209df39007f56a23\",\"measured_estimate\":0.019999999999999973,\"parameter\":\"ir_k_v_per_pp\",\"value_before\":0.015},\"reason_codes\":[\"unsafe_upward_ir_change_not_applied\"],\"reason_overflow\":0}",
+    "sha256": "34cc422e701b68c960ddba0cfe69b34833b3f5eaae238f288932c6576525aaf3"
+  },
+  "refusal_observation": {
+    "bytes": "{\"evidence_hashes\":[\"3a7cd9df0fe734bcda36c4f8ad0253f057ec61959125ae5c58cdcc4959a95165\",\"7db30e61471ceefe4e79391bfa9fccce3cc7620f6a8cef2c1a074b48680cf287\",\"ba1ac1875cc19f2c79743ca5957cb40481e95246e8093bc85692181ed5d27ff2\",\"cc3447f6189080fae8777c9bb7b3d3cad7b8c3ea1d14af39ffa02d64c04d9167\"],\"evidence_set_id\":\"e19a82a737909530b0af5f76e0afa74a9a8cad8ca487462a209df39007f56a23\",\"measured_estimate\":0.019999999999999973,\"parameter\":\"ir_k_v_per_pp\",\"value_before\":0.015}",
+    "sha256": "bebf9e46c6189846d39d92192a877e5d3c8a2d694fba1ef4d9c7c904f72cd159"
+  }
+},
+  "model": {
+    "blackout_id": "10000000000040008000000000000004",
+    "model_before_sha256": "28bdb3afd8fd2e59a4770ef6ae8402f42b8e217157ea2898c936c562eceff47f",
+    "model_after_sha256": "1f09ebfb84bcc4dbd8eb5bbee6dbeb43919a97928931c093a8c5000e7d00bf32",
+    "scientific_fingerprint_before": "37f24881ceeefd94908a4de4629fa8a4ad9acfff115767dd4ccd8e428a5f544c",
+    "scientific_fingerprint_after": "2f97f9ad8d6a33134581268a40dc9ec660012cc26c68cae266732bfb5fcd16aa",
+    "prepared_safety_oracle": "golden-oracle",
+    "commit_time": "2026-08-04T00:04:00.000000Z",
+    "receipt": {
+      "blackout_id": "10000000000040008000000000000004",
+      "parameter": "ir_k_v_per_pp",
+      "value_before": 0.015,
+      "measured_estimate": 0.010000000000000099,
+      "value_after": 0.012,
+      "evidence_set_id": "7350fc0a85b85131d81d91e6a28143ad36ea70117e4fdac36a67bcadd1828fea",
+      "consumed_step_hashes": [
+        "1f876aac59edc127739c9115fda2be6589614d5c0dca765583339d58972a4b84",
+        "3fa135550c7e37de517e15d55885fa593801fa888f394a000ea6505f5e49720e",
+        "a1179eda8b5765396899a4e466f6902ecaee39ad71952fadb378859cdbc8d1b8",
+        "e8d9ca30cfddc530f7f02fc3ee493cc9c0f78d2164ff9e99847763f60ed25760"
+      ],
+      "reference_reparameterization": false,
+      "safety_oracle": "golden-oracle"
+    }
+  },
+  "refusal": {
+    "k_v_per_pp": 0.02,
+    "median_k_v_per_pp": 0.019999999999999973,
+    "reason": "unsafe_upward_ir_change_not_applied",
+    "evidence_set_id": "e19a82a737909530b0af5f76e0afa74a9a8cad8ca487462a209df39007f56a23",
+    "consumed_step_hashes": [
+      "3a7cd9df0fe734bcda36c4f8ad0253f057ec61959125ae5c58cdcc4959a95165",
+      "7db30e61471ceefe4e79391bfa9fccce3cc7620f6a8cef2c1a074b48680cf287",
+      "ba1ac1875cc19f2c79743ca5957cb40481e95246e8093bc85692181ed5d27ff2",
+      "cc3447f6189080fae8777c9bb7b3d3cad7b8c3ea1d14af39ffa02d64c04d9167"
+    ],
+    "model_must_remain_unchanged": true
+  }
+}
