@@ -43,9 +43,31 @@ def compare_forward_model(
     """Compare a frozen model with raw observations; never identify parameters."""
     if assessment.evidence_class != EvidenceClass.QUALIFYING:
         return _refused(assessment.reasons.values)
+    return _compare_admitted_observations(observations, snapshot, assessment.duration_s)
+
+
+def compare_admitted_observations(
+    observations: tuple[PhysicalObservation, ...],
+    snapshot: FrozenModelSnapshot,
+) -> ForwardComparison:
+    """Compare already-admitted raw observations against a frozen snapshot.
+
+    Admission belongs to each consumer.  This numerical core deliberately has
+    no evidence class, terminal policy, or cross-consumer gate; callers pass
+    only the observations they have already admitted for comparison.
+    """
+    duration_s = summarize_timeline(observations, MAX_INTEGRATION_GAP_S).duration_s
+    return _compare_admitted_observations(observations, snapshot, duration_s)
+
+
+def _compare_admitted_observations(
+    observations: tuple[PhysicalObservation, ...],
+    snapshot: FrozenModelSnapshot,
+    duration_s: float,
+) -> ForwardComparison:
     origin = _find_evaluation_origin(observations)
     if origin is None:
-        if assessment.duration_s < SHORT_MIN_DURATION_S:
+        if duration_s < SHORT_MIN_DURATION_S:
             return _refused((ComparisonReason.COMPARISON_NOT_ATTEMPTED,))
         return _refused((ComparisonReason.NO_STABLE_POST_TRANSFER_ORIGIN,))
 

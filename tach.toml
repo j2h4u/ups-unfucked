@@ -16,6 +16,8 @@ depends_on = [
     "src.alerter",
     "src.application",
     "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.values",
     "src.ema_filter",
     "src.monitor_config",
     "src.nut_client",
@@ -60,7 +62,7 @@ depends_on = [
     "src.adapters.jsonl_record_codec",
     "src.adapters.jsonl_work_registry",
     "src.application",
-    "src.domain", "src.adapters",
+    "src.domain.reasons", "src.adapters",
 ]
 layer = "adapters"
 
@@ -158,6 +160,140 @@ depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "s
 layer = "adapters"
 
 [[modules]]
+path = "src.adapters.jsonl_v3_canonical"
+depends_on = []
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_fragment_profile_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_packing",
+    "src.adapters.jsonl_v3_fragment_replay",
+    "src.adapters.jsonl_v3_fragment_wire",
+    "src.domain.fragment_policy",
+    "src.domain.fragments",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_fragment_wire"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.domain.fragments",
+    "src.domain.reasons",
+    "src.domain.values",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_fragment_packing"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_wire",
+    "src.domain.fragments",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_fragment_replay"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_wire",
+    "src.domain.fragments",
+    "src.domain.reasons",
+    "src.domain.values",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_load_sag_assessment_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_profile_codec",
+    "src.domain.load_sag_assessment",
+    "src.domain.fragments",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_curve_assessment_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_profile_codec",
+    "src.domain.curve_assessment",
+    "src.domain.fragments",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_firmware_lb_assessment_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_profile_codec",
+    "src.domain.firmware_lb_assessment",
+    "src.domain.fragments",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_terminal_tail_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.domain.blackout_terminal",
+    "src.domain.fragments",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_learning_decision_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.domain.ir_learning_decision",
+    "src.domain.learning",
+    "src.domain.reasons",
+    "src.domain.values",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_model_commit_receipt_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_learning_decision_codec",
+    "src.domain.ir_learning_decision",
+    "src.domain.values",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_terminal_outcome_codec"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_curve_assessment_codec",
+    "src.adapters.jsonl_v3_firmware_lb_assessment_codec",
+    "src.adapters.jsonl_v3_fragment_profile_codec",
+    "src.adapters.jsonl_v3_learning_decision_codec",
+    "src.adapters.jsonl_v3_load_sag_assessment_codec",
+    "src.adapters.jsonl_v3_model_commit_receipt_codec",
+    "src.adapters.jsonl_v3_terminal_tail_codec",
+    "src.domain.blackout_terminal",
+    "src.domain.fragments",
+    "src.domain.reasons",
+    "src.domain.terminal_outcome",
+]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.jsonl_v3_tail_budget"
+depends_on = [
+    "src.adapters.jsonl_v3_canonical",
+    "src.adapters.jsonl_v3_fragment_profile_codec",
+    "src.domain.fragment_policy",
+]
+layer = "adapters"
+
+[[modules]]
 path = "src.adapters.jsonl_work_registry"
 depends_on = [
     "src.adapters.jsonl_errors",
@@ -174,7 +310,8 @@ depends_on = [
     "src.adapters.model_state_schema",
     "src.application",
     "src.battery_math",
-    "src.domain",
+    "src.domain.learning",
+    "src.domain.values",
 ]
 layer = "adapters"
 
@@ -185,12 +322,16 @@ layer = "adapters"
 
 [[modules]]
 path = "src.adapters.model_state_release_a"
-depends_on = ["src.adapters.model_state_schema", "src.domain"]
+depends_on = ["src.adapters.model_state_schema", "src.domain.values"]
 layer = "adapters"
 
 [[modules]]
 path = "src.adapters.model_state_schema"
-depends_on = ["src.adapters.model_state_persistence", "src.battery_math", "src.domain"]
+depends_on = [
+    "src.adapters.model_state_persistence",
+    "src.battery_math",
+    "src.domain.values",
+]
 layer = "adapters"
 
 [[modules]]
@@ -201,12 +342,13 @@ depends_on = [
     "src.adapters.model_state_schema",
     "src.battery_math",
     "src.domain",
+    "src.domain.values",
 ]
 layer = "adapters"
 
 [[modules]]
 path = "src.adapters.nut_telemetry"
-depends_on = ["src.domain", "src.nut_client"]
+depends_on = ["src.domain.values", "src.nut_client"]
 layer = "adapters"
 
 [[modules]]
@@ -216,7 +358,7 @@ layer = "adapters"
 
 [[modules]]
 path = "src.alerter"
-depends_on = ["src.application", "src.domain"]
+depends_on = ["src.application", "src.domain.reasons", "src.domain.values"]
 layer = "adapters"
 
 [[modules]]
@@ -231,17 +373,142 @@ layer = "adapters"
 
 [[modules]]
 path = "src.virtual_ups_exporter"
-depends_on = ["src.application", "src.domain"]
+depends_on = ["src.application", "src.domain.values"]
 layer = "adapters"
 
 [[modules]]
 path = "src.application"
-depends_on = ["src.battery_math", "src.domain"]
+depends_on = [
+    "src.battery_math",
+    "src.domain",
+    "src.domain.forward_comparison",
+    "src.domain.learning",
+    "src.domain.lifecycle",
+    "src.domain.reasons",
+    "src.domain.values",
+]
 layer = "application"
 
 [[modules]]
+path = "src.domain.fragment_policy"
+depends_on = []
+layer = "domain"
+
+[[modules]]
+path = "src.domain.reasons"
+depends_on = []
+layer = "domain"
+
+[[modules]]
+path = "src.domain.values"
+depends_on = ["src.battery_math", "src.domain.reasons"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.fragments"
+depends_on = [
+    "src.domain.fragment_builder",
+    "src.domain.fragment_primitives",
+    "src.domain.fragment_values",
+]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.fragment_primitives"
+depends_on = ["src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.fragment_values"
+depends_on = [
+    "src.domain.fragment_policy",
+    "src.domain.fragment_primitives",
+    "src.domain.values",
+]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.fragment_builder"
+depends_on = [
+    "src.domain.fragment_policy",
+    "src.domain.fragment_primitives",
+    "src.domain.fragment_values",
+]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.load_sag_assessment"
+depends_on = ["src.domain.fragments", "src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.lifecycle"
+depends_on = ["src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.timeline"
+depends_on = ["src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.forward_comparison"
+depends_on = [
+    "src.battery_math",
+    "src.domain.reasons",
+    "src.domain.timeline",
+    "src.domain.values",
+]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.curve_assessment"
+depends_on = [
+    "src.domain.forward_comparison",
+    "src.domain.fragment_policy",
+    "src.domain.fragments",
+    "src.domain.values",
+]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.firmware_lb_assessment"
+depends_on = ["src.domain.fragments", "src.domain.lifecycle", "src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.blackout_terminal"
+depends_on = ["src.domain.fragments"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.ir_learning_decision"
+depends_on = ["src.domain.learning", "src.domain.reasons", "src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.learning"
+depends_on = ["src.domain.reasons", "src.domain.values"]
+layer = "domain"
+
+[[modules]]
+path = "src.domain.terminal_outcome"
+depends_on = [
+    "src.domain.blackout_terminal",
+    "src.domain.reasons",
+]
+layer = "domain"
+
+[[modules]]
 path = "src.domain"
-depends_on = ["src.battery_math"]
+depends_on = [
+    "src.domain.forward_comparison",
+    "src.domain.learning",
+    "src.domain.lifecycle",
+    "src.domain.reasons",
+    "src.domain.timeline",
+    "src.domain.values",
+]
 layer = "domain"
 
 [[modules]]
