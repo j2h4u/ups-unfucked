@@ -1,0 +1,992 @@
+# Slice 1 Wave 2 v3 blackout storage design
+
+**Status:** implementation-ready design; the approved direction is a fresh v3 authority with no v2
+reader, migration, mutation, import, or reverse projection. This document authorizes implementation design,
+not deployment.
+
+**Authority:** `PRODUCT.md`, ADR 0004, and
+`docs/plans/unified-blackout-recharge-evidence-learning-plan.md`. Wave 1 commit `687bfc6` supplies the
+domain records, application ports and values, schema-3 canonical envelope, physical codecs, terminal/tail
+codecs, and byte budgets reused here.
+
+## 1. Outcome and scope
+
+Wave 2 makes a durably accepted v3 blackout START survive process or host death and makes a sealed blackout
+queryable without treating a projection as scientific evidence. It implements the private filesystem side of
+the Wave 1 ports:
+
+- `BlackoutCaptureStorePort`;
+- `BlackoutEvidencePort`;
+- `BlackoutTailStorePort`;
+- `BlackoutHistoryPort`; and
+- `BlackoutModelCapturePort`.
+
+The result serves these product jobs:
+
+- **J1 — Protect:** all storage calls remain behind safety publication; storage never owns shutdown.
+- **J2 — Remember:** an accepted START has an immutable, streamable v3 terminal locator and history summary,
+  or a typed failure remains in bounded recovery state.
+- **J3 — Improve:** Wave 3 can consume verified raw records and append the existing typed assessment tail;
+  summaries never substitute for evidence.
+- **J4 — Warn:** the durable typed summary hashes needed by later cohort/report work become queryable.
+- **J5 — Run unattended:** every durable transition is restart-convergent and recovery work is bounded.
+
+### 1.1 In scope
+
+1. Owner-only v3 paths, file validation, exact-write/readback, sync, atomic replace, and fault hooks.
+2. A private bounded work registry with preparing, capturing, processing, tail, rollover-reservation, and
+   sealing transaction state.
+3. Registry-first START, exact compare-and-append, terminal close, damage continuation, and size rollover.
+4. Bounded streaming of physical evidence; no whole-event materialization.
+5. Typed derived-tail persistence in the already-frozen codec order and immutable event sealing.
+6. Immutable terminal locators, append-only terminal catalog, resumable order-independent history rebuild,
+   and bounded history pages.
+7. A ModelOwner-owned atomic `(snapshot, persisted hash)` capture seam.
+8. Targeted unit/integration/fault tests and architecture declarations.
+
+### 1.2 Explicitly out of scope
+
+- Recharge storage belongs to Slice 4 and is not prebuilt here.
+- Wave 3 owns fragment profiling, consumer assessment, learning decisions, model commit orchestration,
+  terminal-outcome construction, report rendering, health/MOTD presentation, and report retry. Wave 2 only
+  persists and verifies the typed batch Wave 3 supplies.
+- No v2 or Release-A path is opened, decoded, copied, imported, reprojected, or modified.
+- No SQLite, third-party dependency, generic repository, generic event bus, or application-visible JSON map.
+- No live service/config change, cutover handshake, deployment, UAT, or Cross-AI action is part of Wave 2.
+
+## 2. Context and constraints
+
+### 2.1 Existing contracts retained
+
+- `SCHEMA_VERSION = 3`; a root wire record has `seq=0` and `prev_record_sha256=null`.
+- Each wire chain starts at `seq=0`/`prev=null`, is contiguous, and is at most `3197`; wire sequence is
+  independent from logical domain counters, which remain unsigned 64-bit values. One aggregate has a
+  physical-capture chain and a separate terminal/derived chain, as already demonstrated by the Wave 1 tail
+  codec fixtures that root `endpoint_anchor` at sequence zero.
+- A complete raw NUT token map is at most 16 KiB; a physical JSONL line is at most 20 KiB.
+- A raw evidence page is at most 1,024 records and 4 MiB. A recovery page is at most 32 work items.
+- Capture accounting stops at 62 MiB and retains a 2 MiB full-tail reserve. An aggregate never exceeds
+  64 MiB. A logical aggregate has at most 64 private physical segment references.
+- The existing tail budget remains 128 derived records, 8 KiB per derived record, 256 descriptors of at most
+  256 canonical bytes, and 2 MiB for the complete derived/terminal tail. In the `prove_tail_budget` contract,
+  `derived_records` contains profiles, three assessment summaries, decision, and optional receipt;
+  `terminal_records` contains all terminal anchors, `blackout_end`, and `terminal_outcome`. Outcome is never
+  counted inside the 128-derived-record ceiling.
+- Physical files are scientific authority. Registry, catalog, locators, offset tables, indexes, summaries,
+  reports, cursors, and health values are either transaction metadata or rebuildable projections.
+
+### 2.2 Safety and compatibility
+
+- The monitor publishes the virtual UPS before submitting storage work. Wave 2 adds no poll-thread filesystem
+  call and does not change the one-second cadence, sticky shutdown, unknown handling, or runtime floor.
+- The fresh root is `STATE_ROOT/events-v3/blackouts/`. `STATE_ROOT/events/`,
+  `STATE_ROOT/discharge-events-v1.jsonl`, and every other v2/Release-A path are outside the v3 path resolver.
+- No compatibility fallback is permitted. A missing/corrupt v3 structure fails v3 evidence availability; it
+  never searches an older root.
+- Python 3.13 standard library only. File ownership is the service uid; no new privilege or capability is
+  required.
+
+### 2.3 Performance bounds
+
+- Capture operations encode and append one bounded record. They do not scan an event, catalog, or index.
+- Recovery returns at most 32 items; the global pending-processing cap is eight.
+- Evidence consumers hold at most one 4 MiB page plus bounded decoder state.
+- An index tick completes at most 32 catalog entries, reads/writes at most 4 MiB, and runs for at most 50 ms.
+- A single event larger than the tick budget advances by a durable 512 KiB byte cursor; it is not rejected.
+- Index/catalog/history size has no 4 MiB global ceiling and no automatic time pruning.
+
+## 3. Approaches considered
+
+Scores are 1 (poor) through 5 (strong). The weighted result is out of 5.
+
+| Criterion | Weight | A: clean private v3 family | B: subclass/parameterize v2 | C: one file per record | D: SQLite |
+|---|---:|---:|---:|---:|---:|
+| Fail-closed security and path isolation | 20 | 5 | 2 | 4 | 4 |
+| Proof that v2 is never read or mutated | 20 | 5 | 1 | 5 | 5 |
+| Crash durability and exact replay | 20 | 5 | 4 | 3 | 5 |
+| Wave 1 contract/codec alignment | 15 | 5 | 3 | 3 | 2 |
+| Bounded streaming and rebuild | 10 | 5 | 4 | 2 | 4 |
+| Testability/fault injection | 10 | 5 | 3 | 4 | 3 |
+| Kaizen simplicity/dependency cost | 5 | 4 | 4 | 2 | 1 |
+| **Weighted result** | **100** | **4.95** | **2.55** | **3.50** | **3.85** |
+
+### 3.1 Approach A — clean private v3 adapter family (selected)
+
+Create v3-only path, durability, registry, catalog, locator, capture, evidence, tail, history, and model-capture
+collaborators. Reuse the Wave 1 typed values and codecs, and reuse v2 *techniques* only where they are still
+correct: registry-first creation, exact append intent, owner-only modes, bounded cursors, external merge, and
+atomic promotion.
+
+Benefits are mechanical v2 isolation, typed least-authority ports, bounded recovery, and direct fault tests.
+The cost is new adapter code, but the code is cohesive and contains no migration archaeology.
+
+### 3.2 Approach B — subclass or parameterize v2 storage (rejected)
+
+The existing durability code has valuable patterns, but its public classes encode v2 filenames, schemas,
+record grammar, lifecycle, report outbox, and projection assumptions. Reusing those classes makes an
+accidental v2 open/import hard to disprove and couples v3 changes to legacy behavior. This violates the
+approved fresh-authority boundary.
+
+### 3.3 Approach C — one immutable file per record (rejected)
+
+This makes append idempotency easy, but a long event creates thousands of directory entries, makes directory
+fsync the one-second hot path, complicates ordered streaming and rollover, and broadens cleanup/recovery. It
+does not improve product evidence over bounded append-only segments.
+
+### 3.4 Approach D — SQLite/WAL (rejected)
+
+SQLite offers transactions and indexes, but it contradicts the authoritative JSONL decision, adds a
+dependency and a second scientific representation, and obscures immutable raw receipts. No current business
+requirement justifies it.
+
+### 3.5 Project-specific rejection rules
+
+Any implementation is rejected if it opens a v2 path, requires a whole-event/index scan for a normal append,
+places raw serial/tokens in logs or human projections, follows symlinks, widens owner-only modes, accepts a
+second writer, treats an index as evidence, silently truncates corruption, or lets storage delay safety
+publication.
+
+## 4. Selected architecture
+
+```text
+ModelOwner (owns process lock fd + thread transaction gate)
+   |-- atomic blackout capture adapter -> FrozenModelCapture
+   `-- injects writer lease into v3 mutators
+
+BlackoutCaptureStorePort -> registry -> physical JSONL segment(s) + offset tables
+                                      -> processing registry
+BlackoutEvidencePort     <- active registry or immutable terminal locator
+BlackoutTailStorePort    -> terminal-chain staging -> immutable terminal chain -> seal
+                                                     |
+                                                     v
+                           immutable terminal locator -> terminal catalog
+                                                               |
+                                                               v
+BlackoutHistoryPort      <- active sorted index generation <- bounded rebuild
+```
+
+The adapter has one logical aggregate `segment_id`, retained in every Wave 1 domain value and v3 envelope.
+It has two named wire chains: `physical` contains START, samples, gaps, and intermediate anchors;
+`terminal` contains terminal anchors, END, profiles, summaries, decision, optional receipt, and outcome.
+Damage recovery may split only the physical chain's bytes across private storage segments. Those private
+storage IDs never cross an application port. Therefore every `StoredPhysicalRecord.ref` remains the same
+`BlackoutRef`, while the locator preserves up to 64 physical-segment receipts plus one terminal-chain receipt.
+
+## 5. Exact filesystem contract
+
+`STATE_ROOT` is the existing model directory. Components accept it as a `Path`; they do not infer it from
+environment variables.
+
+```text
+STATE_ROOT/                                      0700, existing
+  monitor.lock                                  0600, ModelOwner-owned
+  events-v3/                                    0700
+    blackouts/                                  0700
+      work-registry-v1.json                     0600
+      terminal-catalog-v1.jsonl                 0600
+      terminal-catalog-head-v1.json             0600
+      terminal-catalog-append-intent-v1.json    0600, present only in flight
+      segments/                                 0700
+        blk-<utc>-<blackout>-p<ordinal>-<storage>.jsonl
+        blk-<utc>-<blackout>-p<ordinal>-<storage>.offsets
+        damaged-p<ordinal>-<file_sha256>.jsonl   0400
+        damaged-p<ordinal>-<file_sha256>.offsets 0400
+      terminal-chains/                          0700
+        <blackout>.jsonl                         0400 after seal
+      transactions/                             0700
+        tail-<blackout>.jsonl                    0600, terminal chain before seal
+      terminal-locators/                        0700
+        <blackout>.json                         0400
+      history/                                  0700
+        index-v1.jsonl                           0600
+        index-head-v1.json                       0600
+        rebuild-state-v1.json                    0600, present only during rebuild
+        event-scan-v1.json                       0600, present only for a large event
+        runs/                                    0700
+        merge-v1.jsonl                           0600, present only during rebuild
+```
+
+### 5.1 Grammar
+
+- Adapter-generated `blackout_id`, logical `segment_id`, and private `storage_id` are lowercase UUID4 hex:
+  `[0-9a-f]{32}` with version nibble `4` and RFC-4122 variant. Supplied IDs are validated to this grammar at
+  the storage edge even though the reusable domain values accept bounded text.
+- `<utc>` is the START UTC rendered as `YYYYMMDDTHHMMSSffffffZ`.
+- `<ordinal>` is six decimal digits `000000..000063`. Ordinal 63 (reference 64) is admitted only for typed
+  terminal damage/rollover continuation.
+- The complete active filename regex is
+  `\Ablk-\d{8}T\d{12}Z-[0-9a-f]{32}-p\d{6}-[0-9a-f]{32}\.jsonl\Z`.
+- Only the resolver creates paths. IDs and cursor strings are never concatenated without grammar validation;
+  `..`, separators, control characters, absolute paths, symlinks, devices, sockets, and hard links with
+  `st_nlink != 1` fail closed.
+
+### 5.2 Creation and sealing modes
+
+- Directories are created `0700` and rejected if group/other bits are present.
+- Mutable files are created with `O_NOFOLLOW|O_CLOEXEC`, exclusive create where applicable, and mode `0600`.
+- A sealed segment, offset table, or locator is `fchmod(0400)`, `fsync`ed, and followed by parent directory
+  `fsync`. Existing modes are never silently widened or repaired.
+- Temporary names are generated only under the exact owning directory as `.<basename>.tmp-<uuid4hex>`.
+  Cleanup removes only a verified regular file with that exact prefix and same uid; cleanup failure is noted
+  without masking the primary error.
+
+## 6. Private persisted schemas
+
+All JSON is strict UTF-8 canonical JSON (`sort_keys=True`, compact separators, ASCII escapes, no NaN), ends
+with one newline, and rejects duplicate keys or unknown fields.
+
+### 6.1 Work registry
+
+Top-level schema `v3-blackout-work-registry-v1` has exactly:
+
+```json
+{"capture":null,"pending":[],"schema":"v3-blackout-work-registry-v1"}
+```
+
+There is at most one `capture` value and at most eight `pending` entries. A START is refused before reservation
+when eight entries are already pending, so every accepted START has a processing slot. The registry is at
+most 256 KiB.
+
+`capture.tag=preparing` contains exactly `blackout_id`, `logical_segment_id`, `storage_id`, `path_token`,
+`offset_token`, `start_line_utf8`, `start_sha256`, `start_length`, `started_utc`, and
+`frozen_policy_revision`.
+
+`capture.tag=capturing` contains those identities plus `physical_episode_id`, `battery_epoch_id`,
+`observation_origin`, nullable `uat_intent_id`, `physical_next_seq`, `physical_last_record_sha256`,
+nullable `terminal_next_seq`, nullable `terminal_last_record_sha256`, `capture_bytes`,
+`capture_record_count`, `sample_count` (uint64), `gap_count` (uint64), ordered `storage_segments` (maximum
+64), nullable `append_intent`, nullable `last_append`, and nullable `rollover`.
+
+Each `storage_segments` item has exactly `ordinal`, `storage_id`, `path_token`, `offset_token`, `trusted_bytes`,
+`first_seq`, `last_seq`, `last_record_sha256`, nullable `damaged_file_sha256`, and `terminal_only`.
+
+`append_intent` has exactly `chain` (`physical|terminal`), `operation`, `expected_seq`,
+`expected_previous_hash`, nullable `storage_ordinal`,
+`file_offset`, `line_utf8`, `line_sha256`, `line_length`, and `expected_cursor_sha256`. It is persisted before
+the file write. `last_append` repeats the operation, prior cursor hash, line hash, and resulting cursor. It
+makes an immediate exact retry idempotent; any different bytes or older cursor are a typed conflict.
+
+`rollover` is a subtransaction, not a second capture. It contains exact `phase` (`reserved`,
+`successor_started`, or `carrier_ended`), old and successor IDs/paths, the encoded successor START,
+encoded carrier END, `continuation_kind=size_rollover`, and hashes/lengths. This is the only representation of
+a preparing successor; it does not consume a pending slot and cannot become capture-active until registry
+swap.
+
+Each `pending` entry has `tag=processing|tail`, aggregate identities, frozen policy revision, exact physical
+and terminal cursors, ordered storage-segment receipts, terminal anchor/end hashes, counters, and one
+stage-specific intent.
+`tag=tail` additionally has the tail staging path/hash/length, ordered record `(offset,length,hash,type)`
+receipts, terminal-outcome hash, and sealing transaction fields `locator_seq`, `catalog_offset`, nullable
+`locator_hash`, and `seal_phase`.
+
+Registry transition is exactly:
+
+```text
+preparing -> capturing -> processing -> tail -> sealed (registry entry removed)
+```
+
+### 6.2 Offset table
+
+Each `.offsets` file is a private derived accelerator with an eight-byte magic/version header followed by
+fixed 56-byte big-endian entries:
+
+```text
+seq:u32 | file_offset:u64 | line_length:u32 | record_sha256:32 bytes | record_kind:u8 |
+reserved:7 zero bytes
+```
+
+The first physical segment starts at sequence zero with previous hash null. Later damage segments continue
+the same logical sequence/hash scope. An offset entry becomes visible only after its JSONL line is durable.
+A missing/damaged offset table is rebuildable by bounded scan; it never changes evidence meaning.
+
+### 6.3 Terminal locator
+
+Schema `v3-blackout-terminal-locator-v1` contains exactly:
+
+- aggregate, physical-episode, battery-epoch, and logical-segment IDs;
+- origin, nullable UAT intent, started/ended UTC, termination, sample/gap uint64 counts;
+- ordered physical-segment receipts (maximum 64): ordinal, path token, offset token, file SHA-256, offset-table
+  SHA-256, byte length, trusted byte length, first/last sequence, first/last record hashes, and damaged flag;
+- one terminal-chain receipt: path token, file SHA-256, byte length, root/final sequence and hashes;
+- `physical_chain_root_record_sha256` and `physical_chain_final_record_sha256`;
+- `terminal_chain_root_record_sha256`, `blackout_end_record_sha256`,
+  `terminal_outcome_record_sha256`, and `terminal_chain_final_record_sha256` (equal to the outcome hash);
+- immutable aggregate hash: SHA-256 of canonical ordered physical-segment receipts plus terminal-chain,
+  END, and outcome hashes;
+- exact canonical `BlackoutSummary` projection and its SHA-256;
+- reserved terminal catalog sequence, byte offset, catalog-line SHA-256; and
+- locator SHA-256 computed over all preceding fields.
+
+The locator is written once. An existing exact locator is idempotent; any difference is corruption/conflict.
+Scientific readers verify segment and record hashes from it and never trust its summary as raw evidence.
+
+### 6.4 Terminal catalog
+
+Each `v3-blackout-terminal-catalog-entry-v1` line is at most 1 KiB and has exactly `schema`, `seq` (uint64),
+`locator_token`, `locator_sha256`, `summary_sort_key`, `previous_entry_sha256`, and `entry_sha256`. Entry zero
+has null previous hash; later entries are contiguous.
+
+`terminal-catalog-head-v1.json` stores next sequence, byte size, and last entry hash. The append-intent file
+stores the exact line and offset before append. Retry uses `pread` at that offset and the immutable locator's
+catalog coordinates; it never scans the catalog. A full exact line advances the head, zero bytes retry, a
+proper torn prefix is quarantined as projection damage and rebuild is unavailable, and different bytes are a
+conflict.
+
+### 6.5 History index
+
+Each `v3-blackout-history-summary-v1` line is at most 8 KiB. It contains the exact `BlackoutSummary` fields,
+locator hash, aggregate hash, terminal outcome hash, `sort_key`, previous index-line hash, and line hash.
+`sort_key` is canonical `started_at_utc + "|" + blackout_id`; it is unique and order is ascending. Wall time
+or catalog sequence may regress without invalidating a generation.
+
+The head names an immutable generation UUID, byte length, line count, final hash, catalog snapshot offset/hash,
+and index SHA-256. A promoted generation is a projection snapshot; newer catalog entries wait for the next
+generation rather than changing the bytes underneath an active page cursor.
+
+## 7. Component and API design
+
+### 7.1 New adapter files
+
+| File | Responsibility |
+|---|---|
+| `src/adapters/jsonl_v3_errors.py` | Closed storage error taxonomy and bounded OS-error rendering. |
+| `src/adapters/jsonl_v3_storage_paths.py` | Exact root/filename grammar, uid/mode/type/link validation. |
+| `src/adapters/jsonl_v3_filesystem.py` | Writer-lease validation, write-all, readback, sync, atomic replace, immutable seal, fault hooks. |
+| `src/adapters/jsonl_v3_registry.py` | Strict private schema, global bounds, transitions, append/rollover/seal intents, recovery pages. |
+| `src/adapters/jsonl_v3_segment_index.py` | Fixed offset entries and bounded rebuild/read by sequence. |
+| `src/adapters/jsonl_v3_capture_store.py` | `BlackoutCaptureStorePort`; START, append, close, rollover, damage continuation. |
+| `src/adapters/jsonl_v3_evidence_store.py` | `BlackoutEvidencePort`; verified 1,024-record/4 MiB pages across private segments. |
+| `src/adapters/jsonl_v3_tail_store.py` | `BlackoutTailStorePort`; ordered encoding, staging, append, readback, sealing handoff. |
+| `src/adapters/jsonl_v3_terminal_locator.py` | Immutable locator codec/store and segment/aggregate verification. |
+| `src/adapters/jsonl_v3_terminal_catalog.py` | Hash-linked catalog, bounded batches, head/append-intent recovery. |
+| `src/adapters/jsonl_v3_history_index.py` | `BlackoutHistoryPort`, bounded external runs/merge, generation cursors. |
+| `src/adapters/jsonl_v3_model_capture.py` | Thin `BlackoutModelCapturePort` adapter delegating one atomic ModelOwner seam. |
+
+### 7.2 Existing files changed by implementation
+
+- `src/adapters/model_owner.py`: add the atomic blackout capture seam and writer-lease capability; retain sole
+  lock ownership.
+- `src/adapters/jsonl_v3_terminal_tail_codec.py`: encode/decode both exact anchor roles. Kinds
+  `transfer_to_battery` and `raw_firmware_lb` require `anchor_role=intermediate`; all other existing kinds
+  require `anchor_role=terminal`. Existing terminal golden bytes remain unchanged.
+- `src/application/blackout_storage_values.py`: add the closed `BlackoutChainKind`, carry it in capture
+  cursors/stored refs, validate pages one chain at a time, freeze `MAX_TAIL_ANCHORS=32`, and freeze the opaque
+  history cursor limit; no JSON/path value is added.
+- `src/application/active_capture_session.py`: retain the advancing physical cursor and nullable advancing
+  terminal cursor independently; a terminal marker never overwrites the cursor needed by later samples.
+- `src/application/blackout_ports.py`: clarify the `project` semantics below without broadening signatures.
+- `tach.toml`: declare the new adapter dependencies and forbid v3 modules from v2 adapter imports.
+
+No configuration file changes.
+
+### 7.3 Public port behavior
+
+Existing Wave 1 signatures remain authoritative.
+
+`BlackoutCaptureStorePort.open(start)`:
+
+- validates IDs, codec bytes, policy, origin, model hash, and backlog before any filesystem mutation;
+- is idempotent only for the exact preparing/capturing START bytes;
+- returns the `physical` chain cursor immediately after durable START.
+
+`append_sample`, `append_gap`, and `append_anchor`:
+
+- require exact active `BlackoutRef` and cursor;
+- encode with the caller's sequence and previous hash;
+- return the next cursor only after write, `fdatasync`, bounded readback, a physical offset receipt when
+  applicable, and registry advance;
+- return the stored result for an exact immediate retry; any changed record at the same cursor is
+  `V3AppendConflict`.
+
+The narrow Wave 2 contract correction adds `BlackoutChainKind(PHYSICAL, TERMINAL)` to
+`BlackoutCaptureCursor` and `StoredRecordRef`. `ActiveCaptureSession` retains a typed pair: the required
+physical cursor and a nullable terminal cursor. Samples, gaps, and intermediate anchors use and advance only
+the physical cursor. The first terminal anchor compares against, but does not consume or advance, the current
+physical cursor; it creates the terminal staging file at terminal `seq=0`/`prev=null` and populates the
+terminal cursor. Later terminal anchors advance only that terminal cursor. Thus the application can continue
+physical samples with its retained physical cursor after a modeled-safe-shutdown marker.
+
+`close(ref,cursor,end)`:
+
+- requires the immediately preceding durable record to be the END's exact terminal anchor, except
+  `aggregate_budget_exhausted`, for which the existing codec permits no endpoint anchor;
+- normally requires a terminal cursor and appends END to that chain. For anchorless
+  `aggregate_budget_exhausted`, `close` compares the physical cursor and roots the terminal chain with END at
+  `seq=0`/`prev=null`. It then moves the guaranteed registry slot to `processing` and never appends assessment
+  data.
+
+`recover(cursor,limit)`:
+
+- limit is `1..32`; order is `(blackout_id, logical_segment_id)` and does not use wall time;
+- emits at most one active capture plus the deterministic processing/tail entries;
+- completes any persisted intent before exposing work and returns the existing typed Wave 1 page/cursor.
+
+`BlackoutEvidencePort.page(ref,cursor,limit)`:
+
+- limit is `1..1024`; result bytes are at most 4 MiB and include at least one legal record when data remains;
+- traverses private storage segments while every returned record retains the same logical `BlackoutRef`;
+- emits records from only one chain per page; after the physical chain it returns a terminal-root cursor, so
+  each page independently verifies contiguous sequence, previous hash, codec, scope, and locator snapshot;
+- streams only `blackout_start`, `discharge_sample`, `discharge_gap`, `endpoint_anchor`, and `blackout_end`.
+
+`BlackoutTailStorePort.append_tail(ref,batch)`:
+
+- requires `processing`, verifies the batch's repeated terminal anchor/END facts, encodes the authoritative
+  order in section 8, proves actual bytes, and persists one exact staging transaction;
+- returns `stage=TAIL` after the terminal outcome is durable.
+
+`mark_processed(processing)`:
+
+- verifies the exact tail, seals segment/offset bytes, writes/verifies locator and catalog, removes the
+  registry entry, and returns `stage=SEALED`;
+- exact retry reconstructs SEALED from locator/catalog coordinates. It never reruns scientific evaluation.
+
+`BlackoutHistoryPort.project(ref)` is frozen as follows:
+
+- `ref` must be sealed and identify its logical aggregate; active/processing input raises
+  `V3ProjectionUnavailable`;
+- verifies the immutable locator and submits its exact summary to the current/next rebuild generation;
+- returns `BlackoutSummaryPage(summaries=(summary,), next_cursor=None, complete=True)` — exactly one summary,
+  never an arbitrary page or physical-episode fold;
+- an exact retry returns the same typed summary; a different summary for the ID is a conflict.
+
+`page_summaries(cursor,limit)`:
+
+- limit is `1..100`; null cursor starts at the promoted generation's first line;
+- the opaque cursor is URL-safe base64 canonical JSON containing schema, generation ID, next byte offset,
+  previous line hash, last sort key, and a SHA-256 checksum; encoded size is at most 512 bytes;
+- it returns ascending `(started_at_utc, blackout_id)` order. `complete=true` means end of that immutable
+  generation; new events appear only in a later null-cursor query.
+
+### 7.4 Atomic model capture and writer ownership
+
+`ModelOwner` adds:
+
+```python
+def capture_blackout_model(self) -> FrozenModelCapture: ...
+def writer_lease(self) -> ModelOwnerWriterLease: ...
+```
+
+`capture_blackout_model` executes under the owner's existing re-entrant lock, reads the model file, verifies
+its hash still equals `_persisted_hash`, and constructs `FrozenModelCapture(self._snapshot,
+self._persisted_hash)` before releasing the lock. The adapter's `capture()` only calls this method; it may not
+read/hash the file itself.
+
+`ModelOwner.open_runtime` continues to acquire `STATE_ROOT/monitor.lock` before model load and owns the fd
+until `close`. `ModelOwnerWriterLease` exposes an adapter-private context manager backed by that same owner
+lock and validates the held fd/device/inode. Every v3 mutation runs inside the lease. Thus:
+
+- no storage collaborator acquires or releases a second process lock;
+- model commits and v3 durable transitions cannot interleave inside one process;
+- a second process fails the existing nonblocking flock; and
+- read-only evidence/history methods need no writer authority, but snapshot mutable registry/index metadata
+  under the lease before reading.
+
+## 8. State and durability sequences
+
+### 8.1 Open
+
+1. Validate START and encode exact `seq=0`, `prev=null` bytes.
+2. Under the writer lease, require no active capture and fewer than eight pending entries.
+3. Atomically replace registry with `preparing` and fsync the blackouts directory.
+4. Exclusive-create segment and offset files; no path may pre-exist.
+5. Write-all START, `fdatasync` segment, read back exact bytes/hash.
+6. Write/fdatasync offset header+entry, then fsync `segments/`.
+7. Atomically replace registry with `capturing` and exact cursor.
+
+Recovery before step 3 did nothing. From steps 3–6 it recreates or verifies only the frozen bytes in
+`preparing`. Different bytes conflict. After step 7, retry returns the existing opened value.
+
+### 8.2 Append
+
+1. Validate ref/cursor and encode the exact line; check line, capture-byte, record-count, sequence-tail, and
+   segment-reference reservations before mutation.
+2. Persist `append_intent` with expected offset and bytes.
+3. Write-all and `fdatasync` the JSONL fd.
+4. `pread` exactly `line_length` at the intent offset and verify equality/hash.
+5. Append/fdatasync its offset entry.
+6. Replace registry with new cursor/counters, clear intent, retain `last_append`.
+
+`write_all` retries `EINTR`, advances on positive short writes, and treats zero as failure without spinning.
+After a crash, exact full bytes complete the receipt, zero bytes retry, and any prefix/other bytes enter damage
+continuation. Normal append never scans the file.
+
+For the first terminal anchor, the same intent protocol creates `transactions/tail-<blackout>.jsonl`, writes
+the anchor at `seq=0`/`prev=null`, fdatasyncs/readbacks it, fsyncs `transactions/`, and advances the terminal
+cursor. Later terminal anchors append with the terminal cursor. Terminal records do not receive physical
+offset-table entries because the whole terminal chain is independently bounded to 2 MiB and verified as one
+sealing unit.
+
+### 8.3 Independent sequence and byte admission
+
+The physical and terminal chains have independent sequence roots; no tail reservation is subtracted from the
+physical chain. This is required by the already-frozen Wave 1 limits and is arithmetically safe:
+
+```text
+physical worst case used by DischargeFragmentPolicy:
+  START 1 + physical samples 3170 + GAP 1 + intermediate ANCHOR 1
+  = 3173 records, seq 0..3172 <= 3197
+
+terminal policy ceiling:
+  terminal anchors 32 + END 1 + derived-record ceiling 128 + outcome 1
+  = 162 records, seq 0..161 <= 3197
+
+reachable Wave 1 BlackoutTailBatch maximum:
+  terminal anchors 32 + END 1 + profile records 96 + summaries 3 +
+  learning decision 1 + optional receipt 1 + outcome 1
+  = 135 records, seq 0..134 <= 3197
+```
+
+The 101 reachable derived records are `96 profiles + 3 summaries + 1 decision + 1 optional receipt`.
+`terminal_outcome` is terminal, not derived. The 256-descriptor limit is a total across the at-most-96 profile
+records; it does not add records. The 128-derived-record policy ceiling deliberately has 27 unused record
+slots for this closed Wave 1 order and is still tested as a construction guard.
+
+The policy's reserved END remains part of its conservative 62 MiB byte construction even though END is in
+the terminal chain; that over-reservation is safe and is not removed. Actual physical-chain bytes are still
+limited to 62 MiB. The complete terminal chain, including anchors, END, derived records, receipt, and outcome,
+must pass the existing 2 MiB `prove_tail_budget` measurement, so the aggregate total remains at most 64 MiB.
+
+Physical-chain sequence exhaustion outside the frozen maximum construction is a defensive capacity failure:
+before accepting such a record, the writer performs the same new-aggregate size rollover with
+`aggregate_budget_exhausted/budget_kind=bytes`. It never consumes terminal sequence space because none is
+shared.
+
+### 8.4 Terminal and intermediate anchors
+
+- `transfer_to_battery` and `raw_firmware_lb` are intermediate-role physical-chain records and count against
+  62 MiB.
+- `modeled_safe_shutdown`, `power_restored`, `service_stop`, `boot_boundary`, `charge_stabilized`, `gap`, and
+  `corruption` use terminal role, live in the terminal chain, and count against the 2 MiB reserve.
+- A modeled-safe-shutdown anchor may remain a mid-event fact if shutdown is cancelled; its *storage role*
+  remains terminal. Physical samples may continue in the independent physical chain. A later final boundary
+  gets its own terminal-chain anchor immediately before END.
+- `blackout_end.terminal_anchor_record_hash` always links the exact last closing anchor, not merely the first
+  terminal marker. If OL follows more physical samples, a new `power_restored` anchor is appended to the
+  terminal chain and END links it; the earlier modeled marker remains independently queryable. A
+  `safe_shutdown_restarted` END may use the modeled anchor as its closing anchor only when no later physical
+  sample exists and its source-sample hash equals the physical chain's durable final record. If later physical
+  bytes exist or reconciliation contradicts that link, recovery appends the appropriate boot/gap/corruption
+  closing anchor and cannot classify the END as `safe_shutdown_restarted`.
+- At most 32 terminal anchors are retained. Exact duplicates coalesce by source-sample hash; exhausting the
+  bound closes as explicit capture damage rather than silently omitting an anchor.
+
+### 8.5 Close and tail order
+
+The first terminal anchor roots `transactions/tail-<blackout>.jsonl` at sequence zero; an anchorless budget END
+may instead be its root. Close durably appends the final terminal anchor (if not already present) then END and
+moves to `processing`. `append_tail` continues that same terminal chain and writes exactly:
+
+1. `fragment_profile` records in codec-produced ordinal order (1–96);
+2. one `load_sag_assessment_summary`;
+3. one `curve_assessment_summary`;
+4. one `firmware_lb_assessment_summary`;
+5. one `learning_decision`;
+6. zero or one `ir_model_commit_receipt`; and
+7. one `terminal_outcome`, always last.
+
+`BlackoutTailBatch.anchors` repeats all already-durable terminal anchors in order as verification input and
+does not append them twice. The receipt is present only for the existing accepted-commit disposition. Every
+terminal-chain record is contiguous in sequence/hash order and scoped to the same blackout;
+compact-summary `segment_id="summary"` remains the codec's existing namespace. `prove_tail_budget` receives
+the actual derived records plus all terminal anchors, END, and outcome and must pass before append and after
+readback.
+
+### 8.6 Rollover
+
+For bytes/sequence reservation:
+
+1. Persist old/new UUIDs, exact link, successor START, and carrier END in `capture.rollover.phase=reserved`.
+2. Create and sync successor START under a new `blackout_id`, same `physical_episode_id`, copied epoch/origin/
+   intent, and `continued_from`/`size_rollover`.
+3. Append and sync old carrier END with `continued_by`; no dangling link is allowed before successor START.
+4. Atomically swap registry active capture to successor and clear rollover.
+
+The successor is not capture-active before step 4. Recovery reuses exact IDs/bytes. If successor creation
+fails before durable START, old stays active/censored. If START is durable but carrier END is not, history uses
+the registry reservation to fold one open physical episode, never two completed events.
+
+### 8.7 Damage continuation and 64 references
+
+Torn tail, unexpected append bytes, or middle-chain corruption is never truncated into apparent cleanliness.
+The current physical file is closed, hashed, renamed to its exact damaged name, made `0400`, and retained.
+Registry stores its trusted prefix. A new private storage segment continues the same logical `blackout_id`,
+logical `segment_id`, next sequence, and last trusted hash; the first new record is an explicit typed
+gap/corruption fact.
+
+References 1–63 allow capture continuation. If another recovery is required at 63, physical reference 64 is
+reserved for the final physical gap/corruption receipt. The independent terminal chain then appends the
+closing corruption anchor and END before rollover. A 65th physical reference is rejected before file
+creation. Ordinary byte rollover never adds a storage reference to the old aggregate.
+
+### 8.8 Seal
+
+1. Verify terminal outcome and every linked typed record from the terminal staging chain and durable readback.
+2. `fdatasync`, readback/hash, `fchmod(0400)`, and `fsync` every physical segment/offset file; fsync
+   `segments/`. Apply the same operations to the terminal staging file, rename it to
+   `terminal-chains/<blackout>.jsonl`, and fsync `terminal-chains/`.
+3. Reserve catalog sequence/offset in the pending registry entry.
+4. Write locator temporary, fdatasync, readback, rename, and fsync `terminal-locators/`.
+5. Persist catalog append intent, append/fdatasync/readback catalog line, advance catalog head, clear intent.
+6. Remove registry pending entry and fsync blackouts directory. The staging name no longer exists because its
+   exact bytes were promoted to the immutable terminal-chain name; fsync `transactions/` after the rename.
+
+Registry removal is the SEALED transition. A crash at any step resumes from exact hashes/coordinates. No
+sealed scientific file is reopened writable.
+
+## 9. History rebuild and large-event behavior
+
+`rebuild_tick(max_files=32,max_bytes=4*MiB,max_wall_s=0.050)` snapshots terminal catalog byte offset and hash.
+It never assumes catalog, close, or wall-time order.
+
+1. Read catalog entries by byte cursor and verify the catalog hash chain.
+2. Verify each immutable locator and its segment receipts. For an event larger than the remaining tick budget,
+   persist `event-scan-v1.json` with locator hash, segment ordinal, byte offset, cumulative SHA-256 state
+   receipt, and expected segment hash. Advance by at most 512 KiB per tick. The catalog entry is consumed only
+   after all segment hashes and terminal records verify.
+3. Accumulate at most 1,024 summaries/4 MiB, sort by `(started_at_utc, blackout_id)`, and atomically seal a run.
+4. Merge at most 16 runs at once in 4 MiB chunks. Exact duplicate ID/summary collapses; differing bytes for
+   one ID fail closed. Multi-pass merge handles any run count.
+5. Verify output order, line chain, byte count, and SHA-256; atomically rename to `index-v1.jsonl`, fsync
+   `history/`, then publish the new head.
+
+Rebuild state records phase (`scan`, `merge`, `verify`, `prepared`), generation, catalog snapshot, run list,
+input/output offsets and hashes, and last progress UTC. Wall time is observability only. Restart resumes exact
+offsets; if any immutable input hash changes, the generation fails closed. The previously promoted generation
+remains queryable during rebuild and after a failed rebuild.
+
+## 10. Error model and recovery policy
+
+New typed errors are:
+
+- `V3StorageError` base;
+- `V3WriterOwnershipError` for missing/wrong lease or second writer;
+- `V3PathError` for path/type/link/uid/mode violations;
+- `V3ValidationError` for schema, ID, cursor, or codec-boundary failures;
+- `V3AppendConflict` for same identity/cursor with different bytes;
+- `V3CapacityError` only when a construction invariant is violated before an explicit rollover path;
+- `V3PersistenceError` for write/sync/rename/readback/ENOSPC/EIO failures;
+- `V3CorruptionError` for durable bytes that violate a hash/schema/order invariant; and
+- `V3ProjectionUnavailable` for an absent/stale/damaged derived generation.
+
+Errors expose bounded stable reason codes to health/application layers. Raw NUT tokens, serials, complete
+paths, and unbounded OS messages are not logged. Persistence errors latch evidence health but never alter the
+safety result. Sealed corruption is never repaired in place; it makes that evidence/projection unavailable
+and preserves bytes for diagnosis.
+
+## 11. Security design
+
+### 11.1 Threat model
+
+| Asset | Actor/vector | Mitigation |
+|---|---|---|
+| Raw UPS evidence and serial fields | local user reads files | service uid ownership; directories 0700; files 0600/0400; no human projection |
+| Evidence integrity | second daemon or concurrent model writer | one ModelOwner-owned flock plus shared in-process transaction gate |
+| State-root boundary | symlink, traversal, device, hard-link substitution | closed grammar, `lstat`, `O_NOFOLLOW`, regular-file/uid/mode/link-count checks, dir-fd-relative operations |
+| Scientific truth | index/locator substitution | event bytes remain authority; immutable segment/aggregate/outcome hashes reverified |
+| Availability | oversized input, huge event/index, corrupt cursor | 16/20 KiB records, bounded pages/ticks/runs, no whole-file hot-path scan, fail-closed cursor validation |
+| Provenance | retry changes origin/UAT/continuation | exact preparing/rollover bytes and immutable START/END stamps |
+| Information disclosure | OS errors/logging | bounded reason codes; no token/serial/payload logging |
+
+### 11.2 Security controls checklist
+
+- [ ] All IDs, paths, enums, counters, sizes, cursors, and canonical JSON are validated at adapter boundaries.
+- [ ] No path is accepted from a wire record or index; the resolver produces all paths.
+- [ ] Owner-only uid/modes and non-symlink regular files/directories are verified on every open/recovery.
+- [ ] One nonblocking writer lock is acquired before model load and remains ModelOwner-owned.
+- [ ] No secret is added; raw forensic values remain only in owner-only event bytes.
+- [ ] No SQL, shell command, network listener, authentication surface, or elevated capability is added.
+- [ ] Resource ceilings exist for records, registry, pending work, segments, pages, tail, tick, run memory, and
+  cursor size; aggregate/index total history is streamed rather than globally capped.
+- [ ] Unknown/corrupt state fails closed and never falls back to v2.
+
+No Critical or High security issue is accepted for merge.
+
+## 12. Exact fault hooks and fault matrix
+
+`V3FaultPoint` is a closed enum. Hooks are test-only injected callables and receive only these names:
+
+```text
+layout.after_events_v3_dirsync
+open.after_registry_preparing
+open.after_segment_create
+open.after_start_write
+open.after_start_fdatasync
+open.after_start_readback
+open.after_offset_fdatasync
+open.after_segments_dirsync
+open.after_registry_capturing
+append.after_registry_intent
+append.after_line_write
+append.after_line_fdatasync
+append.after_line_readback
+append.after_offset_fdatasync
+append.after_registry_advance
+terminal.after_registry_intent
+terminal.after_chain_create
+terminal.after_anchor_write
+terminal.after_anchor_fdatasync
+terminal.after_anchor_readback
+terminal.after_transactions_dirsync
+terminal.after_registry_advance
+damage.after_segment_rename
+damage.after_segments_dirsync
+damage.after_continuation_create
+damage.after_continuation_fdatasync
+damage.after_registry_advance
+rollover.after_registry_reserve
+rollover.after_successor_create
+rollover.after_successor_fdatasync
+rollover.after_successor_dirsync
+rollover.after_carrier_end_fdatasync
+rollover.after_registry_swap
+close.after_anchor_fdatasync
+close.after_end_fdatasync
+close.after_registry_processing
+tail.after_staging_fdatasync
+tail.after_registry_intent
+tail.after_batch_write
+tail.after_batch_fdatasync
+tail.after_batch_readback
+tail.after_registry_outcome
+seal.after_files_readback
+seal.after_files_chmod_fsync
+seal.after_terminal_rename
+seal.after_terminal_dirsync
+seal.after_locator_fdatasync
+seal.after_locator_rename
+seal.after_locator_dirsync
+seal.after_catalog_intent
+seal.after_catalog_write
+seal.after_catalog_fdatasync
+seal.after_catalog_head
+seal.after_registry_remove
+seal.after_transactions_dirsync
+index.after_generation_cursor
+index.after_event_scan_cursor
+index.after_run_fdatasync
+index.after_merge_chunk_fdatasync
+index.after_prepared
+index.after_promote_rename
+index.after_history_dirsync
+index.after_head_publish
+```
+
+Tests inject process-stop exceptions at every hook and reopen from disk. They also inject:
+
+- positive short writes, zero writes, `EINTR`, `ENOSPC`, `EIO`, fdatasync/fsync/directory-fsync/rename/readback
+  failures;
+- torn final line, unexpected tail bytes, hash-valid middle semantic corruption, offset-table corruption;
+- unsafe permissions, wrong uid where testable, symlink/nonregular/hard-link paths, and a second writer;
+- duplicate exact delivery and differing-byte conflict at START, append, tail, locator, and catalog;
+- every open/append/close/tail/seal/rollover/damage durable crash point;
+- a physical event above 4 MiB, an event above one tick budget, a maximum 64 MiB aggregate, and an index above
+  4 MiB/10,000 summaries;
+- byte/sequence rollover, 63-to-64 terminal reference use, refused 65th reference, and unchanged hashes;
+- modeled-safe-shutdown as terminal root followed by more physical samples and a distinct final closing
+  anchor; restart accepts the modeled anchor only when its source hash is still the physical-chain final hash;
+- multiple simultaneous pending entries, recovery pages over 32, unsorted/regressing wall times and catalog
+  completion order, exact duplicate summaries, and conflicting duplicate IDs.
+
+Every restart assertion proves either exact convergence or an explicit typed unavailable/loss state; no test
+accepts silent omission.
+
+## 13. Test plan
+
+### 13.1 Unit tests
+
+| Test file | Required coverage |
+|---|---|
+| `tests/adapters/test_jsonl_v3_storage_paths.py` | grammar, UUID4, traversal, modes, uid/link/type, temp ownership |
+| `tests/adapters/test_jsonl_v3_filesystem.py` | write-all, EINTR/short/zero, sync/replace/readback ordering, fd lifetime |
+| `tests/adapters/test_jsonl_v3_registry.py` | strict schemas, one active/eight pending, all legal/illegal transitions, 32-page recovery |
+| `tests/adapters/test_jsonl_v3_segment_index.py` | binary entries, sequence lookup, rebuild, damage, 4 MiB page support |
+| `tests/application/test_blackout_storage_values.py` | independent chain cursors/refs, one-chain pages, physical-to-terminal cursor transition |
+| `tests/application/test_active_capture_session_chains.py` | retained physical cursor plus nullable terminal cursor; interleaved modeled marker/sample/final close |
+| `tests/adapters/test_jsonl_v3_capture_store.py` | open/append/close idempotency, conflict, uint64 counters, 16/20 KiB, root/chain |
+| `tests/adapters/test_jsonl_v3_rollover.py` | bytes/sequence, exact links/IDs, old-open failure, successor-before-carrier, swap recovery |
+| `tests/adapters/test_jsonl_v3_damage_recovery.py` | torn/middle corruption, trusted prefix, 63/64 refs, no 65th file |
+| `tests/adapters/test_jsonl_v3_evidence_store.py` | 1,024/4 MiB pages across private files, cursors, codec/scope/hash rejection |
+| `tests/adapters/test_jsonl_v3_tail_store.py` | independent seq-zero terminal root, reachable 101-derived/135-total maximum, 128-derived/162-total policy ceiling, 256 descriptors, 2 MiB proof |
+| `tests/adapters/test_jsonl_v3_terminal_locator.py` | exact physical-root/final, terminal-root/END/outcome/final hashes, immutable retry/conflict, aggregate hash |
+| `tests/adapters/test_jsonl_v3_terminal_catalog.py` | root/contiguous catalog, head/intent, no-scan retry, >4 MiB catalog |
+| `tests/adapters/test_jsonl_v3_history_index.py` | unsorted input, external runs/merge, cursor generations, duplicate/conflict |
+| `tests/adapters/test_jsonl_v3_large_event_rebuild.py` | >tick and 64 MiB event across bounded restartable ticks |
+| `tests/adapters/test_jsonl_v3_model_capture.py` | atomic exact snapshot/hash, external model conflict, shared lease/second writer |
+| `tests/adapters/test_jsonl_v3_fault_matrix.py` | every named hook and injected syscall/error class |
+
+### 13.2 Integration and architecture tests
+
+- `tests/application/test_blackout_v3_storage_integration.py`: typed ports from START through SEALED and
+  exact `project`/page behavior; no application JSON/path leakage.
+- `tests/application/test_blackout_v3_recovery_integration.py`: multiple work items, stage convergence,
+  duplicate/conflict, tail retry, and order-independent recovery.
+- Extend `tests/test_architecture_boundaries.py` to reject any import from the new v3 family to v2 JSONL
+  modules and any domain/application import of concrete adapters.
+- Extend `tests/test_quality_gates.py` only if a new source-span rule needs registration; thresholds are never
+  loosened or suppressed.
+
+### 13.3 Business acceptance tests
+
+1. A durable START survives death after every open boundary and appears exactly once.
+2. A >4 MiB event streams in bounded pages; no consumer materializes it.
+3. A >tick-budget event eventually enters history over multiple restarts.
+4. Exact duplicate append/tail/seal calls change no bytes; different bytes conflict.
+5. Torn/corrupt capture retains immutable damaged bytes and explicit continuation/loss facts.
+6. Byte/sequence and reference rollover preserve one physical episode, exact links, hashes, origin, and all
+   accepted samples; no dangling `continued_by` appears.
+7. Eight pending events recover; a ninth START is explicitly refused before acceptance rather than silently
+   stranded.
+8. Unsorted terminal order and backward wall time yield the same sorted unique history generation.
+9. An index/catalog larger than 4 MiB pages normally and rebuilds without a global ceiling.
+10. A storage/permission/second-writer failure leaves safety publication behavior unchanged in the existing
+    safety integration fixture.
+
+## 14. Implementation clusters for LUNA
+
+Clusters are sequential at their integration boundaries but have non-overlapping file ownership. Every LUNA
+prompt must state that other agents may be working in the tree, must preserve unrelated changes, and must not
+edit another cluster's files.
+
+### Cluster A — durability foundation
+
+**Owns:** `jsonl_v3_errors.py`, `jsonl_v3_storage_paths.py`, `jsonl_v3_filesystem.py`,
+`jsonl_v3_registry.py`, `jsonl_v3_segment_index.py`, the chain-kind/cursor changes in
+`src/application/blackout_storage_values.py`, and their same-named tests plus
+`tests/application/test_blackout_storage_values.py`.
+
+**Completion:** schemas, modes, typed independent-chain cursors, lease checks, exact writes/intents, offset
+lookup, and registry transition tests pass. No capture/tail/history behavior is implemented here.
+
+**Targeted gate:**
+
+```bash
+uv run pytest tests/adapters/test_jsonl_v3_storage_paths.py tests/adapters/test_jsonl_v3_filesystem.py tests/adapters/test_jsonl_v3_registry.py tests/adapters/test_jsonl_v3_segment_index.py tests/application/test_blackout_storage_values.py
+uv run ruff format --check src/adapters/jsonl_v3_errors.py src/adapters/jsonl_v3_storage_paths.py src/adapters/jsonl_v3_filesystem.py src/adapters/jsonl_v3_registry.py src/adapters/jsonl_v3_segment_index.py src/application/blackout_storage_values.py tests/adapters/test_jsonl_v3_storage_paths.py tests/adapters/test_jsonl_v3_filesystem.py tests/adapters/test_jsonl_v3_registry.py tests/adapters/test_jsonl_v3_segment_index.py tests/application/test_blackout_storage_values.py
+uv run ruff check src/adapters/jsonl_v3_errors.py src/adapters/jsonl_v3_storage_paths.py src/adapters/jsonl_v3_filesystem.py src/adapters/jsonl_v3_registry.py src/adapters/jsonl_v3_segment_index.py src/application/blackout_storage_values.py tests/adapters/test_jsonl_v3_storage_paths.py tests/adapters/test_jsonl_v3_filesystem.py tests/adapters/test_jsonl_v3_registry.py tests/adapters/test_jsonl_v3_segment_index.py tests/application/test_blackout_storage_values.py
+```
+
+### Cluster B — capture and evidence
+
+**Owns:** `jsonl_v3_capture_store.py`, `jsonl_v3_evidence_store.py`, modification to
+`jsonl_v3_terminal_tail_codec.py`, dual-cursor changes to `src/application/active_capture_session.py`, and
+capture/rollover/damage/evidence tests plus `tests/application/test_active_capture_session_chains.py`.
+
+**Completion:** exact port behavior, retained physical plus nullable terminal cursor, modeled-marker/sample/
+closing-anchor interleave, independent roots, anchor roles, streaming, byte/sequence rollover, corruption
+continuation, and 64-reference boundary pass without touching tail/catalog/history files.
+
+**Targeted gate:**
+
+```bash
+uv run pytest tests/adapters/test_jsonl_v3_capture_store.py tests/adapters/test_jsonl_v3_rollover.py tests/adapters/test_jsonl_v3_damage_recovery.py tests/adapters/test_jsonl_v3_evidence_store.py tests/adapters/test_jsonl_v3_physical_codecs.py tests/adapters/test_jsonl_v3_terminal_tail_codec.py tests/application/test_blackout_storage_values.py tests/application/test_active_capture_session_chains.py
+uv run ruff format --check src/adapters/jsonl_v3_capture_store.py src/adapters/jsonl_v3_evidence_store.py src/adapters/jsonl_v3_terminal_tail_codec.py src/application/active_capture_session.py tests/adapters/test_jsonl_v3_capture_store.py tests/adapters/test_jsonl_v3_rollover.py tests/adapters/test_jsonl_v3_damage_recovery.py tests/adapters/test_jsonl_v3_evidence_store.py tests/application/test_active_capture_session_chains.py
+uv run ruff check src/adapters/jsonl_v3_capture_store.py src/adapters/jsonl_v3_evidence_store.py src/adapters/jsonl_v3_terminal_tail_codec.py src/application/active_capture_session.py tests/adapters/test_jsonl_v3_capture_store.py tests/adapters/test_jsonl_v3_rollover.py tests/adapters/test_jsonl_v3_damage_recovery.py tests/adapters/test_jsonl_v3_evidence_store.py tests/application/test_active_capture_session_chains.py
+```
+
+### Cluster C — tail, locator, catalog, and model capture
+
+**Owns:** `jsonl_v3_tail_store.py`, `jsonl_v3_terminal_locator.py`,
+`jsonl_v3_terminal_catalog.py`, `jsonl_v3_model_capture.py`, modification to `model_owner.py`, and their tests.
+
+**Completion:** existing codecs persist in exact order, actual tail proof passes, SEALED is restart-convergent,
+catalog append is no-scan idempotent, and snapshot/hash is atomic under shared ownership.
+
+**Targeted gate:**
+
+```bash
+uv run pytest tests/adapters/test_jsonl_v3_tail_store.py tests/adapters/test_jsonl_v3_terminal_locator.py tests/adapters/test_jsonl_v3_terminal_catalog.py tests/adapters/test_jsonl_v3_model_capture.py tests/adapters/test_jsonl_v3_tail_budget.py tests/adapters/test_jsonl_v3_*codec.py tests/adapters/test_model_owner.py
+uv run ruff format --check src/adapters/jsonl_v3_tail_store.py src/adapters/jsonl_v3_terminal_locator.py src/adapters/jsonl_v3_terminal_catalog.py src/adapters/jsonl_v3_model_capture.py src/adapters/model_owner.py tests/adapters/test_jsonl_v3_tail_store.py tests/adapters/test_jsonl_v3_terminal_locator.py tests/adapters/test_jsonl_v3_terminal_catalog.py tests/adapters/test_jsonl_v3_model_capture.py
+uv run ruff check src/adapters/jsonl_v3_tail_store.py src/adapters/jsonl_v3_terminal_locator.py src/adapters/jsonl_v3_terminal_catalog.py src/adapters/jsonl_v3_model_capture.py src/adapters/model_owner.py tests/adapters/test_jsonl_v3_tail_store.py tests/adapters/test_jsonl_v3_terminal_locator.py tests/adapters/test_jsonl_v3_terminal_catalog.py tests/adapters/test_jsonl_v3_model_capture.py
+```
+
+### Cluster D — history and composition contracts
+
+**Owns:** `jsonl_v3_history_index.py`, history/large-event tests,
+`test_blackout_v3_storage_integration.py`, `test_blackout_v3_recovery_integration.py`, and the narrow
+documentation/contract changes to `blackout_ports.py`, `tach.toml`, and architecture tests.
+
+**Completion:** bounded order-independent rebuild, >tick event progress, generation paging, exact project
+semantics, and import boundaries pass.
+
+**Targeted gate:**
+
+```bash
+uv run pytest tests/adapters/test_jsonl_v3_history_index.py tests/adapters/test_jsonl_v3_large_event_rebuild.py tests/application/test_blackout_v3_storage_integration.py tests/application/test_blackout_v3_recovery_integration.py tests/application/test_blackout_ports.py tests/test_architecture_boundaries.py
+uv run ruff format --check src/adapters/jsonl_v3_history_index.py src/application/blackout_ports.py tests/adapters/test_jsonl_v3_history_index.py tests/adapters/test_jsonl_v3_large_event_rebuild.py tests/application/test_blackout_v3_storage_integration.py tests/application/test_blackout_v3_recovery_integration.py
+uv run ruff check src/adapters/jsonl_v3_history_index.py src/application/blackout_ports.py tests/adapters/test_jsonl_v3_history_index.py tests/adapters/test_jsonl_v3_large_event_rebuild.py tests/application/test_blackout_v3_storage_integration.py tests/application/test_blackout_v3_recovery_integration.py
+uv run lint-imports
+uv run tach check --exact
+uv run pyright
+```
+
+### Wave 2 release-candidate gate
+
+Only after all four clusters are code-complete:
+
+```bash
+just check
+git diff --check
+```
+
+No suppression, threshold change, or weakened CRAP/structural/source-span/architecture rule is allowed to make
+the RC green.
+
+## 15. Rollback and cleanup
+
+Wave 2 is not deployed independently. Code rollback is a normal revert of Wave 2 implementation commits.
+Because the v3 root is fresh and v2 is untouched, rollback runs the old binary against its existing state;
+the old binary never sees `events-v3`.
+
+For development tests, each test owns a temporary state root and verifies no tail staging, append intent,
+rebuild run, merge file, open fd, process lock, container, worktree, or test database remains. Runtime recovery
+removes a staging file only after SEALED registry removal and exact hash verification. Raw/sealed/damaged
+event bytes and immutable locators are never cleanup targets.
+
+If a future cutover is rolled back after real v3 events exist, retain the complete owner-only `events-v3`
+tree as forensic evidence. Do not import it into v2 and do not delete it as derived state.
+
+## 16. Validation checklist
+
+### Implementation
+
+- [ ] Only the exact v3 root is reachable; production v3 code has no v2 adapter import or path literal.
+- [ ] Registry schemas and all lifecycle transitions are strict, bounded, and restart-convergent.
+- [ ] START is registry-first and durable before `open` returns.
+- [ ] Append retry is exact and no normal append scans a whole file.
+- [ ] Independent physical/terminal roots, per-chain sequence/hash/scope, uint64 counters, 16/20 KiB,
+  62/64 MiB, 32 terminal anchors, 128 derived records, and 64 physical references are enforced before
+  mutation.
+- [ ] Damage is retained and explicit; sealing makes raw bytes immutable.
+- [ ] Evidence and history paging obey exact page/cursor semantics.
+- [ ] Rebuild is order-independent, resumable, and progresses on an event larger than one tick.
+- [ ] Model snapshot/hash capture and writer-lock ownership are atomic and tested.
+- [ ] Wave 2 does not render reports or mutate the model.
+- [ ] All temporary resources are inventoried and cleaned by their owner.
+
+### Security and quality
+
+- [ ] Owner-only modes, no-follow/type/uid/link validation, least privilege, and second-writer refusal pass.
+- [ ] Raw token/serial values do not enter logs, indexes, reports, health, or cursors.
+- [ ] Every fault hook and syscall error in section 12 converges or fails explicitly.
+- [ ] Ruff structural checks, CRAP <=30 per function, source-span limits, Pyright, Vulture, Import Linter, and
+  Tach exact pass with no suppression or loosened threshold.
+- [ ] `just check` and `git diff --check` pass on the exact Wave 2 RC tree.
+
+## 17. Business-value traceability
+
+| Product value | Durable mechanism | Acceptance proof |
+|---|---|---|
+| A blackout does not disappear after accepted START (J2/J5) | registry-first frozen START and exact recovery | crash at every open hook yields exactly one START |
+| Safety never waits for evidence (J1) | storage stays behind publication and uses the existing bounded submission lane | held writer/storage failure keeps safety fixture fresh |
+| Long/deep events remain usable (J2/J3) | 64 MiB immutable aggregate, 4 MiB evidence pages, 512 KiB rebuild cursor | >4 MiB and >tick fixtures finish with bounded state |
+| Damage is honest, not silently repaired (J2/J3) | immutable damaged segment receipt plus explicit gap/corruption continuation | torn/middle-corrupt fixtures preserve hashes and refuse affected science |
+| One physical outage is not inflated by technical rollover (J2) | same physical episode, exact two-sided links, successor-before-carrier transaction | byte/sequence/ref rollover projects one linked episode without dangling link |
+| History works for day/month/year without Grafana (J2) | immutable locators plus unlimited streamed sorted generations | >10,000/>4 MiB unsorted history returns exact unique pages |
+| Later science cannot learn from a summary (J3/J4) | evidence port reopens/verifies raw JSONL; index carries hashes only | architecture and mutation tests reject projection-as-evidence paths |
+| Model evidence matches the actual persisted model (J1/J3) | one ModelOwner-locked snapshot+hash capture | concurrent/external model mutation is an explicit conflict |
+| Reporting failure cannot strand evidence (J5) | SEALED/catalog completion is independent of Wave 3 report sinks | sealed event remains queryable with report layer absent/failing |
+
+Wave 2 is complete only when every row has a deterministic passing test and the full RC gate is green. It is
+not a live v3 deployment claim; the authoritative plan still requires the remaining slices, reviews,
+cutover preflight, and user-run deployment/UAT.
