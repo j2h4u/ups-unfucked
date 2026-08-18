@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.nut_client import NUTClient
+from src.nut_client import NUT_MAX_LINE_BYTES, NUT_MAX_REPLY_BYTES, NUTClient
 
 LIST_VAR_RESPONSE = (
     "BEGIN LIST VAR cyberpower\n"
@@ -180,6 +180,33 @@ class TestStrictListVar:
         mock_nut_socket.sendall.assert_called_once_with(b"LIST VAR cyberpower\n")
         mock_nut_socket.close.assert_called_once()
 
+    def test_strict_evidence_returns_logical_and_exact_wire_lexemes(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = self._reply(
+            "BEGIN LIST VAR cyberpower",
+            r'VAR cyberpower device.note "quoted \"value\" \\ path"',
+            'VAR cyberpower ups.status "OL"',
+            "END LIST VAR cyberpower",
+        )
+
+        values, tokens, wire_lexemes = NUTClient().get_ups_vars_with_evidence_strict()
+
+        assert values["device.note"] == 'quoted "value" \\ path'
+        assert tokens["device.note"] == 'quoted "value" \\ path'
+        assert wire_lexemes["device.note"] == r"quoted \"value\" \\ path"
+        mock_nut_socket.sendall.assert_called_once_with(b"LIST VAR cyberpower\n")
+
+    def test_strict_accepts_empty_quoted_value(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = self._reply(
+            "BEGIN LIST VAR cyberpower",
+            'VAR cyberpower device.note ""',
+            'VAR cyberpower ups.status "OL"',
+            "END LIST VAR cyberpower",
+        )
+
+        values, tokens, wire_lexemes = NUTClient().get_ups_vars_with_evidence_strict()
+
+        assert values["device.note"] == tokens["device.note"] == wire_lexemes["device.note"] == ""
+
     def test_strict_rejects_wrong_begin_envelope(self, mock_nut_socket):
         mock_nut_socket.recv.return_value = self._reply(
             "BEGIN LIST VAR another-ups",
@@ -200,6 +227,14 @@ class TestStrictListVar:
         )
 
         with pytest.raises(ValueError, match="non-VAR"):
+            NUTClient().get_ups_vars_with_tokens_strict()
+
+    def test_strict_rejects_bare_carriage_return(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = (
+            b'BEGIN LIST VAR cyberpower\rVAR cyberpower ups.status "OL"\nEND LIST VAR cyberpower\n'
+        )
+
+        with pytest.raises(ValueError, match="bare carriage"):
             NUTClient().get_ups_vars_with_tokens_strict()
 
     def test_strict_rejects_duplicate_key(self, mock_nut_socket):
@@ -229,6 +264,8 @@ class TestStrictListVar:
             ('VAR cyberpower battery.voltage "13.40', "malformed LIST VAR value"),
             ('VAR cyberpower invalid key "13.40"', "malformed LIST VAR key or value"),
             ('VAR cyberpower note "bad"quote"', "malformed LIST VAR key or value"),
+            (r'VAR cyberpower note "bad\tvalue"', "malformed LIST VAR key or value"),
+            (r'VAR cyberpower note "bad\"', "malformed LIST VAR key or value"),
         ],
     )
     def test_strict_rejects_malformed_var_lines(self, mock_nut_socket, line, message):
@@ -240,6 +277,82 @@ class TestStrictListVar:
 
         with pytest.raises(ValueError, match=message):
             NUTClient().get_ups_vars_with_tokens_strict()
+
+    def test_strict_unquotes_embedded_quotes_and_backslashes(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = self._reply(
+            "BEGIN LIST VAR cyberpower",
+            r'VAR cyberpower device.note "quoted \"value\" \\ path"',
+            "END LIST VAR cyberpower",
+        )
+
+        values, tokens = NUTClient().get_ups_vars_with_tokens_strict()
+
+        assert values["device.note"] == 'quoted "value" \\ path'
+        assert tokens["device.note"] == 'quoted "value" \\ path'
+
+    def test_strict_rejects_oversized_physical_line(self, mock_nut_socket):
+        oversized = "x" * NUT_MAX_LINE_BYTES
+        mock_nut_socket.recv.return_value = self._reply(
+            "BEGIN LIST VAR cyberpower",
+            f'VAR cyberpower vendor.note "{oversized}"',
+            "END LIST VAR cyberpower",
+        )
+
+        with pytest.raises(ValueError, match="line exceeds"):
+            NUTClient().get_ups_vars_with_tokens_strict()
+
+    def test_strict_rejects_oversized_reply(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = b"x" * (NUT_MAX_REPLY_BYTES + 1)
+
+        with pytest.raises(ValueError, match="reply exceeds"):
+            NUTClient().get_ups_vars_with_tokens_strict()
+
+    def test_strict_accepts_exact_64_kib_reply_including_crlf(self, mock_nut_socket):
+        lines = [
+            "BEGIN LIST VAR cyberpower",
+            'VAR cyberpower ups.status "OL"',
+        ]
+        for index in range(45):
+            lines.append(f'VAR cyberpower vendor{index:02d} "{"x" * 1000}"')
+        prefix = "\r\n".join(lines) + "\r\n"
+        suffix = "END LIST VAR cyberpower\r\n"
+        remaining = NUT_MAX_REPLY_BYTES - len(prefix.encode()) - len(suffix.encode())
+        filler_prefix = 'VAR cyberpower final "'
+        filler = filler_prefix + ("x" * (remaining - len(filler_prefix.encode()) - 3)) + '"\r\n'
+        raw = (prefix + filler + suffix).encode()
+        assert len(raw) == NUT_MAX_REPLY_BYTES
+        mock_nut_socket.recv.return_value = raw
+
+        values, _, _ = NUTClient().get_ups_vars_with_evidence_strict()
+
+        assert values["ups.status"] == "OL"
+
+    def test_strict_rejects_reply_one_byte_over_64_kib(self, mock_nut_socket):
+        lines = self._reply(
+            "BEGIN LIST VAR cyberpower",
+            'VAR cyberpower ups.status "OL"',
+            "END LIST VAR cyberpower",
+        )
+        mock_nut_socket.recv.return_value = lines + b"x" * (NUT_MAX_REPLY_BYTES + 1 - len(lines))
+
+        with pytest.raises(ValueError, match="reply exceeds"):
+            NUTClient().get_ups_vars_with_evidence_strict()
+
+    def test_strict_rejects_invalid_utf8_and_trailing_protocol_data(self, mock_nut_socket):
+        mock_nut_socket.recv.return_value = (
+            b'BEGIN LIST VAR cyberpower\nVAR cyberpower note "\xff"\nEND LIST VAR cyberpower\n'
+        )
+        with pytest.raises(ValueError, match="UTF-8"):
+            NUTClient().get_ups_vars_with_evidence_strict()
+
+        mock_nut_socket.recv.return_value = self._reply(
+            "BEGIN LIST VAR cyberpower",
+            'VAR cyberpower ups.status "OL"',
+            "END LIST VAR cyberpower",
+            "trailing protocol data",
+        )
+        with pytest.raises(ValueError, match="incomplete LIST VAR envelope"):
+            NUTClient().get_ups_vars_with_evidence_strict()
 
 
 class TestTruncatedListVar:
