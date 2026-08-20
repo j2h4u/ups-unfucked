@@ -782,11 +782,13 @@ physical samples with its retained physical cursor after a modeled-safe-shutdown
 `close(ref,cursor,end)`:
 
 - requires the immediately preceding durable record to be the END's exact terminal anchor, except
-  `aggregate_budget_exhausted`, for which the existing codec permits no endpoint anchor;
+  `aggregate_budget_exhausted`, whose domain payload always has
+  `terminal_anchor_record_hash=null`;
 - normally requires a terminal cursor and appends END to that chain. For anchorless
-  `aggregate_budget_exhausted`, `close` compares the physical cursor and roots the terminal chain with END at
-  `seq=0`/`prev=null`. It then moves the guaranteed registry slot to `processing` and never appends assessment
-  data.
+  `aggregate_budget_exhausted`, an existing terminal cursor supplies the next sequence and previous-record hash;
+  only when no terminal cursor exists does the physical cursor authorize a terminal-root END at
+  `seq=0`/`prev=null`. The wire contract rejects `seq=0` with a previous hash and `seq>0` without one. It then
+  moves the guaranteed registry slot to `processing` and never appends assessment data.
 
 `recover(cursor,limit)`:
 
@@ -798,9 +800,10 @@ physical samples with its retained physical cursor after a modeled-safe-shutdown
 
 - limit is `1..1024`; result bytes are at most 4 MiB and include at least one legal record when data remains;
 - traverses private storage segments while every returned record retains the same logical `BlackoutRef`;
-- emits records from only one chain per page; after the physical chain it returns a terminal-root cursor, so
-  each page independently verifies contiguous sequence, previous hash, codec, scope, and locator snapshot;
-- streams only `blackout_start`, `discharge_sample`, `discharge_gap`, `endpoint_anchor`, and `blackout_end`.
+- emits only the physical chain and is complete after the final physical record; terminal anchors and END are
+  handled by the independent terminal-chain store;
+- each page independently verifies contiguous sequence, previous hash, codec, scope, and locator snapshot;
+- streams only `blackout_start`, `discharge_sample`, `discharge_gap`, and intermediate `endpoint_anchor` records.
 
 `BlackoutTailStorePort.append_tail(ref,batch)`:
 
@@ -967,8 +970,10 @@ shared.
 ### 8.5 Close and tail order
 
 The first terminal anchor roots `transactions/tail-<blackout>.jsonl` at sequence zero; an anchorless budget END
-may instead be its root. Close durably appends the final terminal anchor (if not already present) then END and
-moves to `processing`. `append_tail` continues that same terminal chain and writes exactly:
+may instead be its root when no terminal anchor exists. With prior terminal records, that same anchorless budget
+END is linked at the next sequence with the prior record hash. Close durably appends the final terminal anchor (if
+not already present) then END and moves to `processing`. `append_tail` continues that same terminal chain and
+writes exactly:
 
 1. `fragment_profile` records in codec-produced ordinal order (1–96);
 2. one `load_sag_assessment_summary`;

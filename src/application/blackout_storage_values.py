@@ -15,7 +15,12 @@ from src.domain.blackout_capture import BlackoutStart, DischargeGap, DischargeSa
 from src.domain.blackout_terminal import BlackoutTermination
 from src.domain.curve_assessment import CurveAssessment, CurveDisposition
 from src.domain.firmware_lb_assessment import FirmwareLbAssessment, FirmwareLbDisposition
-from src.domain.fragments import DischargeFragmentProfile, EndpointAnchor, ObservationOrigin
+from src.domain.fragments import (
+    AnchorKind,
+    DischargeFragmentProfile,
+    EndpointAnchor,
+    ObservationOrigin,
+)
 from src.domain.ir_learning_decision import IrLearningDecision, IrLearningDisposition
 from src.domain.load_sag_assessment import LoadSagAssessment, LoadSagDisposition
 from src.domain.terminal_outcome import TerminalOutcome
@@ -31,6 +36,13 @@ MAX_SUMMARY_PAGE_SIZE = 100
 MAX_RECOVERY_PAGE_SIZE = 32
 MAX_TAIL_PROFILES = 96
 MAX_TAIL_RESULTS = 96
+MAX_TAIL_ANCHORS = 32
+_PHYSICAL_ANCHOR_KINDS = frozenset(
+    {
+        AnchorKind.TRANSFER_TO_BATTERY,
+        AnchorKind.RAW_FIRMWARE_LB,
+    }
+)
 
 
 class BlackoutRecordType(StrEnum):
@@ -117,6 +129,7 @@ class BlackoutCaptureOpened:
             raise TypeError("opened capture cursor must be BlackoutCaptureCursor")
         if self.cursor.chain is not BlackoutChainKind.PHYSICAL:
             raise ValueError("opened capture cursor must belong to the physical chain")
+        _require_post_start_cursor(self.cursor, "opened capture")
         if (
             self.ref.blackout_id != self.cursor.blackout_id
             or self.ref.segment_id != self.cursor.segment_id
@@ -228,6 +241,7 @@ class RecoveredCaptureWork:
 
     ref: BlackoutRef
     cursor: BlackoutCaptureCursor
+    terminal_cursor: BlackoutCaptureCursor | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, BlackoutRef):
@@ -236,6 +250,16 @@ class RecoveredCaptureWork:
             raise TypeError("recovered capture cursor must be BlackoutCaptureCursor")
         if self.cursor.chain is not BlackoutChainKind.PHYSICAL:
             raise ValueError("recovered capture cursor must belong to the physical chain")
+        _require_post_start_cursor(self.cursor, "recovered capture")
+        if self.terminal_cursor is not None:
+            if self.terminal_cursor.chain is not BlackoutChainKind.TERMINAL:
+                raise ValueError("recovered terminal cursor must belong to the terminal chain")
+            _require_post_start_cursor(self.terminal_cursor, "recovered terminal")
+            if (
+                self.terminal_cursor.blackout_id != self.ref.blackout_id
+                or self.terminal_cursor.segment_id != self.ref.segment_id
+            ):
+                raise ValueError("recovered terminal cursor scope differs from its ref")
         if (
             self.ref.blackout_id != self.cursor.blackout_id
             or self.ref.segment_id != self.cursor.segment_id
@@ -530,6 +554,8 @@ def _validate_empty_page_cursor(value: RawEvidencePage) -> None:
         return
     if value.next_cursor is None:
         raise ValueError("empty incomplete evidence page requires its initial cursor")
+    if value.next_cursor.chain is not BlackoutChainKind.PHYSICAL:
+        raise ValueError("empty incomplete evidence page requires a physical cursor")
     _validate_initial_cursor(value.next_cursor)
 
 
@@ -562,6 +588,11 @@ def _validate_cursor_state(next_sequence: int | None, last_hash: str | None) -> 
         raise ValueError("non-initial cursor requires its prior record hash")
 
 
+def _require_post_start_cursor(cursor: BlackoutCaptureCursor, name: str) -> None:
+    if cursor.next_sequence == 0 and cursor.last_record_sha256 is None:
+        raise ValueError(f"{name} cursor must be after durable START")
+
+
 def _validate_initial_cursor(value: BlackoutCaptureCursor) -> None:
     if value.next_sequence != 0 or value.last_record_sha256 is not None:
         raise ValueError("empty incomplete evidence page requires its initial cursor")
@@ -574,6 +605,8 @@ def _validate_physical_record_link(
         raise ValueError("physical record type does not match its immutable reference")
     if value.ref.chain is not BlackoutChainKind.PHYSICAL:
         raise ValueError("physical record must belong to the physical chain")
+    if isinstance(value.value, EndpointAnchor) and value.value.kind not in _PHYSICAL_ANCHOR_KINDS:
+        raise ValueError("physical record anchor kind must be an intermediate anchor")
     if (
         value.value.blackout_id != value.ref.ref.blackout_id
         or value.value.segment_id != value.ref.ref.segment_id
@@ -597,6 +630,8 @@ def _validate_tail_batch_bounds(value: BlackoutTailBatch) -> None:
         > MAX_TAIL_RESULTS
     ):
         raise ValueError("tail assessment batch exceeds its bounded budget")
+    if len(value.anchors) > MAX_TAIL_ANCHORS:
+        raise ValueError("tail anchor batch exceeds its bounded budget")
 
 
 def _validate_tail_batch_values(value: BlackoutTailBatch) -> None:
@@ -631,6 +666,7 @@ __all__ = [
     "MAX_RECOVERY_PAGE_SIZE",
     "MAX_STORED_RECORD_BYTES",
     "MAX_SUMMARY_PAGE_SIZE",
+    "MAX_TAIL_ANCHORS",
     "BlackoutChainKind",
     "BlackoutCaptureCursor",
     "BlackoutCaptureOpened",

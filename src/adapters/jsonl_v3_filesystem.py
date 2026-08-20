@@ -13,7 +13,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol, final
+from typing import Any, Protocol, cast, final
 
 from src.adapters.jsonl_v3_errors import (
     V3AppendConflict,
@@ -28,6 +28,20 @@ from src.adapters.jsonl_v3_errors import (
     V3WriterOwnershipError,
     bounded_os_error,
 )
+from src.adapters.jsonl_v3_filesystem_regions import (
+    V3FileRegion,
+    V3FileSnapshot,
+    offset_snapshot,
+)
+from src.adapters.jsonl_v3_filesystem_regions import (
+    create_and_sync as _create_and_sync,
+)
+from src.adapters.jsonl_v3_filesystem_regions import (
+    read_region as _read_region,
+)
+from src.adapters.jsonl_v3_filesystem_regions import (
+    rename_damaged as _rename_damaged,
+)
 from src.adapters.jsonl_v3_segment_index import (
     OFFSET_ENTRY_SIZE,
     OFFSET_HEADER,
@@ -36,7 +50,6 @@ from src.adapters.jsonl_v3_segment_index import (
     SegmentIndexEntry,
     SegmentIndexPage,
     SegmentIndexSnapshot,
-    append_state_hash,
     decode_offset_entry,
     encode_offset_entry,
 )
@@ -45,14 +58,19 @@ from src.adapters.jsonl_v3_storage_paths import (
     MUTABLE_MODE,
     SEALED_MODE,
     V3AppendableFileToken,
+    V3CreatableCaptureToken,
+    V3DamagedOffsetPathToken,
+    V3DamagedSegmentPathToken,
     V3MutableFileToken,
     V3OffsetIndexToken,
     V3OffsetPathToken,
     V3PromotedFileToken,
     V3ReadableFileToken,
     V3SealableFileToken,
+    V3SegmentPathToken,
     V3StoragePaths,
     V3TemporaryFileToken,
+    V3TerminalStagingToken,
     _resolve_token,
     validate_path_token,
 )
@@ -69,6 +87,13 @@ def _validate_offset_token(token: V3OffsetIndexToken) -> None:
     if isinstance(token, V3TemporaryFileToken) and isinstance(token.destination, V3OffsetPathToken):
         return
     raise V3PathError("offset operation requires an offset token")
+
+
+def _validate_offset_read_token(
+    token: V3OffsetPathToken | V3DamagedOffsetPathToken,
+) -> None:
+    if not isinstance(token, (V3OffsetPathToken, V3DamagedOffsetPathToken)):
+        raise V3PathError("offset read requires a sealed offset token")
 
 
 def _validate_offset_page_bounds(entry_ordinal: object, limit: object) -> tuple[int, int]:
@@ -90,6 +115,17 @@ class V3FaultPoint(StrEnum):
     REPLACE_AFTER_RENAME = "replace.after_rename"
     APPEND_AFTER_WRITE = "append.after_write"
     APPEND_AFTER_FDATASYNC = "append.after_fdatasync"
+    DAMAGE_AFTER_SEGMENT_RENAME = "damage.after_segment_rename"
+    DAMAGE_AFTER_SEGMENTS_DIRSYNC = "damage.after_segments_dirsync"
+    DAMAGE_AFTER_CONTINUATION_CREATE = "damage.after_continuation_create"
+    DAMAGE_AFTER_CONTINUATION_FDATASYNC = "damage.after_continuation_fdatasync"
+    DAMAGE_AFTER_REGISTRY_ADVANCE = "damage.after_registry_advance"
+    ROLLOVER_AFTER_REGISTRY_RESERVE = "rollover.after_registry_reserve"
+    ROLLOVER_AFTER_SUCCESSOR_CREATE = "rollover.after_successor_create"
+    ROLLOVER_AFTER_SUCCESSOR_FDATASYNC = "rollover.after_successor_fdatasync"
+    ROLLOVER_AFTER_SUCCESSOR_DIRSYNC = "rollover.after_successor_dirsync"
+    ROLLOVER_AFTER_CARRIER_END_FDATASYNC = "rollover.after_carrier_end_fdatasync"
+    ROLLOVER_AFTER_REGISTRY_SWAP = "rollover.after_registry_swap"
     SEAL_AFTER_FCHMOD = "seal.after_fchmod"
     PROMOTE_AFTER_FCHMOD = "promote.after_fchmod"
     PROMOTE_AFTER_RENAME = "promote.after_rename"
@@ -178,12 +214,6 @@ def _hash_fd(fd: int, size: int, max_bytes: int) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class V3FileSnapshot:
-    byte_length: int
-    content_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
 class V3AppendReceipt:
     previous_length: int
     appended_length: int
@@ -199,6 +229,42 @@ class V3WriteTransaction:
         self, filesystem: "JsonlV3Filesystem", lease: ValidatedWriterLease, token: object
     ) -> None:
         raise TypeError("transaction construction is private")
+
+    def ensure_layout(self) -> None:
+        self._check()
+        self.__a.paths = V3StoragePaths(self.__a.state_root)
+        root_fd = os.open(
+            self.__a.state_root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+        )
+        self.__d.append(root_fd)
+        for chain in (
+            ("events-v3",),
+            ("events-v3", "blackouts"),
+            ("events-v3", "blackouts", "segments"),
+            ("events-v3", "blackouts", "terminal-chains"),
+            ("events-v3", "blackouts", "transactions"),
+            ("events-v3", "blackouts", "terminal-locators"),
+            ("events-v3", "blackouts", "history"),
+            ("events-v3", "blackouts", "history", "runs"),
+        ):
+            fd = root_fd
+            for name in chain:
+                try:
+                    os.mkdir(name, DIRECTORY_MODE, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                child = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=fd
+                )
+                info = os.fstat(child)
+                if (
+                    info.st_uid != self.__a.owner_uid
+                    or stat.S_IMODE(info.st_mode) != DIRECTORY_MODE
+                ):
+                    os.close(child)
+                    raise V3PathError("v3 directory has unsafe identity")
+                self.__d.append(child)
+                fd = child
 
     def _check(self) -> None:
         if self.__c:
@@ -288,6 +354,64 @@ class V3WriteTransaction:
             raise V3CapacityError("file exceeds the bounded filesystem limit")
         data = _read_exact(fd, 0, info.st_size)
         return data, V3FileSnapshot(info.st_size, hashlib.sha256(data).hexdigest())
+
+    def _track_fd(self, fd: int) -> None:
+        self.__f = fd
+
+    def create_and_sync(
+        self, token: V3CreatableCaptureToken, contents: bytes, max_result_bytes: int
+    ) -> V3FileSnapshot:
+        return _create_and_sync(self, token, contents, max_result_bytes)
+
+    def read_region_bounded(
+        self,
+        token: V3SegmentPathToken | V3DamagedSegmentPathToken | V3TerminalStagingToken,
+        *,
+        offset: int,
+        length: int,
+        max_file_bytes: int,
+    ) -> V3FileRegion:
+        return _read_region(
+            self, token, offset=offset, length=length, max_file_bytes=max_file_bytes
+        )
+
+    def read_region(
+        self,
+        token: V3SegmentPathToken | V3DamagedSegmentPathToken,
+        *,
+        offset: int,
+        length: int,
+        max_file_bytes: int,
+    ) -> V3FileRegion:
+        return self.read_region_bounded(
+            token, offset=offset, length=length, max_file_bytes=max_file_bytes
+        )
+
+    def file_length(self, token: V3SegmentPathToken | V3DamagedSegmentPathToken) -> int:
+        self._check()
+        if not isinstance(token, (V3SegmentPathToken, V3DamagedSegmentPathToken)):
+            raise V3PathError("segment length requires a segment token")
+        fd, _ = self._open(token, os.O_RDONLY, SEALED_MODE)
+        info = os.fstat(fd)
+        if info.st_size > MAX_SEAL_BYTES:
+            raise V3CapacityError("segment exceeds the bounded size")
+        return info.st_size
+
+    def file_sha256(self, token: V3OffsetPathToken | V3DamagedOffsetPathToken) -> str:
+        self._check()
+        if not isinstance(token, (V3OffsetPathToken, V3DamagedOffsetPathToken)):
+            raise V3PathError("offset digest requires an offset token")
+        fd, _ = self._open(token, os.O_RDONLY, SEALED_MODE)
+        info = os.fstat(fd)
+        return _hash_fd(fd, info.st_size, MAX_READBACK_BYTES)
+
+    def rename_damaged(
+        self,
+        source: V3SegmentPathToken | V3OffsetPathToken,
+        target: V3DamagedSegmentPathToken | V3DamagedOffsetPathToken,
+        expected: V3FileSnapshot,
+    ) -> V3FileSnapshot:
+        return _rename_damaged(self, source, target, expected)
 
     def replace_bounded(
         self,
@@ -476,8 +600,11 @@ class V3WriteTransaction:
         os.fsync(parent)
         return self._offset_snapshot(fd)
 
-    def snapshot_offset_index(self, token: V3OffsetIndexToken):
-        _validate_offset_token(token)
+    def snapshot_offset_index(self, token: V3OffsetIndexToken | V3DamagedOffsetPathToken):
+        if isinstance(token, V3TemporaryFileToken):
+            _validate_offset_token(token)
+        else:
+            _validate_offset_read_token(token)
         fd, _ = self._open(token, os.O_RDONLY, SEALED_MODE)
         return self._offset_snapshot(fd)
 
@@ -510,8 +637,10 @@ class V3WriteTransaction:
             raise V3CorruptionError("offset append readback differs")
         return self._offset_snapshot(fd)
 
-    def get_offset_index(self, token: V3OffsetIndexToken, *, sequence: int):
-        _validate_offset_token(token)
+    def get_offset_index(
+        self, token: V3OffsetPathToken | V3DamagedOffsetPathToken, *, sequence: int
+    ):
+        _validate_offset_read_token(token)
         if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
             raise V3ValidationError("offset sequence is invalid")
         fd, _ = self._open(token, os.O_RDONLY, SEALED_MODE)
@@ -536,8 +665,14 @@ class V3WriteTransaction:
             OffsetRecordKind(value.record_kind),
         )
 
-    def page_offset_index(self, token: V3OffsetIndexToken, *, entry_ordinal: int, limit: int):
-        _validate_offset_token(token)
+    def page_offset_index(
+        self,
+        token: V3OffsetPathToken | V3DamagedOffsetPathToken,
+        *,
+        entry_ordinal: int,
+        limit: int,
+    ):
+        _validate_offset_read_token(token)
         entry_ordinal, limit = _validate_offset_page_bounds(entry_ordinal, limit)
         fd, _ = self._open(token, os.O_RDONLY, SEALED_MODE)
         snapshot = self._offset_snapshot(fd)
@@ -567,80 +702,31 @@ class V3WriteTransaction:
         )
 
     def _offset_snapshot(self, fd: int) -> SegmentIndexSnapshot:
-        info = os.fstat(fd)
-        payload = info.st_size - 8
-        if payload < 0 or payload % OFFSET_ENTRY_SIZE or os.pread(fd, 8, 0) != OFFSET_HEADER:
-            raise V3CorruptionError("offset table shape is invalid")
-        count = payload // OFFSET_ENTRY_SIZE
-        first_raw = last_raw = None
-        first = last = None
-        if count:
-            first_raw = os.pread(fd, OFFSET_ENTRY_SIZE, 8)
-            last_raw = os.pread(fd, OFFSET_ENTRY_SIZE, 8 + (count - 1) * OFFSET_ENTRY_SIZE)
-            first, last = decode_offset_entry(first_raw), decode_offset_entry(last_raw)
-            if last.seq != first.seq + count - 1:
-                raise V3CorruptionError("offset sequences are not contiguous")
-        return SegmentIndexSnapshot(
-            count,
-            first.seq if first else None,
-            last.seq if last else None,
-            info.st_size,
-            append_state_hash(info.st_size, first_raw, last_raw),
-        )
+        return offset_snapshot(fd)
 
     def _close(self) -> None:
-        failed = False
-        if self.__f is not None:
-            try:
-                os.close(self.__f)
-            except OSError:
-                failed = True
-            self.__f = None
-        for fd in reversed(self.__d):
-            try:
-                os.close(fd)
-            except OSError:
-                failed = True
-        self.__d.clear()
-        self.__c = True
-        if failed:
-            raise V3PersistenceError("transaction descriptor cleanup failed")
+        _close_transaction(self)
 
-    def ensure_layout(self) -> None:
-        self._check()
-        self.__a.paths = V3StoragePaths(self.__a.state_root)
-        root_fd = os.open(
-            self.__a.state_root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-        )
-        self.__d.append(root_fd)
-        for chain in (
-            ("events-v3",),
-            ("events-v3", "blackouts"),
-            ("events-v3", "blackouts", "segments"),
-            ("events-v3", "blackouts", "terminal-chains"),
-            ("events-v3", "blackouts", "transactions"),
-            ("events-v3", "blackouts", "terminal-locators"),
-            ("events-v3", "blackouts", "history"),
-            ("events-v3", "blackouts", "history", "runs"),
-        ):
-            fd = root_fd
-            for name in chain:
-                try:
-                    os.mkdir(name, DIRECTORY_MODE, dir_fd=fd)
-                except FileExistsError:
-                    pass
-                child = os.open(
-                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=fd
-                )
-                info = os.fstat(child)
-                if (
-                    info.st_uid != self.__a.owner_uid
-                    or stat.S_IMODE(info.st_mode) != DIRECTORY_MODE
-                ):
-                    os.close(child)
-                    raise V3PathError("v3 directory has unsafe identity")
-                self.__d.append(child)
-                fd = child
+
+def _close_transaction(transaction: "V3WriteTransaction") -> None:
+    state = cast(Any, transaction)
+    failed = False
+    fd = state._V3WriteTransaction__f
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            failed = True
+        state._V3WriteTransaction__f = None
+    for descriptor in reversed(state._V3WriteTransaction__d):
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    state._V3WriteTransaction__d.clear()
+    state._V3WriteTransaction__c = True
+    if failed:
+        raise V3PersistenceError("transaction descriptor cleanup failed")
 
 
 class JsonlV3Filesystem:

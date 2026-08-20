@@ -14,6 +14,8 @@ from src.adapters.jsonl_v3_terminal_tail_codec import (
     BLACKOUT_END_RECORD_TYPE,
     ENDPOINT_ANCHOR_MAX_LINE_BYTES,
     ENDPOINT_ANCHOR_RECORD_TYPE,
+    INTERMEDIATE_ANCHOR_ROLE,
+    TERMINAL_ANCHOR_ROLE,
     decode_blackout_end,
     decode_blackout_end_record,
     decode_endpoint_anchor,
@@ -55,6 +57,32 @@ def _anchor(kind: AnchorKind = AnchorKind.POWER_RESTORED) -> EndpointAnchor:
     )
 
 
+def _anchor_for_kind(kind: AnchorKind) -> EndpointAnchor:
+    provenance = {
+        AnchorKind.TRANSFER_TO_BATTERY: AnchorProvenance.PHYSICAL,
+        AnchorKind.RAW_FIRMWARE_LB: AnchorProvenance.FIRMWARE,
+        AnchorKind.MODELED_SAFE_SHUTDOWN: AnchorProvenance.MODELED,
+        AnchorKind.POWER_RESTORED: AnchorProvenance.PHYSICAL,
+        AnchorKind.SERVICE_STOP: AnchorProvenance.OPERATIONAL,
+        AnchorKind.BOOT_BOUNDARY: AnchorProvenance.OPERATIONAL,
+        AnchorKind.CHARGE_STABILIZED: AnchorProvenance.OPERATIONAL,
+        AnchorKind.GAP: AnchorProvenance.OPERATIONAL,
+        AnchorKind.CORRUPTION: AnchorProvenance.OPERATIONAL,
+    }[kind]
+    return EndpointAnchor(
+        H1,
+        kind,
+        provenance,
+        "boot-1",
+        START,
+        10,
+        H2,
+        "blackout-1",
+        "episode-1",
+        "segment-1",
+    )
+
+
 def _end(**changes: object) -> BlackoutEnd:
     fields: dict[str, object] = {
         "blackout_id": "blackout-1",
@@ -78,14 +106,14 @@ def _linked_end(
     **changes: object,
 ) -> tuple[EncodedV3Record, BlackoutEnd, EncodedV3Record]:
     anchor = _anchor(anchor_kind)
-    endpoint = encode_endpoint_anchor(anchor, seq=8)
+    endpoint = encode_endpoint_anchor(anchor)
     value = _end(
         terminal_anchor_record_hash=endpoint.record_sha256,
         **changes,
     )
     encoded = encode_blackout_end(
         value,
-        seq=9,
+        seq=1,
         previous_record_sha256=endpoint.record_sha256,
     )
     return endpoint, value, encoded
@@ -97,11 +125,11 @@ def _rehash(encoded, payload: dict[str, object], **changes: object) -> bytes:
 
 
 def test_terminal_anchor_round_trip_is_byte_identical_and_scoped() -> None:
-    encoded = encode_endpoint_anchor(_anchor(), seq=4)
+    encoded = encode_endpoint_anchor(_anchor(), seq=4, previous_record_sha256=H2)
     decoded = decode_endpoint_anchor(encoded.line)
 
     assert decoded == _anchor()
-    assert encoded.line == encode_endpoint_anchor(_anchor(), seq=4).line
+    assert encoded.line == encode_endpoint_anchor(_anchor(), seq=4, previous_record_sha256=H2).line
     assert encoded.envelope.record_type == ENDPOINT_ANCHOR_RECORD_TYPE
     assert encoded.envelope.provenance == AnchorProvenance.PHYSICAL.value
     assert len(encoded.line) <= ENDPOINT_ANCHOR_MAX_LINE_BYTES
@@ -109,7 +137,7 @@ def test_terminal_anchor_round_trip_is_byte_identical_and_scoped() -> None:
 
 def test_strict_link_entrypoints_return_canonical_records() -> None:
     endpoint, _, encoded = _linked_end()
-    endpoint_record = encode_endpoint_anchor(_anchor(), seq=8)
+    endpoint_record = encode_endpoint_anchor(_anchor(), seq=8, previous_record_sha256=H2)
     assert decode_endpoint_anchor_record(endpoint_record.line) == endpoint_record
     assert (
         decode_blackout_end_record(
@@ -127,7 +155,7 @@ def test_safe_shutdown_is_a_modeled_terminal_anchor() -> None:
     assert encoded.envelope.provenance == AnchorProvenance.MODELED.value
 
 
-def test_intermediate_anchor_is_rejected_by_terminal_tail() -> None:
+def test_intermediate_anchor_has_a_physical_role_and_round_trips() -> None:
     intermediate = EndpointAnchor(
         H1,
         AnchorKind.TRANSFER_TO_BATTERY,
@@ -140,8 +168,63 @@ def test_intermediate_anchor_is_rejected_by_terminal_tail() -> None:
         "episode-1",
         "segment-1",
     )
+    encoded = encode_endpoint_anchor(intermediate, seq=3, previous_record_sha256=H2)
+    assert encoded.envelope.payload["anchor_role"] == INTERMEDIATE_ANCHOR_ROLE
+    assert decode_endpoint_anchor(encoded.line) == intermediate
+
+
+@pytest.mark.parametrize("kind", (AnchorKind.TRANSFER_TO_BATTERY, AnchorKind.RAW_FIRMWARE_LB))
+def test_intermediate_anchor_accepts_only_a_linked_nonroot_position(kind: AnchorKind) -> None:
+    intermediate = _anchor_for_kind(kind)
+    encoded = encode_endpoint_anchor(intermediate, seq=3, previous_record_sha256=H2)
+    assert decode_endpoint_anchor(encoded.line) == intermediate
+
+
+@pytest.mark.parametrize(
+    ("sequence", "previous"),
+    ((0, None), (0, H2), (3, None)),
+)
+def test_intermediate_anchor_rejects_root_or_unlinked_positions(
+    sequence: int, previous: str | None
+) -> None:
+    intermediate = _anchor_for_kind(AnchorKind.TRANSFER_TO_BATTERY)
     with pytest.raises(V3CodecError):
-        encode_endpoint_anchor(intermediate)
+        encode_endpoint_anchor(intermediate, seq=sequence, previous_record_sha256=previous)
+
+    valid = encode_endpoint_anchor(intermediate, seq=3, previous_record_sha256=H2)
+    malformed = _rehash(
+        valid, dict(valid.envelope.payload), seq=sequence, prev_record_sha256=previous
+    )
+    with pytest.raises(V3CodecError):
+        decode_endpoint_anchor(malformed)
+
+
+def test_terminal_anchor_has_terminal_role() -> None:
+    encoded = encode_endpoint_anchor(_anchor())
+    assert encoded.envelope.payload["anchor_role"] == TERMINAL_ANCHOR_ROLE
+
+
+@pytest.mark.parametrize(
+    ("kind", "role"),
+    (
+        (AnchorKind.TRANSFER_TO_BATTERY, INTERMEDIATE_ANCHOR_ROLE),
+        (AnchorKind.RAW_FIRMWARE_LB, INTERMEDIATE_ANCHOR_ROLE),
+        (AnchorKind.MODELED_SAFE_SHUTDOWN, TERMINAL_ANCHOR_ROLE),
+        (AnchorKind.POWER_RESTORED, TERMINAL_ANCHOR_ROLE),
+        (AnchorKind.SERVICE_STOP, TERMINAL_ANCHOR_ROLE),
+        (AnchorKind.BOOT_BOUNDARY, TERMINAL_ANCHOR_ROLE),
+        (AnchorKind.CHARGE_STABILIZED, TERMINAL_ANCHOR_ROLE),
+        (AnchorKind.GAP, TERMINAL_ANCHOR_ROLE),
+        (AnchorKind.CORRUPTION, TERMINAL_ANCHOR_ROLE),
+    ),
+)
+def test_all_anchor_kinds_have_explicit_role_and_round_trip(kind: AnchorKind, role: str) -> None:
+    anchor_value = _anchor_for_kind(kind)
+    sequence = 0 if role == TERMINAL_ANCHOR_ROLE else 3
+    previous = None if sequence == 0 else H2
+    encoded = encode_endpoint_anchor(anchor_value, seq=sequence, previous_record_sha256=previous)
+    assert encoded.envelope.payload["anchor_role"] == role
+    assert decode_endpoint_anchor(encoded.line) == anchor_value
 
 
 @pytest.mark.parametrize(
@@ -192,7 +275,7 @@ def test_blackout_end_round_trip_preserves_terminal_and_origin_scope() -> None:
         encoded.line
         == encode_blackout_end(
             value,
-            seq=9,
+            seq=1,
             previous_record_sha256=endpoint.record_sha256,
         ).line
     )
@@ -281,11 +364,11 @@ def test_terminal_payload_envelope_shape_is_exact() -> None:
 
 
 def test_blackout_end_links_a_separate_endpoint_record_by_hash() -> None:
-    endpoint = encode_endpoint_anchor(_anchor(), seq=3)
+    endpoint = encode_endpoint_anchor(_anchor(), seq=3, previous_record_sha256=H2)
     value = _end(terminal_anchor_record_hash=endpoint.record_sha256)
     encoded = encode_blackout_end(value, seq=4, previous_record_sha256=endpoint.record_sha256)
     assert decode_blackout_end(encoded.line, terminal_anchor_record=endpoint) == value
-    other_endpoint = encode_endpoint_anchor(_anchor(), seq=99)
+    other_endpoint = encode_endpoint_anchor(_anchor(), seq=99, previous_record_sha256=H2)
     with pytest.raises(V3CodecError):
         decode_blackout_end(encoded.line, terminal_anchor_record=other_endpoint)
 
@@ -296,19 +379,113 @@ def test_blackout_end_rejects_anchor_canonical_hash_and_anchor_only_placeholder(
         _end(),
         terminal_anchor_record_hash=_anchor().canonical_hash,
     )
-    anchor_hash_record = encode_blackout_end(
-        anchor_hash_value,
-        seq=9,
-        previous_record_sha256=endpoint.record_sha256,
-    )
     with pytest.raises(V3CodecError):
-        decode_blackout_end(anchor_hash_record.line, terminal_anchor_record=endpoint)
+        encode_blackout_end(
+            anchor_hash_value,
+            seq=1,
+            previous_record_sha256=endpoint.record_sha256,
+        )
     with pytest.raises(V3CodecError):
         decode_blackout_end(encoded.line, terminal_anchor=_anchor())
 
 
 def test_blackout_end_rejects_broken_endpoint_chain() -> None:
     endpoint, value, _ = _linked_end()
-    broken = encode_blackout_end(value, seq=9, previous_record_sha256=H2)
+    valid = encode_blackout_end(value, seq=1, previous_record_sha256=endpoint.record_sha256)
+    broken = _rehash(valid, dict(valid.envelope.payload), seq=9, prev_record_sha256=H2)
     with pytest.raises(V3CodecError):
-        decode_blackout_end(broken.line, terminal_anchor_record=endpoint)
+        decode_blackout_end(broken, terminal_anchor_record=endpoint)
+
+
+@pytest.mark.parametrize(
+    ("sequence", "previous"),
+    ((0, None), (0, H2), (1, None), (1, H2)),
+)
+def test_non_budget_end_rejects_unlinked_terminal_positions(
+    sequence: int, previous: str | None
+) -> None:
+    endpoint, value, valid = _linked_end()
+    with pytest.raises(V3CodecError):
+        encode_blackout_end(value, seq=sequence, previous_record_sha256=previous)
+
+    malformed = _rehash(
+        valid, dict(valid.envelope.payload), seq=sequence, prev_record_sha256=previous
+    )
+    with pytest.raises(V3CodecError):
+        decode_blackout_end(malformed, terminal_anchor_record=endpoint)
+
+
+@pytest.mark.parametrize("anchor_sequence", (0, 3))
+def test_non_budget_end_accepts_exact_terminal_anchor_link(anchor_sequence: int) -> None:
+    previous = None if anchor_sequence == 0 else H2
+    endpoint = encode_endpoint_anchor(
+        _anchor(), seq=anchor_sequence, previous_record_sha256=previous
+    )
+    value = _end(terminal_anchor_record_hash=endpoint.record_sha256)
+    encoded = encode_blackout_end(
+        value,
+        seq=anchor_sequence + 1,
+        previous_record_sha256=endpoint.record_sha256,
+    )
+    assert decode_blackout_end(encoded.line, terminal_anchor_record=endpoint) == value
+
+
+def test_anchorless_budget_end_accepts_root_or_linked_wire_position() -> None:
+    budget = _end(
+        termination=BlackoutTermination.AGGREGATE_BUDGET_EXHAUSTED,
+        terminal_anchor_record_hash=None,
+        budget_kind=BudgetKind.BYTES,
+        continued_by="blackout-2",
+        continuation_kind=ContinuationKind.SIZE_ROLLOVER,
+    )
+    root = encode_blackout_end(budget)
+    assert decode_blackout_end(root.line) == budget
+
+    endpoint = encode_endpoint_anchor(_anchor())
+    linked = encode_blackout_end(
+        budget,
+        seq=endpoint.envelope.seq + 1,
+        previous_record_sha256=endpoint.record_sha256,
+    )
+    assert decode_blackout_end(linked.line, terminal_anchor_record=endpoint) == budget
+
+
+@pytest.mark.parametrize(
+    ("sequence", "previous"),
+    ((0, H2), (1, None)),
+)
+def test_anchorless_budget_end_rejects_malformed_wire_position(
+    sequence: int, previous: str | None
+) -> None:
+    budget = _end(
+        termination=BlackoutTermination.AGGREGATE_BUDGET_EXHAUSTED,
+        terminal_anchor_record_hash=None,
+        budget_kind=BudgetKind.BYTES,
+        continued_by="blackout-2",
+        continuation_kind=ContinuationKind.SIZE_ROLLOVER,
+    )
+    with pytest.raises(V3CodecError):
+        encode_blackout_end(budget, seq=sequence, previous_record_sha256=previous)
+
+    valid = encode_blackout_end(budget)
+    malformed = _rehash(
+        valid, dict(valid.envelope.payload), seq=sequence, prev_record_sha256=previous
+    )
+    with pytest.raises(V3CodecError):
+        decode_blackout_end(malformed)
+
+
+def test_supplied_endpoint_anchor_must_have_coherent_sequence_and_previous_hash() -> None:
+    endpoint = encode_endpoint_anchor(_anchor())
+    malformed = _rehash(
+        endpoint,
+        dict(endpoint.envelope.payload),
+        seq=8,
+        prev_record_sha256=None,
+    )
+    end_value = _end(terminal_anchor_record_hash=endpoint.record_sha256)
+    end_record = encode_blackout_end(
+        end_value, seq=9, previous_record_sha256=endpoint.record_sha256
+    )
+    with pytest.raises(V3CodecError):
+        decode_blackout_end(end_record.line, terminal_anchor_record=malformed)

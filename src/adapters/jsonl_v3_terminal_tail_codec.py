@@ -31,6 +31,7 @@ ENDPOINT_ANCHOR_RECORD_TYPE = "endpoint_anchor"
 BLACKOUT_END_RECORD_TYPE = "blackout_end"
 PHYSICAL_PROVENANCE = frozenset(item.value for item in AnchorProvenance)
 TERMINAL_ANCHOR_ROLE = "terminal"
+INTERMEDIATE_ANCHOR_ROLE = "intermediate"
 TERMINAL_TAIL_MAX_LINE_BYTES = 2 * 1024
 ENDPOINT_ANCHOR_MAX_LINE_BYTES = TERMINAL_TAIL_MAX_LINE_BYTES
 BLACKOUT_END_MAX_LINE_BYTES = TERMINAL_TAIL_MAX_LINE_BYTES
@@ -39,15 +40,21 @@ BLACKOUT_END_SCHEMA = "blackout-end-v1"
 
 _HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 _UTC_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z\Z")
-_TERMINAL_KINDS = frozenset(
+_ANCHOR_ROLE_BY_KIND = {
+    AnchorKind.TRANSFER_TO_BATTERY: INTERMEDIATE_ANCHOR_ROLE,
+    AnchorKind.RAW_FIRMWARE_LB: INTERMEDIATE_ANCHOR_ROLE,
+    AnchorKind.MODELED_SAFE_SHUTDOWN: TERMINAL_ANCHOR_ROLE,
+    AnchorKind.POWER_RESTORED: TERMINAL_ANCHOR_ROLE,
+    AnchorKind.SERVICE_STOP: TERMINAL_ANCHOR_ROLE,
+    AnchorKind.BOOT_BOUNDARY: TERMINAL_ANCHOR_ROLE,
+    AnchorKind.CHARGE_STABILIZED: TERMINAL_ANCHOR_ROLE,
+    AnchorKind.GAP: TERMINAL_ANCHOR_ROLE,
+    AnchorKind.CORRUPTION: TERMINAL_ANCHOR_ROLE,
+}
+_INTERMEDIATE_ANCHOR_KINDS = frozenset(
     {
-        AnchorKind.MODELED_SAFE_SHUTDOWN,
-        AnchorKind.POWER_RESTORED,
-        AnchorKind.SERVICE_STOP,
-        AnchorKind.BOOT_BOUNDARY,
-        AnchorKind.CHARGE_STABILIZED,
-        AnchorKind.GAP,
-        AnchorKind.CORRUPTION,
+        AnchorKind.TRANSFER_TO_BATTERY,
+        AnchorKind.RAW_FIRMWARE_LB,
     }
 )
 _ANCHOR_FIELDS = frozenset(
@@ -93,7 +100,7 @@ def encode_endpoint_anchor(
     seq: int = 0,
     previous_record_sha256: str | None = None,
 ) -> EncodedV3Record:
-    """Encode one terminal-role endpoint anchor in the reserved tail."""
+    """Encode one intermediate- or terminal-role endpoint anchor in the reserved tail."""
     _validate_terminal_anchor(anchor)
     payload = _anchor_payload(anchor)
     envelope = V3RecordEnvelope(
@@ -109,11 +116,12 @@ def encode_endpoint_anchor(
         prev_record_sha256=previous_record_sha256,
         payload=payload,
     )
+    _validate_anchor_chain(envelope, anchor.kind)
     return _encode_bounded(envelope, ENDPOINT_ANCHOR_MAX_LINE_BYTES, "endpoint anchor")
 
 
 def decode_endpoint_anchor(line: bytes) -> EndpointAnchor:
-    """Decode one terminal anchor and reconstruct its domain value."""
+    """Decode one intermediate- or terminal-role anchor and reconstruct its value."""
     record = _decode_bounded(line, ENDPOINT_ANCHOR_MAX_LINE_BYTES, "endpoint anchor")
     envelope = record.envelope
     if envelope.record_type != ENDPOINT_ANCHOR_RECORD_TYPE:
@@ -122,13 +130,14 @@ def decode_endpoint_anchor(line: bytes) -> EndpointAnchor:
     try:
         anchor = _anchor_from_payload(payload)
         _validate_anchor_envelope(envelope, anchor)
+        _validate_anchor_chain(envelope, anchor.kind)
     except (TypeError, ValueError, KeyError) as exc:
         raise V3CodecError("endpoint anchor payload is invalid") from exc
     return anchor
 
 
 def decode_endpoint_anchor_record(line: bytes) -> EncodedV3Record:
-    """Strictly decode and validate a terminal endpoint record."""
+    """Strictly decode and validate an intermediate or terminal endpoint record."""
     record = _decode_bounded(line, ENDPOINT_ANCHOR_MAX_LINE_BYTES, "endpoint anchor")
     decode_endpoint_anchor(record.line)
     return record
@@ -157,6 +166,17 @@ def encode_blackout_end(
         prev_record_sha256=previous_record_sha256,
         payload=payload,
     )
+    if value.terminal_anchor_record_hash is None:
+        if envelope.seq == 0 and envelope.prev_record_sha256 is not None:
+            raise V3CodecError("anchorless budget END root must not carry a previous hash")
+        if envelope.seq > 0 and envelope.prev_record_sha256 is None:
+            raise V3CodecError("linked anchorless budget END must carry a previous hash")
+    elif (
+        envelope.seq == 0
+        or envelope.prev_record_sha256 is None
+        or envelope.prev_record_sha256 != value.terminal_anchor_record_hash
+    ):
+        raise V3CodecError("linked blackout end must follow its terminal anchor record")
     return _encode_bounded(envelope, BLACKOUT_END_MAX_LINE_BYTES, "blackout end")
 
 
@@ -203,7 +223,7 @@ def decode_blackout_end(
             terminal_anchor, terminal_anchor_record
         )
         _validate_end_semantics(value, supplied_anchor, supplied_record_hash)
-        _validate_end_chain(envelope, supplied_record_hash, supplied_record_seq)
+        _validate_end_chain(envelope, value, supplied_record_hash, supplied_record_seq)
         _validate_end_envelope(envelope, value)
     except (TypeError, ValueError, KeyError) as exc:
         raise V3CodecError("blackout end payload is invalid") from exc
@@ -234,8 +254,8 @@ def decode_blackout_end_record(
 def _validate_terminal_anchor(anchor: EndpointAnchor) -> None:
     if not isinstance(anchor, EndpointAnchor):
         raise V3CodecError("endpoint anchor must be EndpointAnchor")
-    if anchor.kind not in _TERMINAL_KINDS:
-        raise V3CodecError("endpoint anchor is not a terminal-role kind")
+    if anchor.kind not in _ANCHOR_ROLE_BY_KIND:
+        raise V3CodecError("endpoint anchor kind is not closed")
 
 
 def _validate_end_semantics(
@@ -251,8 +271,11 @@ def _validate_end_semantics(
     }
     damaged_kinds = {AnchorKind.GAP, AnchorKind.CORRUPTION}
     if value.termination is BlackoutTermination.AGGREGATE_BUDGET_EXHAUSTED:
-        if terminal_anchor is not None or terminal_anchor_record_hash is not None:
-            raise ValueError("budget rollover must not carry a terminal anchor")
+        if terminal_anchor is not None:
+            if terminal_anchor_record_hash is None:
+                raise ValueError("budget rollover must not carry a decoded terminal anchor")
+            if terminal_anchor.kind in _INTERMEDIATE_ANCHOR_KINDS:
+                raise ValueError("budget END must follow a terminal-role record")
         return
     if terminal_anchor is None or terminal_anchor_record_hash is None:
         raise ValueError("decoded terminal anchor record must be supplied for this termination")
@@ -271,21 +294,42 @@ def _validate_end_semantics(
 
 def _validate_end_chain(
     envelope: V3RecordEnvelope,
+    value: BlackoutEnd,
     anchor_record_hash: str | None,
     anchor_record_seq: int | None,
 ) -> None:
-    if anchor_record_hash is None:
+    if value.termination is BlackoutTermination.AGGREGATE_BUDGET_EXHAUSTED:
+        _validate_budget_end_chain(envelope, anchor_record_hash, anchor_record_seq)
         return
+    if anchor_record_hash is None:
+        raise ValueError("decoded terminal anchor record must be supplied for this termination")
     if envelope.prev_record_sha256 != anchor_record_hash:
         raise ValueError("blackout end must immediately follow its terminal anchor record")
     if anchor_record_seq is None or envelope.seq != anchor_record_seq + 1:
         raise ValueError("blackout end sequence must follow its terminal anchor record")
 
 
+def _validate_budget_end_chain(
+    envelope: V3RecordEnvelope,
+    anchor_record_hash: str | None,
+    anchor_record_seq: int | None,
+) -> None:
+    if envelope.seq == 0 and envelope.prev_record_sha256 is not None:
+        raise ValueError("anchorless budget END root must not carry a previous hash")
+    if envelope.seq > 0 and envelope.prev_record_sha256 is None:
+        raise ValueError("linked anchorless budget END must carry a previous hash")
+    if anchor_record_hash is None:
+        return
+    if envelope.prev_record_sha256 != anchor_record_hash:
+        raise ValueError("budget END does not follow its terminal cursor")
+    if anchor_record_seq is None or envelope.seq != anchor_record_seq + 1:
+        raise ValueError("budget END sequence must follow its terminal cursor")
+
+
 def _anchor_payload(anchor: EndpointAnchor) -> dict[str, Any]:
     return {
         "schema": ENDPOINT_ANCHOR_SCHEMA,
-        "anchor_role": TERMINAL_ANCHOR_ROLE,
+        "anchor_role": _ANCHOR_ROLE_BY_KIND[anchor.kind],
         "canonical_hash": anchor.canonical_hash,
         "kind": anchor.kind.value,
         "provenance": anchor.provenance.value,
@@ -302,11 +346,12 @@ def _anchor_payload(anchor: EndpointAnchor) -> dict[str, Any]:
 def _anchor_from_payload(payload: Mapping[str, Any]) -> EndpointAnchor:
     if payload["schema"] != ENDPOINT_ANCHOR_SCHEMA:
         raise ValueError("unsupported endpoint anchor schema")
-    if payload["anchor_role"] != TERMINAL_ANCHOR_ROLE:
-        raise ValueError("endpoint anchor role must be terminal")
+    kind = _enum(payload["kind"], AnchorKind, "anchor kind")
+    if payload["anchor_role"] != _ANCHOR_ROLE_BY_KIND.get(kind):
+        raise ValueError("endpoint anchor role does not match kind")
     anchor = EndpointAnchor(
         canonical_hash=_hash(payload["canonical_hash"], "anchor canonical hash"),
-        kind=_enum(payload["kind"], AnchorKind, "anchor kind"),
+        kind=kind,
         provenance=_enum(payload["provenance"], AnchorProvenance, "anchor provenance"),
         boot_id=_text(payload["boot_id"], "anchor boot ID"),
         wall_time_utc=_parse_utc(payload["wall_time_utc"]),
@@ -353,6 +398,17 @@ def _validate_anchor_envelope(envelope: V3RecordEnvelope, anchor: EndpointAnchor
         or envelope.monotonic_ns != anchor.monotonic_ns
     ):
         raise ValueError("anchor envelope scope is not bound")
+
+
+def _validate_anchor_chain(envelope: V3RecordEnvelope, kind: AnchorKind) -> None:
+    if kind in _INTERMEDIATE_ANCHOR_KINDS:
+        if envelope.seq == 0 or envelope.prev_record_sha256 is None:
+            raise V3CodecError("intermediate anchor must follow a prior physical record")
+        return
+    if envelope.seq == 0 and envelope.prev_record_sha256 is not None:
+        raise V3CodecError("terminal root anchor must not carry a previous hash")
+    if envelope.seq > 0 and envelope.prev_record_sha256 is None:
+        raise V3CodecError("non-root anchor must carry its previous hash")
 
 
 def _validate_end_envelope(envelope: V3RecordEnvelope, value: BlackoutEnd) -> None:

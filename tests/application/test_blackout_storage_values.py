@@ -2,6 +2,7 @@
 
 from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from src.application.blackout_storage_values import (
     MAX_CHAIN_SEQUENCE,
     MAX_RECOVERY_PAGE_SIZE,
+    MAX_TAIL_ANCHORS,
     BlackoutCaptureCursor,
     BlackoutCaptureOpened,
     BlackoutChainKind,
@@ -26,6 +28,7 @@ from src.application.blackout_storage_values import (
     RecoveredCaptureWork,
     StoredPhysicalRecord,
     StoredRecordRef,
+    _validate_tail_batch_bounds,
 )
 from src.battery_math.lut import LutPoint
 from src.domain.blackout_capture import (
@@ -146,6 +149,30 @@ def _anchor() -> EndpointAnchor:
         H,
         AnchorKind.TRANSFER_TO_BATTERY,
         AnchorProvenance.PHYSICAL,
+        "boot-1",
+        UTC,
+        1,
+        None,
+        "blackout-1",
+        "episode-1",
+        "segment-1",
+    )
+
+
+def _anchor_for_kind(kind: AnchorKind) -> EndpointAnchor:
+    provenance = {
+        AnchorKind.MODELED_SAFE_SHUTDOWN: AnchorProvenance.MODELED,
+        AnchorKind.POWER_RESTORED: AnchorProvenance.PHYSICAL,
+        AnchorKind.SERVICE_STOP: AnchorProvenance.OPERATIONAL,
+        AnchorKind.BOOT_BOUNDARY: AnchorProvenance.OPERATIONAL,
+        AnchorKind.CHARGE_STABILIZED: AnchorProvenance.OPERATIONAL,
+        AnchorKind.GAP: AnchorProvenance.OPERATIONAL,
+        AnchorKind.CORRUPTION: AnchorProvenance.OPERATIONAL,
+    }[kind]
+    return EndpointAnchor(
+        H,
+        kind,
+        provenance,
         "boot-1",
         UTC,
         1,
@@ -325,7 +352,7 @@ def test_raw_page_requires_cursor_to_follow_final_sequence_and_hash() -> None:
         )
 
 
-def test_physical_and_terminal_pages_have_independent_cursors() -> None:
+def test_physical_pages_reject_terminal_cursors() -> None:
     ref = _ref()
     physical_cursor = _cursor(
         chain=BlackoutChainKind.PHYSICAL, next_sequence=3, last_record_sha256=H
@@ -343,13 +370,11 @@ def test_physical_and_terminal_pages_have_independent_cursors() -> None:
     terminal_root = _cursor(
         chain=BlackoutChainKind.TERMINAL, next_sequence=0, last_record_sha256=None
     )
-    terminal_page = RawEvidencePage(ref, (), terminal_root, False)
     assert physical_page.next_cursor is physical_cursor
     assert physical_page.next_cursor is not None
     assert physical_page.next_cursor.chain is BlackoutChainKind.PHYSICAL
-    assert terminal_page.next_cursor is terminal_root
-    assert terminal_page.next_cursor is not None
-    assert terminal_page.next_cursor.chain is BlackoutChainKind.TERMINAL
+    with pytest.raises(ValueError, match="physical cursor"):
+        RawEvidencePage(ref, (), terminal_root, False)
 
 
 def test_raw_page_rejects_mixed_chain_cursor_and_nonroot_terminal_page() -> None:
@@ -364,8 +389,29 @@ def test_raw_page_rejects_mixed_chain_cursor_and_nonroot_terminal_page() -> None
     terminal_non_root = _cursor(
         chain=BlackoutChainKind.TERMINAL, next_sequence=1, last_record_sha256=H
     )
-    with pytest.raises(ValueError, match="initial cursor"):
+    with pytest.raises(ValueError, match="physical cursor"):
         RawEvidencePage(ref, (), terminal_non_root, False)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    (
+        AnchorKind.MODELED_SAFE_SHUTDOWN,
+        AnchorKind.POWER_RESTORED,
+        AnchorKind.SERVICE_STOP,
+        AnchorKind.BOOT_BOUNDARY,
+        AnchorKind.CHARGE_STABILIZED,
+        AnchorKind.GAP,
+        AnchorKind.CORRUPTION,
+    ),
+)
+def test_stored_physical_record_rejects_terminal_anchor_kinds(kind: AnchorKind) -> None:
+    ref = _ref()
+    with pytest.raises(ValueError, match="intermediate anchor"):
+        StoredPhysicalRecord(
+            _record(ref, BlackoutRecordType.ANCHOR, 2),
+            _anchor_for_kind(kind),
+        )
 
 
 def test_record_refs_reject_wrong_chain_and_profile_mixing() -> None:
@@ -397,7 +443,36 @@ def test_capture_open_and_recovery_require_physical_cursor() -> None:
     with pytest.raises(ValueError, match="physical chain"):
         BlackoutCaptureOpened(ref, terminal_root)
     with pytest.raises(ValueError, match="physical chain"):
-        RecoveredCaptureWork(ref, terminal_root)
+        RecoveredCaptureWork(ref, terminal_root, terminal_root)
+
+
+def test_capture_open_and_recovery_reject_pre_start_cursors() -> None:
+    ref = _ref()
+    physical_root = _cursor(
+        chain=BlackoutChainKind.PHYSICAL, next_sequence=0, last_record_sha256=None
+    )
+    with pytest.raises(ValueError, match="after durable START"):
+        BlackoutCaptureOpened(ref, physical_root)
+    with pytest.raises(ValueError, match="after durable START"):
+        RecoveredCaptureWork(ref, physical_root, None)
+
+    terminal_root = _cursor(
+        chain=BlackoutChainKind.TERMINAL, next_sequence=0, last_record_sha256=None
+    )
+    with pytest.raises(ValueError, match="after durable START"):
+        RecoveredCaptureWork(ref, _cursor(), terminal_root)
+
+
+def test_tail_anchor_batch_has_a_frozen_bound() -> None:
+    value = SimpleNamespace(
+        profiles=(),
+        load_sag_results=(),
+        curve_results=(),
+        firmware_lb_results=(),
+        anchors=(_anchor(),) * (MAX_TAIL_ANCHORS + 1),
+    )
+    with pytest.raises(ValueError, match="anchor batch"):
+        _validate_tail_batch_bounds(cast(Any, value))
 
 
 def test_raw_page_empty_semantics_are_initial_incomplete_or_complete_only() -> None:
@@ -419,7 +494,7 @@ def test_recovery_page_is_bounded_repeatable_and_supports_multiple_work_items() 
         BlackoutProcessingRef(ref_b, BlackoutProcessingStage.TAIL, H, "policy-v1"),
     )
     page = BlackoutRecoveryPage(
-        RecoveredCaptureWork(_ref(), _cursor()),
+        RecoveredCaptureWork(_ref(), _cursor(), None),
         processing,
         BlackoutRecoveryCursor(2, True),
         False,

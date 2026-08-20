@@ -12,6 +12,7 @@ import pytest
 from src.adapters.jsonl_v3_errors import (
     V3CapacityError,
     V3CorruptionError,
+    V3PathBindingConflict,
     V3PersistenceError,
     V3TransactionClosed,
     V3ValidationError,
@@ -120,6 +121,146 @@ def test_bounded_replace_read_append_and_seal(tmp_path: Path) -> None:
         assert receipt.resulting_length == 4
         sealed = tx.seal(token, expected_length=4, max_bytes=16)
         assert sealed.byte_length == 4
+
+
+def test_create_region_read_and_damaged_rename_are_typed(tmp_path: Path) -> None:
+    filesystem, _ = fs(tmp_path)
+    paths = filesystem.paths
+    assert paths is not None
+    token = paths.segment_token(
+        "2026-08-18T12:34:56.123456Z",
+        uuid.uuid4().hex,
+        uuid.uuid4().hex,
+        0,
+        uuid.uuid4().hex,
+    )
+    contents = b"START\n" + b"x" * (5 * 1024 * 1024)
+    with filesystem.write_transaction() as tx:
+        snapshot = tx.create_and_sync(token, contents, 64 * 1024 * 1024)
+        region = tx.read_region_bounded(
+            token, offset=4 * 1024 * 1024, length=1024, max_file_bytes=64 * 1024 * 1024
+        )
+        assert region.file_length == len(contents)
+        assert region.contents == b"x" * 1024
+        damaged, _ = paths.damaged_tokens(
+            token.blackout_id,
+            token.logical_segment_id,
+            token.ordinal,
+            token.storage_id,
+            snapshot.content_sha256,
+        )
+        assert tx.rename_damaged(token, damaged, snapshot) == snapshot
+    assert not (paths.segments / "missing").exists()
+    assert any(paths.segments.glob("damaged-*.jsonl"))
+
+
+def test_region_read_rejects_invalid_token_bounds_and_file_extent(tmp_path: Path) -> None:
+    filesystem, _ = fs(tmp_path)
+    paths = filesystem.paths
+    assert paths is not None
+    token = paths.segment_token(
+        "2026-08-18T12:34:56.123456Z",
+        uuid.uuid4().hex,
+        uuid.uuid4().hex,
+        0,
+        uuid.uuid4().hex,
+    )
+    with filesystem.write_transaction() as tx:
+        tx.replace_bounded(token, expected=None, contents=b"abc", max_bytes=8)
+        with pytest.raises(V3ValidationError):
+            tx.read_region_bounded(paths.registry_token(), offset=0, length=1, max_file_bytes=8)  # type: ignore[arg-type]
+        with pytest.raises(V3ValidationError):
+            tx.read_region_bounded(token, offset=-1, length=1, max_file_bytes=8)
+        with pytest.raises(V3CapacityError):
+            tx.read_region_bounded(
+                token,
+                offset=0,
+                length=4 * 1024 * 1024 + 1,
+                max_file_bytes=4 * 1024 * 1024 + 1,
+            )
+        with pytest.raises(V3CorruptionError):
+            tx.read_region_bounded(token, offset=3, length=1, max_file_bytes=8)
+
+
+def test_damaged_rename_rejects_binding_cas_and_existing_target(
+    tmp_path: Path,
+) -> None:
+    filesystem, _ = fs(tmp_path)
+    paths = filesystem.paths
+    assert paths is not None
+    token = paths.segment_token(
+        "2026-08-18T12:34:56.123456Z",
+        uuid.uuid4().hex,
+        uuid.uuid4().hex,
+        0,
+        uuid.uuid4().hex,
+    )
+    with filesystem.write_transaction() as tx:
+        snapshot = tx.create_and_sync(token, b"capture", 64)
+        damaged, _ = paths.damaged_tokens(
+            token.blackout_id,
+            token.logical_segment_id,
+            token.ordinal,
+            token.storage_id,
+            snapshot.content_sha256,
+        )
+        wrong_scope = paths.damaged_tokens(
+            uuid.uuid4().hex,
+            token.logical_segment_id,
+            token.ordinal,
+            token.storage_id,
+            snapshot.content_sha256,
+        )[0]
+        with pytest.raises(V3PathBindingConflict):
+            tx.rename_damaged(token, wrong_scope, snapshot)
+        with pytest.raises(V3PathBindingConflict):
+            tx.rename_damaged(token, paths.offset_token(token), snapshot)  # type: ignore[arg-type]
+        with pytest.raises(V3PersistenceError):
+            tx.rename_damaged(token, damaged, snapshot.__class__(snapshot.byte_length, "b" * 64))
+        target = paths.segments / (
+            f"damaged-{token.blackout_id}-{token.logical_segment_id}-p{token.ordinal:06d}-"
+            f"{token.storage_id}-{snapshot.content_sha256}.jsonl"
+        )
+        target.write_bytes(b"existing")
+        with pytest.raises(V3PersistenceError):
+            tx.rename_damaged(token, damaged, snapshot)
+
+
+def test_damaged_offset_rename_and_fchmod_failure_are_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filesystem, _ = fs(tmp_path)
+    paths = filesystem.paths
+    assert paths is not None
+    segment = paths.segment_token(
+        "2026-08-18T12:34:56.123456Z",
+        uuid.uuid4().hex,
+        uuid.uuid4().hex,
+        0,
+        uuid.uuid4().hex,
+    )
+    offset = paths.offset_token(segment)
+    with filesystem.write_transaction() as tx:
+        tx.create_offset_index(offset)
+        snapshot = tx.read_bounded(offset, max_bytes=4 * 1024 * 1024)[1]
+        _, damaged = paths.damaged_tokens(
+            segment.blackout_id,
+            segment.logical_segment_id,
+            segment.ordinal,
+            segment.storage_id,
+            snapshot.content_sha256,
+        )
+        real_fchmod = os.fchmod
+
+        def fail_fchmod(fd: int, mode: int) -> None:
+            del fd, mode
+            raise OSError(errno.EIO, "injected chmod failure")
+
+        monkeypatch.setattr(os, "fchmod", fail_fchmod)
+        with pytest.raises(V3PersistenceError):
+            tx.rename_damaged(offset, damaged, snapshot)
+        monkeypatch.setattr(os, "fchmod", real_fchmod)
+        assert tx.rename_damaged(offset, damaged, snapshot) == snapshot
 
 
 def test_transaction_invalidates_and_rejects_unbounded_read(tmp_path: Path) -> None:

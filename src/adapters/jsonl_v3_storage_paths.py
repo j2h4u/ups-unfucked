@@ -218,6 +218,7 @@ class V3TemporaryFileToken(Generic[_T]):
 
 
 V3OffsetIndexToken: TypeAlias = V3OffsetPathToken | V3TemporaryFileToken
+V3CreatableCaptureToken: TypeAlias = V3SegmentPathToken | V3TerminalStagingToken
 V3ReadableFileToken: TypeAlias = (
     V3RegistryToken
     | V3SegmentPathToken
