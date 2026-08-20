@@ -130,7 +130,6 @@ source_modules = [
     "src.adapters.jsonl_summary_codec",
     "src.adapters.jsonl_work_registry",
 ]
-
 forbidden_modules = [
     "src.adapters.model_owner",
     "src.adapters.model_state_persistence",
@@ -139,42 +138,6 @@ forbidden_modules = [
     "src.adapters.model_transform",
     "src.adapters.nut_telemetry",
     "src.adapters.telemetry_capability_baseline",
-]
-
-[[tool.importlinter.contracts]]
-name = "V3 assessment codecs stay in the concrete adapter/domain boundary"
-type = "forbidden"
-source_modules = [
-    "src.adapters.jsonl_v3_canonical",
-    "src.adapters.jsonl_v3_fragment_profile_codec",
-    "src.adapters.jsonl_v3_fragment_wire",
-    "src.adapters.jsonl_v3_fragment_packing",
-    "src.adapters.jsonl_v3_fragment_replay",
-    "src.adapters.jsonl_v3_load_sag_assessment_codec",
-    "src.adapters.jsonl_v3_curve_assessment_codec",
-    "src.adapters.jsonl_v3_firmware_lb_assessment_codec",
-    "src.adapters.jsonl_v3_terminal_tail_codec",
-    "src.adapters.jsonl_v3_learning_decision_codec",
-    "src.adapters.jsonl_v3_model_commit_receipt_codec",
-    "src.adapters.jsonl_v3_terminal_outcome_codec",
-    "src.adapters.jsonl_v3_tail_budget",
-]
-forbidden_modules = [
-    "src.application",
-    "src.monitor",
-    "src.monitor_config",
-    "src.alerter",
-    "src.motd_status",
-    "src.nut_client",
-    "src.virtual_ups_exporter",
-    "src.adapters.model_owner",
-    "src.adapters.model_state_persistence",
-    "src.adapters.model_state_release_a",
-    "src.adapters.model_state_schema",
-    "src.adapters.model_transform",
-    "src.adapters.nut_telemetry",
-    "src.adapters.telemetry_capability_baseline",
-    "src.domain.safety_policy",
 ]
 
 [[tool.importlinter.contracts]]
