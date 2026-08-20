@@ -15,8 +15,6 @@ from typing import Protocol
 logger = logging.getLogger("ups-battery-monitor")
 
 _NUT_SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+$")
-NUT_MAX_REPLY_BYTES = 64 * 1024
-NUT_MAX_LINE_BYTES = 20 * 1024
 
 
 class NUTTelemetryPort(Protocol):
@@ -26,19 +24,11 @@ class NUTTelemetryPort(Protocol):
 
 
 class StrictNUTTelemetryPort(Protocol):
-    """Least-authority two-map read port for capability-baseline production."""
+    """Least-authority read port for the capability-baseline producer."""
 
     def get_ups_vars_with_tokens_strict(
         self,
     ) -> tuple[dict[str, float | str], dict[str, str]]: ...
-
-
-class StrictNUTEvidencePort(Protocol):
-    """One-method exact-evidence port for the inactive raw capture adapter."""
-
-    def get_ups_vars_with_evidence_strict(
-        self,
-    ) -> tuple[dict[str, float | str], dict[str, str], dict[str, str]]: ...
 
 
 def _validate_nut_identifier(value: str, label: str) -> None:
@@ -121,29 +111,7 @@ class NUTClient:
         finally:
             self._close_socket()
 
-    _MAX_RECV_BYTES = NUT_MAX_REPLY_BYTES  # NUT LIST VAR is typically ~1 KB
-
-    def _recv_until_bytes(self, delimiter: str) -> bytes:
-        """Receive one complete sentinel-delimited reply without decoding it."""
-        assert self.sock is not None
-        buf = b""
-        deadline = time.monotonic() + self.timeout
-        while not self._contains_complete_line(buf, delimiter):
-            if time.monotonic() > deadline:
-                raise socket.timeout("LIST VAR response deadline exceeded")
-            chunk = self.sock.recv(4096)
-            if not chunk:
-                raise ConnectionError("LIST VAR connection closed before END sentinel")
-            buf += chunk
-            if len(buf) > self._MAX_RECV_BYTES:
-                raise ConnectionError(
-                    "LIST VAR response too large (>64KB) — possible protocol violation"
-                )
-        if len(buf) > self._MAX_RECV_BYTES:
-            raise ConnectionError(
-                "LIST VAR response too large (>64KB) — possible protocol violation"
-            )
-        return buf
+    _MAX_RECV_BYTES = 64 * 1024  # 64 KB — NUT LIST VAR is typically ~1 KB
 
     def _recv_until(self, delimiter):
         """
@@ -161,7 +129,21 @@ class NUTClient:
         Raises:
             socket.timeout: If wall-clock deadline exceeded or individual recv times out
         """
-        return self._recv_until_bytes(delimiter).decode()
+        assert self.sock is not None
+        buf = b""
+        deadline = time.monotonic() + self.timeout
+        while not self._contains_complete_line(buf, delimiter):
+            if time.monotonic() > deadline:
+                raise socket.timeout("LIST VAR response deadline exceeded")
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("LIST VAR connection closed before END sentinel")
+            buf += chunk
+            if len(buf) > self._MAX_RECV_BYTES:
+                raise ConnectionError(
+                    "LIST VAR response too large (>64KB) — possible protocol violation"
+                )
+        return buf.decode()
 
     @staticmethod
     def _contains_complete_line(payload: bytes, expected_line: str) -> bool:
@@ -205,141 +187,42 @@ class NUTClient:
         ``VAR`` line, variable names may not repeat, and the BEGIN/END envelope must
         identify this client.  This method still sends only ``LIST VAR``.
         """
-        lines = self._strict_list_var_lines()
-        values: dict[str, float | str] = {}
-        tokens: dict[str, str] = {}
-        for line in lines[1:-1]:
-            var_name, value, raw_value = self._parse_strict_var_line(line)
-            if var_name in values:
-                raise ValueError(f"duplicate LIST VAR key: {var_name}")
-            values[var_name] = value
-            tokens[var_name] = raw_value
-        if not values:
-            raise ValueError("LIST VAR reply contains no variables")
-        return values, tokens
-
-    def get_ups_vars_with_evidence_strict(
-        self,
-    ) -> tuple[dict[str, float | str], dict[str, str], dict[str, str]]:
-        """Fetch one reply with typed values, logical tokens, and wire lexemes.
-
-        The third mapping retains the exact UTF-8 spelling between the outer
-        NUT quotes.  This method issues exactly one read-only ``LIST VAR``
-        request, independently of the two-map capability-baseline method.
-        """
-        lines = self._strict_list_var_lines()
-        values: dict[str, float | str] = {}
-        tokens: dict[str, str] = {}
-        wire_lexemes: dict[str, str] = {}
-        for line in lines[1:-1]:
-            var_name, value, raw_value, wire = self._parse_strict_var_line_with_wire(line)
-            if var_name in values:
-                raise ValueError(f"duplicate LIST VAR key: {var_name}")
-            values[var_name] = value
-            tokens[var_name] = raw_value
-            wire_lexemes[var_name] = wire
-        if not values:
-            raise ValueError("LIST VAR reply contains no variables")
-        return values, tokens, wire_lexemes
-
-    def _strict_list_var_lines(self) -> list[str]:
         with self._socket_session():
             assert self.sock is not None
             self.sock.sendall(f"LIST VAR {self.ups_name}\n".encode())
-            try:
-                raw = self._recv_until_bytes(f"END LIST VAR {self.ups_name}")
-                lines = _strict_reply_lines(raw)
-            except UnicodeDecodeError as exc:
-                raise ValueError("LIST VAR reply is not valid UTF-8") from exc
-            except ConnectionError as exc:
-                if "response too large" in str(exc):
-                    raise ValueError(f"LIST VAR reply exceeds {NUT_MAX_REPLY_BYTES} bytes") from exc
-                raise
+            raw = self._recv_until(f"END LIST VAR {self.ups_name}")
+            lines = raw.splitlines()
             expected_begin = f"BEGIN LIST VAR {self.ups_name}"
             expected_end = f"END LIST VAR {self.ups_name}"
             if not lines or lines[0] != expected_begin or lines[-1] != expected_end:
                 raise ValueError("incomplete LIST VAR envelope")
-            return lines
+
+            values: dict[str, float | str] = {}
+            tokens: dict[str, str] = {}
+            for line in lines[1:-1]:
+                parsed = self._parse_strict_var_line(line)
+                var_name, value, raw_value = parsed
+                if var_name in values:
+                    raise ValueError(f"duplicate LIST VAR key: {var_name}")
+                values[var_name] = value
+                tokens[var_name] = raw_value
+            if not values:
+                raise ValueError("LIST VAR reply contains no variables")
+            return values, tokens
 
     def _parse_strict_var_line(self, line: str) -> tuple[str, float | str, str]:
-        name, value, raw, _ = self._parse_strict_var_line_with_wire(line)
-        return name, value, raw
-
-    def _parse_strict_var_line_with_wire(self, line: str) -> tuple[str, float | str, str, str]:
-        if len(line.encode("utf-8")) > NUT_MAX_LINE_BYTES:
-            raise ValueError(f"LIST VAR line exceeds {NUT_MAX_LINE_BYTES} bytes")
         prefix = f"VAR {self.ups_name} "
         if not line.startswith(prefix):
             raise ValueError("LIST VAR reply contains a non-VAR line")
         remainder = line[len(prefix) :]
-        separator_index = remainder.find(' "')
-        if separator_index < 0:
+        name, separator, quoted = remainder.partition(' "')
+        if not separator or not quoted.endswith('"'):
             raise ValueError("malformed LIST VAR value")
-        name = remainder[:separator_index]
-        quoted = remainder[separator_index + 1 :]
-        if not name or not _NUT_SAFE_NAME.fullmatch(name):
+        raw_value = quoted[:-1]
+        if not name or not _NUT_SAFE_NAME.fullmatch(name) or '"' in raw_value:
             raise ValueError("malformed LIST VAR key or value")
-        raw_value, wire = self._unquote_strict_value(quoted)
-        if raw_value is None or wire is None:
-            message = (
-                "malformed LIST VAR value"
-                if quoted.count('"') == 1
-                else "malformed LIST VAR key or value"
-            )
-            raise ValueError(message)
         try:
             value: float | str = float(raw_value)
         except ValueError:
             value = raw_value
-        return name, value, raw_value, wire
-
-    @staticmethod
-    def _unquote_strict_value(quoted: str) -> tuple[str | None, str | None]:
-        """Unquote one NUT value and reject trailing protocol text.
-
-        NUT frames values in double quotes and escapes embedded quotes and
-        backslashes with a backslash.  The returned token is the value after
-        that framing has been removed, matching what the client exposes to
-        callers.  ``None`` denotes malformed quoting.
-        """
-        if not quoted.startswith('"'):
-            return None, None
-        value: list[str] = []
-        index = 1
-        while index < len(quoted):
-            char = quoted[index]
-            if char == '"':
-                if index == len(quoted) - 1:
-                    return "".join(value), quoted[1:index]
-                return None, None
-            if char == "\\":
-                index += 1
-                if index >= len(quoted) or quoted[index] not in {'"', "\\"}:
-                    return None, None
-                value.append(quoted[index])
-            else:
-                value.append(char)
-            index += 1
-        return None, None
-
-
-def _strict_reply_lines(raw: bytes) -> list[str]:
-    """Decode complete physical lines, counting CRLF before terminator strip."""
-    if not isinstance(raw, bytes):
-        raise TypeError("LIST VAR reply must be bytes")
-    physical_lines = raw.splitlines(keepends=True)
-    if not physical_lines or b"".join(physical_lines) != raw:
-        raise ValueError("incomplete LIST VAR envelope")
-    lines: list[str] = []
-    for physical in physical_lines:
-        if physical.endswith(b"\r"):
-            raise ValueError("LIST VAR reply contains a bare carriage return")
-        if len(physical) > NUT_MAX_LINE_BYTES:
-            raise ValueError(f"LIST VAR line exceeds {NUT_MAX_LINE_BYTES} bytes")
-        if not physical.endswith(b"\n"):
-            raise ValueError("incomplete LIST VAR envelope")
-        content = physical[:-2] if physical.endswith(b"\r\n") else physical[:-1]
-        if b"\r" in content:
-            raise ValueError("LIST VAR reply contains a bare carriage return")
-        lines.append(content.decode("utf-8"))
-    return lines
+        return name, value, raw_value

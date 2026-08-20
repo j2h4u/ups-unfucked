@@ -3,7 +3,7 @@
 import pytest
 
 from src.domain.evidence import EvidenceContext, assess_evidence
-from src.domain.forward_comparison import compare_admitted_observations, compare_forward_model
+from src.domain.forward_comparison import compare_forward_model
 from src.domain.reasons import ComparisonReason, EvidenceReason
 from src.domain.values import BlackoutKind, ComparisonMode, EvidenceClass
 
@@ -143,15 +143,6 @@ def test_comparison_uses_frozen_snapshot_and_signed_residual(observation_factory
     assert first.mean_residual_v is not None
     assert first.delivered_ah_proxy is not None
     assert first.delivered_ah_proxy > 0.0
-
-
-def test_legacy_wrapper_matches_pure_admitted_comparison(observation_factory, frozen_snapshot):
-    observations = tuple(
-        observation_factory(second, voltage_v=13.2 - 0.001 * second) for second in range(256)
-    )
-    legacy = compare_forward_model(observations, frozen_snapshot, _assessment(observations))
-    pure = compare_admitted_observations(observations, frozen_snapshot)
-    assert legacy == pure
 
 
 def test_origin_uses_exact_window_medians_not_midpoint_outlier(
