@@ -23,7 +23,7 @@ from src.domain.blackout_capture import (
     DischargeSample,
     FrozenModelCapture,
 )
-from src.domain.blackout_terminal import BlackoutEnd
+from src.domain.blackout_terminal import BlackoutEnd, BudgetKind
 from src.domain.fragments import EndpointAnchor
 
 
@@ -43,6 +43,14 @@ class BlackoutCaptureStorePort(Protocol):
     def append_anchor(
         self, ref: BlackoutRef, cursor: BlackoutCaptureCursor, anchor: EndpointAnchor
     ) -> BlackoutCaptureCursor: ...
+
+    def rollover(
+        self,
+        ref: BlackoutRef,
+        cursor: BlackoutCaptureCursor,
+        *,
+        budget_kind: BudgetKind = BudgetKind.BYTES,
+    ) -> BlackoutCaptureOpened: ...
 
     def close(
         self, ref: BlackoutRef, cursor: BlackoutCaptureCursor, end: BlackoutEnd

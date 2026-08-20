@@ -54,6 +54,10 @@ class V3CapacityError(V3StorageError):
 
     reason_code = "capacity"
 
+    def __init__(self, message: str = "v3 capacity is exhausted") -> None:
+        self.rollover_required = message == "capture requires aggregate rollover"
+        super().__init__(message)
+
 
 class V3PersistenceError(V3StorageError):
     """A write, sync, rename, or readback boundary failed."""

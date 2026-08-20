@@ -246,7 +246,18 @@ def validate_registry(state: Any) -> None:
             isinstance(state.capture, (PreparingCaptureState, CapturingState))
             and (state.capture.blackout_id, state.capture.logical_segment_id) in identifiers
         ):
-            raise V3ValidationError("active capture duplicates pending aggregate")
+            # Reference-64 damage rollover deliberately retains the already
+            # finalized Processing carrier while a registry-first successor
+            # reservation is replayed.  The active duplicate is permitted only
+            # for that exact rollover shape; ordinary captures remain unique.
+            if not (
+                isinstance(state.capture, CapturingState)
+                and state.capture.rollover is not None
+                and state.capture.rollover.old_blackout_id == state.capture.blackout_id
+                and state.capture.rollover.old_logical_segment_id
+                == state.capture.logical_segment_id
+            ):
+                raise V3ValidationError("active capture duplicates pending aggregate")
 
 
 def _validate_state(state: object) -> None:
@@ -323,6 +334,8 @@ def _validate_processing(state: ProcessingState) -> None:
     if state.tail_build_intent is not None:
         _validate_tail_build(state.tail_build_intent, state)
     _hash(state.terminal_root_sha256)
+    if state.terminal_closing_anchor_sha256 is not None:
+        _hash(state.terminal_closing_anchor_sha256)
     _hash(state.terminal_end_sha256)
     _cursor(state.terminal_cursor_after_end)
     _cursor_scope(
