@@ -271,7 +271,8 @@ class RechargeCapture:
         )
         stable_windows = _advance_stability(self._policy, active, observation)
         active.last_observed = observation
-        if active.elapsed_s >= self._policy.maximum_duration_s:
+        battery_pct_terminal = _battery_pct_terminal(observation)
+        if not battery_pct_terminal and active.elapsed_s >= self._policy.maximum_duration_s:
             return self._close_locked(
                 RechargeTermination.EPISODE_BUDGET_EXHAUSTED,
                 observation,
@@ -288,7 +289,7 @@ class RechargeCapture:
                 stable_windows,
             )
         )
-        if active.observed_samples >= self._policy.maximum_samples:
+        if not battery_pct_terminal and active.observed_samples >= self._policy.maximum_samples:
             return self._close_locked(
                 RechargeTermination.EPISODE_BUDGET_EXHAUSTED,
                 observation,
@@ -296,7 +297,8 @@ class RechargeCapture:
             )
         stable_duration = _stable_duration(active.stable_since, observation)
         if (
-            stable_windows >= self._policy.required_consecutive_stable_windows
+            not battery_pct_terminal
+            and stable_windows >= self._policy.required_consecutive_stable_windows
             and stable_duration >= self._policy.minimum_stabilization_duration_s
         ):
             return self._close_locked(
@@ -304,7 +306,7 @@ class RechargeCapture:
                 observation,
                 "stable voltage window; full charge is not established",
             )
-        if not decision.persist:
+        if not decision.persist and not battery_pct_terminal:
             return True
         active.sample_scheduled += 1
         sample_index = active.persisted_samples + active.sample_scheduled
@@ -358,7 +360,15 @@ class RechargeCapture:
                 observation,
                 "recharge observation queue overflow",
             )
-        return True
+        return (
+            self._close_locked(
+                RechargeTermination.CHARGE_STABILIZED,
+                observation,
+                "UPS reported battery percentage at least 100",
+            )
+            if battery_pct_terminal
+            else True
+        )
 
     def supersede_by_blackout(
         self, observation: PhysicalObservation, *, blackout_id: str | None
@@ -498,6 +508,13 @@ def _observation_from_record_payload(payload: Mapping[str, Any]) -> PhysicalObse
         return parse_observation(raw, 0)
     except (ProjectionInputError, TypeError, ValueError) as exc:
         raise ValueError("recovered recharge observation is invalid") from exc
+
+
+def _battery_pct_terminal(observation: PhysicalObservation) -> bool:
+    """Close on the first online reading whose UPS percentage reaches 100."""
+    return "OL" in observation.raw_status.split() and (
+        observation.battery_pct is not None and observation.battery_pct >= 100.0
+    )
 
 
 def _advance_stability(
