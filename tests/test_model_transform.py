@@ -104,6 +104,21 @@ def _release_a_state() -> dict:
     }
 
 
+def _release_a_duplicate_lut_state() -> dict:
+    state = _release_a_state()
+    state["lut"] = [
+        {"v": 13.4, "soc": 1.0, "source": "standard"},
+        {"v": 13.4, "soc": 1.0, "source": "measured", "timestamp": 2000.0},
+        {"v": 12.55, "soc": 0.7, "source": "measured", "timestamp": 1234.0},
+        {"v": 12.1, "soc": 0.4, "source": "standard"},
+        {"v": 12.1, "soc": 0.4, "source": "measured", "timestamp": 1900.0},
+        {"v": 11.6, "soc": 0.18, "source": "standard"},
+        {"v": 11.6, "soc": 0.18, "source": "measured", "timestamp": 1800.0},
+        {"v": 10.5, "soc": 0.0, "source": "anchor"},
+    ]
+    return state
+
+
 def _legacy_model(path: Path) -> tuple[bytes, str, dict]:
     state = _release_a_state()
     path.write_text(json.dumps(state, ensure_ascii=True, indent=2), encoding="utf-8")
@@ -186,6 +201,68 @@ def test_transform_shifts_every_lut_row_drops_rls_and_keeps_exact_backup(tmp_pat
     assert ModelOwner(
         path, safety_oracle=_oracle
     ).current_snapshot().ir_k_v_per_pp == pytest.approx(0.017)
+
+
+def test_transform_canonicalizes_real_duplicate_coordinates_and_keeps_measured_provenance(
+    tmp_path: Path,
+):
+    path = tmp_path / "model.json"
+    backup = tmp_path / "model.pretransform.json"
+    source_state = _release_a_duplicate_lut_state()
+    path.write_text(json.dumps(source_state, ensure_ascii=True, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+    source_fingerprint = release_a_scientific_fingerprint(source_state)
+    source = load_release_a_source(path, registered_source_fingerprint=source_fingerprint)
+    target_state = build_target_state(source.state)
+    target_fingerprint = scientific_fingerprint(target_state)
+
+    receipt = transform_model_file(
+        path,
+        backup_path=backup,
+        registered_source_fingerprint=source_fingerprint,
+        registered_target_fingerprint=target_fingerprint,
+        settings=TRANSFORM_SETTINGS,
+    )
+
+    transformed = json.loads(path.read_text(encoding="utf-8"))
+    validate_target_state(transformed)
+    assert backup.read_bytes() == before
+    assert receipt.backup_path == backup
+    assert receipt.source_scientific_fingerprint == source_fingerprint
+    assert receipt.target_scientific_fingerprint == target_fingerprint
+    assert receipt.equivalence.lb_transitions_identical
+    assert receipt.equivalence.non_lb_status_identical
+    assert receipt.equivalence.max_soc_delta <= 0.005
+    assert receipt.equivalence.max_runtime_delta_seconds <= 1.0
+    assert transformed["lut"] == [
+        {"v": 13.74, "soc": 1.0, "source": "measured", "timestamp": 2000.0},
+        {"v": 12.89, "soc": 0.7, "source": "measured", "timestamp": 1234.0},
+        {"v": 12.44, "soc": 0.4, "source": "measured", "timestamp": 1900.0},
+        {"v": 11.94, "soc": 0.18, "source": "measured", "timestamp": 1800.0},
+        {"v": 10.84, "soc": 0.0, "source": "anchor"},
+    ]
+
+
+def test_transform_refuses_conflicting_duplicate_voltage_without_writes(tmp_path: Path):
+    path = tmp_path / "model.json"
+    backup = tmp_path / "model.pretransform.json"
+    source_state = _release_a_duplicate_lut_state()
+    source_state["lut"][1]["soc"] = 0.99
+    path.write_text(json.dumps(source_state, ensure_ascii=True, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+    source_fingerprint = release_a_scientific_fingerprint(source_state)
+
+    with pytest.raises(ModelTransformError, match="conflicting duplicate voltage 13.4"):
+        transform_model_file(
+            path,
+            backup_path=backup,
+            registered_source_fingerprint=source_fingerprint,
+            registered_target_fingerprint="0" * 64,
+            settings=TRANSFORM_SETTINGS,
+        )
+
+    assert path.read_bytes() == before
+    assert not backup.exists()
 
 
 def test_dense_oracle_exercises_actual_source_and_target_float_frames(tmp_path: Path):
