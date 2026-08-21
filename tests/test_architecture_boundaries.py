@@ -8,7 +8,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
 MODEL_OWNER = "src/adapters/model_owner.py"
-MODEL_TRANSFORM = "src/adapters/model_transform.py"
 EVENT_FILE_OWNERS = frozenset(
     {
         "src/adapters/minimal_event_file.py",
@@ -151,7 +150,6 @@ def test_model_persistence_authority_is_confined_to_model_state_adapter():
     assert [path for path, _ in definitions] == ["src/adapters/model_state_persistence.py"]
     assert persistence_owners <= {
         MODEL_OWNER,
-        MODEL_TRANSFORM,
         "src/adapters/model_state_persistence.py",
     }
 

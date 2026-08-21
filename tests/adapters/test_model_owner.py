@@ -985,7 +985,6 @@ def test_production_has_no_legacy_model_import_edge():
     production_paths = [
         *(repository / "src").rglob("*.py"),
         *(repository / "scripts").rglob("*.py"),
-        repository / "scripts" / "reparameterize-ir-reference",
     ]
     legacy_importers = []
     for path in production_paths:

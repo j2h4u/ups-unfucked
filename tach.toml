@@ -23,11 +23,6 @@ depends_on = [
 layer = "composition"
 
 [[modules]]
-path = "src.telemetry_capability_cli"
-depends_on = ["src.adapters.telemetry_capability_baseline", "src.monitor_config", "src.nut_client"]
-layer = "composition"
-
-[[modules]]
 path = "src.monitor_config"
 depends_on = ["src.battery_math", "src.domain"]
 layer = "composition"
@@ -73,34 +68,13 @@ depends_on = []
 layer = "adapters"
 
 [[modules]]
-path = "src.adapters.model_state_release_a"
-depends_on = ["src.adapters.model_state_schema", "src.domain"]
-layer = "adapters"
-
-[[modules]]
 path = "src.adapters.model_state_schema"
 depends_on = ["src.adapters.model_state_persistence", "src.battery_math", "src.domain"]
 layer = "adapters"
 
 [[modules]]
-path = "src.adapters.model_transform"
-depends_on = [
-    "src.adapters.model_state_persistence",
-    "src.adapters.model_state_release_a",
-    "src.adapters.model_state_schema",
-    "src.battery_math",
-    "src.domain",
-]
-layer = "adapters"
-
-[[modules]]
 path = "src.adapters.nut_telemetry"
 depends_on = ["src.domain", "src.nut_client"]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.telemetry_capability_baseline"
-depends_on = ["src.domain.telemetry_capability", "src.nut_client"]
 layer = "adapters"
 
 [[modules]]
@@ -131,11 +105,6 @@ layer = "application"
 [[modules]]
 path = "src.domain"
 depends_on = ["src.battery_math"]
-layer = "domain"
-
-[[modules]]
-path = "src.domain.telemetry_capability"
-depends_on = []
 layer = "domain"
 
 [[modules]]

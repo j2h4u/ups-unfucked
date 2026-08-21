@@ -105,13 +105,6 @@
       "expected_test_ids": ["tests/adapters/test_model_owner.py::test_target_validator_rejects_invalid_schema_and_policy"]
     },
     {
-      "path": "src/adapters/model_transform.py",
-      "sha256": "41a58fc0a45ed2828665217b7c4a4d7d5e972770c906a6ac8fba6a6df3a0a348",
-      "purpose": "Strict Release-A source identity and no-clobber target transform contract.",
-      "expected_golden_ids": ["model.registered_release_a_fingerprint", "model.dense_no_later_lb_oracle"],
-      "expected_test_ids": ["tests/test_model_transform.py::test_release_a_codec_reproduces_registered_legacy_fingerprint_without_writes", "tests/test_model_transform.py::test_dense_oracle_exercises_actual_source_and_target_float_frames"]
-    },
-    {
       "path": "src/domain/evidence.py",
       "sha256": "1b73fd189dd2f62331d1c43ac7923ba81d0b19f45e323d143943dc9f9e162fc9",
       "purpose": "Historical global terminal-science policy and evidence admission boundary to be superseded in Slice 1.",
@@ -215,13 +208,6 @@
       "purpose": "Architecture fixture forbidding battery math from importing application code.",
       "expected_golden_ids": ["architecture.math_no_application"],
       "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
-    },
-    {
-      "path": "tests/test_model_transform.py",
-      "sha256": "b92c4e13500f456a61eef221817e5c7be25ebe12ec940b5f9f021a657214c6c5",
-      "purpose": "Release-A fingerprint, target transform, dense oracle, no-clobber, rollback, and CLI goldens.",
-      "expected_golden_ids": ["model.registered_release_a_fingerprint", "model.transform_exact_backup", "model.dense_no_later_lb_oracle"],
-      "expected_test_ids": ["tests/test_model_transform.py::test_release_a_codec_reproduces_registered_legacy_fingerprint_without_writes", "tests/test_model_transform.py::test_transform_shifts_every_lut_row_drops_rls_and_keeps_exact_backup", "tests/test_model_transform.py::test_post_write_verification_failure_restores_exact_source"]
     },
     {
       "path": "tests/test_safety_freshness.py",

@@ -33,9 +33,9 @@ trailing_voltage_span_v  # FALSE POSITIVE: ChargeReadiness JSONL field (domain/v
 
 # Health/publication projections use dataclasses.asdict(), so these fields are
 # read reflectively by the JSON health publisher rather than by name.
-maintenance_queued  # FALSE POSITIVE: CaptureQueueHealth health JSON field (application/capture_writer.py)
-max_busy_time_s  # FALSE POSITIVE: CaptureQueueHealth health JSON field (application/capture_writer.py)
-oldest_queue_age_s  # FALSE POSITIVE: CaptureQueueHealth health JSON field (application/capture_writer.py)
+maintenance_queued  # FALSE POSITIVE: CaptureQueueHealth health JSON field (application/storage_values.py)
+max_busy_time_s  # FALSE POSITIVE: CaptureQueueHealth health JSON field (application/storage_values.py)
+oldest_queue_age_s  # FALSE POSITIVE: CaptureQueueHealth health JSON field (application/storage_values.py)
 durability_lag_s  # FALSE POSITIVE: StorageHealth health JSON field (application/storage_values.py)
 rebuild_generation  # FALSE POSITIVE: StorageHealth health JSON field (application/storage_values.py)
 rebuild_files_remaining  # FALSE POSITIVE: StorageHealth health JSON field (application/storage_values.py)
@@ -45,29 +45,12 @@ total_bytes  # FALSE POSITIVE: StorageHealth health JSON field (application/stor
 free_bytes  # FALSE POSITIVE: StorageHealth health JSON field (application/storage_values.py)
 observed_utc  # FALSE POSITIVE: _ApparentTransitionSag health JSON field (virtual_ups_exporter.py)
 
-# This structural dependency-injection port is intentionally a Protocol. Its
-# only production reference is a string forward annotation, which vulture
-# cannot count as a use.
-BackgroundModelPort  # FALSE POSITIVE: typing.Protocol structural port (application/background_coordinator.py)
-JsonlLaneHost  # FALSE POSITIVE: typing.Protocol lane contract used through annotations (adapters/jsonl_state.py)
-
-# Intentional public seams: these are called by sanctioned reset/orchestration
-# paths or preserve a durable recovery contract that static reachability misses.
+# Intentional public seams: these are called by sanctioned reset paths or
+# preserve a durable contract that static reachability misses.
 _.reset_baseline  # FALSE POSITIVE: sanctioned physical-battery reset API (adapters/model_owner.py)
-_.drain_one  # FALSE POSITIVE: deterministic manual capture-drain seam for orchestration tests (application/capture_writer.py)
-transform_model_file  # FALSE POSITIVE: public transform CLI entrypoint (adapters/model_transform.py)
 trusted_prefixes  # FALSE POSITIVE: adapter-built persisted corruption/recovery contract (application/storage_values.py)
 CLOSED_RESTART_GAP  # FALSE POSITIVE: TerminationFact value serialized in terminal records (domain/values.py)
 ended_utc  # FALSE POSITIVE: public blackout/recharge history DTO field read by query consumers
 comparison_available  # FALSE POSITIVE: public EventSummary field read by history consumers
 ir_estimate_available  # FALSE POSITIVE: public EventSummary field read by history consumers
 commit_receipt_id  # FALSE POSITIVE: public EventSummary field read by history consumers
-
-# Offline model transformation receipts are serialized with dataclasses.asdict
-# by scripts/reparameterize-ir-reference; vulture cannot see those field reads.
-lb_transitions_identical  # FALSE POSITIVE: EquivalenceReport serialized receipt field (adapters/model_transform.py)
-non_lb_status_identical  # FALSE POSITIVE: EquivalenceReport serialized receipt field (adapters/model_transform.py)
-source_model_hash  # FALSE POSITIVE: TransformReceipt serialized receipt field (adapters/model_transform.py)
-target_model_hash  # FALSE POSITIVE: TransformReceipt serialized receipt field (adapters/model_transform.py)
-source_scientific_fingerprint  # FALSE POSITIVE: TransformReceipt serialized receipt field (adapters/model_transform.py)
-target_scientific_fingerprint  # FALSE POSITIVE: TransformReceipt serialized receipt field (adapters/model_transform.py)

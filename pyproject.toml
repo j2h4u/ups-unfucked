@@ -62,7 +62,7 @@ root_package = "src"
 name = "Production dependencies point inward"
 type = "layers"
 layers = [
-    "src.monitor : src.monitor_config : src.telemetry_capability_cli",
+    "src.monitor : src.monitor_config",
     "src.adapters : src.alerter : src.motd_status : src.nut_client : src.virtual_ups_exporter",
     "src.application",
     "src.domain",
@@ -75,7 +75,6 @@ type = "forbidden"
 source_modules = ["src.domain", "src.application"]
 forbidden_modules = [
     "src.adapters",
-    "src.adapters.telemetry_capability_baseline",
     "src.alerter",
     "src.motd_status",
     "src.nut_client",
@@ -123,11 +122,8 @@ source_modules = [
 forbidden_modules = [
     "src.adapters.model_owner",
     "src.adapters.model_state_persistence",
-    "src.adapters.model_state_release_a",
     "src.adapters.model_state_schema",
-    "src.adapters.model_transform",
     "src.adapters.nut_telemetry",
-    "src.adapters.telemetry_capability_baseline",
 ]
 
 [[tool.importlinter.contracts]]
@@ -136,11 +132,8 @@ type = "forbidden"
 source_modules = [
     "src.adapters.model_owner",
     "src.adapters.model_state_persistence",
-    "src.adapters.model_state_release_a",
     "src.adapters.model_state_schema",
-    "src.adapters.model_transform",
     "src.adapters.nut_telemetry",
-    "src.adapters.telemetry_capability_baseline",
 ]
 forbidden_modules = [
     "src.adapters.jsonl_errors",
@@ -156,13 +149,10 @@ typeCheckingMode = "basic"
 quote-style = "double"
 
 [tool.vulture]
-# Include the offline entrypoint so its call to transform_model_file is visible
-# to the hard gate. vulture_whitelist.py contains only reviewed false positives.
+# vulture_whitelist.py contains only reviewed false positives.
 paths = [
     "src",
     "scripts",
-    "scripts/reparameterize-ir-reference",
-    "scripts/record-telemetry-capability-baseline",
     "vulture_whitelist.py",
 ]
 min_confidence = 60
