@@ -141,6 +141,27 @@ def test_end_command_keeps_its_observation_as_a_sample(tmp_path: Path) -> None:
     assert "termination" not in json.loads(lines[-1])
 
 
+def test_end_without_observation_does_not_invent_a_sample(tmp_path: Path) -> None:
+    store = MinimalJsonlEventStore(tmp_path)
+    handle = store.open(_start("2026-08-22T00:00:00Z"))
+    path = tmp_path / "events" / "telemetry.jsonl"
+    before = path.read_bytes()
+
+    store.append(
+        handle,
+        EventRecord(
+            "end",
+            "boot",
+            "2026-08-22T00:00:10Z",
+            2,
+            {"termination": "service_stop"},
+            "physical",
+        ),
+    )
+
+    assert path.read_bytes() == before
+
+
 def test_projection_splits_two_blackouts_and_recharge_in_one_chronological_stream(
     tmp_path: Path,
 ) -> None:

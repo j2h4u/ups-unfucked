@@ -295,17 +295,6 @@ class RechargeCapture:
                 observation,
                 "maximum recharge sample budget reached",
             )
-        stable_duration = _stable_duration(active.stable_since, observation)
-        if (
-            not battery_pct_terminal
-            and stable_windows >= self._policy.required_consecutive_stable_windows
-            and stable_duration >= self._policy.minimum_stabilization_duration_s
-        ):
-            return self._close_locked(
-                RechargeTermination.CHARGE_STABILIZED,
-                observation,
-                "stable voltage window; full charge is not established",
-            )
         if not decision.persist and not battery_pct_terminal:
             return True
         active.sample_scheduled += 1
@@ -424,6 +413,7 @@ class RechargeCapture:
             ),
         )
         payload: dict[str, Any] = {
+            "observation": json_value(observation),
             "episode_id": active.episode_id,
             "preceding_blackout_id": active.preceding_blackout_id,
             "superseding_blackout_id": superseding_blackout_id,

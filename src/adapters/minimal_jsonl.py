@@ -136,10 +136,12 @@ class MinimalJsonlEventStore:
             # The terminal command carries the last physical observation.  It
             # is valuable telemetry and must survive even though the
             # termination label itself has no sample-only representation.
-            append(
-                path,
-                _sample_from_observation(record.payload.get("observation"), record.wall_time_utc),
-            )
+            observation = record.payload.get("observation")
+            if observation is not None:
+                terminal = _sample_from_observation(observation, record.wall_time_utc)
+                existing = read(path).records
+                if not existing or existing[-1] != terminal:
+                    append(path, terminal)
         # gap/derived records have no representation in the sample-only wire
         # contract.  Their capture remains safe because observations are
         # appended before these best-effort lifecycle calls.
