@@ -118,6 +118,8 @@ VIRTUAL_DRIVER_SRC="$REPO_ROOT/systemd/nut-driver@${UPS_VIRTUAL_NAME}.service"
 VIRTUAL_DRIVER_DST="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service"
 LEGACY_DROPIN_DIR="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service.d"
 LEGACY_DROPIN_DST="$LEGACY_DROPIN_DIR/nut-driver-virtual.conf"
+STALE_MONITOR_DROPIN_DIR="/etc/systemd/system/ups-battery-monitor.service.d"
+STALE_MONITOR_DROPIN_DST="$STALE_MONITOR_DROPIN_DIR/20-stable-worktree.conf"
 TARGET_WANTS_LINK="/etc/systemd/system/nut-driver.target.wants/nut-driver@${UPS_VIRTUAL_NAME}.service"
 MONITOR_WANTS_DIR="/etc/systemd/system/ups-battery-monitor.service.wants"
 MONITOR_WANTS_LINK="$MONITOR_WANTS_DIR/nut-driver@${UPS_VIRTUAL_NAME}.service"
@@ -219,6 +221,33 @@ backup_transaction_file() {
     else
         : > "$TRANSACTION_ROOT/$name.absent"
     fi
+}
+
+validate_dropin_path() {
+    local parent="$1"
+    local target="$2"
+
+    if [[ -L "$parent" ]]; then
+        log_error "Refusing symlink drop-in parent: $parent"
+        return 1
+    fi
+    if [[ -e "$parent" && ! -d "$parent" ]]; then
+        log_error "Drop-in parent is not a directory: $parent"
+        return 1
+    fi
+    assert_restore_target_safe "$target"
+}
+
+retire_stale_monitor_dropin() {
+    validate_dropin_path "$STALE_MONITOR_DROPIN_DIR" "$STALE_MONITOR_DROPIN_DST"
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would remove stale monitor drop-in: $STALE_MONITOR_DROPIN_DST"
+        return
+    fi
+    if [[ -e "$STALE_MONITOR_DROPIN_DST" || -L "$STALE_MONITOR_DROPIN_DST" ]]; then
+        rm -- "$STALE_MONITOR_DROPIN_DST"
+    fi
+    log_ok "Stale monitor drop-in retired: $STALE_MONITOR_DROPIN_DST"
 }
 
 # shellcheck disable=SC2317 # Called from the installation transaction and tests.
@@ -457,6 +486,9 @@ rollback_transaction() {
     restore_transaction_file "$SERVICE_DST" service || rollback_status=1
     restore_transaction_file "$VIRTUAL_DRIVER_DST" virtual-driver || rollback_status=1
     restore_transaction_file "$LEGACY_DROPIN_DST" legacy-dropin || rollback_status=1
+    if [[ -n "${STALE_MONITOR_DROPIN_DST:-}" ]]; then
+        restore_transaction_file "$STALE_MONITOR_DROPIN_DST" stale-monitor-dropin || rollback_status=1
+    fi
     restore_transaction_file "$NUT_CONFIG" nut-config || rollback_status=1
     restore_transaction_file "$UPSMON_CONF" upsmon || rollback_status=1
     restore_transaction_link "$TARGET_WANTS_LINK" target-wants || rollback_status=1
@@ -609,6 +641,8 @@ chmod 700 -- "$TRANSACTION_ROOT"
 backup_transaction_file "$SERVICE_DST" service
 backup_transaction_file "$VIRTUAL_DRIVER_DST" virtual-driver
 backup_transaction_file "$LEGACY_DROPIN_DST" legacy-dropin
+validate_dropin_path "$STALE_MONITOR_DROPIN_DIR" "$STALE_MONITOR_DROPIN_DST"
+backup_transaction_file "$STALE_MONITOR_DROPIN_DST" stale-monitor-dropin
 backup_transaction_file "$NUT_CONFIG" nut-config
 backup_transaction_file "$UPSMON_CONF" upsmon
 backup_transaction_link "$TARGET_WANTS_LINK" target-wants
@@ -652,6 +686,8 @@ else
     rm -f -- "$LEGACY_DROPIN_DST"
     log_ok "Legacy enumerator-owned virtual driver drop-in retired"
 fi
+
+retire_stale_monitor_dropin
 
 log_info "Reloading systemd daemon..."
 run_cmd systemctl daemon-reload

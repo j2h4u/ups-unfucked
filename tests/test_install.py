@@ -273,6 +273,121 @@ test "$(stat -c %a "$SERVICE_DST")" = 640
     assert result.returncode == 0, result.stderr
 
 
+def _monitor_dropin_test_command(
+    tmp_path: Path,
+    *,
+    dry_run: bool,
+    target_exists: bool = True,
+) -> str:
+    parent = tmp_path / "ups-battery-monitor.service.d"
+    target = parent / "20-stable-worktree.conf"
+    transaction = tmp_path / "transaction"
+    parent.mkdir()
+    if target_exists:
+        target.write_bytes(b"[Service]\nWorkingDirectory=/old/release\n")
+    return f"""
+set -euo pipefail
+DRY_RUN={"yes" if dry_run else "no"}
+STALE_MONITOR_DROPIN_DIR={shlex.quote(str(parent))}
+STALE_MONITOR_DROPIN_DST={shlex.quote(str(target))}
+TRANSACTION_ROOT={shlex.quote(str(transaction))}
+log_error() {{ echo "$*" >&2; }}
+log_ok() {{ echo "$*"; }}
+mkdir --parents -- "$TRANSACTION_ROOT"
+{_transaction_helpers()}
+validate_dropin_path "$STALE_MONITOR_DROPIN_DIR" "$STALE_MONITOR_DROPIN_DST"
+backup_transaction_file "$STALE_MONITOR_DROPIN_DST" stale-monitor-dropin
+retire_stale_monitor_dropin
+"""
+
+
+def test_install_retires_stale_monitor_dropin_on_real_install(tmp_path):
+    result = subprocess.run(
+        ["bash", "-c", _monitor_dropin_test_command(tmp_path, dry_run=False)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "ups-battery-monitor.service.d" / "20-stable-worktree.conf").exists()
+    assert "Stale monitor drop-in retired" in result.stdout
+
+
+def test_install_dry_run_reports_but_preserves_stale_monitor_dropin(tmp_path):
+    result = subprocess.run(
+        ["bash", "-c", _monitor_dropin_test_command(tmp_path, dry_run=True)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    target = tmp_path / "ups-battery-monitor.service.d" / "20-stable-worktree.conf"
+
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == b"[Service]\nWorkingDirectory=/old/release\n"
+    assert "Would remove stale monitor drop-in" in result.stdout
+
+
+def test_install_rollback_restores_stale_monitor_dropin_exactly(tmp_path):
+    target = tmp_path / "ups-battery-monitor.service.d" / "20-stable-worktree.conf"
+    transaction = tmp_path / "transaction"
+    command = (
+        _monitor_dropin_test_command(tmp_path, dry_run=False)
+        + f"""
+printf '[Service]\\nWorkingDirectory=/new/release\\n' > {shlex.quote(str(target))}
+SERVICE_DST="$TRANSACTION_ROOT/service.target"
+VIRTUAL_DRIVER_DST="$TRANSACTION_ROOT/virtual-driver.target"
+LEGACY_DROPIN_DST="$TRANSACTION_ROOT/legacy-dropin.target"
+NUT_CONFIG="$TRANSACTION_ROOT/ups.target"
+UPSMON_CONF="$TRANSACTION_ROOT/upsmon.target"
+TARGET_WANTS_LINK="$TRANSACTION_ROOT/target-wants.link"
+MONITOR_WANTS_LINK="$TRANSACTION_ROOT/monitor-wants.link"
+MONITOR_WANTS_DIR="$TRANSACTION_ROOT/monitor-wants.d"
+MONITOR_WANTS_DIR_CREATED=no
+for name in service virtual-driver legacy-dropin nut-config upsmon; do : > "$TRANSACTION_ROOT/$name.absent"; done
+: > "$TRANSACTION_ROOT/target-wants.absent"
+: > "$TRANSACTION_ROOT/monitor-wants.absent"
+DRY_RUN=yes
+rollback_transaction
+cmp -- {shlex.quote(str(transaction / "stale-monitor-dropin"))} {shlex.quote(str(target))}
+"""
+    )
+    result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert target.read_bytes() == b"[Service]\nWorkingDirectory=/old/release\n"
+
+
+def test_install_transaction_records_absent_stale_monitor_dropin(tmp_path):
+    target = tmp_path / "ups-battery-monitor.service.d" / "20-stable-worktree.conf"
+    transaction = tmp_path / "transaction"
+    command = (
+        _monitor_dropin_test_command(tmp_path, dry_run=False, target_exists=False)
+        + f"""
+printf '[Service]\\nWorkingDirectory=/new/release\\n' > {shlex.quote(str(target))}
+SERVICE_DST="$TRANSACTION_ROOT/service.target"
+VIRTUAL_DRIVER_DST="$TRANSACTION_ROOT/virtual-driver.target"
+LEGACY_DROPIN_DST="$TRANSACTION_ROOT/legacy-dropin.target"
+NUT_CONFIG="$TRANSACTION_ROOT/ups.target"
+UPSMON_CONF="$TRANSACTION_ROOT/upsmon.target"
+TARGET_WANTS_LINK="$TRANSACTION_ROOT/target-wants.link"
+MONITOR_WANTS_LINK="$TRANSACTION_ROOT/monitor-wants.link"
+MONITOR_WANTS_DIR="$TRANSACTION_ROOT/monitor-wants.d"
+MONITOR_WANTS_DIR_CREATED=no
+for name in service virtual-driver legacy-dropin nut-config upsmon; do : > "$TRANSACTION_ROOT/$name.absent"; done
+: > "$TRANSACTION_ROOT/target-wants.absent"
+: > "$TRANSACTION_ROOT/monitor-wants.absent"
+DRY_RUN=yes
+rollback_transaction
+test ! -e {shlex.quote(str(target))}
+test -f {shlex.quote(str(transaction / "stale-monitor-dropin.absent"))}
+"""
+    )
+    result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+
+
 def _runtime_state_test_command(tmp_path: Path, *, fail_unit: str = "") -> str:
     event_log = tmp_path / "runtime-events.log"
     return f"""
