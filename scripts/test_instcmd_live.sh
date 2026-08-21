@@ -1,159 +1,140 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+set -uo pipefail
 
-# Live validation: Send INSTCMD test.battery.start.quick/deep to real UT850EG
-# Requires: NUT upsd running locally, CyberPower UPS configured
-# Purpose: Validate RFC 9271 INSTCMD protocol works on target hardware
-
-# Script usage
 usage() {
     cat <<'EOF'
-test_instcmd_live.sh — Live validation of NUT INSTCMD protocol on UT850EG
+Usage: test_instcmd_live.sh [--ups NAME] [--timeout SECONDS] [--quick]
 
-USAGE:
-  test_instcmd_live.sh [OPTIONS]
-
-OPTIONS:
-  --help              Show this help message
-  --ups <name>        UPS name in NUT (default: cyberpower)
-  --quick             Send test.battery.start.quick (default)
-  --deep              Send test.battery.start.deep
-  --timeout <sec>     Wait timeout for test result in seconds (default: 30)
-
-EXAMPLES:
-  # Send quick test and monitor for 30 seconds
-  test_instcmd_live.sh --quick
-
-  # Send deep test to custom UPS, wait 60 seconds
-  test_instcmd_live.sh --ups myups --deep --timeout 60
-
-PROTOCOL:
-  Sends INSTCMD via NUT upscmd CLI tool, then polls test.result variable
-  to confirm test actually started. Timeout is graceful (test may still run).
-
-REQUIREMENTS:
-  - upscmd and upsc CLI tools (from nut package)
-  - NUT upsd daemon running
-  - UPS configured in upsd
+Run one authenticated quick UPS self-test and briefly observe both NUT UPS
+identities plus the shared telemetry.jsonl stream. The NUT password is read
+once from the terminal and is never printed or saved.
 EOF
 }
 
-# Error handling
 die() {
-    echo "ERROR: $1" >&2
+    local -r message="$1"
+    printf 'ERROR: %s\n' "$message" >&2
     exit 1
 }
 
-# Defaults
-ups_name="cyberpower"
-test_cmd="test.battery.start.quick"
-timeout_sec=30
+require_integer() {
+    local -r value="$1" name="$2"
+    [[ "$value" =~ ^[0-9]+$ && "$value" -gt 0 ]] || die "$name must be a positive integer"
+}
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --help)
-            usage
-            exit 0
-            ;;
-        --ups)
-            ups_name="$2"
-            shift 2
-            ;;
-        --quick)
-            test_cmd="test.battery.start.quick"
-            shift
-            ;;
-        --deep)
-            test_cmd="test.battery.start.deep"
-            shift
-            ;;
-        --timeout)
-            timeout_sec="$2"
-            shift 2
-            ;;
-        *)
-            die "Unknown option: $1"
-            ;;
-    esac
-done
+ups_snapshot() {
+    local -r ups="$1"
+    local output
 
-# Pre-flight checks
-echo "=== Pre-flight Checks ==="
+    output=$(upsc "$ups" 2>/dev/null) || return 1
+    awk -F': ' '
+        $1 == "ups.status" { status=$2 }
+        $1 == "battery.charge" { charge=$2 }
+        $1 == "battery.runtime" { runtime=$2 }
+        END {
+            if (status == "") status="?"
+            if (charge == "") charge="?"
+            if (runtime == "") runtime="?"
+            printf "status=%s charge=%s%% runtime=%ss", status, charge, runtime
+        }
+    ' <<<"$output"
+}
 
-# Check upscmd CLI
-if ! command -v upscmd &> /dev/null; then
-    die "upscmd not found in PATH. Install NUT package: sudo apt-get install nut"
-fi
-echo "✓ upscmd CLI found"
+telemetry_size() {
+    local -r telemetry="$1"
+    local bytes lines
 
-# Check upsc CLI
-if ! command -v upsc &> /dev/null; then
-    die "upsc not found in PATH. Install NUT package: sudo apt-get install nut"
-fi
-echo "✓ upsc CLI found"
+    if [[ -f "$telemetry" ]]; then
+        bytes=$(stat --format='%s' "$telemetry") || return 1
+        lines=$(wc --lines <"$telemetry") || return 1
+        printf '%s bytes/%s lines' "$bytes" "${lines//[[:space:]]/}"
+    else
+        printf 'absent'
+    fi
+}
 
-# Check NUT upsd is running and responding
-if ! upsc "$ups_name" battery.charge &>/dev/null; then
-    die "NUT upsd not responding for UPS '$ups_name'. Check: upsc $ups_name"
-fi
-echo "✓ NUT upsd responding for UPS '$ups_name'"
+main() {
+    local ups_name='cyberpower'
+    local timeout_sec=30
+    local telemetry="${XDG_CONFIG_HOME:-$HOME/.config}/ups-battery-monitor/events/telemetry.jsonl"
+    local option
+    local physical virtual after
+    local start_time now elapsed
+    local telemetry_before telemetry_after
+    local -i telemetry_grew=0
 
-echo ""
-echo "=== Sending INSTCMD ==="
+    while [[ $# -gt 0 ]]; do
+        option="$1"
+        case "$option" in
+            --help)
+                usage
+                return 0
+                ;;
+            --ups)
+                [[ $# -ge 2 ]] || die '--ups requires a value'
+                ups_name="$2"
+                shift 2
+                ;;
+            --timeout)
+                [[ $# -ge 2 ]] || die '--timeout requires a value'
+                timeout_sec="$2"
+                shift 2
+                ;;
+            --quick)
+                shift
+                ;;
+            --deep)
+                die 'only test.battery.start.quick is allowed'
+                ;;
+            *)
+                die "unknown option: $option"
+                ;;
+        esac
+    done
+    require_integer "$timeout_sec" '--timeout'
 
-# Capture pre-dispatch test.result to detect changes
-pre_test_result=$(upsc "$ups_name" test.result 2>/dev/null || echo "UNKNOWN")
-echo "Pre-dispatch test.result: $pre_test_result"
+    command -v upscmd >/dev/null 2>&1 || die 'upscmd not found in PATH'
+    command -v upsc >/dev/null 2>&1 || die 'upsc not found in PATH'
 
-# Send INSTCMD via upscmd (simulating daemon behavior)
-echo "Sending: upscmd -u upsmon $ups_name $test_cmd"
-response=$(upscmd -u upsmon "$ups_name" "$test_cmd" 2>&1 || true)
-echo "Response: $response"
+    printf 'Preflight (%s and cyberpower-virtual)\n' "$ups_name"
+    physical=$(ups_snapshot "$ups_name") || die "NUT is not responding for $ups_name"
+    virtual=$(ups_snapshot 'cyberpower-virtual') || die 'NUT is not responding for cyberpower-virtual'
+    printf '  %s: %s\n  cyberpower-virtual: %s\n' "$ups_name" "$physical" "$virtual"
+    telemetry_before=$(telemetry_size "$telemetry") || die "cannot inspect $telemetry"
+    printf '  telemetry: %s (%s)\n' "$telemetry" "$telemetry_before"
 
-# Check for success indicators
-if echo "$response" | grep -qi "succeeded\|Instant command succeeded"; then
-    echo "✓ INSTCMD dispatch successful (upscmd OK)"
-else
-    die "INSTCMD dispatch failed. Response: $response"
-fi
+    [[ -t 0 ]] || die 'NUT password requires an interactive terminal'
 
-echo ""
-echo "=== Monitoring Test Progress (${timeout_sec}s timeout) ==="
-
-# Poll test.result variable post-dispatch
-start_time=$(date +%s)
-deadline=$((start_time + timeout_sec))
-poll_interval=2
-
-while [[ $(date +%s) -lt $deadline ]]; do
-    test_result=$(upsc "$ups_name" test.result 2>/dev/null || echo "UNKNOWN")
-    echo "[$(($(date +%s) - start_time))s] test.result: $test_result"
-
-    # Check if test started (test.result changed from pre-dispatch value)
-    if [[ "$test_result" != "$pre_test_result" ]] && [[ "$test_result" != "UNKNOWN" ]]; then
-        if [[ "$test_result" == *"In Progress"* ]] || [[ "$test_result" == *"Completed"* ]]; then
-            echo "✓ Test started and actively running"
-            break
-        fi
+    printf 'Starting quick self-test on %s...\n' "$ups_name"
+    if ! upscmd -u upsmon "$ups_name" test.battery.start.quick; then
+        die 'quick self-test dispatch failed'
     fi
 
-    sleep "$poll_interval"
-done
+    start_time=$(printf '%(%s)T' -1)
+    while :; do
+        now=$(printf '%(%s)T' -1)
+        elapsed=$((now - start_time))
+        physical=$(ups_snapshot "$ups_name") || physical='unavailable'
+        virtual=$(ups_snapshot 'cyberpower-virtual') || virtual='unavailable'
+        telemetry_after=$(telemetry_size "$telemetry") || telemetry_after='unavailable'
+        printf '[%ss] %s: %s | cyberpower-virtual: %s | telemetry: %s\n' \
+            "$elapsed" "$ups_name" "$physical" "$virtual" "$telemetry_after"
+        if [[ "$telemetry_after" != 'absent' && "$telemetry_after" != 'unavailable' && "$telemetry_after" != "$telemetry_before" ]]; then
+            telemetry_grew=1
+        fi
+        if (( elapsed >= timeout_sec )); then
+            break
+        fi
+        sleep 2
+    done
 
-echo ""
-echo "=== Summary ==="
-final_test_result=$(upsc "$ups_name" test.result 2>/dev/null || echo "UNKNOWN")
-echo "Final test.result: $final_test_result"
+    after=$(ups_snapshot "$ups_name" 2>/dev/null || printf 'unavailable')
+    printf 'Result: quick self-test dispatched; final %s: %s\n' "$ups_name" "$after"
+    if (( telemetry_grew )); then
+        printf 'Telemetry: grew during observation (%s -> %s)\n' "$telemetry_before" "$telemetry_after"
+    else
+        printf 'Telemetry: no growth observed within %ss\n' "$timeout_sec"
+    fi
+}
 
-if [[ "$final_test_result" != "$pre_test_result" ]] && [[ "$final_test_result" != "UNKNOWN" ]]; then
-    echo "✓ Test execution confirmed (result changed from pre-dispatch state)"
-else
-    echo "⚠ Test result unchanged after dispatch"
-    echo "  Note: For deep tests, this timeout (${timeout_sec}s) may be insufficient."
-    echo "  Check later: upsc $ups_name test.result"
-fi
-
-echo ""
-echo "=== Live Validation Complete ==="
-exit 0
+main "$@"
