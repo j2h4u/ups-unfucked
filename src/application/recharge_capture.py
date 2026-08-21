@@ -141,6 +141,8 @@ class RechargeCapture:
         with self._lock:
             if self._active is not None:
                 return True
+            if _battery_pct_terminal(observation):
+                return True
             if self._pending_restoration_blackout_id is not None:
                 return False
             candidate = _restart_candidate(projections)
@@ -177,6 +179,8 @@ class RechargeCapture:
         uat_intent_id: str | None = None,
     ) -> bool:
         """Durably start one idempotent episode from the first online poll."""
+        if _battery_pct_terminal(observation):
+            return True
         return self._begin(
             observation,
             _StartDetails(
@@ -376,6 +380,8 @@ class RechargeCapture:
 
     def service_stop(self, observation: PhysicalObservation) -> bool:
         with self._lock:
+            if self._active is None:
+                return True
             return self._close_locked(
                 RechargeTermination.SERVICE_STOP,
                 observation,

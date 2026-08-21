@@ -112,6 +112,17 @@ def test_service_stop_does_not_invent_a_terminal_telemetry_state(tmp_path: Path)
     assert events == ()
 
 
+def test_full_charge_does_not_start_recharge_or_fail_service_stop(tmp_path: Path) -> None:
+    with nullcontext(MinimalJsonlEventStore(tmp_path)) as store:
+        writer = CaptureWriter()
+        recharge = RechargeCapture(store, writer)
+
+        assert recharge.begin(observation(0, battery_pct=100.0), preceding_blackout_id=None)
+        assert recharge.service_stop(observation(1, battery_pct=100.0))
+
+    assert not tmp_path.joinpath("events", "telemetry.jsonl").exists()
+
+
 def test_crash_restored_start_is_adopted_and_acknowledged(tmp_path: Path) -> None:
     crashed = [True]
 
