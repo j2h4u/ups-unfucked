@@ -3,9 +3,7 @@
 # Displays: status icon, charge%, runtime, load%, SoH%, replacement date
 # Colors: green (healthy), yellow (warning), red (critical)
 #
-# Live UPS metrics come from NUT (upsc); SoH and replacement date come from the
-# bundled CLI (python3 -m src.motd_status) — no jq. @INSTALL_DIR@ is filled in by
-# scripts/install.sh; override with UPS_PKG_DIR for local testing.
+# Live UPS metrics come from NUT (upsc) — no jq or bundled CLI dependency.
 
 set -o pipefail
 
@@ -22,7 +20,6 @@ else
     NC='\033[0m'  # No color
 fi
 
-UPS_PKG_DIR="${UPS_PKG_DIR:-@INSTALL_DIR@}"
 # Virtual UPS NUT address; @UPS_NUT_ADDRESS@ is filled in by scripts/install.sh
 # (from UPS_VIRTUAL_NAME). Override with UPS_NUT_ADDRESS for local testing.
 UPS_NUT_ADDRESS="${UPS_NUT_ADDRESS:-@UPS_NUT_ADDRESS@}"
@@ -36,18 +33,8 @@ ups_status=$(echo "$ups_data" | grep "^ups.status:" | cut -d' ' -f2-)
 charge=$(echo "$ups_data" | grep "^battery.charge:" | cut -d' ' -f2 | cut -d'.' -f1)
 runtime=$(echo "$ups_data" | grep "^battery.runtime:" | cut -d' ' -f2)
 load=$(echo "$ups_data" | grep "^ups.load:" | cut -d' ' -f2 | cut -d'.' -f1)
-
-# SoH (already as integer percent) and replacement date from the bundled CLI
-soh_pct=""
+soh_pct=$(echo "$ups_data" | grep "^battery.health:" | cut -d' ' -f2 | cut -d'.' -f1)
 replacement_date=""
-if motd=$(PYTHONPATH="$UPS_PKG_DIR" python3 -m src.motd_status 2>/dev/null); then
-    while IFS='=' read -r key value; do
-        case "$key" in
-            soh_pct) soh_pct="$value" ;;
-            replacement_due) replacement_date="$value" ;;
-        esac
-    done <<< "$motd"
-fi
 
 # Format runtime: convert seconds to minutes/hours
 if [[ -n "$runtime" && "$runtime" -gt 0 ]] 2>/dev/null; then
