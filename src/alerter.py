@@ -77,7 +77,7 @@ class JournaldHealthAlertSink:
             return
         reason = health.bounded_error
         if reason is None or not reason.strip():
-            reason = "capture_writer_unavailable"
+            reason = "storage_unavailable"
         bounded_reason = _bounded(reason)
         logger.warning(
             "Blackout evidence capture writer is degraded: %s",

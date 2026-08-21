@@ -10,10 +10,9 @@ exact = true
 [[modules]]
 path = "src.monitor"
 depends_on = [
-    "src.adapters.minimal_jsonl",
+    "src.adapters.telemetry_jsonl",
     "src.adapters.model_owner",
     "src.adapters.nut_telemetry",
-    "src.alerter",
     "src.application",
     "src.domain",
     "src.ema_filter",
@@ -53,13 +52,8 @@ depends_on = ["src.adapters.jsonl_errors"]
 layer = "adapters"
 
 [[modules]]
-path = "src.adapters.minimal_jsonl"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.minimal_event_file",
-    "src.application",
-    "src.domain",
-]
+path = "src.adapters.telemetry_jsonl"
+depends_on = ["src.adapters.minimal_event_file", "src.domain"]
 layer = "adapters"
 
 [[modules]]

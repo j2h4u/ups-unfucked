@@ -286,7 +286,7 @@ class VirtualUpsExporter:
                 if maintenance_failure:
                     self._storage_error = capture.bounded_error or "writer_maintenance_unavailable"
                 else:
-                    self._capture_error = capture.bounded_error or "capture_writer_unavailable"
+                    self._capture_error = capture.bounded_error or "storage_unavailable"
             elif capture.capture_available:
                 self._capture_error = None
             if reporting.health.alarm or reporting.health.bounded_error:

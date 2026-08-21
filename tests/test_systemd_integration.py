@@ -158,7 +158,7 @@ def test_service_file_service_section_restart_config():
     assert unit["StartLimitBurst"] == "3"
 
 
-def test_notify_service_waits_indefinitely_for_degraded_startup():
+def test_notify_service_waits_indefinitely_for_physical_startup():
     """A missing physical UPS must not trigger Type=notify startup restarts."""
     service = parse_service_file(SERVICE_FILE_PATH)["Service"]
 

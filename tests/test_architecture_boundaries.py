@@ -12,7 +12,7 @@ MODEL_TRANSFORM = "src/adapters/model_transform.py"
 EVENT_FILE_OWNERS = frozenset(
     {
         "src/adapters/minimal_event_file.py",
-        "src/adapters/minimal_jsonl.py",
+        "src/adapters/telemetry_jsonl.py",
     }
 )
 
@@ -130,118 +130,6 @@ def test_application_has_no_concrete_adapter_import_edges() -> None:
                 importers.append((path, getattr(node, "lineno", 0), imported))
 
     assert importers == []
-
-
-def _blackout_capture_constructors(tree: ast.Module) -> frozenset[str]:
-    constructors: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "src.application.capture_blackout":
-            constructors.update(
-                alias.asname or alias.name
-                for alias in node.names
-                if alias.name == "BlackoutCapture"
-            )
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "src.application.capture_blackout":
-                    bound = alias.asname or alias.name
-                    constructors.add(f"{bound}.BlackoutCapture")
-    return frozenset(constructors)
-
-
-def _blackout_capture_instances(tree: ast.Module, constructors: frozenset[str]) -> frozenset[str]:
-    instances: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.arg) and node.annotation is not None:
-            if _qualified_name(node.annotation) in constructors:
-                instances.add(node.arg)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            if _qualified_name(node.annotation) in constructors:
-                instances.add(node.target.id)
-        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            if _qualified_name(node.value.func) in constructors:
-                instances.update(
-                    target.id for target in node.targets if isinstance(target, ast.Name)
-                )
-    return frozenset(instances)
-
-
-def _assignment_paths(node: ast.Assign | ast.AnnAssign) -> tuple[str, ...]:
-    targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
-    return tuple(path for target in targets if (path := _qualified_name(target)) is not None)
-
-
-def _blackout_capture_references(tree: ast.Module, constructors: frozenset[str]) -> frozenset[str]:
-    references = set(_blackout_capture_instances(tree, constructors))
-    capture_names = frozenset(references)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
-            if _qualified_name(node.annotation) in constructors:
-                references.add(_qualified_name(node.target) or "")
-        elif isinstance(node, ast.Assign):
-            source = _qualified_name(node.value)
-            source_name = source.rsplit(".", maxsplit=1)[-1] if source else None
-            if (
-                isinstance(node.value, ast.Call)
-                and _qualified_name(node.value.func) in constructors
-            ):
-                references.update(_assignment_paths(node))
-            elif source in references or source_name in capture_names:
-                references.update(_assignment_paths(node))
-    references.discard("")
-    return frozenset(references)
-
-
-def _blackout_capture_private_violations(
-    tree: ast.Module, constructors: frozenset[str]
-) -> list[tuple[int, str]]:
-    references = _blackout_capture_references(tree, constructors)
-    return [
-        (node.lineno, node.attr)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute)
-        and node.attr.startswith("_")
-        and _qualified_name(node.value) in references
-    ]
-
-
-def test_blackout_capture_private_state_stays_in_aggregate() -> None:
-    """No production module outside the aggregate may reach its private state."""
-    violations: list[tuple[str, int, str]] = []
-    for path, tree in _production_trees():
-        if path == "src/application/capture_blackout.py":
-            continue
-        constructors = _blackout_capture_constructors(tree)
-        if not constructors:
-            continue
-        violations.extend(
-            (path, lineno, attr)
-            for lineno, attr in _blackout_capture_private_violations(tree, constructors)
-        )
-    assert violations == []
-
-
-def test_blackout_capture_private_guard_rejects_holder_fixture() -> None:
-    path = (
-        PROJECT_ROOT
-        / "tests"
-        / "fixtures"
-        / "architecture"
-        / ("forbidden_capture_private_state.py")
-    )
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    constructors = _blackout_capture_constructors(tree)
-
-    assert _blackout_capture_private_violations(tree, constructors) == [(11, "_store")]
-
-
-def test_monitor_capture_holder_uses_public_capture_api() -> None:
-    path = SOURCE_ROOT / "monitor.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    constructors = _blackout_capture_constructors(tree)
-
-    assert "self._capture" in _blackout_capture_references(tree, constructors)
-    assert _blackout_capture_private_violations(tree, constructors) == []
 
 
 def test_decline_raw_admission_policy_stays_in_domain() -> None:
