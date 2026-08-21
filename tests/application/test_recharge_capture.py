@@ -91,7 +91,7 @@ def projected_event(
     return EventProjection(start, (), (), end, (), None, (), records)
 
 
-def test_recharge_is_one_ordinary_event_with_terminal_outcome(tmp_path: Path) -> None:
+def test_service_stop_does_not_invent_a_terminal_telemetry_state(tmp_path: Path) -> None:
     blackout_id = uuid4().hex
     with nullcontext(MinimalJsonlEventStore(tmp_path)) as store:
         writer = CaptureWriter()
@@ -102,27 +102,14 @@ def test_recharge_is_one_ordinary_event_with_terminal_outcome(tmp_path: Path) ->
         drain(writer)
         assert recharge.service_stop(observation(2, voltage=12.5))
         drain(writer)
-        event = next(
-            iter(
-                store.sealed_event_projections(
-                    "2026-08-21T00:00:00Z",
-                    "2026-08-22T00:00:00Z",
-                    event_kind="recharge",
-                )
-            )
+        events = store.sealed_event_projections(
+            "2026-08-21T00:00:00Z",
+            "2026-08-22T00:00:00Z",
+            event_kind="recharge",
         )
 
     assert [path.name for path in tmp_path.joinpath("events").iterdir()] == ["telemetry.jsonl"]
-    assert [record.record_type for record in event.records] == [
-        "start",
-        "observation",
-        "observation",
-        "end",
-        "outcome",
-    ]
-    assert all(record.event_kind == "recharge" for record in event.records)
-    assert event.outcome is not None
-    assert event.outcome.payload["disposition"] == "recorded_only"
+    assert events == ()
 
 
 def test_crash_restored_start_is_adopted_and_acknowledged(tmp_path: Path) -> None:
@@ -205,9 +192,8 @@ def test_recovered_recharge_requires_new_stability_after_long_restart_gap(
         "2026-08-22T00:00:00Z",
         event_kind="recharge",
     )
-    assert len(events) == 1
-    assert events[0].outcome is not None
-    assert events[0].outcome.payload["disposition"] == "recorded_only"
+    assert events == ()
+    assert second_store.work_registry().capture is not None
     second_store.close()
 
 
@@ -237,9 +223,8 @@ def test_unstable_window_resets_then_stabilizes_after_continuous_duration(
             "2026-08-22T00:00:00Z",
             event_kind="recharge",
         )
-        assert len(events) == 1
-        assert events[0].outcome is not None
-    assert events[0].outcome.payload["disposition"] == "recorded_only"
+        assert events == ()
+        assert store.work_registry().capture is not None
 
 
 def test_online_battery_pct_100_is_persisted_once_as_terminal_sample(tmp_path: Path) -> None:
@@ -286,7 +271,7 @@ def test_new_blackout_supersedes_recharge_before_new_event_start(tmp_path: Path)
         )
     assert len(events) == 1
     assert events[0].end is not None
-    assert events[0].end.payload["termination"] == "unknown"
+    assert events[0].end.payload["termination"] == "superseded_by_blackout"
 
 
 def test_reconcile_restart_uses_newest_unlinked_restoration() -> None:
