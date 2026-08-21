@@ -20,7 +20,13 @@ from src.domain.recharge import RechargeSamplingPolicy
 from src.domain.values import PhysicalObservation
 
 
-def observation(second: int, *, voltage: float = 12.3, status: str = "OL") -> PhysicalObservation:
+def observation(
+    second: int,
+    *,
+    voltage: float = 12.3,
+    status: str = "OL",
+    battery_pct: float | None = None,
+) -> PhysicalObservation:
     return PhysicalObservation(
         "boot-a",
         second * 1_000_000_000,
@@ -31,6 +37,7 @@ def observation(second: int, *, voltage: float = 12.3, status: str = "OL") -> Ph
         0.01,
         20.0,
         230.0,
+        battery_pct=battery_pct,
     )
 
 
@@ -233,6 +240,35 @@ def test_unstable_window_resets_then_stabilizes_after_continuous_duration(
         assert len(events) == 1
         assert events[0].outcome is not None
     assert events[0].outcome.payload["disposition"] == "recorded_only"
+
+
+def test_online_battery_pct_100_is_persisted_once_as_terminal_sample(tmp_path: Path) -> None:
+    policy = RechargeSamplingPolicy(
+        dense_enrichment_interval_s=300.0,
+        sparse_enrichment_interval_s=300.0,
+        backbone_interval_s=300.0,
+    )
+    with nullcontext(MinimalJsonlEventStore(tmp_path)) as store:
+        writer = CaptureWriter()
+        recharge = RechargeCapture(store, writer, policy=policy)
+        assert recharge.begin(observation(0, battery_pct=99.0), preceding_blackout_id=None)
+        drain(writer)
+
+        assert recharge.observe(observation(1, status="OL", battery_pct=100.0))
+        drain(writer)
+        assert not recharge.observe(observation(2, battery_pct=100.0))
+
+        events = store.sealed_event_projections(
+            "2026-08-21T00:00:00Z",
+            "2026-08-22T00:00:00Z",
+            event_kind="recharge",
+        )
+        assert len(events) == 1
+        assert events[0].outcome is not None
+        assert events[0].end is not None
+        assert events[0].end.payload["termination"] == "charge_complete"
+        assert len(events[0].observations) == 2
+        assert events[0].observations[-1].payload["battery_pct"] == 100.0
 
 
 def test_new_blackout_supersedes_recharge_before_new_event_start(tmp_path: Path) -> None:
