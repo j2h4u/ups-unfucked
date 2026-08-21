@@ -57,9 +57,7 @@ def _record(
         .isoformat()
         .replace("+00:00", "Z"),
         monotonic_ns=monotonic_ns,
-        prev_record_sha256=None if seq == 0 else f"{seq - 1:064x}",
         payload=payload,
-        record_sha256=f"{seq:064x}",
     )
 
 
@@ -178,8 +176,6 @@ def _projection(
         (stored_estimate,),
         outcome,
         (records,),
-        (),
-        0,
         records,
     )
 
@@ -196,7 +192,6 @@ def _summary(
     day: int,
     *,
     evidence_class: str = "qualifying",
-    damaged_segment_hashes: tuple[str, ...] = (),
     termination: str | None = "power_restored",
 ) -> EventSummary:
     return EventSummary(
@@ -215,10 +210,6 @@ def _summary(
         "none",
         True,
         None,
-        damaged_segment_hashes,
-        0,
-        "a" * 64,
-        "b" * 64,
     )
 
 
@@ -327,16 +318,14 @@ def test_decline_selects_latest_six_per_metric_without_cross_metric_crowding(
 
 
 @pytest.mark.parametrize(
-    ("evidence_class", "damaged"),
+    "evidence_class",
     (
-        ("operational_only", False),
-        ("rejected", False),
-        ("qualifying", True),
+        "operational_only",
+        "rejected",
     ),
 )
-def test_decline_recomputes_current_raw_evidence_and_rejects_damage(
+def test_decline_recomputes_current_raw_evidence_for_nonqualifying_events(
     evidence_class: str,
-    damaged: bool,
 ) -> None:
     ids = tuple(f"{index + 1:032x}" for index in range(6))
     projections = {
@@ -352,7 +341,6 @@ def test_decline_recomputes_current_raw_evidence_and_rejects_damage(
             blackout_id,
             index,
             evidence_class=evidence_class,
-            damaged_segment_hashes=(("c" * 64,) if damaged else ()),
         )
         for index, blackout_id in enumerate(ids)
     )
@@ -361,10 +349,7 @@ def test_decline_recomputes_current_raw_evidence_and_rejects_damage(
 
     assert statuses[0].verdict == DeclineVerdict.INSUFFICIENT_COMPARABLE_EVIDENCE
     assert statuses[1].verdict == DeclineVerdict.INSUFFICIENT_COMPARABLE_EVIDENCE
-    if evidence_class in {"operational_only", "rejected"} and not damaged:
-        assert statuses[2].verdict == DeclineVerdict.STABLE_WITHIN_OBSERVED_EVIDENCE
-    else:
-        assert statuses[2].verdict == DeclineVerdict.INSUFFICIENT_COMPARABLE_EVIDENCE
+    assert statuses[2].verdict == DeclineVerdict.STABLE_WITHIN_OBSERVED_EVIDENCE
 
 
 def test_public_decline_statuses_recomputes_firmware_for_operational_event() -> None:

@@ -25,7 +25,6 @@ from src.adapters.jsonl_record_codec import (
     _bounded_error,
     _decode_record_line,
     _EnvelopeParts,
-    _is_sha256,
     _require_uuid4_hex,
     _StoredRecord,
     _strict_json_loads,
@@ -103,7 +102,6 @@ def _processing_ref_dict(ref: ProcessingRef) -> dict[str, JsonValue]:
         "segment_ids": list(ref.segment_ids),
         "final_path_token": ref.final_path_token,
         "frozen_stage": ref.frozen_stage,
-        "last_record_hash": ref.last_record_hash,
     }
 
 
@@ -154,7 +152,6 @@ def _decode_processing_ref(value: Any) -> ProcessingRef:
         "segment_ids",
         "final_path_token",
         "frozen_stage",
-        "last_record_hash",
     }
     if not isinstance(value, dict) or set(value) != required or value.get("tag") != "processing":
         raise EventCorruptionError("processing registry fields do not match schema")
@@ -176,18 +173,14 @@ def _decode_processing_ref(value: Any) -> ProcessingRef:
         raise EventCorruptionError("processing path token is invalid")
     _validate_path_token(path_token)
     frozen_stage = value["frozen_stage"]
-    last_hash = value["last_record_hash"]
     if not isinstance(frozen_stage, str):
         raise EventCorruptionError("processing frozen stage is invalid")
     _validate_short_ascii(frozen_stage, "frozen_stage", MAX_REASON_BYTES)
-    if not isinstance(last_hash, str) or not _is_sha256(last_hash):
-        raise EventCorruptionError("processing last record hash is invalid")
     return ProcessingRef(
         blackout_id,
         tuple(segment_ids),
         path_token,
         frozen_stage,
-        last_hash,
     )
 
 
@@ -279,18 +272,17 @@ class JsonlWorkRegistry:
             tail.segment_id,
             ref.final_path_token,
             tail.seq + 1,
-            tail.record_sha256,
             tail.event_kind,
         )
 
-    def _move_capture_to_processing(self, handle: EventHandle, last_hash: str) -> None:
+    def _move_capture_to_processing(self, handle: EventHandle) -> None:
         registry = self._read_registry()
         capture = registry.capture
         if not isinstance(capture, CapturingEventRef) or capture.blackout_id != handle.blackout_id:
             matching = [
                 ref for ref in registry.pending_processing if ref.blackout_id == handle.blackout_id
             ]
-            if matching and matching[0].last_record_hash == last_hash:
+            if matching and matching[0].final_path_token == handle.path_token:
                 return
             raise EventConflictError("end transition does not match active capture")
         projection = self._stream().project(EventRef(handle.blackout_id, handle.path_token))
@@ -302,7 +294,6 @@ class JsonlWorkRegistry:
             segment_ids,
             handle.path_token,
             "end_durable",
-            last_hash,
         )
         self._write_registry(WorkRegistry(None, (*registry.pending_processing, processing)))
 
@@ -321,7 +312,6 @@ class JsonlWorkRegistry:
                 end_record.boot_id,
                 end_record.wall_time_utc,
                 end_record.monotonic_ns,
-                handle.last_record_sha256,
                 {
                     "disposition": "rejected",
                     "evidence_class": "rejected",
@@ -347,7 +337,6 @@ class JsonlWorkRegistry:
             handle.segment_id,
             handle.path_token,
             handle.next_seq + 1,
-            outcome.record_sha256,
             outcome.event_kind,
         )
         self._finish_sealed_projection(sealed_handle, outcome)
@@ -430,13 +419,13 @@ class JsonlWorkRegistry:
         if len(self._read_registry().pending_processing) >= MAX_PENDING_PROCESSING:
             self._reject_processing_backlog_full(handle, record)
         try:
-            self._move_capture_to_processing(handle, handle.last_record_sha256)
+            self._move_capture_to_processing(handle)
         except EventCorruptionError:
             capture = self._read_registry().capture
             if not isinstance(capture, CapturingEventRef):
                 raise
             handle = self._stream()._continue_capture_after_corruption(capture, path)
-            self._move_capture_to_processing(handle, handle.last_record_sha256)
+            self._move_capture_to_processing(handle)
         self._filesystem._trip("after_end_registry_transition")
         return handle
 
@@ -460,7 +449,7 @@ class JsonlWorkRegistry:
         self._filesystem.sync_storage_directory(self._events_path)
         self._filesystem._trip("after_event_chmod")
         projection = self._stream().project(EventRef(handle.blackout_id, handle.path_token))
-        if projection.outcome is None or projection.outcome.record_sha256 != outcome.record_sha256:
+        if projection.outcome is None or projection.outcome.payload != outcome.payload:
             raise EventConflictError("sealed outcome does not match projected outcome")
         self._filesystem._trip("before_summary_append")
         self._commit_sealed(handle.path_token, projection)
@@ -474,5 +463,4 @@ class JsonlWorkRegistry:
             handle.blackout_id,
             segment_ids,
             handle.path_token,
-            outcome.record_sha256,
         )

@@ -69,7 +69,6 @@ depends_on = [
     "src.adapters.jsonl_errors",
     "src.adapters.jsonl_event_read_codec",
     "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
     "src.application",
 ]
 layer = "adapters"
@@ -139,7 +138,7 @@ layer = "adapters"
 
 [[modules]]
 path = "src.adapters.jsonl_summary_codec"
-depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "src.application"]
+depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
 layer = "adapters"
 
 [[modules]]

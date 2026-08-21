@@ -117,9 +117,7 @@ def _projection(
         "boot-a",
         WHEN,
         2,
-        "c" * 64,
         _outcome_payload(observed_increase),
-        "d" * 64,
     )
     start = ProjectedEventRecord(
         2,
@@ -131,13 +129,9 @@ def _projection(
         "boot-a",
         WHEN,
         0,
-        None,
         {"observation": {"raw_status": "OB DISCHRG LB"}},
-        "e" * 64,
     )
-    return EventProjection(
-        start, (), (), None, (), outcome, ((start, outcome),), (), 0, (start, outcome)
-    )
+    return EventProjection(start, (), (), None, (), outcome, ((start, outcome),), (start, outcome))
 
 
 def _infrastructure_projection(reason: str) -> EventProjection:
@@ -183,10 +177,6 @@ class _Store:
                 "none",
                 False,
                 None,
-                (),
-                0,
-                "f" * 64,
-                "1" * 64,
             ),
         )
 

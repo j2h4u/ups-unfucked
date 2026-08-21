@@ -1,6 +1,5 @@
 """Direct sealed-event history projection for the JSONL event store."""
 
-import hashlib
 from collections.abc import Callable, Collection
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,21 +7,17 @@ from typing import Literal
 
 from src.adapters.jsonl_errors import EventCorruptionError, EventPathError, EventValidationError
 from src.adapters.jsonl_event_read_codec import (
-    damaged_hashes,
-    event_file_sha256,
     project_event,
     sealed_event_paths,
 )
 from src.adapters.jsonl_record_codec import (
     EVENT_FILENAME_RE,
-    MAX_DAMAGED_HASHES,
     SCHEMA_VERSION,
     _optional_bool,
     _optional_finite_nonnegative,
     _optional_short_string,
     _required_short_string,
 )
-from src.adapters.jsonl_summary_codec import _encode_summary
 from src.application.storage_values import (
     EpochHistoryScan,
     EpochHistoryTail,
@@ -110,12 +105,9 @@ class JsonlEventHistory:
         self, path_token: str, projection: EventProjection, append: Callable[..., object]
     ) -> None:
         summary = self._summary_for(path_token, projection)
-        summary_hash = hashlib.sha256(_encode_summary(summary)).hexdigest()
         append(
             blackout_id=summary.blackout_id,
             segment_filename=summary.segment_filename,
-            summary_sha256=summary_hash,
-            index_head_sha256=summary_hash,
         )
 
     def _history(self) -> tuple[EventSummary, ...]:
@@ -159,7 +151,6 @@ class JsonlEventHistory:
             comparison_mode = "short_window"
         elif raw_comparison_mode not in {None, "none"}:
             raise EventValidationError("invalid comparison mode in outcome")
-        damaged = damaged_hashes(self._events_path, start.blackout_id)
         summary = EventSummary(
             schema_version=SCHEMA_VERSION,
             blackout_id=start.blackout_id,
@@ -176,12 +167,7 @@ class JsonlEventHistory:
             comparison_mode=comparison_mode,
             ir_estimate_available=_optional_bool(outcome_payload, "ir_estimate_available", False),
             commit_receipt_id=_optional_short_string(outcome_payload, "commit_receipt_id"),
-            damaged_segment_hashes=damaged[:MAX_DAMAGED_HASHES],
-            damaged_segment_overflow=max(0, len(damaged) - MAX_DAMAGED_HASHES),
-            outcome_record_sha256=outcome.record_sha256,
-            event_file_sha256=event_file_sha256(self._events_path / path_token),
         )
-        _encode_summary(summary)
         return summary
 
 

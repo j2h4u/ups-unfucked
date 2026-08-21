@@ -58,6 +58,10 @@ _.drain_one  # FALSE POSITIVE: deterministic manual capture-drain seam for orche
 transform_model_file  # FALSE POSITIVE: public transform CLI entrypoint (adapters/model_transform.py)
 trusted_prefixes  # FALSE POSITIVE: adapter-built persisted corruption/recovery contract (application/storage_values.py)
 CLOSED_RESTART_GAP  # FALSE POSITIVE: TerminationFact value serialized in terminal records (domain/values.py)
+ended_utc  # FALSE POSITIVE: public blackout/recharge history DTO field read by query consumers
+comparison_available  # FALSE POSITIVE: public EventSummary field read by history consumers
+ir_estimate_available  # FALSE POSITIVE: public EventSummary field read by history consumers
+commit_receipt_id  # FALSE POSITIVE: public EventSummary field read by history consumers
 
 # Offline model transformation receipts are serialized with dataclasses.asdict
 # by scripts/reparameterize-ir-reference; vulture cannot see those field reads.

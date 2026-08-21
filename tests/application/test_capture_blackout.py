@@ -46,7 +46,7 @@ class Store:
 
     def append(self, handle, record):
         self.records.append(record)
-        return replace(handle, next_seq=handle.next_seq + 1, last_record_sha256="b" * 64)
+        return replace(handle, next_seq=handle.next_seq + 1)
 
     def checkpoint_processing(self, handle, frozen_stage):
         self.checkpoints.append((handle, frozen_stage))

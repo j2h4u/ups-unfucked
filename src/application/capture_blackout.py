@@ -416,7 +416,7 @@ class BlackoutCapture:
     def attach_recovered_capture(self, handle: EventHandle, *, boot_id: str) -> None:
         if not boot_id:
             raise ValueError("recovered capture boot_id must be non-empty")
-        if handle.next_seq < 1 or len(handle.last_record_sha256) != 64:
+        if handle.next_seq < 1:
             raise ValueError("recovered capture handle is invalid")
         with self._submission_lock:
             if self._lifecycle_state == LifecycleState.CAPTURE_DAMAGED:

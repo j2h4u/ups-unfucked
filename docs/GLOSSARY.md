@@ -179,7 +179,7 @@ firmware LB. It is a warning, not a cause, measured SoH, or permission to weaken
 ### Per-event JSONL
 
 The authoritative scientific evidence under
-`~/.config/ups-battery-monitor/events/`. Each record is canonical, hash-linked, newline-terminated,
+`~/.config/ups-battery-monitor/events/`. Each record is canonical, sequence-numbered, newline-terminated,
 and synchronized before it is acknowledged as durable. There is no SQLite database.
 
 ### `ModelOwner`

@@ -20,7 +20,7 @@ capacity, State of Health (SoH), Peukert exponent, or a replacement voltage-to-S
 
 Each blackout whose boundary is accepted by the writer has its own append-only JSONL event file under
 `~/.config/ups-battery-monitor/events/`. This is the authoritative scientific evidence. Records are
-hash-linked, synchronised, bounded, and closed with one terminal outcome. Reboot gaps, missing
+sequence-numbered, synchronised, bounded, and closed with one terminal outcome. Reboot gaps, missing
 samples, corruption, and capture damage stay explicit; they are never silently interpolated.
 
 Storage-unavailable startup has a finite, explicit boundary. The application retains at most eight

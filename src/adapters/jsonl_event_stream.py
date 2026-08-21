@@ -22,9 +22,6 @@ from src.adapters.jsonl_event_read_codec import (
     _EventCapacityExceeded,
 )
 from src.adapters.jsonl_event_read_codec import (
-    damaged_hashes as read_damaged_hashes,
-)
-from src.adapters.jsonl_event_read_codec import (
     last_record as read_last_record,
 )
 from src.adapters.jsonl_event_read_codec import (
@@ -36,9 +33,8 @@ from src.adapters.jsonl_event_read_codec import (
 from src.adapters.jsonl_event_read_codec import (
     trusted_prefix as read_trusted_prefix,
 )
-from src.adapters.jsonl_filesystem import JsonlFilesystem, _file_sha256, _read_exact_fd
+from src.adapters.jsonl_filesystem import JsonlFilesystem, _read_exact_fd
 from src.adapters.jsonl_record_codec import (
-    MAX_DAMAGED_HASHES,
     MAX_LINE_BYTES,
     MAX_SEGMENT_REFS,
     SCHEMA_VERSION,
@@ -46,10 +42,9 @@ from src.adapters.jsonl_record_codec import (
     _bounded_error,
     _decode_record_line,
     _EnvelopeParts,
-    _is_sha256,
     _parse_utc,
     _StoredRecord,
-    _validate_record_without_hash,
+    _validate_record,
     canonical_record_line,
 )
 from src.adapters.jsonl_summary_codec import _bounded_tail_lines
@@ -89,23 +84,6 @@ def _continuation_event_filename(
     return f"evt-{timestamp}-{blackout_id}-seg-{ordinal:06d}-{segment_id}.jsonl"
 
 
-def _corrupt_original_filename(filename: str) -> str | None:
-    if not filename.startswith("corrupt-") or len(filename) < 74:
-        return None
-    digest = filename[8:72]
-    if not _is_sha256(digest) or filename[72] != "-":
-        return None
-    original = filename[73:]
-    return original if original.startswith("evt-") and original.endswith(".jsonl") else None
-
-
-def _corrupt_digest(filename: str) -> str:
-    original = _corrupt_original_filename(filename)
-    if original is None:
-        raise EventPathError("corrupt evidence filename is invalid")
-    return filename[8:72]
-
-
 def _replacement_processing_ref(
     ref: ProcessingRef,
     processing: ProcessingRef,
@@ -118,7 +96,6 @@ def _replacement_processing_ref(
         tuple(dict.fromkeys((*ref.segment_ids, handle.segment_id))),
         handle.path_token,
         "capture_damaged",
-        handle.last_record_sha256,
     )
 
 
@@ -151,11 +128,8 @@ class JsonlEventStream:
         self._monotonic_clock_ns = monotonic_clock_ns
         self._capacity = JsonlEventCapacity(events_path, filesystem, registry)
 
-    def _reserve_segment_manifest(self, path_token: str, damaged_sha256: str | None = None) -> None:
-        self._capacity.reserve_segment_manifest(path_token, damaged_sha256)
-
-    def _damaged_hashes(self, blackout_id: str) -> tuple[str, ...]:
-        return read_damaged_hashes(self._events_path, blackout_id)
+    def _reserve_segment_manifest(self, path_token: str) -> None:
+        self._capacity.reserve_segment_manifest(path_token)
 
     def _record_envelope(self, parts: _EnvelopeParts) -> dict[str, Any]:
         envelope = {
@@ -169,10 +143,9 @@ class JsonlEventStream:
             "boot_id": parts.boot_id,
             "wall_time_utc": parts.wall_time_utc,
             "monotonic_ns": parts.monotonic_ns,
-            "prev_record_sha256": parts.prev_record_sha256,
             "payload": dict(parts.payload),
         }
-        _validate_record_without_hash(envelope)
+        _validate_record(envelope)
         return envelope
 
     def _repair_torn_tail(self, path: Path) -> bool:
@@ -314,11 +287,10 @@ class JsonlEventStream:
         """Preserve a full raw segment and create one bounded terminal lane."""
         if last is None:
             raise EventCorruptionError("capacity-limited event has no durable tail")
-        prepared = self._capacity.prepare_capacity_continuation(handle, path, last)
+        self._capacity.prepare_capacity_continuation(handle, path, last)
         continued = self._create_continuation_segment(
             blackout_id=handle.blackout_id,
             previous_segment_id=handle.segment_id,
-            damaged_sha256=prepared.damaged_sha256,
             prefix=(last,),
             reason="event_size_limit",
         )
@@ -338,7 +310,6 @@ class JsonlEventStream:
         handle = self._create_continuation_segment(
             blackout_id=capture.blackout_id,
             previous_segment_id=capture.segment_id,
-            damaged_sha256=_corrupt_digest(preserved.name),
             prefix=prefix,
         )
         self._registry()._write_registry(
@@ -381,7 +352,6 @@ class JsonlEventStream:
         return self._create_continuation_segment(
             blackout_id=processing.blackout_id,
             previous_segment_id=previous_segment_id,
-            damaged_sha256=_corrupt_digest(preserved.name),
             prefix=prefix,
         )
 
@@ -390,7 +360,6 @@ class JsonlEventStream:
         *,
         blackout_id: str,
         previous_segment_id: str,
-        damaged_sha256: str,
         prefix: Sequence[_StoredRecord],
         reason: str = "capture_damaged",
     ) -> EventHandle:
@@ -400,7 +369,7 @@ class JsonlEventStream:
             wall_time_utc,
             blackout_id,
             segment_id,
-            ordinal=len(self._damaged_hashes(blackout_id)),
+            ordinal=len(self._capacity.segment_sources(blackout_id)),
         )
         boot_id = prefix[-1].boot_id if prefix else "storage-recovery"
         envelope = self._record_envelope(
@@ -413,13 +382,9 @@ class JsonlEventStream:
                 boot_id,
                 wall_time_utc,
                 self._monotonic_clock_ns(),
-                None,
                 {
                     "reason": reason,
-                    "damaged_segment_sha256": damaged_sha256,
                     "previous_segment_id": previous_segment_id,
-                    "previous_segment_file_sha256": damaged_sha256,
-                    "previous_final_record_sha256": prefix[-1].record_sha256 if prefix else None,
                 },
                 prefix[-1].event_kind if prefix else "blackout",
             )
@@ -438,7 +403,6 @@ class JsonlEventStream:
             segment_id,
             path_token,
             1,
-            gap.record_sha256,
             gap.event_kind,
         )
 
@@ -457,7 +421,7 @@ class JsonlEventStream:
             wall_time_utc,
             blackout_id,
             segment_id,
-            ordinal=len(self._damaged_hashes(blackout_id)),
+            ordinal=len(self._capacity.segment_sources(blackout_id)),
         )
         envelope = self._record_envelope(
             _EnvelopeParts(
@@ -469,7 +433,6 @@ class JsonlEventStream:
                 prefix[-1].boot_id,
                 wall_time_utc,
                 self._monotonic_clock_ns(),
-                None,
                 self._capture_damaged_payload(blackout_id),
                 prefix[-1].event_kind,
             )
@@ -488,12 +451,10 @@ class JsonlEventStream:
             segment_id,
             path_token,
             1,
-            outcome.record_sha256,
             outcome.event_kind,
         )
 
     def _capture_damaged_payload(self, blackout_id: str) -> Mapping[str, JsonValue]:
-        damaged = self._damaged_hashes(blackout_id)
         return {
             "disposition": "rejected",
             "evidence_class": "rejected",
@@ -502,18 +463,13 @@ class JsonlEventStream:
             "ir_estimate_available": False,
             "commit_allowed": False,
             "reasons": ["capture_damaged"],
-            "damaged_segment_hashes": list(damaged[:MAX_DAMAGED_HASHES]),
-            "damaged_segment_overflow": max(0, len(damaged) - MAX_DAMAGED_HASHES),
         }
 
     def _preserve_corrupt_path(self, path: Path) -> Path:
-        digest = _file_sha256(path)
-        corrupt_path = self._events_path / f"corrupt-{digest}-{path.name}"
+        corrupt_path = self._events_path / f"corrupt-{path.name}"
         if corrupt_path.exists():
-            if _file_sha256(corrupt_path) != digest:
-                raise EventConflictError("corrupt evidence destination has different bytes")
             return corrupt_path
-        self._reserve_segment_manifest(path.name, digest)
+        self._reserve_segment_manifest(path.name)
         try:
             os.replace(path, corrupt_path)
             self._filesystem.sync_storage_directory(self._events_path)

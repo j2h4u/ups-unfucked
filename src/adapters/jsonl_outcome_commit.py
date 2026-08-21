@@ -34,9 +34,7 @@ class JsonlOutcomeResolver:
         last: _StoredRecord,
     ) -> _StoredRecord:
         path = self.filesystem._event_path(handle.path_token)
-        damaged = processing.frozen_stage == "capture_damaged" or bool(
-            self.stream._damaged_hashes(handle.blackout_id)
-        )
+        damaged = processing.frozen_stage == "capture_damaged"
         payload = _json_mapping(outcome.payload, "outcome payload")
         if outcome.event_kind != handle.event_kind:
             raise EventConflictError("terminal outcome event kind does not match event handle")
@@ -47,11 +45,9 @@ class JsonlOutcomeResolver:
         monotonic_ns = last.monotonic_ns if damaged else outcome.monotonic_ns
         sequence = handle.next_seq
         segment_id = handle.segment_id
-        previous_hash = handle.last_record_sha256
         if last.record_type == "outcome":
             sequence = last.seq
             segment_id = last.segment_id
-            previous_hash = records[-2].record_sha256 if len(records) > 1 else None
         envelope = self.stream._record_envelope(
             _EnvelopeParts(
                 "outcome",
@@ -62,7 +58,6 @@ class JsonlOutcomeResolver:
                 boot_id,
                 wall_time,
                 monotonic_ns,
-                previous_hash,
                 payload,
                 handle.event_kind,
             )
@@ -73,7 +68,7 @@ class JsonlOutcomeResolver:
             if last.canonical_line != line:
                 raise EventConflictError("terminal outcome idempotency conflict")
             return last
-        if last.seq != handle.next_seq - 1 or last.record_sha256 != handle.last_record_sha256:
+        if last.seq != handle.next_seq - 1:
             raise EventConflictError("event handle does not match the durable tail")
         self.filesystem._trip("before_outcome_append")
         fd = self.filesystem._open_existing(path, writable=True)

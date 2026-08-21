@@ -55,7 +55,7 @@ must not delay or weaken the low-battery safety publication.
 
 ## Evidence and learning
 
-Each event file is hash-linked, synchronised, bounded, and closed with one terminal outcome. Gaps,
+Each event file is sequence-numbered, synchronised, bounded, and closed with one terminal outcome. Gaps,
 corruption, and capture damage remain explicit rather than being interpolated. The event file is
 the only scientific evidence; `index.jsonl` is a rebuildable summary and `active.json` is a bounded
 work registry, not evidence.
