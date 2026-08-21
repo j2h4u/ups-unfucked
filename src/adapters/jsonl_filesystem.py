@@ -112,7 +112,7 @@ class JsonlFilesystem:
         self._monotonic_clock_ns = monotonic_clock_ns
         self._last_error: str | None = None
         self._pending_durability_started_ns: int | None = None
-        self._catalog_reserver: Callable[[str], None] | None = None
+        self._event_path_reserver: Callable[[str], None] | None = None
 
     def _events_path(self) -> Path:
         return self._events
@@ -130,8 +130,8 @@ class JsonlFilesystem:
     def _end_durability_window(self) -> None:
         self._pending_durability_started_ns = None
 
-    def _attach_catalog_reserver(self, reserver: Callable[[str], None]) -> None:
-        self._catalog_reserver = reserver
+    def _attach_event_path_reserver(self, reserver: Callable[[str], None]) -> None:
+        self._event_path_reserver = reserver
 
     def _ensure_layout(self) -> None:
         _ensure_private_directory(self._root, create=True)
@@ -180,9 +180,9 @@ class JsonlFilesystem:
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd: int | None = None
         try:
-            if self._catalog_reserver is not None and path.name.startswith("evt-"):
-                self._catalog_reserver(path.name)
-                self._trip("after_catalog_reserve")
+            if self._event_path_reserver is not None and path.name.startswith("evt-"):
+                self._event_path_reserver(path.name)
+                self._trip("after_event_path_reserve")
             fd = os.open(path, flags, mode)
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise EventPathError(f"new path is not a regular file: {path.name}")

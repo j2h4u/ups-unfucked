@@ -15,7 +15,6 @@ from src.application.ports import (
     AssessmentQueryEventStorePort,
     CaptureEventStorePort,
     HealthAlertPort,
-    MaintenanceEventStorePort,
     ReportingEventStorePort,
 )
 
@@ -31,7 +30,7 @@ def _protocol_methods(protocol: type) -> frozenset[str]:
 def test_event_store_protocols_are_consumer_owned() -> None:
     assert "EventStorePort" not in vars(__import__("src.application.ports", fromlist=["*"]))
     assert _protocol_methods(AssessmentQueryEventStorePort) == frozenset(
-        {"project", "index_tail_for_epoch"}
+        {"project", "history_tail_for_epoch"}
     )
     assert _protocol_methods(AssessmentCloseEventStorePort) == frozenset(
         {"append", "seal", "checkpoint_processing"}
@@ -39,8 +38,7 @@ def test_event_store_protocols_are_consumer_owned() -> None:
     assert _protocol_methods(CaptureEventStorePort) == frozenset(
         {"open", "append", "recover_startup", "checkpoint_processing"}
     )
-    assert "begin_index_rebuild" not in _protocol_methods(ReportingEventStorePort)
-    assert "append" not in _protocol_methods(MaintenanceEventStorePort)
+    assert "history_tail" in _protocol_methods(ReportingEventStorePort)
 
 
 def test_assessment_model_port_cannot_execute_a_commit() -> None:

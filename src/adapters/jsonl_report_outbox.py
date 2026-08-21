@@ -25,7 +25,7 @@ from src.adapters.jsonl_errors import (
 from src.adapters.jsonl_filesystem import JsonlFilesystem
 from src.adapters.jsonl_record_codec import (
     EMPTY_SHA256,
-    MAX_INDEX_LINE_BYTES,
+    MAX_FIXED_LINE_BYTES,
     MAX_REGISTRY_BYTES,
     _is_sha256,
     _strict_json_loads,
@@ -102,7 +102,7 @@ def _encode_notice(notice: ReportNotice) -> bytes:
     )
     value = {**body, "notice_sha256": notice.notice_sha256}
     raw = canonical_json_bytes(value) + b"\n"
-    if len(raw) > MAX_INDEX_LINE_BYTES:
+    if len(raw) > MAX_FIXED_LINE_BYTES:
         raise EventValidationError("report outbox notice exceeds its bound")
     return raw
 
@@ -146,7 +146,7 @@ def make_notice(**values: Any) -> ReportNotice:
 
 
 def _decode_notice(raw: bytes) -> ReportNotice:
-    if not raw.endswith(b"\n") or len(raw) > MAX_INDEX_LINE_BYTES:
+    if not raw.endswith(b"\n") or len(raw) > MAX_FIXED_LINE_BYTES:
         raise EventCorruptionError("report outbox line is torn or oversized")
     try:
         value = _strict_json_loads(raw[:-1])
@@ -303,7 +303,7 @@ class JsonlReportOutbox:
         try:
             with os.fdopen(fd, "rb") as stream:
                 stream.seek(offset)
-                line = stream.readline(MAX_INDEX_LINE_BYTES + 1)
+                line = stream.readline(MAX_FIXED_LINE_BYTES + 1)
                 if not line:
                     return None
                 return _decode_notice(line), stream.tell()
@@ -322,7 +322,7 @@ class JsonlReportOutbox:
                 stream.seek(offset)
                 while True:
                     start = stream.tell()
-                    line = stream.readline(MAX_INDEX_LINE_BYTES + 1)
+                    line = stream.readline(MAX_FIXED_LINE_BYTES + 1)
                     if not line:
                         return
                     yield _decode_notice(line), start + len(line)
@@ -355,7 +355,7 @@ class JsonlReportOutbox:
 
     @staticmethod
     def _read_tail_suffix(fd: int, size: int) -> tuple[int, bytes]:
-        window = 2 * (MAX_INDEX_LINE_BYTES + 1)
+        window = 2 * (MAX_FIXED_LINE_BYTES + 1)
         offset = max(0, size - window)
         try:
             os.lseek(fd, offset, os.SEEK_SET)

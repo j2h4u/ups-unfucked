@@ -397,7 +397,7 @@ def _finish_durable_outcome(
     coordinator.run_one()
     _drain(writer)
     coordinator.run_one()
-    summary = store.index_tail(1)[0]
+    summary = store.history_tail(1)[0]
     return store.project(EventRef(summary.blackout_id, summary.segment_filename))
 
 

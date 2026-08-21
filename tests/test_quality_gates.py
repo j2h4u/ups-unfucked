@@ -178,7 +178,6 @@ def test_import_linter_declares_nested_adapter_family_boundaries() -> None:
     )
     assert "src.adapters.jsonl_event_store" in nested_sources
     assert "src.adapters.jsonl_filesystem" in nested_sources
-    assert "src.adapters.jsonl_index_merge" in nested_sources
 
 
 def test_configured_architecture_tools_reject_forbidden_edge_fixtures(

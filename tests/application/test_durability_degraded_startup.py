@@ -27,15 +27,13 @@ def test_degraded_store_rejects_all_scientific_mutations_and_queries_empty() -> 
 
     assert store.work_registry().capture is None
     assert store.work_registry().pending_processing == ()
-    assert store.index_tail(32) == ()
-    assert not store.index_scan_for_decline_epoch("epoch").scan_complete
+    assert store.history_tail(32) == ()
+    assert not store.history_scan_for_epoch("epoch").scan_complete
     assert store.storage_health().alarm == "startup_degraded"
     assert "registry contains corruption" == store.reason
 
     with pytest.raises(EventStorageUnavailable, match="startup_degraded"):
         store.recover_startup()
-    assert store.begin_index_rebuild() == "degraded-startup"
-    assert store.rebuild_index_tick(max_files=1, max_bytes=1)
 
 
 def test_deferred_store_activates_real_store_after_startup_recovery_failure(

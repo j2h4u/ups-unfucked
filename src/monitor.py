@@ -586,7 +586,6 @@ def build_daemon(
         reporter = ReportingScheduler(
             ReportingSchedulerDependencies(
                 store=store,
-                maintenance=store.maintenance,
                 model=model,
                 writer=writer,
                 publisher=exporter,

@@ -24,7 +24,7 @@ from src.application.reporting_scheduler import (
     ReportingSchedulerDependencies,
 )
 from src.application.safety import SafetyInputs, calculate_safety, make_safety_publication
-from src.application.storage_values import CaptureQueueHealth, EpochIndexScan, StorageHealth
+from src.application.storage_values import CaptureQueueHealth, EpochHistoryScan, StorageHealth
 from src.battery_math.lut import LutPoint
 from src.domain.decline import (
     assess_firmware_lb_reserve,
@@ -76,25 +76,17 @@ def _observation(status: str = "OB DISCHRG") -> PhysicalObservation:
     )
 
 
-def _storage_health(*, index_available: bool) -> StorageHealth:
+def _storage_health() -> StorageHealth:
     return StorageHealth(
         capture_available=True,
         active_phase=None,
         queued_observations=None,
         durability_lag_s=0.0,
-        index_available=index_available,
-        rebuild_generation=None,
-        rebuild_in_progress=False,
-        rebuild_files_done=0,
-        rebuild_files_target=0,
-        rebuild_files_remaining=0,
-        rebuild_last_progress_utc=None,
-        rebuild_stalled=False,
         consumed_step_budget_remaining=None,
         event_count=0,
         total_bytes=0,
         free_bytes=1024,
-        alarm=None if index_available else "projection_unavailable",
+        alarm=None,
         bounded_error=None,
     )
 
@@ -146,14 +138,13 @@ def test_health_and_motd_expose_storage_budget_and_decline_statuses(tmp_path: Pa
     exporter.stage(PollPublicationContext(observation, snapshot, calculation, 1, 2.0))
     exporter.publish(make_safety_publication(observation, calculation))
     health = replace(
-        _storage_health(index_available=True),
+        _storage_health(),
         queued_observations=4,
         consumed_step_budget_remaining=252,
     )
     reporting = ReportingSnapshot(
         health=health,
         events=(),
-        maintenance=None,
     )
     capture = CaptureQueueHealth(
         capture_available=True,
@@ -193,7 +184,7 @@ def test_health_before_first_poll_is_explicitly_empty_and_keeps_bounded_error(
     )
 
     assert exporter.publish_health(
-        ReportingSnapshot(_storage_health(index_available=True), (), None),
+        ReportingSnapshot(_storage_health(), ()),
         capture_health,
         consecutive_errors=2,
         decline=_decline(),
@@ -229,7 +220,7 @@ def test_successful_poll_clears_only_poll_error_channel(tmp_path: Path) -> None:
     exporter.stage(PollPublicationContext(observation, snapshot, calculation, 1, 2.0))
     exporter.publish(make_safety_publication(observation, calculation))
     degraded_storage = replace(
-        _storage_health(index_available=True),
+        _storage_health(),
         alarm="storage failure",
         bounded_error="storage failure",
     )
@@ -239,7 +230,7 @@ def test_successful_poll_clears_only_poll_error_channel(tmp_path: Path) -> None:
         bounded_error="capture failure",
     )
     assert exporter.publish_health(
-        ReportingSnapshot(degraded_storage, (), None),
+        ReportingSnapshot(degraded_storage, ()),
         degraded_capture,
         consecutive_errors=0,
         decline=_decline(),
@@ -292,7 +283,7 @@ def test_ol_to_ob_transition_and_latest_report_are_bounded_health_diagnostics(
     )
 
     assert exporter.publish_health(
-        ReportingSnapshot(_storage_health(index_available=True), (), None),
+        ReportingSnapshot(_storage_health(), ()),
         CaptureWriter().health(),
         consecutive_errors=0,
         decline=_decline(),
@@ -319,24 +310,17 @@ class _MaintenanceStore:
     def storage_health(self, **kwargs):
         self.calls.append(("health", kwargs))
         return replace(
-            _storage_health(index_available=False),
+            _storage_health(),
             queued_observations=kwargs.get("queued_observations"),
             consumed_step_budget_remaining=kwargs.get("consumed_step_budget_remaining"),
         )
 
-    def index_tail(self, _limit):
-        raise AssertionError("unavailable index must not be queried")
+    def history_tail(self, _limit):
+        return ()
 
-    def begin_index_rebuild(self):
-        self.calls.append(("begin", None))
-        return "generation"
-
-    def rebuild_index_tick(self, *, max_files, max_bytes):
-        self.calls.append(("tick", (max_files, max_bytes)))
-        return True
-
-    def promote_index_rebuild(self):
-        self.calls.append(("promote", None))
+    def history_scan_for_epoch(self, _battery_epoch_id):
+        self.calls.append(("history", None))
+        return EpochHistoryScan((), True)
 
 
 class _HealthyReportingStore(_MaintenanceStore):
@@ -347,20 +331,20 @@ class _HealthyReportingStore(_MaintenanceStore):
     def storage_health(self, **kwargs):
         self.calls.append(("health", kwargs))
         return replace(
-            _storage_health(index_available=True),
+            _storage_health(),
             queued_observations=kwargs.get("queued_observations"),
             consumed_step_budget_remaining=kwargs.get("consumed_step_budget_remaining"),
         )
 
-    def index_tail(self, _limit):
+    def history_tail(self, _limit):
         return ()
 
-    def index_tail_for_epoch(self, _battery_epoch_id, _limit):
+    def history_tail_for_epoch(self, _battery_epoch_id, _limit):
         raise AssertionError("decline reporting must use the eligibility-filtered query")
 
-    def index_scan_for_decline_epoch(self, _battery_epoch_id):
+    def history_scan_for_epoch(self, _battery_epoch_id):
         self.decline_calls.append(_battery_epoch_id)
-        return EpochIndexScan((), True)
+        return EpochHistoryScan((), True)
 
 
 class _PolicyModel:
@@ -444,7 +428,7 @@ def test_capture_queue_alert_reports_overflow_stop_and_bounded_fallback(
     reason: str,
 ) -> None:
     with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
-        JournaldHealthAlertSink().publish(health, _storage_health(index_available=True), ())
+        JournaldHealthAlertSink().publish(health, _storage_health(), ())
 
     alerts = [
         record
@@ -463,7 +447,7 @@ def test_decline_storage_corruption_emits_distinct_operator_alert(
     with caplog.at_level(logging.WARNING, logger="ups-battery-monitor"):
         JournaldHealthAlertSink().publish(
             _capture_health(bounded_error=None),
-            _storage_health(index_available=True),
+            _storage_health(),
             (status,),
         )
 
@@ -494,7 +478,6 @@ def test_reporting_scheduler_alerts_terminal_writer_failure_each_reporting_tick(
     scheduler = ReportingScheduler(
         ReportingSchedulerDependencies(
             store=cast(Any, store),
-            maintenance=cast(Any, store),
             model=cast(Any, _PolicyModel()),
             writer=writer,
             publisher=publisher,
@@ -523,7 +506,7 @@ def test_reporting_scheduler_alerts_terminal_writer_failure_each_reporting_tick(
     )
 
 
-def test_reporting_scheduler_composes_real_queue_budget_and_writer_only_maintenance() -> None:
+def test_reporting_scheduler_composes_real_queue_budget_and_direct_history() -> None:
     store = _MaintenanceStore()
     writer = CaptureWriter()
     for _ in range(3):
@@ -537,7 +520,6 @@ def test_reporting_scheduler_composes_real_queue_budget_and_writer_only_maintena
     scheduler = ReportingScheduler(
         ReportingSchedulerDependencies(
             store=cast(Any, store),
-            maintenance=cast(Any, store),
             model=cast(Any, _PolicyModel()),
             writer=writer,
             publisher=publisher,
@@ -549,16 +531,7 @@ def test_reporting_scheduler_composes_real_queue_budget_and_writer_only_maintena
 
     assert snapshot.health.queued_observations == 3
     assert snapshot.health.consumed_step_budget_remaining == 255
-    assert not any(call[0] == "begin" for call in store.calls)
-    while writer.drain_one():
-        pass
-    assert [call[0] for call in store.calls if call[0] != "health"] == [
-        "begin",
-        "tick",
-        "promote",
-    ]
-    tick = next(call for call in store.calls if call[0] == "tick")
-    assert tick[1] == (4, 512 * 1024)
+    assert [call[0] for call in store.calls if call[0] != "health"] == ["history"]
 
 
 def test_reporting_scheduler_uses_the_projected_persisted_evidence_budget() -> None:
@@ -566,7 +539,6 @@ def test_reporting_scheduler_uses_the_projected_persisted_evidence_budget() -> N
     scheduler = ReportingScheduler(
         ReportingSchedulerDependencies(
             store=cast(Any, store),
-            maintenance=cast(Any, store),
             model=cast(Any, _ProjectedBudgetModel()),
             writer=CaptureWriter(),
             publisher=_HealthPublisher(),

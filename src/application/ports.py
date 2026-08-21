@@ -5,8 +5,8 @@ from typing import Protocol, runtime_checkable
 from src.application.storage_values import (
     CaptureCloseReconciliation,
     CaptureQueueHealth,
-    EpochIndexScan,
-    EpochIndexTail,
+    EpochHistoryScan,
+    EpochHistoryTail,
     EventHandle,
     EventProjection,
     EventRecord,
@@ -86,7 +86,7 @@ class AssessmentQueryEventStorePort(Protocol):
 
     def project(self, ref: EventRef | EventHandle | SealedEventRef) -> EventProjection: ...
 
-    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail: ...
+    def history_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochHistoryTail: ...
 
 
 class ReportOutboxEventStorePort(Protocol):
@@ -132,7 +132,7 @@ class StartupRecoveryEventStorePort(Protocol):
 
 
 class ReportingEventStorePort(Protocol):
-    """Reporting lane: bounded health and sealed-index reads only."""
+    """Reporting lane: bounded health and sealed event-history reads only."""
 
     def storage_health(
         self,
@@ -141,33 +141,10 @@ class ReportingEventStorePort(Protocol):
         consumed_step_budget_remaining: int | None = None,
     ) -> StorageHealth: ...
 
-    def index_tail(self, limit: int) -> tuple[EventSummary, ...]: ...
+    def history_tail(self, limit: int) -> tuple[EventSummary, ...]: ...
 
-    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail: ...
+    def history_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochHistoryTail: ...
 
-    def index_scan_for_decline_epoch(self, battery_epoch_id: str) -> EpochIndexScan: ...
+    def history_scan_for_epoch(self, battery_epoch_id: str) -> EpochHistoryScan: ...
 
     def project(self, ref: EventRef | EventHandle | SealedEventRef) -> EventProjection: ...
-
-
-class MaintenanceEventStorePort(Protocol):
-    """Maintenance lane: bounded index rebuild operations on the writer lane."""
-
-    def storage_health(
-        self,
-        *,
-        queued_observations: int | None = None,
-        consumed_step_budget_remaining: int | None = None,
-    ) -> StorageHealth: ...
-
-    def begin_index_rebuild(self) -> str: ...
-
-    def rebuild_index_tick(
-        self,
-        *,
-        max_files: int,
-        max_bytes: int,
-        max_wall_s: float = 0.20,
-    ) -> bool: ...
-
-    def promote_index_rebuild(self) -> None: ...

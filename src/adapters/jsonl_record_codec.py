@@ -33,18 +33,12 @@ MAX_EVENT_BYTES = 64 * 1024 * 1024
 CAPTURE_APPEND_LIMIT = MAX_EVENT_BYTES - (2 * 1024 * 1024)
 MAX_SNAPSHOT_BYTES = 64 * 1024
 MAX_REGISTRY_BYTES = 128 * 1024
-MAX_INDEX_LINE_BYTES = 4 * 1024
+MAX_FIXED_LINE_BYTES = 4 * 1024
 MAX_REASON_BYTES = 64
 MAX_REASONS = 8
 MAX_DIAGNOSTIC_ERROR_BYTES = 512
 MAX_PENDING_PROCESSING = 8
 MAX_DAMAGED_HASHES = 16
-MAX_INDEX_TAIL = 32
-MAX_EPOCH_INDEX_SCAN_BYTES = 4 * 1024 * 1024
-REBUILD_MAX_FILES_PER_TICK = 32
-REBUILD_MAX_BYTES_PER_TICK = 4 * 1024 * 1024
-REBUILD_MAX_WALL_SECONDS = 0.20
-REBUILD_STALL_SECONDS = 120.0
 MAX_SEGMENT_REFS = 64
 HASH_HEX_LENGTH = 64
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
@@ -62,51 +56,6 @@ PROVENANCE_BY_RECORD_TYPE = {
     **dict.fromkeys(SYSTEM_RECORD_TYPES, "system"),
     **dict.fromkeys(DERIVED_RECORD_TYPES, "derived"),
 }
-SUMMARY_FIELDS = frozenset(
-    {
-        "schema_version",
-        "blackout_id",
-        "segment_filename",
-        "started_utc",
-        "ended_utc",
-        "termination",
-        "evidence_class",
-        "disposition",
-        "duration_s",
-        "observation_count",
-        "battery_epoch_id",
-        "comparison_available",
-        "comparison_mode",
-        "ir_estimate_available",
-        "commit_receipt_id",
-        "damaged_segment_hashes",
-        "damaged_segment_overflow",
-        "outcome_record_sha256",
-        "event_file_sha256",
-    }
-)
-CURSOR_FIELDS = frozenset(
-    {
-        "schema_version",
-        "phase",
-        "generation_id",
-        "target_last_filename",
-        "last_projected_filename",
-        "last_projected_sha256",
-        "rebuild_output_offset",
-        "rebuild_output_sha256",
-        "files_done",
-        "target_count",
-        "merge_rebuild_offset",
-        "merge_delta_offset",
-        "merge_delta_target_offset",
-        "merge_output_offset",
-        "merge_output_sha256",
-        "merge_verify_offset",
-        "merge_verify_sha256",
-        "last_progress_utc",
-    }
-)
 type JsonScalar = None | bool | int | float | str
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 
@@ -687,20 +636,6 @@ def _bounded_error(error: BaseException | str) -> str:
 
 def _wall_time_utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
-
-
-def _cursor_int(cursor: Mapping[str, Any] | None, key: str) -> int:
-    if cursor is None:
-        return 0
-    value = cursor.get(key)
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
-
-
-def _cursor_str(cursor: Mapping[str, Any] | None, key: str) -> str | None:
-    if cursor is None:
-        return None
-    value = cursor.get(key)
-    return value if isinstance(value, str) else None
 
 
 def _validate_path_token(value: str) -> None:

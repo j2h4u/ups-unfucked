@@ -38,11 +38,11 @@ from src.adapters.jsonl_record_codec import (
 
 if TYPE_CHECKING:
     from src.adapters.jsonl_event_stream import JsonlEventStream
-    from src.adapters.jsonl_index import JsonlIndex
 from src.application.storage_values import (
     CaptureRef,
     CapturingEventRef,
     EventHandle,
+    EventProjection,
     EventRecord,
     EventRef,
     PreparingCaptureRef,
@@ -184,13 +184,13 @@ class JsonlWorkRegistry:
         events_path: Path,
         filesystem: JsonlFilesystem,
         stream: Callable[[], "JsonlEventStream"],
-        index: Callable[[], "JsonlIndex"],
+        commit_sealed: Callable[[str, EventProjection], None],
     ) -> None:
         self._registry_path = registry_path
         self._events_path = events_path
         self._filesystem = filesystem
         self._stream = stream
-        self._index = index
+        self._commit_sealed = commit_sealed
 
     def _recover_preparing(
         self,
@@ -440,9 +440,8 @@ class JsonlWorkRegistry:
         projection = self._stream().project(EventRef(handle.blackout_id, handle.path_token))
         if projection.outcome is None or projection.outcome.record_sha256 != outcome.record_sha256:
             raise EventConflictError("sealed outcome does not match projected outcome")
-        summary = self._index()._summary_for(handle.path_token, projection)
         self._filesystem._trip("before_summary_append")
-        self._index()._commit_summary(summary, projection)
+        self._commit_sealed(handle.path_token, projection)
         self._filesystem._trip("after_summary_append")
         self._remove_processing_or_capture_ref(
             blackout_id=handle.blackout_id,

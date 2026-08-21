@@ -273,32 +273,6 @@ def test_atomic_replace_directory_sync_failure_converges_on_retry(
         assert destination.read_bytes() == b"newer\n"
 
 
-def test_projection_unlink_failure_preserves_file_for_retry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    with JsonlEventStore(tmp_path) as store:
-        projection = tmp_path / "events" / "index.rebuild.in-progress.jsonl"
-        projection.write_bytes(b"partial\n")
-        real_unlink = Path.unlink
-        failed = False
-
-        def failing_unlink(path: Path, *args, **kwargs) -> None:
-            nonlocal failed
-            if path == projection and not failed:
-                failed = True
-                raise OSError(errno.EIO, "injected projection unlink failure")
-            real_unlink(path, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "unlink", failing_unlink)
-        with pytest.raises(OSError, match="projection unlink failure"):
-            store._index._unlink_projection_file(projection)
-        assert projection.read_bytes() == b"partial\n"
-
-        monkeypatch.setattr(Path, "unlink", real_unlink)
-        store._index._unlink_projection_file(projection)
-        assert not projection.exists()
-
-
 def test_model_backup_write_all_handles_partial_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

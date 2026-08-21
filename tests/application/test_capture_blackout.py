@@ -755,7 +755,7 @@ def test_full_processing_fifo_rejects_one_capture_then_next_blackout_is_isolated
         assert rejected.outcome is not None
         assert rejected.outcome.payload["disposition"] == "rejected"
         assert rejected.outcome.payload["reasons"] == ["processing_backlog_full"]
-        assert store.index_tail(1)[0].blackout_id == ninth_ref.blackout_id
+        assert store.history_tail(1)[0].blackout_id == ninth_ref.blackout_id
         assert not writer.health().capture_available
         assert "ProcessingBacklogFullError" in (writer.health().bounded_error or "")
 

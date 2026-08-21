@@ -196,8 +196,8 @@ class EventSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class EpochIndexTail:
-    """Epoch-first bounded index query with explicit older-match overflow."""
+class EpochHistoryTail:
+    """Newest-first bounded history query with explicit older-match overflow."""
 
     summaries: tuple[EventSummary, ...]
     overflow_count: int
@@ -209,19 +209,19 @@ class EpochIndexTail:
             or not isinstance(self.overflow_count, int)
             or self.overflow_count < 0
         ):
-            raise ValueError("epoch index overflow_count must be a nonnegative integer")
+            raise ValueError("epoch history overflow_count must be a nonnegative integer")
 
 
 @dataclass(frozen=True, slots=True)
-class EpochIndexScan:
-    """Bounded same-epoch candidate scan with explicit completeness."""
+class EpochHistoryScan:
+    """Newest-first same-epoch history scan with explicit completeness."""
 
     summaries: tuple[EventSummary, ...]
     scan_complete: bool
 
     def __post_init__(self) -> None:
         if not isinstance(self.scan_complete, bool):
-            raise ValueError("epoch index scan completeness must be boolean")
+            raise ValueError("epoch history scan completeness must be boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,14 +238,6 @@ class StorageHealth:
     active_phase: str | None
     queued_observations: int | None
     durability_lag_s: float | None
-    index_available: bool
-    rebuild_generation: str | None
-    rebuild_in_progress: bool
-    rebuild_files_done: int
-    rebuild_files_target: int
-    rebuild_files_remaining: int
-    rebuild_last_progress_utc: str | None
-    rebuild_stalled: bool
     consumed_step_budget_remaining: int | None
     event_count: int
     total_bytes: int

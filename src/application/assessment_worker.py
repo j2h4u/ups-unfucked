@@ -378,7 +378,7 @@ class AssessmentWorker:
         available = False
         candidates: list[CohortStep] = []
         try:
-            tail = self._store.index_tail_for_epoch(
+            tail = self._store.history_tail_for_epoch(
                 battery_epoch_id,
                 HISTORICAL_COHORT_LIMIT,
             )
