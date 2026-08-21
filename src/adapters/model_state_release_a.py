@@ -300,7 +300,7 @@ def build_target_state(source_state: dict[str, Any]) -> dict[str, Any]:
     offset = Decimal(str(current_k)) * Decimal("20")
     source["lut"] = [
         {**copy.deepcopy(entry), "v": float(Decimal(str(entry["v"])) + offset)}
-        for entry in source["lut"]
+        for entry in _canonicalize_release_a_lut(source["lut"])
     ]
     epoch_id = source["battery_epoch_id"]
     source["physics"] = {
@@ -329,3 +329,43 @@ def build_target_state(source_state: dict[str, Any]) -> dict[str, Any]:
     except target.TargetModelStateError as exc:
         raise ModelTransformError(str(exc)) from exc
     return source
+
+
+def _canonicalize_release_a_lut(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove safe duplicate coordinates while refusing ambiguous voltages.
+
+    Release-A permits a standard point and a measured point to share an exact
+    voltage/SoC coordinate.  The target schema does not permit duplicate
+    voltages, so keep measured provenance (the newest measurement when more
+    than one measured row shares the coordinate).  Any different SoC at one
+    voltage is ambiguous and must stop the transform before it can write.
+    """
+    groups: dict[float, list[dict[str, Any]]] = {}
+    for entry in entries:
+        groups.setdefault(float(entry["v"]), []).append(entry)
+
+    canonical: dict[float, dict[str, Any]] = {}
+    for voltage, group in groups.items():
+        socs = {float(entry["soc"]) for entry in group}
+        if len(socs) != 1:
+            raise ModelTransformError(
+                f"Release-A LUT has conflicting duplicate voltage {voltage}: "
+                f"SoC values={sorted(socs)}"
+            )
+        measured = [entry for entry in group if entry["source"] == "measured"]
+        if measured:
+            # max() is stable for equal timestamps, retaining source order.
+            chosen = max(measured, key=lambda entry: float(entry["timestamp"]))
+        else:
+            anchors = [entry for entry in group if entry["source"] == "anchor"]
+            chosen = anchors[0] if anchors else group[0]
+        canonical[voltage] = copy.deepcopy(chosen)
+
+    seen: set[float] = set()
+    result: list[dict[str, Any]] = []
+    for entry in entries:
+        voltage = float(entry["v"])
+        if voltage not in seen:
+            result.append(canonical[voltage])
+            seen.add(voltage)
+    return result
