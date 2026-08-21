@@ -1,4 +1,4 @@
-"""Evidence-only decline boundaries and bounded reporting tests."""
+"""Evidence-only decline boundaries."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -12,17 +12,9 @@ from src.domain.decline import (
     assess_load_sag_trend,
     assess_long_partial_curve,
 )
-from src.domain.evidence import EvidenceContext, assess_evidence
-from src.domain.learning import make_learning_decision
-from src.domain.reasons import ComparisonReason, DeclineReason, order_reasons
-from src.domain.reporting import ReportEvidenceContext, build_plain_language_report
+from src.domain.reasons import DeclineReason
 from src.domain.values import (
-    BlackoutKind,
-    ComparisonMode,
     DeclineVerdict,
-    ForwardComparison,
-    TerminalDisposition,
-    TerminalOutcome,
 )
 
 START = datetime(2026, 8, 1, tzinfo=timezone.utc)
@@ -236,60 +228,3 @@ def test_long_partial_requires_ready_start_for_every_event() -> None:
     result = assess_long_partial_curve(samples)
 
     assert result.reasons.values == (DeclineReason.INSUFFICIENT_COMPARABLE_EVIDENCE,)
-
-
-def test_report_calls_partial_censored_and_raw_lb_diagnostic_only(observation_factory):
-    observations = tuple(observation_factory(second) for second in range(10))
-    assessment = assess_evidence(
-        observations,
-        EvidenceContext(
-            blackout_kind=BlackoutKind.BLACKOUT_REAL,
-            frozen_snapshot_supported=True,
-            current_battery_epoch_id="epoch-a",
-            frozen_battery_epoch_id="epoch-a",
-            capture_damaged=False,
-            snapshot_within_budget=True,
-        ),
-    )
-    comparison = ForwardComparison(
-        ComparisonMode.NONE,
-        None,
-        0.0,
-        0,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        order_reasons((ComparisonReason.COMPARISON_NOT_ATTEMPTED,)),
-    )
-    decision = make_learning_decision(
-        assessment,
-        comparison,
-        None,
-        decline_evidence_eligible=False,
-    )
-    outcome = TerminalOutcome(
-        TerminalDisposition.RECORDED_ONLY,
-        assessment,
-        comparison,
-        None,
-        decision,
-        None,
-        order_reasons((ComparisonReason.COMPARISON_NOT_ATTEMPTED,)),
-    )
-    report = build_plain_language_report(
-        outcome,
-        blackout_id="event-a",
-        generated_utc=START,
-        evidence=ReportEvidenceContext(True, None),
-        consumed_evidence_budget_remaining=252,
-    )
-    text = " ".join(report.lines)
-    assert "censored evidence, not measured full runtime or SoH" in text
-    assert "raw LB" in text
-    assert "did not command virtual LB or FSD" in text
-    assert "comparison_not_attempted" in text
-    assert "252" in text

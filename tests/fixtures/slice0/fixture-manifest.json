@@ -168,13 +168,6 @@
       "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
     },
     {
-      "path": "tests/fixtures/architecture/forbidden_application_alerter.py",
-      "sha256": "9edf56ab9a950b529d2b018d95710f4f174bfb6f1686bd344c44d78cd80bbcdc",
-      "purpose": "Architecture fixture forbidding application-to-journald adapter coupling.",
-      "expected_golden_ids": ["architecture.application_no_alerter_adapter"],
-      "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
-    },
-    {
       "path": "tests/fixtures/architecture/forbidden_application_jsonl.py",
       "sha256": "2df1cc2681e5c81c7986a8f767a6ff0753dbf6a8c75bd0da57a48b0b7c883374",
       "purpose": "Architecture fixture forbidding application-to-concrete-JSONL coupling.",

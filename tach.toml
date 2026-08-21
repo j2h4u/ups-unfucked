@@ -78,16 +78,6 @@ depends_on = ["src.domain", "src.nut_client"]
 layer = "adapters"
 
 [[modules]]
-path = "src.alerter"
-depends_on = ["src.application", "src.domain"]
-layer = "adapters"
-
-[[modules]]
-path = "src.motd_status"
-depends_on = []
-layer = "adapters"
-
-[[modules]]
 path = "src.nut_client"
 depends_on = []
 layer = "adapters"

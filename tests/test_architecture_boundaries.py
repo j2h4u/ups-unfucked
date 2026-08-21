@@ -106,8 +106,6 @@ def test_production_has_no_legacy_model_import_edge() -> None:
 def test_application_has_no_concrete_adapter_import_edges() -> None:
     forbidden = (
         "src.adapters",
-        "src.alerter",
-        "src.motd_status",
         "src.nut_client",
         "src.virtual_ups_exporter",
     )

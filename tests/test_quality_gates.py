@@ -17,7 +17,6 @@ _FORBIDDEN_FIXTURE_TARGETS = {
     "forbidden_domain_adapter.py": "src/domain/architecture_violation.py",
     "forbidden_application_nut.py": "src/application/architecture_violation.py",
     "forbidden_application_jsonl.py": "src/application/architecture_jsonl_violation.py",
-    "forbidden_application_alerter.py": "src/application/architecture_alerter_violation.py",
     "forbidden_math_application.py": "src/battery_math/architecture_violation.py",
     "forbidden_event_file_model_peer.py": "src/adapters/telemetry_jsonl.py",
 }
@@ -140,7 +139,6 @@ def test_forbidden_edge_fixtures_pin_the_architecture_contract() -> None:
         "forbidden_domain_adapter.py": "src.adapters",
         "forbidden_application_nut.py": "src.nut_client",
         "forbidden_application_jsonl.py": "src.adapters",
-        "forbidden_application_alerter.py": "src.alerter",
         "forbidden_math_application.py": "src.application",
         "forbidden_event_file_model_peer.py": "src.adapters.model_owner",
     }
