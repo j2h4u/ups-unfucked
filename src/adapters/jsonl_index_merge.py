@@ -14,10 +14,13 @@ from src.adapters.jsonl_errors import (
     EventPersistenceError,
     ProjectionUnavailableError,
 )
-from src.adapters.jsonl_external_sort import sort_summary_files
 from src.adapters.jsonl_filesystem import JsonlFilesystem
 from src.adapters.jsonl_record_codec import EMPTY_SHA256, MAX_INDEX_LINE_BYTES, _bounded_error
-from src.adapters.jsonl_summary_codec import _bounded_tail_lines, _decode_summary_line
+from src.adapters.jsonl_summary_codec import (
+    _bounded_tail_lines,
+    _decode_summary_line,
+    _summary_key,
+)
 from src.application.storage_values import EventSummary
 
 
@@ -96,13 +99,9 @@ class IndexMergeCoordinator:
     def _sort_inputs(self) -> None:
         """Normalize both rebuild inputs before any merge cursor is exposed."""
         if self._rebuild_path.exists():
-            sort_summary_files(
-                [self._rebuild_path], self._rebuild_path, work_directory=self._events_path
-            )
+            _sort_summary_file(self._rebuild_path, self._filesystem)
         if self._delta_path.exists() and self._delta_path.stat().st_size:
-            sort_summary_files(
-                [self._delta_path], self._delta_path, work_directory=self._events_path
-            )
+            _sort_summary_file(self._delta_path, self._filesystem)
 
     def tick(
         self,
@@ -412,6 +411,31 @@ def _output_matches(path: Path, *, offset: int, digest: str) -> bool:
         return path.stat().st_size == offset and _tail_digest(path) == digest
     except OSError:
         return False
+
+
+def _sort_summary_file(path: Path, filesystem: JsonlFilesystem) -> None:
+    """Validate, canonically order, and deduplicate one summary projection."""
+    try:
+        lines = path.read_bytes().splitlines(keepends=True)
+    except OSError as exc:
+        raise EventPersistenceError(f"cannot read {path.name}: {_bounded_error(exc)}") from exc
+
+    records: list[tuple[tuple[str, str, str], tuple[str, str], bytes]] = []
+    for line in lines:
+        summary = _decode_summary_line(line)
+        records.append((_summary_sort_key(summary), _summary_key(summary), line))
+    records.sort(key=lambda record: record[0])
+
+    unique: list[bytes] = []
+    seen: dict[tuple[str, str], bytes] = {}
+    for _order, identity, line in records:
+        previous = seen.get(identity)
+        if previous is None:
+            seen[identity] = line
+            unique.append(line)
+        elif previous != line:
+            raise EventConflictError("summary duplicate key has different bytes")
+    filesystem.atomic_replace(path, b"".join(unique), mode=0o400)
 
 
 def _summary_sort_key(summary: EventSummary) -> tuple[str, str, str]:

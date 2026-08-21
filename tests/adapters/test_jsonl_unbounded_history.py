@@ -16,12 +16,12 @@ import pytest
 from src.adapters.jsonl_errors import EventConflictError, EventCorruptionError
 from src.adapters.jsonl_event_catalog import _encode_entry
 from src.adapters.jsonl_event_store import JsonlEventStore
-from src.adapters.jsonl_external_sort import sort_summary_files
+from src.adapters.jsonl_filesystem import JsonlFilesystem
+from src.adapters.jsonl_index_merge import IndexMergeCoordinator, IndexMergePaths
 from src.adapters.jsonl_record_codec import (
     EMPTY_SHA256,
     _decode_record_line,
     _validate_segment_boundaries,
-    canonical_json_bytes,
     canonical_record_line,
 )
 from src.adapters.jsonl_summary_codec import _encode_summary
@@ -269,7 +269,7 @@ def test_rebuild_promote_restart_handles_index_past_4mib(tmp_path: Path) -> None
             )
         )
         expanded = tmp_path / "events" / "index.rebuild.expanded.jsonl"
-        sort_summary_files([merged, padding], expanded, work_directory=tmp_path / "events" / "runs")
+        expanded.write_bytes(merged.read_bytes() + padding.read_bytes())
         merged.unlink()
         expanded.rename(merged)
         merged.chmod(0o400)
@@ -302,35 +302,65 @@ def test_large_event_scans_across_bounded_ticks_and_promotes(tmp_path: Path) -> 
         assert store.index_tail(1)
 
 
-def _sort_line(sequence: int, blackout_id: str, marker: str, *, extra: str = "") -> bytes:
-    return (
-        canonical_json_bytes(
-            {
-                "terminal_catalog_seq": sequence,
-                "blackout_id": blackout_id,
-                "outcome_record_sha256": marker * 64,
-                "marker": marker,
-                "extra": extra,
-            }
+def test_merge_owner_sorts_deduplicates_and_rejects_conflicting_summaries(
+    tmp_path: Path,
+) -> None:
+    class Host:
+        def __init__(self) -> None:
+            self.cursor: dict[str, Any] | None = None
+
+        def _read_cursor_if_present(self) -> dict[str, Any] | None:
+            return self.cursor
+
+        def _write_rebuild_cursor(self, cursor: dict[str, Any]) -> None:
+            self.cursor = cursor
+
+        def _clear_rebuild_metadata(self) -> None:
+            self.cursor = None
+
+        def _unlink_projection_file(self, path: Path) -> None:
+            path.unlink(missing_ok=True)
+
+    def coordinator(root: Path) -> tuple[IndexMergeCoordinator, Path]:
+        events = root / "events"
+        events.mkdir(parents=True)
+        events.chmod(0o700)
+        rebuild = events / "rebuild.jsonl"
+        filesystem = JsonlFilesystem(
+            root,
+            fault_hook=None,
+            monotonic_clock_ns=time.monotonic_ns,
         )
-        + b"\n"
+        paths = IndexMergePaths(
+            events_path=events,
+            index_path=events / "index.jsonl",
+            rebuild_path=rebuild,
+            merge_path=events / "merged.jsonl",
+            delta_path=events / "delta.jsonl",
+        )
+        return (
+            IndexMergeCoordinator(
+                filesystem,
+                Host(),
+                paths,
+                lambda: "2026-08-21T00:00:00.000000Z",
+            ),
+            rebuild,
+        )
+
+    first, rebuild = coordinator(tmp_path / "ordered")
+    older = _summary(0)
+    newer = _summary(1)
+    rebuild.write_bytes(_encode_summary(newer) + _encode_summary(older) + _encode_summary(older))
+    first.begin({"phase": "project"})
+    assert rebuild.read_bytes() == _encode_summary(older) + _encode_summary(newer)
+
+    conflicting, conflict_path = coordinator(tmp_path / "conflict")
+    conflict_path.write_bytes(
+        _encode_summary(older) + _encode_summary(replace(older, evidence_class="conflicting-bytes"))
     )
-
-
-def test_external_sort_normalizes_unsorted_inputs_and_rejects_conflicts(tmp_path: Path) -> None:
-    first = tmp_path / "base.jsonl"
-    second = tmp_path / "delta.jsonl"
-    lines = [_sort_line(2, "b" * 32, "a"), _sort_line(0, "a" * 32, "b")]
-    first.write_bytes(lines[0])
-    second.write_bytes(lines[1])
-    output = tmp_path / "sorted.jsonl"
-    assert sort_summary_files([first, second], output, work_directory=tmp_path / "runs") == 2
-    assert output.read_bytes().splitlines() == [lines[1].rstrip(), lines[0].rstrip()]
-
-    conflict = tmp_path / "conflict.jsonl"
-    conflict.write_bytes(_sort_line(0, "a" * 32, "b", extra="conflicting-bytes"))
-    with pytest.raises(EventConflictError, match="duplicate key"):
-        sort_summary_files([second, conflict], tmp_path / "conflict-out.jsonl")
+    with pytest.raises(EventConflictError, match="summary duplicate key"):
+        conflicting.begin({"phase": "project"})
 
 
 def _locator_fixture(root: Path) -> tuple[JsonlSummaryLocatorStore, str, Path]:

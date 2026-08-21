@@ -143,7 +143,7 @@ depends_on = [
     "src.adapters.jsonl_filesystem",
     "src.adapters.jsonl_record_codec",
     "src.adapters.jsonl_summary_codec",
-    "src.application", "src.adapters",
+    "src.application",
 ]
 layer = "adapters"
 
