@@ -426,7 +426,6 @@ class VirtualUpsExporter:
             "capture_queue": asdict(capture),
             "storage": storage,
             "events": events,
-            "index_maintenance_pending": reporting.maintenance is not None,
             "decline_evidence": [
                 {
                     "metric": status.metric,

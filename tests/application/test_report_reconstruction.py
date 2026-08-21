@@ -164,7 +164,7 @@ def _infrastructure_projection(reason: str) -> EventProjection:
 
 
 class _Store:
-    def index_tail(self, limit: int) -> tuple[EventSummary, ...]:
+    def history_tail(self, limit: int) -> tuple[EventSummary, ...]:
         assert limit == 1
         return (
             EventSummary(
@@ -275,9 +275,9 @@ def test_upward_ir_observation_reconstructs_exact_report_after_restart() -> None
     assert "possible battery-degradation signal, not measured SoH" in rendered
 
 
-def test_index_summary_reconstructs_after_crash_before_report_publication() -> None:
+def test_event_summary_reconstructs_after_crash_before_report_publication() -> None:
     durable_store = _Store()
-    summary = durable_store.index_tail(1)[-1]
+    summary = durable_store.history_tail(1)[0]
 
     # The reporter crashed after the summary became durable but before the
     # publication call.  Restart uses the durable summary and event projection.

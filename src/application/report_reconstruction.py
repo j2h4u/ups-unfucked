@@ -65,10 +65,10 @@ def reconstruct_latest_report(
     if consumed_evidence_budget_remaining < 0:
         raise ValueError("consumed evidence budget cannot be negative")
     try:
-        summaries = store.index_tail(1)
+        summaries = store.history_tail(1)
         if not summaries:
             return None
-        summary = summaries[-1]
+        summary = summaries[0]
         return reconstruct_report_for_event(
             store,
             blackout_id=summary.blackout_id,
@@ -86,7 +86,7 @@ def reconstruct_report_for_event(
     segment_filename: str,
     consumed_evidence_budget_remaining: int,
 ) -> PlainLanguageReport | None:
-    """Rebuild one report for a sealed event identified by its index summary."""
+    """Rebuild one report for a sealed event identified by its history summary."""
     if consumed_evidence_budget_remaining < 0:
         raise ValueError("consumed evidence budget cannot be negative")
     projection = store.project(EventRef(blackout_id, segment_filename))

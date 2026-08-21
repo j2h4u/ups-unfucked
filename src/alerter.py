@@ -50,11 +50,9 @@ class JournaldHealthAlertSink:
 
     @staticmethod
     def _publish_storage(health: StorageHealth) -> None:
-        if health.capture_available and health.alarm is None and not health.rebuild_stalled:
+        if health.capture_available and health.alarm is None:
             return
-        reason = health.alarm or (
-            "index_rebuild_stalled" if health.rebuild_stalled else "capture_unavailable"
-        )
+        reason = health.alarm or "capture_unavailable"
         bounded_reason = _bounded(reason)
         logger.warning(
             "Blackout evidence storage is degraded: %s",
@@ -63,7 +61,6 @@ class JournaldHealthAlertSink:
                 "event_type": "storage_health_alert",
                 "storage_alarm": bounded_reason,
                 "capture_available": health.capture_available,
-                "rebuild_stalled": health.rebuild_stalled,
                 "active_phase": health.active_phase or "none",
             },
         )

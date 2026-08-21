@@ -25,7 +25,7 @@ from src.application.startup_recovery import (
     recover_startup_metadata,
 )
 from src.application.storage_values import (
-    EpochIndexTail,
+    EpochHistoryTail,
     EventProjection,
     EventRecord,
     EventSummary,
@@ -84,14 +84,14 @@ class FakeStore:
         assert event_ref.blackout_id == BLACKOUT_ID
         return self.projection
 
-    def index_tail(self, limit):
+    def history_tail(self, limit):
         assert limit == 32
         return ()
 
-    def index_tail_for_epoch(self, battery_epoch_id, limit):
+    def history_tail_for_epoch(self, battery_epoch_id, limit):
         assert battery_epoch_id == "epoch-a"
         assert limit == 31
-        return EpochIndexTail((), 0, True)
+        return EpochHistoryTail((), 0, True)
 
     def recover_startup(self):
         return None
@@ -544,17 +544,17 @@ class VerticalStore:
         self.projected_ids.append(event_ref.blackout_id)
         return self.projections[event_ref.blackout_id]
 
-    def index_tail(self, limit):
+    def history_tail(self, limit):
         assert limit == 32
         return self.summaries
 
-    def index_tail_for_epoch(self, battery_epoch_id, limit):
+    def history_tail_for_epoch(self, battery_epoch_id, limit):
         assert battery_epoch_id == "epoch-a"
         assert limit == 31
         matching = tuple(
             summary for summary in self.summaries if summary.battery_epoch_id == battery_epoch_id
         )
-        return EpochIndexTail(matching[-limit:], max(0, len(matching) - limit), True)
+        return EpochHistoryTail(matching[-limit:], max(0, len(matching) - limit), True)
 
     def append(self, handle, record):
         self.operations.append(f"append:{record.record_type}")
@@ -677,13 +677,13 @@ def test_fixed_history_window_filters_epoch_before_the_31_event_slice():
             self.projected_ids.append(event_ref.blackout_id)
             return self.projection
 
-        def index_tail(self, limit):
+        def history_tail(self, limit):
             raise AssertionError("global tail must not precede epoch filtering")
 
-        def index_tail_for_epoch(self, battery_epoch_id, limit):
+        def history_tail_for_epoch(self, battery_epoch_id, limit):
             assert battery_epoch_id == "epoch-a"
             assert limit == 31
-            return EpochIndexTail(summaries[-31:], 1, True)
+            return EpochHistoryTail(summaries[-31:], 1, True)
 
     store = WindowStore()
     worker = AssessmentWorker(store, FakeModel(_snapshot()))
@@ -709,10 +709,10 @@ def test_incomplete_epoch_scan_fails_closed_without_projecting_partial_history()
             self.projected_ids.append(event_ref.blackout_id)
             return self.projection
 
-        def index_tail_for_epoch(self, battery_epoch_id, limit):
+        def history_tail_for_epoch(self, battery_epoch_id, limit):
             assert battery_epoch_id == "epoch-a"
             assert limit == 31
-            return EpochIndexTail((_summary(historical_id, 1),), 0, False)
+            return EpochHistoryTail((_summary(historical_id, 1),), 0, False)
 
     store = IncompleteStore()
     worker = AssessmentWorker(store, FakeModel(_snapshot()))
@@ -727,16 +727,16 @@ def test_incomplete_epoch_scan_fails_closed_without_projecting_partial_history()
     )
 
 
-def test_epoch_index_tail_retains_exact_bounded_overflow_count():
-    tail = EpochIndexTail((), 7, True)
+def test_epoch_history_tail_retains_exact_bounded_overflow_count():
+    tail = EpochHistoryTail((), 7, True)
 
     assert tail.overflow_count == 7
 
 
-def test_epoch_index_tail_rejects_boolean_overflow_count():
+def test_epoch_history_tail_rejects_boolean_overflow_count():
     legacy_count = bool(1)
     with pytest.raises(ValueError, match="overflow_count must be a nonnegative integer"):
-        EpochIndexTail((), legacy_count, True)
+        EpochHistoryTail((), legacy_count, True)
 
 
 def test_unknown_durable_learning_policy_fails_closed():

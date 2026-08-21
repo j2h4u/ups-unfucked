@@ -252,7 +252,7 @@ def test_recovery_reuses_durable_candidate_without_recomputing(tmp_path: Path):
         assert result.outcome.disposition == TerminalDisposition.LEARNED
         assert model.commit_calls == 1
         assert store.work_registry().pending_processing == ()
-        assert store.index_tail(1)[0].commit_receipt_id == receipt.evidence_set_id
+        assert store.history_tail(1)[0].commit_receipt_id == receipt.evidence_set_id
     finally:
         store.close()
 
@@ -334,7 +334,7 @@ def _assert_derived_prefix_recovery(
         resumed = worker.prepare(CloseRequest(recovered.work_registry().pending_processing[0]))
         assert resumed.derived_records == expected[prefix_count:]
         close_blackout(recovered, model, resumed)
-        summary = recovered.index_tail(1)[0]
+        summary = recovered.history_tail(1)[0]
         projection = recovered.project(EventRef(summary.blackout_id, summary.segment_filename))
         assert tuple(
             (record.record_type, record.payload) for record in projection.derived_records

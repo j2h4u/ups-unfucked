@@ -16,7 +16,6 @@ from src.application.ports import (
     AssessmentQueryEventStorePort,
     CaptureRecoveryEventStorePort,
     CloseablePort,
-    MaintenanceEventStorePort,
     ProcessingRejectionEventStorePort,
     ReportingEventStorePort,
     ReportOutboxEventStorePort,
@@ -25,8 +24,8 @@ from src.application.ports import (
 from src.application.storage_values import (
     CaptureCloseReconciliation,
     CaptureCloseState,
-    EpochIndexScan,
-    EpochIndexTail,
+    EpochHistoryScan,
+    EpochHistoryTail,
     EventHandle,
     EventProjection,
     EventRecord,
@@ -63,9 +62,6 @@ class _DeferredStoreDelegate(
     @property
     def report_outbox(self) -> ReportOutboxEventStorePort: ...
 
-    @property
-    def maintenance(self) -> MaintenanceEventStorePort: ...
-
 
 class DegradedEventStore:
     """No-capture store that keeps safety/reporting construction deterministic."""
@@ -77,7 +73,6 @@ class DegradedEventStore:
         self._closed = False
         self.acknowledge_capture_recovery = lambda: None
         self.report_outbox: ReportOutboxEventStorePort = self
-        self.maintenance: MaintenanceEventStorePort = self
 
     def close(self) -> None:
         """Close the no-op boundary without attempting any filesystem work."""
@@ -138,14 +133,6 @@ class DegradedEventStore:
             active_phase=None,
             queued_observations=queued_observations,
             durability_lag_s=None,
-            index_available=False,
-            rebuild_generation=None,
-            rebuild_in_progress=False,
-            rebuild_files_done=0,
-            rebuild_files_target=0,
-            rebuild_files_remaining=0,
-            rebuild_last_progress_utc=None,
-            rebuild_stalled=False,
             consumed_step_budget_remaining=consumed_step_budget_remaining,
             event_count=0,
             total_bytes=0,
@@ -154,20 +141,20 @@ class DegradedEventStore:
             bounded_error=self.reason,
         )
 
-    def index_tail(self, limit: int) -> tuple[EventSummary, ...]:
-        """Return no sealed science while the index is unavailable."""
+    def history_tail(self, limit: int) -> tuple[EventSummary, ...]:
+        """Return no sealed science while storage is unavailable."""
         del limit
         return ()
 
-    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail:
+    def history_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochHistoryTail:
         """Return an incomplete empty cohort instead of querying storage."""
         del battery_epoch_id, limit
-        return EpochIndexTail((), 0, False)
+        return EpochHistoryTail((), 0, False)
 
-    def index_scan_for_decline_epoch(self, battery_epoch_id: str) -> EpochIndexScan:
+    def history_scan_for_epoch(self, battery_epoch_id: str) -> EpochHistoryScan:
         """Return an incomplete empty decline cohort instead of querying storage."""
         del battery_epoch_id
-        return EpochIndexScan((), False)
+        return EpochHistoryScan((), False)
 
     def report_outbox_pending(self, limit: int) -> tuple[ReportNoticeIdentity, ...]:
         del limit
@@ -177,25 +164,6 @@ class DegradedEventStore:
         del notice
         raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
 
-    def begin_index_rebuild(self) -> str:
-        """Keep maintenance a bounded no-op until a later retry can recover."""
-        return "degraded-startup"
-
-    def rebuild_index_tick(
-        self,
-        *,
-        max_files: int,
-        max_bytes: int,
-        max_wall_s: float = 0.20,
-    ) -> bool:
-        """Complete no work; no recovery bytes are touched in this boundary."""
-        del max_files, max_bytes, max_wall_s
-        return True
-
-    def promote_index_rebuild(self) -> None:
-        """Do not promote a projection that was never rebuilt."""
-        return None
-
 
 class DeferredEventStore:
     """Safety-first facade that activates one real store after the first poll."""
@@ -204,7 +172,6 @@ class DeferredEventStore:
         self._fallback = DegradedEventStore(reason)
         self._delegate: _DeferredStoreDelegate | None = None
         self.report_outbox: ReportOutboxEventStorePort = _DeferredReportOutbox(self)
-        self.maintenance: MaintenanceEventStorePort = _DeferredMaintenance(self)
 
     def activate(self, store: _DeferredStoreDelegate) -> None:
         if self._delegate is not None and self._delegate is not store:
@@ -256,14 +223,14 @@ class DeferredEventStore:
     def acknowledge_capture_recovery(self) -> None:
         self._target().acknowledge_capture_recovery()
 
-    def index_tail(self, limit: int) -> tuple[EventSummary, ...]:
-        return self._target().index_tail(limit)
+    def history_tail(self, limit: int) -> tuple[EventSummary, ...]:
+        return self._target().history_tail(limit)
 
-    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail:
-        return self._target().index_tail_for_epoch(battery_epoch_id, limit)
+    def history_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochHistoryTail:
+        return self._target().history_tail_for_epoch(battery_epoch_id, limit)
 
-    def index_scan_for_decline_epoch(self, battery_epoch_id: str) -> EpochIndexScan:
-        return self._target().index_scan_for_decline_epoch(battery_epoch_id)
+    def history_scan_for_epoch(self, battery_epoch_id: str) -> EpochHistoryScan:
+        return self._target().history_scan_for_epoch(battery_epoch_id)
 
     def storage_health(
         self,
@@ -291,43 +258,6 @@ class _DeferredReportOutbox:
 
     def acknowledge_report_notice(self, notice: ReportNoticeIdentity) -> None:
         self._owner._target().report_outbox.acknowledge_report_notice(notice)
-
-
-class _DeferredMaintenance:
-    """Forward bounded maintenance to the active or degraded target."""
-
-    def __init__(self, owner: DeferredEventStore) -> None:
-        self._owner = owner
-
-    def storage_health(
-        self,
-        *,
-        queued_observations: int | None = None,
-        consumed_step_budget_remaining: int | None = None,
-    ) -> StorageHealth:
-        return self._owner._target().maintenance.storage_health(
-            queued_observations=queued_observations,
-            consumed_step_budget_remaining=consumed_step_budget_remaining,
-        )
-
-    def begin_index_rebuild(self) -> str:
-        return self._owner._target().maintenance.begin_index_rebuild()
-
-    def rebuild_index_tick(
-        self,
-        *,
-        max_files: int,
-        max_bytes: int,
-        max_wall_s: float = 0.20,
-    ) -> bool:
-        return self._owner._target().maintenance.rebuild_index_tick(
-            max_files=max_files,
-            max_bytes=max_bytes,
-            max_wall_s=max_wall_s,
-        )
-
-    def promote_index_rebuild(self) -> None:
-        self._owner._target().maintenance.promote_index_rebuild()
 
 
 def _bounded_reason(reason: BaseException | str) -> str:

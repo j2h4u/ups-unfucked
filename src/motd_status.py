@@ -55,9 +55,6 @@ def render_motd(*, health_path: Path) -> str:
         ("active_event_phase", storage.get("active_phase")),
         ("durability_lag_s", storage.get("durability_lag_s")),
         ("storage_alarm", storage.get("alarm")),
-        ("index_available", storage.get("index_available")),
-        ("index_rebuild_in_progress", storage.get("rebuild_in_progress")),
-        ("index_rebuild_stalled", storage.get("rebuild_stalled")),
         (
             "consumed_evidence_budget_remaining",
             storage.get("consumed_step_budget_remaining"),

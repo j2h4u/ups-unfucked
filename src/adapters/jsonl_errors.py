@@ -32,9 +32,5 @@ class EventCorruptionError(StoragePortCorruption, EventStoreError):
     """Evidence contains non-tail corruption and science must fail closed."""
 
 
-class ProjectionUnavailableError(EventStoreError):
-    """The rebuildable index cannot currently accept/query projections."""
-
-
-class ProcessingBacklogFullError(DurableCaptureTerminalError, ProjectionUnavailableError):
+class ProcessingBacklogFullError(DurableCaptureTerminalError, EventStoreError):
     """All processing slots were occupied, so the event was durably rejected."""

@@ -15,25 +15,15 @@ from src.adapters import model_state_persistence as model_files
 from src.adapters.jsonl_errors import (
     EventConflictError,
     EventCorruptionError,
-    ProjectionUnavailableError,
 )
 from src.adapters.jsonl_event_store import JsonlEventStore
 from src.adapters.jsonl_record_codec import (
     _decode_record_line,
     canonical_record_line,
 )
-from src.adapters.jsonl_summary_codec import (
-    _bounded_epoch_summaries,
-    _bounded_file_suffix,
-    _bounded_tail_lines,
-    _decode_summary_line,
-    _encode_summary,
-    _iter_complete_lines,
-)
 from src.application.storage_values import (
     EventRecord,
     EventStart,
-    EventSummary,
     TerminalOutcomeRecord,
 )
 
@@ -138,7 +128,7 @@ def test_end_transition_faults_converge_to_one_pending_seal(tmp_path: Path, stag
         assert restarted.recover_startup() is None
         _retry_pending_seal(restarted)
         assert restarted.work_registry().pending_processing == ()
-        summaries = restarted.index_tail(1)
+        summaries = restarted.history_tail(1)
         assert len(summaries) == 1
         assert summaries[0].blackout_id == BLACKOUT_ID
 
@@ -175,10 +165,10 @@ def test_seal_fault_stages_preserve_durable_outcome_for_retry(tmp_path: Path, st
             _retry_pending_seal(restarted)
             assert restarted.work_registry().pending_processing == ()
         assert event_path.read_bytes() == durable_event_bytes
-        index_path = tmp_path / "events" / "index.jsonl"
-        index_lines = index_path.read_bytes().splitlines() if index_path.exists() else []
-        assert len(index_lines) == 1
-        assert restarted.index_tail(1)[0].blackout_id == BLACKOUT_ID
+        outbox_path = tmp_path / "events" / "report-outbox.jsonl"
+        outbox_lines = outbox_path.read_bytes().splitlines() if outbox_path.exists() else []
+        assert len(outbox_lines) == 1
+        assert restarted.history_tail(1)[0].blackout_id == BLACKOUT_ID
 
 
 def test_seal_retry_rejects_different_outcome_without_changing_durable_bytes(
@@ -216,148 +206,8 @@ def test_seal_retry_rejects_different_outcome_without_changing_durable_bytes(
         assert event_path.read_bytes() == durable_event_bytes
         _retry_pending_seal(restarted)
         assert restarted.work_registry().pending_processing == ()
-        assert len(restarted.index_tail(1)) == 1
+        assert len(restarted.history_tail(1)) == 1
         assert event_path.read_bytes() == durable_event_bytes
-
-
-@pytest.mark.parametrize(
-    "stage",
-    (
-        "after_rebuild_merge_cursor",
-        "after_rebuild_merge_append",
-        "after_rebuild_merge_verify_started",
-        "after_rebuild_merge_prepared",
-    ),
-)
-def test_merge_fault_stages_resume_and_promote_exact_projection(tmp_path: Path, stage: str) -> None:
-    def crash(selected: str) -> None:
-        if selected == stage:
-            raise InjectedCrash(stage)
-
-    store = JsonlEventStore(tmp_path, fault_hook=crash)
-    _open_and_end(store)
-    store.seal(
-        store._registry._handle_from_processing_ref(store.work_registry().pending_processing[0]),
-        _outcome(),
-    )
-    (tmp_path / "events" / "index.jsonl").unlink()
-    with pytest.raises(InjectedCrash, match=stage):
-        store.maintenance.rebuild_index_tick(max_files=16, max_bytes=4 * 1024 * 1024)
-    store.close()
-
-    with JsonlEventStore(tmp_path) as restarted:
-        ready = False
-        for _ in range(8):
-            if restarted.maintenance.rebuild_index_tick(max_files=16, max_bytes=4 * 1024 * 1024):
-                ready = True
-                break
-        assert ready
-        restarted.maintenance.promote_index_rebuild()
-        assert restarted.index_tail(1)[0].blackout_id == BLACKOUT_ID
-        assert len((tmp_path / "events" / "index.jsonl").read_bytes().splitlines()) == 1
-
-
-def test_merge_before_rename_crash_retains_prepared_output_for_retry(tmp_path: Path) -> None:
-    armed = False
-
-    def crash(stage: str) -> None:
-        if armed and stage == "before_rebuild_rename":
-            raise InjectedCrash(stage)
-
-    store = JsonlEventStore(tmp_path, fault_hook=crash)
-    _open_and_end(store)
-    store.seal(
-        store._registry._handle_from_processing_ref(store.work_registry().pending_processing[0]),
-        _outcome(),
-    )
-    (tmp_path / "events" / "index.jsonl").unlink()
-    assert store.maintenance.rebuild_index_tick(max_files=16, max_bytes=4 * 1024 * 1024)
-    armed = True
-    with pytest.raises(InjectedCrash, match="before_rebuild_rename"):
-        store.maintenance.promote_index_rebuild()
-    store.close()
-
-    with JsonlEventStore(tmp_path) as restarted:
-        restarted.maintenance.promote_index_rebuild()
-        assert restarted.index_tail(1)[0].blackout_id == BLACKOUT_ID
-
-
-def _summary() -> EventSummary:
-    return EventSummary(
-        2,
-        BLACKOUT_ID,
-        f"evt-20260817T000000.000Z-{BLACKOUT_ID}.jsonl",
-        WALL_START,
-        WALL_END,
-        "power_restored",
-        "censored_partial",
-        "recorded_only",
-        1.0,
-        0,
-        EPOCH_ID,
-        False,
-        "none",
-        False,
-        None,
-        (),
-        0,
-        "a" * 64,
-        "b" * 64,
-    )
-
-
-@pytest.mark.parametrize(
-    "raw",
-    (
-        b"",
-        b"{}\n",
-        b'{"schema_version":2}\n',
-        b'{"schema_version":2',
-        _encode_summary(_summary())[:-1],
-        _encode_summary(_summary()).replace(b'"schema_version":2', b'"schema_version":1'),
-    ),
-)
-def test_summary_decoder_rejects_empty_short_torn_and_corrupt_lines(raw: bytes) -> None:
-    with pytest.raises(EventCorruptionError):
-        _decode_summary_line(raw)
-
-
-def test_summary_stream_decoders_reject_torn_and_short_eof(tmp_path: Path) -> None:
-    valid = _encode_summary(_summary())
-    path = tmp_path / "index.jsonl"
-    path.write_bytes(valid + b"torn")
-    with pytest.raises(EventCorruptionError, match="torn"):
-        tuple(_iter_complete_lines(path, 4096))
-    with pytest.raises(EventCorruptionError, match="newline"):
-        _bounded_tail_lines(path, 1, 4096)
-    with pytest.raises(EventCorruptionError, match="torn"):
-        _bounded_file_suffix(path, 4096)
-    with pytest.raises(EventCorruptionError):
-        _bounded_epoch_summaries(path, EPOCH_ID)
-
-
-def test_index_and_merge_cursors_fail_closed_on_eof_or_short_output(tmp_path: Path) -> None:
-    with JsonlEventStore(tmp_path) as store:
-        events = tmp_path / "events"
-        cursor = events / "index-rebuild.cursor.json"
-        cursor.write_bytes(b'{"phase":')
-        with pytest.raises(EventCorruptionError):
-            store._index._read_cursor_if_present()
-
-        catalog_cursor = events / "index-rebuild.catalog.cursor.json"
-        catalog_cursor.write_bytes(b'{"phase":')
-        with pytest.raises(EventCorruptionError):
-            store._index._read_catalog_cursor()
-
-        merge_path = store._index._merge._merge_path
-        assert store._index._merge._summary_at(merge_path, 0) is None
-        with pytest.raises(EventCorruptionError, match="disappeared"):
-            store._index._merge._summary_at(merge_path, 1)
-        merge_path.write_bytes(b"short")
-        with pytest.raises(EventCorruptionError, match="torn"):
-            store._index._merge._summary_at(merge_path, 0)
-        with pytest.raises(ProjectionUnavailableError, match="shorter"):
-            store._index._merge._repair_output({"merge_output_offset": len(b"short") + 1})
 
 
 def test_registry_empty_processing_file_is_not_fabricated_on_restart(tmp_path: Path) -> None:

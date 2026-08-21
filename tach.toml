@@ -40,7 +40,7 @@ layer = "battery_math"
 
 [[modules]]
 path = "src.adapters"
-depends_on = ["src.adapters.jsonl_index_merge", "src.adapters.jsonl_event_catalog", "src.adapters.jsonl_filesystem", "src.adapters.jsonl_index_metadata", "src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "src.application"]
+depends_on = ["src.adapters.jsonl_filesystem", "src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "src.application"]
 layer = "adapters"
 
 [[modules]]
@@ -52,11 +52,10 @@ layer = "adapters"
 path = "src.adapters.jsonl_event_store"
 depends_on = [
     "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_catalog",
+    "src.adapters.jsonl_event_history",
     "src.adapters.jsonl_event_stream",
     "src.adapters.jsonl_filesystem",
     "src.adapters.jsonl_health_report",
-    "src.adapters.jsonl_index",
     "src.adapters.jsonl_record_codec",
     "src.adapters.jsonl_work_registry",
     "src.application",
@@ -65,8 +64,15 @@ depends_on = [
 layer = "adapters"
 
 [[modules]]
-path = "src.adapters.jsonl_event_catalog"
-depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
+path = "src.adapters.jsonl_event_history"
+depends_on = [
+    "src.adapters.jsonl_errors",
+    "src.adapters.jsonl_event_stream",
+    "src.adapters.jsonl_filesystem",
+    "src.adapters.jsonl_record_codec",
+    "src.adapters.jsonl_summary_codec",
+    "src.application",
+]
 layer = "adapters"
 
 [[modules]]
@@ -98,51 +104,10 @@ depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
 layer = "adapters"
 
 [[modules]]
-path = "src.adapters.jsonl_health_inventory"
-depends_on = ["src.adapters.jsonl_event_catalog", "src.adapters.jsonl_filesystem"]
-layer = "adapters"
-
-[[modules]]
 path = "src.adapters.jsonl_health_report"
 depends_on = [
     "src.adapters.jsonl_errors",
     "src.adapters.jsonl_record_codec",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_index"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_catalog",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_health_inventory",
-    "src.adapters.jsonl_index_metadata",
-    "src.adapters.jsonl_index_merge",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-    "src.application", "src.adapters",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_index_metadata"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_index_merge"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
     "src.application",
 ]
 layer = "adapters"

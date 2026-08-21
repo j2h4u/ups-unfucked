@@ -12,14 +12,10 @@ MODEL_TRANSFORM = "src/adapters/model_transform.py"
 JSONL_OWNERS = frozenset(
     {
         "src/adapters/jsonl_event_store.py",
-        "src/adapters/jsonl_event_catalog.py",
         "src/adapters/jsonl_event_capacity.py",
         "src/adapters/jsonl_event_stream.py",
         "src/adapters/jsonl_filesystem.py",
-        "src/adapters/jsonl_health_inventory.py",
         "src/adapters/jsonl_health_report.py",
-        "src/adapters/jsonl_index.py",
-        "src/adapters/jsonl_index_merge.py",
         "src/adapters/jsonl_work_registry.py",
     }
 )
@@ -58,19 +54,6 @@ def _is_protocol_stub(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 def test_jsonl_collaborators_have_local_state_ownership() -> None:
     """The JSONL lanes must not regress to a shared mutable state bag."""
     assert not (SOURCE_ROOT / "adapters" / "jsonl_state.py").exists()
-    inventory_fields = frozenset(
-        {
-            "_health_inventory_complete",
-            "_health_catalog_offset",
-            "_health_catalog_seq",
-            "_health_catalog_prev_hash",
-            "_health_catalog_target_offset",
-            "_health_pending_event_count",
-            "_health_pending_total_bytes",
-            "_health_published_stats",
-        }
-    )
-    inventory_field_owners: set[tuple[str, str]] = set()
     for path, tree in _production_trees():
         if path not in JSONL_OWNERS:
             continue
@@ -79,11 +62,6 @@ def test_jsonl_collaborators_have_local_state_ownership() -> None:
                 assert node.id != "JsonlStoreState"
             if isinstance(node, ast.Attribute):
                 assert node.attr != "_state"
-                if node.attr in inventory_fields:
-                    inventory_field_owners.add((path, node.attr))
-    assert all(
-        path == "src/adapters/jsonl_health_inventory.py" for path, _ in inventory_field_owners
-    )
 
 
 def _model_owner_constructors(tree: ast.Module) -> frozenset[str]:

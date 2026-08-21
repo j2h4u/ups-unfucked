@@ -16,13 +16,13 @@ from src.adapters.jsonl_errors import (
     EventCorruptionError,
     EventValidationError,
 )
-from src.adapters.jsonl_event_catalog import JsonlEventCatalog
+from src.adapters.jsonl_event_history import JsonlEventHistory
 from src.adapters.jsonl_event_stream import JsonlEventStream, _initial_event_filename
 from src.adapters.jsonl_filesystem import JsonlFilesystem
 from src.adapters.jsonl_health_report import storage_health
-from src.adapters.jsonl_index import JsonlIndex, JsonlIndexPaths
 from src.adapters.jsonl_outcome_commit import JsonlOutcomeResolver
 from src.adapters.jsonl_record_codec import (
+    EVENT_FILENAME_RE,
     MAX_PENDING_PROCESSING,
     MAX_REASON_BYTES,
     PROVENANCE_BY_RECORD_TYPE,
@@ -36,14 +36,14 @@ from src.adapters.jsonl_record_codec import (
     _wall_time_utc,
     canonical_record_line,
 )
-from src.adapters.jsonl_report_outbox import ReportNotice
+from src.adapters.jsonl_report_outbox import JsonlReportOutbox, ReportNotice
 from src.adapters.jsonl_work_registry import JsonlWorkRegistry
 from src.application.storage_values import (
     CaptureCloseReconciliation,
     CaptureCloseState,
     CapturingEventRef,
-    EpochIndexScan,
-    EpochIndexTail,
+    EpochHistoryScan,
+    EpochHistoryTail,
     EventHandle,
     EventProjection,
     EventRecord,
@@ -78,7 +78,6 @@ class JsonlEventStore:
     ) -> None:
         root = Path(model_data_dir)
         events_path = root / "events"
-        catalog_path = events_path / "event-catalog.jsonl"
         registry_path = events_path / "active.json"
         wall_clock_fn = wall_clock or _wall_time_utc
         monotonic_clock_fn = monotonic_clock_ns or time.monotonic_ns
@@ -89,10 +88,8 @@ class JsonlEventStore:
             fault_hook=fault_hook,
             monotonic_clock_ns=monotonic_clock_fn,
         )
-        self._catalog = JsonlEventCatalog(catalog_path, self._filesystem)
         stream_ref: JsonlEventStream | None = None
         registry_ref: JsonlWorkRegistry | None = None
-        index_ref: JsonlIndex | None = None
 
         def stream_dependency() -> JsonlEventStream:
             assert stream_ref is not None
@@ -101,10 +98,6 @@ class JsonlEventStore:
         def registry_dependency() -> JsonlWorkRegistry:
             assert registry_ref is not None
             return registry_ref
-
-        def index_dependency() -> JsonlIndex:
-            assert index_ref is not None
-            return index_ref
 
         self._stream = JsonlEventStream(
             events_path,
@@ -116,38 +109,40 @@ class JsonlEventStore:
         self._outcome_resolver = JsonlOutcomeResolver(self._filesystem, self._stream)
 
         def reserve_event_path(path_token: str) -> None:
-            self._catalog.reserve(path_token)
             self._stream._reserve_segment_manifest(path_token)
 
-        self._filesystem._attach_catalog_reserver(reserve_event_path)
+        self._filesystem._attach_event_path_reserver(reserve_event_path)
         self._registry = JsonlWorkRegistry(
             registry_path,
             events_path,
             self._filesystem,
             stream_dependency,
-            index_dependency,
+            self._commit_sealed,
         )
-        self._index = JsonlIndex(
-            JsonlIndexPaths(
-                events_path=events_path,
-                index_path=events_path / "index.jsonl",
-                cursor_path=events_path / "index-rebuild.cursor.json",
-                rebuild_path=events_path / "index.rebuild.in-progress.jsonl",
-                merge_path=events_path / "index.rebuild.merged.jsonl",
-                delta_path=events_path / "index-rebuild.delta.jsonl",
-                catalog_cursor_path=events_path / "index-rebuild.catalog.cursor.json",
-                wall_clock=wall_clock_fn,
-            ),
+
+        def owned_event_paths() -> frozenset[str]:
+            registry = self._registry._read_registry()
+            owned = {registry.capture.path_token} if registry.capture is not None else set()
+            for pending in registry.pending_processing:
+                owned.add(pending.final_path_token)
+                owned.update(
+                    path.name
+                    for path in events_path.iterdir()
+                    if (match := EVENT_FILENAME_RE.fullmatch(path.name)) is not None
+                    and match.group("blackout") == pending.blackout_id
+                    and match.group("segment") in pending.segment_ids
+                )
+            return frozenset(owned)
+
+        self._history_reader = JsonlEventHistory(
+            events_path,
             self._filesystem,
-            stream_dependency,
-            registry_dependency,
-            self._catalog,
+            self._stream,
+            owned_event_paths,
         )
-        self.report_outbox = _EventReportOutbox(self._index)
-        self.maintenance = _EventMaintenance(self._index)
+        self.report_outbox = _EventReportOutbox(JsonlReportOutbox(events_path, self._filesystem))
         stream_ref = self._stream
         registry_ref = self._registry
-        index_ref = self._index
         self._filesystem._ensure_layout()
         if writer_lock_fd is None:
             self._owned_lock_fd = self._filesystem._acquire_writer_lock()
@@ -155,7 +150,6 @@ class JsonlEventStore:
             self._filesystem._validate_lock_fd(writer_lock_fd)
         if not registry_path.exists():
             self._registry._write_registry(WorkRegistry(None, ()))
-        self._index._recover_append_intent()
 
     def __enter__(self) -> Self:
         return self
@@ -221,14 +215,23 @@ class JsonlEventStore:
     def project(self, ref: EventRef | EventHandle | SealedEventRef) -> EventProjection:
         return self._stream.project(ref)
 
-    def index_tail(self, limit: int) -> tuple[EventSummary, ...]:
-        return self._index.index_tail(limit)
+    def history_tail(self, limit: int) -> tuple[EventSummary, ...]:
+        """Return newest sealed event summaries by projecting event files in memory."""
+        if not 0 <= limit <= 32:
+            raise ValueError("limit must be between 0 and 32")
+        return self._history_reader.tail(limit)
 
-    def index_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochIndexTail:
-        return self._index.index_tail_for_epoch(battery_epoch_id, limit)
+    def history_tail_for_epoch(self, battery_epoch_id: str, limit: int) -> EpochHistoryTail:
+        if not battery_epoch_id or len(battery_epoch_id.encode("utf-8")) > 128:
+            raise ValueError("battery_epoch_id must be a non-empty bounded string")
+        if not 0 <= limit <= 32:
+            raise ValueError("limit must be between 0 and 32")
+        return self._history_reader.tail_for_epoch(battery_epoch_id, limit)
 
-    def index_scan_for_decline_epoch(self, battery_epoch_id: str) -> EpochIndexScan:
-        return self._index.index_scan_for_decline_epoch(battery_epoch_id)
+    def history_scan_for_epoch(self, battery_epoch_id: str) -> EpochHistoryScan:
+        if not battery_epoch_id or len(battery_epoch_id.encode("utf-8")) > 128:
+            raise ValueError("battery_epoch_id must be a non-empty bounded string")
+        return self._history_reader.scan_for_epoch(battery_epoch_id)
 
     def storage_health(
         self,
@@ -237,10 +240,14 @@ class JsonlEventStore:
         consumed_step_budget_remaining: int | None = None,
     ) -> StorageHealth:
         return storage_health(
-            self._index,
+            self._filesystem,
+            self._registry,
             queued_observations=queued_observations,
             consumed_step_budget_remaining=consumed_step_budget_remaining,
         )
+
+    def _commit_sealed(self, path_token: str, projection: EventProjection) -> None:
+        self._history_reader.commit_notice(path_token, projection, self.report_outbox._append)
 
     def open(self, start: EventStart) -> EventHandle:
         """Create one event using registry-first preparing -> capturing order."""
@@ -513,19 +520,34 @@ class JsonlEventStore:
 class _EventReportOutbox:
     """Narrow report-delivery adapter separate from the event-store facade."""
 
-    def __init__(self, index: JsonlIndex) -> None:
-        self._index = index
+    def __init__(self, outbox: JsonlReportOutbox) -> None:
+        self._outbox = outbox
+
+    def _append(
+        self,
+        *,
+        blackout_id: str,
+        segment_filename: str,
+        summary_sha256: str,
+        index_head_sha256: str,
+    ) -> ReportNotice:
+        return self._outbox.append(
+            blackout_id=blackout_id,
+            segment_filename=segment_filename,
+            summary_sha256=summary_sha256,
+            index_head_sha256=index_head_sha256,
+        )
 
     def report_outbox_pending(self, limit: int) -> tuple[ReportNoticeIdentity, ...]:
         return tuple(
             ReportNoticeIdentity(item.blackout_id, item.segment_filename, item.summary_sha256)
-            for item in self._index.report_outbox_pending(limit)
+            for item in self._outbox.pending(limit=limit)
         )
 
     def acknowledge_report_notice(self, notice: ReportNoticeIdentity) -> None:
-        item = self._index.report_outbox_head()
+        item = self._outbox.head()
         if item is not None and _notice_matches(item, notice):
-            self._index.acknowledge_report_notice(item)
+            self._outbox.acknowledge(item)
             return
         raise EventConflictError("report outbox notice is not pending")
 
@@ -536,41 +558,3 @@ def _notice_matches(item: ReportNotice, notice: ReportNoticeIdentity) -> bool:
         notice.segment_filename,
         notice.summary_sha256,
     )
-
-
-class _EventMaintenance:
-    """Narrow bounded index-maintenance adapter."""
-
-    def __init__(self, index: JsonlIndex) -> None:
-        self._index = index
-
-    def storage_health(
-        self,
-        *,
-        queued_observations: int | None = None,
-        consumed_step_budget_remaining: int | None = None,
-    ) -> StorageHealth:
-        return storage_health(
-            self._index,
-            queued_observations=queued_observations,
-            consumed_step_budget_remaining=consumed_step_budget_remaining,
-        )
-
-    def begin_index_rebuild(self) -> str:
-        return self._index._begin_index_rebuild()
-
-    def rebuild_index_tick(
-        self,
-        *,
-        max_files: int,
-        max_bytes: int,
-        max_wall_s: float = 0.20,
-    ) -> bool:
-        return self._index._rebuild_index_tick(
-            max_files=max_files,
-            max_bytes=max_bytes,
-            max_wall_s=max_wall_s,
-        )
-
-    def promote_index_rebuild(self) -> None:
-        self._index._promote_index_rebuild()

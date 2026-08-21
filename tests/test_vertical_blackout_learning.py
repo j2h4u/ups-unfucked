@@ -359,10 +359,10 @@ def test_real_vertical_four_step_cohort_commits_seals_and_restarts(tmp_path: Pat
         assert model_path.read_bytes() != scenario.initial_model_bytes
         assert scenario.owner.current_snapshot().ir_k_v_per_pp == pytest.approx(0.012)
 
-        summaries = scenario.store.index_tail(32)
+        summaries = scenario.store.history_tail(32)
         assert len(summaries) == 4
         assert sum(summary.commit_receipt_id is not None for summary in summaries) == 1
-        assert summaries[-1].commit_receipt_id == receipt.evidence_set_id
+        assert summaries[0].commit_receipt_id == receipt.evidence_set_id
         event_paths = tuple((tmp_path / "events").glob("evt-*.jsonl"))
         assert len(event_paths) == 4
         assert all(stat.S_IMODE(path.stat().st_mode) == 0o400 for path in event_paths)
@@ -383,8 +383,8 @@ def test_real_vertical_four_step_cohort_commits_seals_and_restarts(tmp_path: Pat
         assert restarted_owner.current_snapshot().ir_k_v_per_pp == pytest.approx(0.012)
         assert restarted_owner.policy_projection().persisted_hash == receipt.model_hash_after
         assert len(report.events) == 4
-        assert report.events[-1].disposition == TerminalDisposition.LEARNED.value
-        assert report.events[-1].commit_receipt_id == receipt.evidence_set_id
+        assert report.events[0].disposition == TerminalDisposition.LEARNED.value
+        assert report.events[0].commit_receipt_id == receipt.evidence_set_id
 
 
 def test_missing_step_direction_has_exact_refusal_and_zero_model_writes(tmp_path: Path) -> None:
@@ -402,7 +402,7 @@ def test_missing_step_direction_has_exact_refusal_and_zero_model_writes(tmp_path
         assert model_path.read_bytes() == scenario.initial_model_bytes
         assert model_path.stat().st_mtime_ns == scenario.initial_model_mtime_ns
         assert not (tmp_path / "model.precommit.json").exists()
-        assert all(summary.commit_receipt_id is None for summary in scenario.store.index_tail(32))
+        assert all(summary.commit_receipt_id is None for summary in scenario.store.history_tail(32))
     finally:
         scenario.writer.stop(drain=True)
         scenario.store.close()
