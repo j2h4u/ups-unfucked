@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Protocol
 
-from src.application.storage_values import EventProjection
+from src.application.storage_values import EventProjection, ProjectedEventRecord
 
 
 class HistoryReadPort(Protocol):
@@ -144,9 +144,7 @@ def _recharge_by_blackout(
 ) -> dict[str, EventProjection]:
     linked: dict[str, EventProjection] = {}
     for projection in projections:
-        start = projection.start
-        if start is None:
-            raise ValueError("sealed recharge projection has no start")
+        start = _recharge_start(projection)
         blackout_id = _string(start.payload.get("preceding_blackout_id"))
         if blackout_id is None:
             continue
@@ -228,13 +226,23 @@ def _has_durable_model_change(
 def _recharge_entry(projection: EventProjection | None) -> RechargeHistory | None:
     if projection is None:
         return None
-    start = projection.start
-    if start is None:
-        raise ValueError("recharge projection has no start")
+    start = _recharge_start(projection)
     episode_id = start.blackout_id
     end = projection.end
     if end is None:
         return RechargeHistory(episode_id, None, "incomplete", "recharge is still open")
+    return _recharge_terminal(episode_id, end)
+
+
+def _recharge_start(projection: EventProjection) -> ProjectedEventRecord:
+    start = projection.start
+    if start is None:
+        raise ValueError("sealed recharge projection has no start")
+    return start
+
+
+def _recharge_terminal(episode_id: str, end: ProjectedEventRecord) -> RechargeHistory:
+    """Render one durable recharge terminal record."""
     assessment = end.payload.get("assessment")
     assessment_map = assessment if isinstance(assessment, Mapping) else {}
     outcome = _string(assessment_map.get("kind")) or "unknown"

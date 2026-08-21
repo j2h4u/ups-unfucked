@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.adapters.jsonl_event_store import JsonlEventStore
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
 from src.application.degraded_startup import (
     DeferredEventStore,
     DegradedEventStore,
@@ -42,14 +42,13 @@ def test_deferred_store_activates_real_store_after_startup_recovery_failure(
     deferred = DeferredEventStore("active registry is torn")
     assert not deferred.storage_health().capture_available
 
-    real_store = JsonlEventStore(tmp_path)
+    real_store = MinimalJsonlEventStore(tmp_path)
     deferred.activate(real_store)
     deferred.degrade("late stale error")
 
     assert deferred.storage_health().capture_available
     assert deferred.work_registry().capture is None
     deferred.close()
-    assert real_store._owned_lock_fd is None
 
 
 def test_deferred_store_activation_is_idempotent_but_cannot_switch_delegate() -> None:

@@ -89,7 +89,6 @@ class TransactionModel:
 
 def _physical_record(seq: int, record_type: str) -> ProjectedEventRecord:
     return ProjectedEventRecord(
-        schema_version=2,
         record_type=record_type,
         provenance="physical",
         blackout_id=BLACKOUT_ID,
@@ -118,7 +117,7 @@ def _projection() -> EventProjection:
 
 
 def _request() -> CloseRequest:
-    processing = ProcessingRef(BLACKOUT_ID, (SEGMENT_ID,), PATH, "end_durable")
+    processing = ProcessingRef(BLACKOUT_ID, PATH, "end_durable")
     return CloseRequest(processing)
 
 

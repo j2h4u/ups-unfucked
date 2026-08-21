@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+declare -r REPO_ROOT='/home/j2h4u/repos/j2h4u/ups-battery-monitor'
+declare -r EVENTS_DIR='/home/j2h4u/.config/ups-battery-monitor/events'
+declare -r MONITOR='ups-battery-monitor.service'
+declare -r DRIVER='nut-driver@cyberpower-virtual.service'
+declare -ri EXPECTED_OLD_SAMPLES=961
+
+die() {
+    printf 'FATAL: %s\n' "$1" >&2
+    exit 1
+}
+
+verify_events() {
+    env PYTHONPATH="$REPO_ROOT" python3 - "$EVENTS_DIR" "$EXPECTED_OLD_SAMPLES" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+events = Path(sys.argv[1])
+expected = int(sys.argv[2])
+if sorted(path.name for path in events.iterdir()) != ["telemetry.jsonl"]:
+    raise SystemExit("events directory must contain exactly telemetry.jsonl")
+
+fields = {"at", "battery_v", "battery_pct", "runtime_s", "load_pct", "input_v", "output_v", "status"}
+previous = None
+count = 0
+for number, raw in enumerate((events / "telemetry.jsonl").read_bytes().splitlines(keepends=True), 1):
+    if not raw.endswith(b"\n"):
+        raise SystemExit(f"line {number} is not newline terminated")
+    row = json.loads(raw[:-1])
+    if not isinstance(row, dict) or set(row) != fields:
+        raise SystemExit(f"line {number} has the wrong schema")
+    at = row["at"]
+    if not isinstance(at, str):
+        raise SystemExit(f"line {number} has an invalid timestamp")
+    parsed = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    if previous is not None and parsed < previous:
+        raise SystemExit(f"line {number} is out of chronological order")
+    previous = parsed
+    for key in fields - {"at", "status"}:
+        value = row[key]
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise SystemExit(f"line {number} has a non-numeric {key}")
+    if not isinstance(row["status"], str):
+        raise SystemExit(f"line {number} has a non-string status")
+    count += 1
+if count < expected:
+    raise SystemExit(f"expected at least {expected} samples, found {count}")
+PY
+}
+
+main() {
+    [[ "$(id --user --name)" == 'j2h4u' ]] || die 'run as j2h4u'
+    [[ -d "$REPO_ROOT" && -d "$EVENTS_DIR" ]] || die 'required path is missing'
+    command -v systemctl >/dev/null 2>&1 || die 'systemctl is required'
+    command -v sudo >/dev/null 2>&1 || die 'sudo is required'
+    command -v python3 >/dev/null 2>&1 || die 'python3 is required'
+
+    sudo -n systemctl stop "$MONITOR"
+    env PYTHONPATH="$REPO_ROOT" python3 "$REPO_ROOT/scripts/migrate-jsonl-remove-hashes.py" "$EVENTS_DIR" --apply
+    sudo -n systemctl restart "$MONITOR"
+    sudo -n systemctl restart "$DRIVER"
+    sudo -n systemctl is-active --quiet "$MONITOR"
+    sudo -n systemctl is-active --quiet "$DRIVER"
+    verify_events
+    printf 'telemetry cutover verified: at least %d samples in telemetry.jsonl\n' "$EXPECTED_OLD_SAMPLES"
+}
+
+main "$@"

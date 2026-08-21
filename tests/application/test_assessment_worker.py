@@ -152,7 +152,6 @@ def _observation(
 
 def _record(seq: int, record_type: str, payload, *, second: int) -> ProjectedEventRecord:
     return ProjectedEventRecord(
-        schema_version=2,
         record_type=record_type,
         provenance="physical",
         blackout_id=BLACKOUT_ID,
@@ -200,8 +199,20 @@ def _projection(
     )
 
 
+def _minimal_projection() -> EventProjection:
+    projection = _projection()
+    assert projection.start is not None
+    return replace(
+        projection,
+        start=replace(
+            projection.start,
+            payload={"observation": projection.start.payload["observation"]},
+        ),
+    )
+
+
 def _processing() -> ProcessingRef:
-    return ProcessingRef(BLACKOUT_ID, (SEGMENT_ID,), PATH, "end_durable")
+    return ProcessingRef(BLACKOUT_ID, PATH, "end_durable")
 
 
 def _prepare(projection: EventProjection, model: FakeModel | None = None):
@@ -222,7 +233,6 @@ def _with_derived_records(
         seq = anchor.seq + offset
         projected.append(
             ProjectedEventRecord(
-                schema_version=2,
                 record_type=record.record_type,
                 provenance=record.provenance,
                 blackout_id=anchor.blackout_id,
@@ -249,6 +259,76 @@ def test_short_blackout_is_recorded_only_without_model_or_store_writes():
     assert prepared.prepared_commit is None
     assert model.prepare_calls == 0
     assert store.append_calls == 0
+
+
+def test_minimal_projection_keeps_observations_and_assesses_against_current_model():
+    prepared, _, _ = _prepare(_minimal_projection())
+
+    assert prepared.assessment.evidence_class == EvidenceClass.QUALIFYING
+    assert prepared.assessment.observation_count == 2
+    assert EvidenceReason.UNSUPPORTED_FROZEN_SNAPSHOT not in prepared.assessment.reasons.values
+
+
+def test_incompatible_snapshotless_history_fails_closed():
+    historical_id = "c" * 32
+
+    class IncompatibleHistoryStore(FakeStore):
+        def __init__(self):
+            super().__init__(_minimal_projection())
+            self.projected_ids = []
+
+        def project(self, event_ref):
+            self.projected_ids.append(event_ref.blackout_id)
+            return self.projection
+
+        def history_tail_for_epoch(self, battery_epoch_id, limit):
+            assert battery_epoch_id == "epoch-a"
+            assert limit == 31
+            summary = replace(_summary(historical_id, 1), battery_epoch_id="epoch-b")
+            return EpochHistoryTail((summary,), 0, True)
+
+    store = IncompatibleHistoryStore()
+    worker = AssessmentWorker(store, FakeModel(_snapshot()))
+    worker.after_first_safety_publication()
+
+    prepared = worker.prepare(CloseRequest(_processing()))
+
+    assert store.projected_ids == [BLACKOUT_ID]
+    assert prepared.cohort_estimate.blackout_ids == ()
+    assert (
+        IdentificationReason.COHORT_PROJECTION_UNAVAILABLE
+        in prepared.cohort_estimate.reasons.values
+    )
+
+
+def test_same_epoch_snapshotless_history_uses_current_model_snapshot():
+    historical_id = "c" * 32
+
+    class SameEpochHistoryStore(FakeStore):
+        def __init__(self):
+            super().__init__(_minimal_projection())
+            self.projected_ids = []
+
+        def project(self, event_ref):
+            self.projected_ids.append(event_ref.blackout_id)
+            return self.projection
+
+        def history_tail_for_epoch(self, battery_epoch_id, limit):
+            assert battery_epoch_id == "epoch-a"
+            assert limit == 31
+            return EpochHistoryTail((_summary(historical_id, 1),), 0, True)
+
+    store = SameEpochHistoryStore()
+    worker = AssessmentWorker(store, FakeModel(_snapshot()))
+    worker.after_first_safety_publication()
+
+    prepared = worker.prepare(CloseRequest(_processing()))
+
+    assert store.projected_ids == [BLACKOUT_ID, historical_id]
+    assert (
+        IdentificationReason.COHORT_PROJECTION_UNAVAILABLE
+        not in prepared.cohort_estimate.reasons.values
+    )
 
 
 def test_cal_with_missing_input_is_real_but_still_operational_only():
@@ -588,7 +668,6 @@ def _step_projection(
 
     def record(seq, record_type, payload, second):
         return ProjectedEventRecord(
-            2,
             record_type,
             "physical",
             blackout_id,
@@ -622,7 +701,6 @@ def _step_projection(
 
 def _summary(blackout_id: str, day: int) -> EventSummary:
     return EventSummary(
-        schema_version=2,
         blackout_id=blackout_id,
         segment_filename=f"path-{blackout_id}",
         started_utc=(NOW - timedelta(days=day)).isoformat().replace("+00:00", "Z"),
@@ -634,7 +712,6 @@ def _summary(blackout_id: str, day: int) -> EventSummary:
         observation_count=240,
         battery_epoch_id="epoch-a",
         comparison_available=False,
-        comparison_mode="none",
         ir_estimate_available=True,
         commit_receipt_id=None,
     )
@@ -774,7 +851,6 @@ def test_real_current_plus_three_history_pipeline_commits_one_safe_decrease():
     request = CloseRequest(
         ProcessingRef(
             BLACKOUT_ID,
-            (BLACKOUT_ID,),
             PATH,
             "end_durable",
         )
@@ -822,7 +898,6 @@ def test_non_restored_terminal_is_operational_and_cannot_prepare_or_commit_learn
     request = CloseRequest(
         ProcessingRef(
             BLACKOUT_ID,
-            (BLACKOUT_ID,),
             PATH,
             "end_durable",
         )
@@ -862,7 +937,6 @@ def test_upward_cohort_durably_observes_exact_assessment_time_ir_without_commit(
         CloseRequest(
             ProcessingRef(
                 BLACKOUT_ID,
-                (BLACKOUT_ID,),
                 PATH,
                 "end_durable",
             )
@@ -928,7 +1002,6 @@ def test_ineligible_historical_provenance_cannot_teach_or_commit(
     request = CloseRequest(
         ProcessingRef(
             BLACKOUT_ID,
-            (BLACKOUT_ID,),
             PATH,
             "end_durable",
         )
@@ -976,7 +1049,6 @@ def test_prepare_race_or_refusal_becomes_deterministic_recorded_only(failure, re
     request = CloseRequest(
         ProcessingRef(
             BLACKOUT_ID,
-            (BLACKOUT_ID,),
             PATH,
             "end_durable",
         )

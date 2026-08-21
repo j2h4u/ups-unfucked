@@ -9,14 +9,10 @@ PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
 MODEL_OWNER = "src/adapters/model_owner.py"
 MODEL_TRANSFORM = "src/adapters/model_transform.py"
-JSONL_OWNERS = frozenset(
+EVENT_FILE_OWNERS = frozenset(
     {
-        "src/adapters/jsonl_event_store.py",
-        "src/adapters/jsonl_event_capacity.py",
-        "src/adapters/jsonl_event_stream.py",
-        "src/adapters/jsonl_filesystem.py",
-        "src/adapters/jsonl_health_report.py",
-        "src/adapters/jsonl_work_registry.py",
+        "src/adapters/minimal_event_file.py",
+        "src/adapters/minimal_jsonl.py",
     }
 )
 
@@ -55,7 +51,7 @@ def test_jsonl_collaborators_have_local_state_ownership() -> None:
     """The JSONL lanes must not regress to a shared mutable state bag."""
     assert not (SOURCE_ROOT / "adapters" / "jsonl_state.py").exists()
     for path, tree in _production_trees():
-        if path not in JSONL_OWNERS:
+        if path not in EVENT_FILE_OWNERS:
             continue
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):

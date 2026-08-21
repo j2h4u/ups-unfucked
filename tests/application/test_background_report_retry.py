@@ -74,7 +74,7 @@ def test_transient_report_sink_failure_keeps_notice_for_automatic_retry(
 
 
 def test_invalid_assessment_is_rejected_once_on_writer_lane() -> None:
-    processing = ProcessingRef("a" * 32, ("b" * 32,), "event.jsonl", "end_durable")
+    processing = ProcessingRef("a" * 32, "event.jsonl", "end_durable")
     request = CloseRequest(processing)
 
     class Worker:
@@ -97,9 +97,7 @@ def test_invalid_assessment_is_rejected_once_on_writer_lane() -> None:
 
         def reject_processing(self, rejected, reason):
             self.rejected.append((rejected, reason))
-            return SealedEventRef(
-                rejected.blackout_id, rejected.segment_ids, rejected.final_path_token
-            )
+            return SealedEventRef(rejected.blackout_id, rejected.final_path_token)
 
     worker = Worker()
     store = Store()
@@ -138,8 +136,8 @@ def test_invalid_assessment_is_rejected_once_on_writer_lane() -> None:
 
 
 def test_failed_close_stays_at_queue_head_before_newer_event() -> None:
-    first = CloseRequest(ProcessingRef("a" * 32, ("b" * 32,), "first.jsonl", "end_durable"))
-    second = CloseRequest(ProcessingRef("d" * 32, ("e" * 32,), "second.jsonl", "end_durable"))
+    first = CloseRequest(ProcessingRef("a" * 32, "first.jsonl", "end_durable"))
+    second = CloseRequest(ProcessingRef("d" * 32, "second.jsonl", "end_durable"))
 
     class Worker:
         pending = [first, second]
@@ -165,7 +163,6 @@ def test_failed_close_stays_at_queue_head_before_newer_event() -> None:
                 raise OSError("transient terminal write failure")
             return SealedEventRef(
                 processing.blackout_id,
-                processing.segment_ids,
                 processing.final_path_token,
             )
 

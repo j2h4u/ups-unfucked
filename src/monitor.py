@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from src.adapters.jsonl_event_store import JsonlEventStore
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
 from src.adapters.model_owner import ModelOwner
 from src.adapters.nut_telemetry import NutTelemetry
 from src.alerter import JournaldHealthAlertSink, JournaldReportSink
@@ -610,7 +610,7 @@ def build_daemon(
 
     def load_store() -> StartupRecovery:
         try:
-            candidate = JsonlEventStore(
+            candidate = MinimalJsonlEventStore(
                 config.model_dir,
                 writer_lock_fd=model.writer_lock_fd,
             )
@@ -660,7 +660,10 @@ def build_daemon(
                 writer=writer,
                 reporter=reporter,
                 report_sink=report_sink,
-                report_outbox_store=store.report_outbox,
+                # The minimal event files are the durable report source.  A
+                # report is reconstructed from sealed history on close and at
+                # startup; there is no second durable outbox in this cutover.
+                report_outbox_store=None,
             ),
             startup,
             BackgroundSettings(

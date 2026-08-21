@@ -19,7 +19,7 @@ _FORBIDDEN_FIXTURE_TARGETS = {
     "forbidden_application_jsonl.py": "src/application/architecture_jsonl_violation.py",
     "forbidden_application_alerter.py": "src/application/architecture_alerter_violation.py",
     "forbidden_math_application.py": "src/battery_math/architecture_violation.py",
-    "forbidden_jsonl_model_peer.py": "src/adapters/jsonl_event_store.py",
+    "forbidden_event_file_model_peer.py": "src/adapters/minimal_jsonl.py",
 }
 
 
@@ -142,7 +142,7 @@ def test_forbidden_edge_fixtures_pin_the_architecture_contract() -> None:
         "forbidden_application_jsonl.py": "src.adapters",
         "forbidden_application_alerter.py": "src.alerter",
         "forbidden_math_application.py": "src.application",
-        "forbidden_jsonl_model_peer.py": "src.adapters.model_owner",
+        "forbidden_event_file_model_peer.py": "src.adapters.model_owner",
     }
 
     for filename, forbidden_prefix in expected.items():
@@ -169,15 +169,15 @@ def test_import_linter_declares_nested_adapter_family_boundaries() -> None:
     contracts = config["tool"]["importlinter"]["contracts"]
     names = {contract["name"] for contract in contracts}
 
-    assert "JSONL adapter internals do not reach model or NUT adapters" in names
-    assert "Model and NUT adapter internals do not reach JSONL adapters" in names
+    assert "Event-file adapter internals do not reach model or NUT adapters" in names
+    assert "Model and NUT adapter internals do not reach event-file adapters" in names
     nested_sources = next(
         contract["source_modules"]
         for contract in contracts
-        if contract["name"] == "JSONL adapter internals do not reach model or NUT adapters"
+        if contract["name"] == "Event-file adapter internals do not reach model or NUT adapters"
     )
-    assert "src.adapters.jsonl_event_store" in nested_sources
-    assert "src.adapters.jsonl_filesystem" in nested_sources
+    assert "src.adapters.minimal_jsonl" in nested_sources
+    assert "src.adapters.minimal_event_file" in nested_sources
 
 
 def test_configured_architecture_tools_reject_forbidden_edge_fixtures(

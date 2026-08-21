@@ -46,7 +46,6 @@ def _record(
         else 0
     )
     return ProjectedEventRecord(
-        schema_version=2,
         record_type=record_type,
         provenance="derived" if record_type in {"ir_estimate", "outcome"} else "physical",
         blackout_id=blackout_id,
@@ -195,7 +194,6 @@ def _summary(
     termination: str | None = "power_restored",
 ) -> EventSummary:
     return EventSummary(
-        2,
         blackout_id,
         f"event-{blackout_id}.jsonl",
         (NOW + timedelta(days=day)).isoformat().replace("+00:00", "Z"),
@@ -207,7 +205,6 @@ def _summary(
         131,
         "epoch-a",
         False,
-        "none",
         True,
         None,
     )

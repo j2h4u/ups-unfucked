@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from src.adapters.jsonl_event_store import JsonlEventStore
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
 from src.application.capture_blackout import BlackoutCapture
 from src.application.capture_storage_commands import CaptureStart
 from src.application.capture_writer import (
@@ -85,7 +85,6 @@ def _projected_records(
 ) -> tuple[ProjectedEventRecord, ...]:
     return tuple(
         ProjectedEventRecord(
-            1,
             record.record_type,
             record.provenance,
             handle.blackout_id,
@@ -1328,7 +1327,7 @@ def test_prestart_fifo_overflow_is_health_latched_and_durable_receipt() -> None:
     assert not capture._prestart_loss.overflowed
 
 
-class _CheckpointFailStore(JsonlEventStore):
+class _CheckpointFailStore(MinimalJsonlEventStore):
     def __init__(self, root) -> None:
         super().__init__(root)
         self.fail_checkpoint = True
@@ -1367,16 +1366,22 @@ def test_terminal_retry_reconstructs_end_before_checkpoint(tmp_path) -> None:
         )
         _drain(writer)
 
-        assert writer.health().capture_available
+        assert not writer.health().capture_available
         storage_health = store.storage_health()
         assert storage_health.capture_available
         assert storage_health.bounded_error is None
-        pending = store.work_registry().pending_processing
-        assert len(pending) == 1
-        projection = store.project(EventRef(pending[0].blackout_id, pending[0].final_path_token))
-        assert [record.record_type for record in projection.records] == ["start", "gap", "end"]
-        assert pending[0].frozen_stage == "capture_damaged"
-        assert capture.accept_after_safety_publish(
+        # The stream contains only physical samples.  A failed observation
+        # cannot synthesize a durable gap/end marker, so the still-OB episode
+        # remains active and is fail-closed rather than reported as complete.
+        assert store.work_registry().pending_processing == ()
+        active = store.work_registry().capture
+        assert active is not None
+        projection = store.project(EventRef(active.blackout_id, active.path_token))
+        assert [record.record_type for record in projection.records] == [
+            "start",
+            "observation",
+        ]
+        assert not capture.accept_after_safety_publish(
             _observation("OB", 3), safety_snapshot=_snapshot(), charge_readiness=_READINESS
         )
     finally:

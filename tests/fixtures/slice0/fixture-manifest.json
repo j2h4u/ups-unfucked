@@ -102,13 +102,6 @@
   },
   "entries": [
     {
-      "path": "src/adapters/jsonl_record_codec.py",
-      "sha256": "b4dfa93d22350b1fde51a77d2976f99c0f0583f2293ec539afabf0ee60eeb62f",
-      "purpose": "Current JSONL schema, canonical bytes, hashes, and record-boundary contract.",
-      "expected_golden_ids": ["jsonl.canonical_record_bytes_and_hash"],
-      "expected_test_ids": ["tests/adapters/test_jsonl_event_store.py::test_canonical_record_golden_bytes_and_hash"]
-    },
-    {
       "path": "src/adapters/model_state_schema.py",
       "sha256": "675c4ad553602252873c7fc010404597095e8471ae5a17d556f02b94f403a4b3",
       "purpose": "Current target model schema, identity fields, fingerprint algorithm, and IR policy bounds.",
@@ -135,34 +128,6 @@
       "purpose": "Current terminal-disposition enum, terminal facts, and frozen model snapshot value contract.",
       "expected_golden_ids": ["terminal.dispositions.learned_recorded_only_rejected"],
       "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
-    },
-    {
-      "path": "tests/adapters/test_durability_fault_matrix.py",
-      "sha256": "18fb592e8a7f2f6fd600f79a92ebd3610df44d74cd39ae125493525f5a0e4a5e",
-      "purpose": "JSONL crash-window and decoder fault goldens for exact replay/convergence.",
-      "expected_golden_ids": ["jsonl.fault_matrix_exact_replay"],
-      "expected_test_ids": ["tests/adapters/test_durability_fault_matrix.py::test_open_fault_stages_recover_exact_start_bytes", "tests/adapters/test_durability_fault_matrix.py::test_seal_fault_stages_preserve_durable_outcome_for_retry", "tests/adapters/test_durability_fault_matrix.py::test_record_decoder_rejects_hash_and_canonicality_damage"]
-    },
-    {
-      "path": "tests/adapters/test_durability_faults.py",
-      "sha256": "f9db709ed3d8b2bdd5b3cf73d582752a3f1da63cd75893d7f5d727fbd2e111e1",
-      "purpose": "Filesystem and model atomic-write durability goldens.",
-      "expected_golden_ids": ["jsonl.atomic_replace_retry", "model.atomic_write_rollback"],
-      "expected_test_ids": ["tests/adapters/test_durability_faults.py::test_atomic_replace_orders_write_sync_rename_and_directory_sync", "tests/adapters/test_durability_faults.py::test_model_atomic_write_flush_failure_preserves_original_target"]
-    },
-    {
-      "path": "tests/adapters/test_jsonl_event_store.py",
-      "sha256": "adb09763e16a534616fbd4887c00276189dad7bfd674678462af68fb7abf035a",
-      "purpose": "Hash-linked JSONL store, canonical record, sealing, corruption, capacity, and bounded projection goldens.",
-      "expected_golden_ids": ["jsonl.canonical_record_bytes_and_hash", "jsonl.registry_recovery", "jsonl.capture_capacity_and_terminal_reserve"],
-      "expected_test_ids": ["tests/adapters/test_jsonl_event_store.py::test_canonical_record_golden_bytes_and_hash", "tests/adapters/test_jsonl_event_store.py::test_registry_first_crash_recreates_exact_frozen_start", "tests/adapters/test_jsonl_event_store.py::test_newline_middle_corruption_rotates_segment_and_seals_aggregate_rejection", "tests/adapters/test_jsonl_event_store.py::test_continuation_reserves_terminal_budget_across_restart"]
-    },
-    {
-      "path": "tests/adapters/test_jsonl_index_recovery.py",
-      "sha256": "686264f91d4cb13f2e97c9b1a960664d75f2993f8b290f36685c2a2703eceac0",
-      "purpose": "Index/rebuild cursor recovery and orphan cleanup goldens.",
-      "expected_golden_ids": ["jsonl.index_rebuild_idempotence"],
-      "expected_test_ids": ["tests/adapters/test_jsonl_index_recovery.py::test_merge_verification_rejects_equal_length_earlier_corruption", "tests/adapters/test_jsonl_index_recovery.py::test_sealed_replay_does_not_scan_growing_index"]
     },
     {
       "path": "tests/adapters/test_model_owner.py",
@@ -305,10 +270,10 @@
       "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
     },
     {
-      "path": "tests/fixtures/architecture/forbidden_jsonl_model_peer.py",
-      "sha256": "bd02bc71b6eca6902eefc5c650db7ce8e20b5173f3d6287850a816e389cf87fb",
-      "purpose": "Architecture fixture forbidding JSONL adapter internals from reaching model peers.",
-      "expected_golden_ids": ["architecture.jsonl_no_model_peer"],
+      "path": "tests/fixtures/architecture/forbidden_event_file_model_peer.py",
+      "sha256": "82a42936c45863491bb00fb5daedb8618723f3094284baf1991bd00c8a02d74a",
+      "purpose": "Architecture fixture forbidding event-file adapter internals from reaching model peers.",
+      "expected_golden_ids": ["architecture.event_file_no_model_peer"],
       "expected_test_ids": ["tests/test_quality_gates.py::test_forbidden_edge_fixtures_pin_the_architecture_contract"]
     },
     {

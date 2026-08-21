@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.adapters.jsonl_history_store import JsonlHistoryStore
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
 from src.application.history_query import (
     HistoryRange,
     HistoryResult,
@@ -91,8 +91,11 @@ def main(argv: list[str] | None = None) -> None:
         or Path.home() / ".config" / "ups-battery-monitor"
     )
     period = _period(arguments)
-    with JsonlHistoryStore(state_dir) as store:
+    store = MinimalJsonlEventStore(state_dir)
+    try:
         result = query_history(store, period)
+    finally:
+        store.close()
     sys.stdout.write(render_history(result) + "\n")
 
 

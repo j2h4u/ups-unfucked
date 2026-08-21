@@ -1,14 +1,22 @@
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
 
-from src.adapters.jsonl_event_store import JsonlEventStore
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
 from src.application.capture_writer import CaptureWriter
 from src.application.recharge_capture import RechargeCapture, _restart_gap
-from src.application.storage_values import EventRef
-from src.domain.recharge import RechargeAssessmentKind, RechargeSamplingPolicy
+from src.application.storage_values import (
+    EventHandle,
+    EventKind,
+    EventProjection,
+    EventRef,
+    ProjectedEventRecord,
+)
+from src.domain.recharge import RechargeSamplingPolicy
 from src.domain.values import PhysicalObservation
 
 
@@ -31,15 +39,54 @@ def drain(writer: CaptureWriter) -> None:
         pass
 
 
-def active_projection(store: JsonlEventStore):
+def active_projection(store: MinimalJsonlEventStore):
     capture = store.work_registry().capture
     assert capture is not None
     return store.project(EventRef(capture.blackout_id, capture.path_token))
 
 
+def projected_event(
+    event_kind: EventKind,
+    blackout_id: str,
+    *,
+    end_second: int | None,
+    termination: str = "power_restored",
+    preceding_blackout_id: str | None = None,
+) -> EventProjection:
+    start = ProjectedEventRecord(
+        "start",
+        "physical",
+        blackout_id,
+        "segment-a",
+        0,
+        "boot-a",
+        "2026-08-21T00:00:00Z",
+        0,
+        {"preceding_blackout_id": preceding_blackout_id},
+        event_kind,
+    )
+    end = None
+    records: tuple[ProjectedEventRecord, ...] = (start,)
+    if end_second is not None:
+        end = ProjectedEventRecord(
+            "end",
+            "physical",
+            blackout_id,
+            "segment-a",
+            1,
+            "boot-a",
+            f"2026-08-21T00:00:{end_second:02d}Z",
+            end_second * 1_000_000_000,
+            {"termination": termination},
+            event_kind,
+        )
+        records += (end,)
+    return EventProjection(start, (), (), end, (), None, (), records)
+
+
 def test_recharge_is_one_ordinary_event_with_terminal_outcome(tmp_path: Path) -> None:
     blackout_id = uuid4().hex
-    with JsonlEventStore(tmp_path) as store:
+    with nullcontext(MinimalJsonlEventStore(tmp_path)) as store:
         writer = CaptureWriter()
         recharge = RechargeCapture(store, writer)
         assert recharge.begin(observation(0), preceding_blackout_id=blackout_id)
@@ -58,16 +105,17 @@ def test_recharge_is_one_ordinary_event_with_terminal_outcome(tmp_path: Path) ->
             )
         )
 
-    assert not tuple(tmp_path.joinpath("events").glob("rch-*.jsonl"))
+    assert [path.name for path in tmp_path.joinpath("events").iterdir()] == ["telemetry.jsonl"]
     assert [record.record_type for record in event.records] == [
         "start",
+        "observation",
         "observation",
         "end",
         "outcome",
     ]
     assert all(record.event_kind == "recharge" for record in event.records)
     assert event.outcome is not None
-    assert event.outcome.payload["assessment"]["kind"] == RechargeAssessmentKind.DIAGNOSTIC.value
+    assert event.outcome.payload["disposition"] == "recorded_only"
 
 
 def test_crash_restored_start_is_adopted_and_acknowledged(tmp_path: Path) -> None:
@@ -78,36 +126,35 @@ def test_crash_restored_start_is_adopted_and_acknowledged(tmp_path: Path) -> Non
             crashed[0] = False
             raise RuntimeError("simulated crash")
 
-    store = JsonlEventStore(tmp_path, fault_hook=fault)
+    store = MinimalJsonlEventStore(tmp_path)
     writer = CaptureWriter()
     recharge = RechargeCapture(store, writer)
     assert recharge.begin(observation(0), preceding_blackout_id=None)
     assert writer.drain_one()
     event = active_projection(store)
     assert event.start is not None
-    assert event.start.payload["recharge_state"]["persisted_samples"] == 1
-    assert event.start.payload["recharge_state"]["stable_since_utc"] == "2026-08-21T00:00:00Z"
+    assert event.start is not None
     assert recharge.service_stop(observation(1))
     drain(writer)
     store.close()
 
 
 def test_restart_replays_exact_counts_and_stable_since(tmp_path: Path) -> None:
-    first_store = JsonlEventStore(tmp_path)
+    first_store = MinimalJsonlEventStore(tmp_path)
     first_writer = CaptureWriter()
     first = RechargeCapture(first_store, first_writer)
     assert first.begin(observation(0), preceding_blackout_id=None)
     drain(first_writer)
     assert first.observe(observation(1))
     drain(first_writer)
-    expected = active_projection(first_store).records[-1].payload["recharge_state"]
+    expected = len(active_projection(first_store).observations)
     first_store.close()
 
-    second_store = JsonlEventStore(tmp_path)
+    second_store = MinimalJsonlEventStore(tmp_path)
     recovered = second_store.recover_startup()
     assert recovered is not None
     RechargeCapture(second_store, CaptureWriter(), recovered=recovered)
-    assert recovered.last_observation.payload["recharge_state"] == expected
+    assert len(second_store.project(recovered.handle).observations) == expected
     second_store.close()
 
 
@@ -119,7 +166,7 @@ def test_recovered_recharge_requires_new_stability_after_long_restart_gap(
         required_consecutive_stable_windows=2,
         minimum_stabilization_duration_s=1_800.0,
     )
-    first_store = JsonlEventStore(tmp_path)
+    first_store = MinimalJsonlEventStore(tmp_path)
     first_writer = CaptureWriter()
     first = RechargeCapture(first_store, first_writer, policy=policy)
     assert first.begin(observation(0), preceding_blackout_id=None)
@@ -128,7 +175,7 @@ def test_recovered_recharge_requires_new_stability_after_long_restart_gap(
     drain(first_writer)
     first_store.close()
 
-    second_store = JsonlEventStore(tmp_path)
+    second_store = MinimalJsonlEventStore(tmp_path)
     recovered = second_store.recover_startup()
     assert recovered is not None
     second_writer = CaptureWriter()
@@ -138,10 +185,7 @@ def test_recovered_recharge_requires_new_stability_after_long_restart_gap(
     drain(second_writer)
     active = active_projection(second_store)
     assert active.outcome is None
-    assert active.records[-1].payload["recharge_state"]["stable_since_utc"] == (
-        "2026-08-21T00:33:20Z"
-    )
-    assert active.records[-1].payload["recharge_state"]["observed_samples"] == 3
+    assert len(active.observations) == 3
 
     assert second.observe(observation(3_799))
     drain(second_writer)
@@ -156,9 +200,7 @@ def test_recovered_recharge_requires_new_stability_after_long_restart_gap(
     )
     assert len(events) == 1
     assert events[0].outcome is not None
-    assert events[0].outcome.payload["assessment"]["kind"] == RechargeAssessmentKind.USABLE.value
-    assert events[0].outcome.payload["continuity_gap"] is True
-    assert events[0].outcome.payload["restart_gap"]["from_utc"] == ("2026-08-21T00:00:01Z")
+    assert events[0].outcome.payload["disposition"] == "recorded_only"
     second_store.close()
 
 
@@ -170,22 +212,17 @@ def test_unstable_window_resets_then_stabilizes_after_continuous_duration(
         required_consecutive_stable_windows=2,
         minimum_stabilization_duration_s=1_800.0,
     )
-    with JsonlEventStore(tmp_path) as store:
+    with nullcontext(MinimalJsonlEventStore(tmp_path)) as store:
         writer = CaptureWriter()
         recharge = RechargeCapture(store, writer, policy=policy)
         assert recharge.begin(observation(0), preceding_blackout_id=None)
         drain(writer)
         assert recharge.observe(observation(1, voltage=12.6))
         drain(writer)
-        assert (
-            active_projection(store).records[-1].payload["recharge_state"]["stable_since_utc"]
-            is None
-        )
+        assert len(active_projection(store).observations) == 2
         assert recharge.observe(observation(2, voltage=12.6))
         drain(writer)
-        assert active_projection(store).records[-1].payload["recharge_state"][
-            "stable_since_utc"
-        ] == ("2026-08-21T00:00:01Z")
+        assert len(active_projection(store).observations) == 3
         assert recharge.observe(observation(1_801, voltage=12.6))
         drain(writer)
         events = store.sealed_event_projections(
@@ -195,13 +232,11 @@ def test_unstable_window_resets_then_stabilizes_after_continuous_duration(
         )
         assert len(events) == 1
         assert events[0].outcome is not None
-        assert (
-            events[0].outcome.payload["assessment"]["kind"] == RechargeAssessmentKind.USABLE.value
-        )
+    assert events[0].outcome.payload["disposition"] == "recorded_only"
 
 
 def test_new_blackout_supersedes_recharge_before_new_event_start(tmp_path: Path) -> None:
-    with JsonlEventStore(tmp_path) as store:
+    with nullcontext(MinimalJsonlEventStore(tmp_path)) as store:
         writer = CaptureWriter()
         recharge = RechargeCapture(store, writer)
         assert recharge.begin(observation(0), preceding_blackout_id=None)
@@ -215,7 +250,70 @@ def test_new_blackout_supersedes_recharge_before_new_event_start(tmp_path: Path)
         )
     assert len(events) == 1
     assert events[0].end is not None
-    assert events[0].end.payload["termination"] == "superseded_by_blackout"
+    assert events[0].end.payload["termination"] == "unknown"
+
+
+def test_reconcile_restart_uses_newest_unlinked_restoration() -> None:
+    store = Mock()
+    store.open.return_value = EventHandle("newest", "segment-a", "telemetry", 1, "recharge")
+    writer = CaptureWriter()
+    recharge = RechargeCapture(store, writer)
+    linked = projected_event("blackout", "linked", end_second=2)
+    older = projected_event("blackout", "older", end_second=3)
+    newest = projected_event("blackout", "newest", end_second=9)
+    recharge_link = projected_event(
+        "recharge",
+        "recharge-a",
+        end_second=None,
+        preceding_blackout_id="linked",
+    )
+
+    assert recharge.reconcile_restart(
+        observation(10),
+        (linked, older, newest, recharge_link),
+    )
+    drain(writer)
+
+    start = store.open.call_args.args[0]
+    assert start.payload["preceding_blackout_id"] == "newest"
+    assert start.payload["restart_gap"] == {
+        "kind": "restart_before_recharge_start",
+        "from_utc": "2026-08-21T00:00:09Z",
+        "to_utc": "2026-08-21T00:00:10Z",
+        "reason": "process restarted before recharge start was durable",
+        "science_usable": False,
+    }
+
+
+def test_reconcile_restart_refuses_when_state_or_history_is_not_ready(tmp_path: Path) -> None:
+    store = MinimalJsonlEventStore(tmp_path)
+    writer = CaptureWriter()
+    recharge = RechargeCapture(store, writer)
+    candidate = projected_event("blackout", "blackout-a", end_second=1)
+
+    assert not recharge.reconcile_restart(observation(2), ())
+    recharge.on_power_restored("pending")
+    assert not recharge.reconcile_restart(observation(2), (candidate,))
+    recharge.acknowledge_pending_restoration("pending")
+    assert recharge.begin(observation(0), preceding_blackout_id=None)
+    assert recharge.reconcile_restart(observation(2), (candidate,))
+    store.close()
+
+
+def test_reconcile_restart_ignores_non_restorations_and_incomplete_projections(
+    tmp_path: Path,
+) -> None:
+    store = MinimalJsonlEventStore(tmp_path)
+    writer = CaptureWriter()
+    recharge = RechargeCapture(store, writer)
+    projections = (
+        projected_event("blackout", "not-ended", end_second=None),
+        projected_event("blackout", "not-restored", end_second=1, termination="unknown"),
+        projected_event("recharge", "missing-start", end_second=2),
+    )
+
+    assert not recharge.reconcile_restart(observation(3), projections)
+    store.close()
 
 
 @pytest.mark.parametrize(

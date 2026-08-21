@@ -6,7 +6,6 @@ from pathlib import Path
 from threading import Event
 
 from src.adapters import model_state_persistence as model_files
-from src.adapters.jsonl_errors import EventConflictError
 from src.application.assessment_worker import AssessmentWorker
 from src.application.background_coordinator import (
     BackgroundCoordinator,
@@ -15,6 +14,7 @@ from src.application.background_coordinator import (
 )
 from src.application.capture_writer import CaptureWriter
 from src.application.degraded_startup import DegradedEventStore, EventStorageUnavailable
+from src.application.errors import StoragePortConflict
 from src.application.startup_recovery import StartupRecovery
 from src.monitor import build_daemon
 from src.monitor_config import Config
@@ -41,12 +41,12 @@ class _Sink:
 
 
 def test_corrupt_storage_is_explicit_no_capture_health() -> None:
-    store = DegradedEventStore("registry is corrupt")
+    store = DegradedEventStore("event storage is corrupt")
     health = store.storage_health()
 
     assert not health.capture_available
     assert health.alarm == "startup_degraded"
-    assert health.bounded_error == "registry is corrupt"
+    assert health.bounded_error == "event storage is corrupt"
     try:
         store.open(None)
     except EventStorageUnavailable as exc:
@@ -67,7 +67,7 @@ def test_startup_recovery_failure_latches_and_retries_off_poll_thread() -> None:
     def load():
         attempts.append(now[0])
         if len(attempts) == 1:
-            raise OSError("corrupt registry")
+            raise OSError("corrupt event storage")
         return StartupRecovery(None, ())
 
     coordinator = BackgroundCoordinator(
@@ -121,7 +121,7 @@ def test_store_lock_conflict_is_fatal_after_first_safety_publication() -> None:
     seen = Event()
 
     def load():
-        raise EventConflictError("another event-store writer owns monitor.lock")
+        raise StoragePortConflict("another event-store writer owns monitor.lock")
 
     coordinator = BackgroundCoordinator(
         BackgroundDependencies(
@@ -147,8 +147,8 @@ def test_store_lock_conflict_is_fatal_after_first_safety_publication() -> None:
     coordinator.after_first_safety_publication()
     try:
         assert seen.wait(timeout=1.0)
-        assert isinstance(coordinator.fatal_startup_error, EventConflictError)
-        assert isinstance(errors[0], EventConflictError)
+        assert isinstance(coordinator.fatal_startup_error, StoragePortConflict)
+        assert isinstance(errors[0], StoragePortConflict)
     finally:
         coordinator.stop()
         writer.stop(drain=True)
@@ -187,7 +187,7 @@ def test_store_constructor_failure_builds_safety_only_daemon(
         constructor_calls.append(_path)
         raise OSError("event directory permission denied")
 
-    monkeypatch.setattr("src.monitor.JsonlEventStore", fail_store)
+    monkeypatch.setattr("src.monitor.MinimalJsonlEventStore", fail_store)
     daemon = build_daemon(
         Config(model_dir=tmp_path),
         virtual_ups_path=tmp_path / "ups.dev",
