@@ -518,7 +518,7 @@ class _EventReportOutbox:
 
     def report_outbox_pending(self, limit: int) -> tuple[ReportNoticeIdentity, ...]:
         return tuple(
-            ReportNoticeIdentity(item.blackout_id, item.segment_filename, item.locator_sha256)
+            ReportNoticeIdentity(item.blackout_id, item.segment_filename, item.summary_sha256)
             for item in self._index.report_outbox_pending(limit)
         )
 
@@ -534,7 +534,7 @@ def _notice_matches(item: ReportNotice, notice: ReportNoticeIdentity) -> bool:
     return item.identity == (
         notice.blackout_id,
         notice.segment_filename,
-        notice.locator_sha256,
+        notice.summary_sha256,
     )
 
 

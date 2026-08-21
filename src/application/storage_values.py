@@ -260,7 +260,7 @@ class ReportNoticeIdentity:
 
     blackout_id: str
     segment_filename: str
-    locator_sha256: str
+    summary_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
