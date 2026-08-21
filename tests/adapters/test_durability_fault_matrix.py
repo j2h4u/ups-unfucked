@@ -258,7 +258,6 @@ def _record_line() -> bytes:
             "boot_id": "boot-a",
             "wall_time_utc": WALL_START,
             "monotonic_ns": 1_000_000_000,
-            "prev_record_sha256": None,
             "payload": {"battery_epoch_id": EPOCH_ID},
         }
     )
@@ -270,9 +269,8 @@ def test_record_decoder_rejects_eof_short_and_non_strict_json(raw: bytes) -> Non
         _decode_record_line(raw)
 
 
-def test_record_decoder_rejects_hash_and_canonicality_damage() -> None:
+def test_record_decoder_rejects_noncanonical_json() -> None:
     line = _record_line()
     obj = json.loads(line)
-    obj["record_sha256"] = "f" * 64
-    with pytest.raises(EventCorruptionError, match="SHA-256"):
-        _decode_record_line(json.dumps(obj, separators=(",", ":")).encode() + b"\n")
+    with pytest.raises(EventCorruptionError, match="canonical JSON"):
+        _decode_record_line(json.dumps(obj).encode() + b"\n")

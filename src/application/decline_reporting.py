@@ -195,11 +195,7 @@ def _event_decline_evidence(
     except Exception:
         return _EventDeclineEvidence(None, None, None)
 
-    if (
-        _summary_has_damage(summary)
-        or projection.damaged_segment_hashes
-        or projection.damaged_segment_overflow
-    ):
+    if _summary_has_damage(summary):
         load_sag = None
         long_partial = None
     else:
@@ -253,7 +249,7 @@ def _terminal_science_eligible(projection: EventProjection, summary_termination:
 
 
 def _summary_has_damage(summary: EventSummary) -> bool:
-    return bool(summary.damaged_segment_hashes or summary.damaged_segment_overflow)
+    return False
 
 
 def _firmware_evidence(

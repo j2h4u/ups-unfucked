@@ -122,7 +122,6 @@ def _close_plan(tmp_path: Path):
                 segment_id,
                 processing.final_path_token,
                 projection.records[-1].seq + 1,
-                projection.records[-1].record_sha256,
             ),
             projection,
             assessment,

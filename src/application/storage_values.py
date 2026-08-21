@@ -50,7 +50,6 @@ class EventHandle:
     segment_id: str
     path_token: str
     next_seq: int
-    last_record_sha256: str
     event_kind: EventKind = "blackout"
 
 
@@ -106,10 +105,6 @@ class RecoveredCapture:
     def next_seq(self) -> int:
         return self.handle.next_seq
 
-    @property
-    def last_record_sha256(self) -> str:
-        return self.handle.last_record_sha256
-
 
 @dataclass(frozen=True, slots=True)
 class PreparingCaptureRef:
@@ -139,7 +134,6 @@ class ProcessingRef:
     segment_ids: tuple[str, ...]
     final_path_token: str
     frozen_stage: str
-    last_record_hash: str
     tag: Literal["processing"] = "processing"
 
 
@@ -166,9 +160,7 @@ class ProjectedEventRecord:
     boot_id: str
     wall_time_utc: str
     monotonic_ns: int
-    prev_record_sha256: str | None
     payload: Mapping[str, Any]
-    record_sha256: str
     event_kind: EventKind = "blackout"
 
 
@@ -181,8 +173,6 @@ class EventProjection:
     derived_records: tuple[ProjectedEventRecord, ...]
     outcome: ProjectedEventRecord | None
     trusted_prefixes: tuple[tuple[ProjectedEventRecord, ...], ...]
-    damaged_segment_hashes: tuple[str, ...]
-    damaged_segment_overflow: int
     records: tuple[ProjectedEventRecord, ...]
 
     @property
@@ -211,10 +201,6 @@ class EventSummary:
     comparison_mode: Literal["full", "short_window", "none"]
     ir_estimate_available: bool
     commit_receipt_id: str | None
-    damaged_segment_hashes: tuple[str, ...]
-    damaged_segment_overflow: int
-    outcome_record_sha256: str
-    event_file_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +237,6 @@ class SealedEventRef:
     blackout_id: str
     segment_ids: tuple[str, ...]
     final_path_token: str
-    outcome_record_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,7 +259,6 @@ class ReportNoticeIdentity:
 
     blackout_id: str
     segment_filename: str
-    summary_sha256: str
 
 
 @dataclass(frozen=True, slots=True)

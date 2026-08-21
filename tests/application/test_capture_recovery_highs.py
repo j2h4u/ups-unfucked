@@ -94,9 +94,7 @@ def _projected_records(
             record.boot_id,
             record.wall_time_utc,
             record.monotonic_ns,
-            None,
             record.payload,
-            "e" * 64,
         )
         for seq, record in enumerate(records, start=1)
     )
@@ -111,8 +109,6 @@ def _projection(records: tuple[ProjectedEventRecord, ...]) -> EventProjection:
         (),
         None,
         (),
-        (),
-        0,
         records,
     )
 
@@ -426,14 +422,14 @@ class _Store:
 
     def open(self, start):
         self.starts.append(start)
-        return EventHandle(start.blackout_id, start.segment_id, "event.jsonl", 1, "a" * 64)
+        return EventHandle(start.blackout_id, start.segment_id, "event.jsonl", 1)
 
     def append(self, handle, record):
         if record.record_type in self.failures:
             self.failures.remove(record.record_type)
             raise OSError(f"{record.record_type} failed")
         self.records.append(record)
-        return replace(handle, next_seq=handle.next_seq + 1, last_record_sha256="b" * 64)
+        return replace(handle, next_seq=handle.next_seq + 1)
 
     def checkpoint_processing(self, _handle, _stage):
         return None
@@ -460,7 +456,7 @@ class _PreparingRecoveryStore(_Store):
     def open(self, start):
         self.starts.append(start)
         self.pending = RecoveredCapture(
-            EventHandle(start.blackout_id, start.segment_id, "event.jsonl", 1, "a" * 64),
+            EventHandle(start.blackout_id, start.segment_id, "event.jsonl", 1),
             start.boot_id,
             RecoveredObservation(
                 start.boot_id,
@@ -548,7 +544,6 @@ class _ProjectionTerminalStore(_Store):
         self._active_handle = replace(
             self._active_handle,
             next_seq=len(self._projection_records) + 1,
-            last_record_sha256="f" * 64,
         )
         return CaptureCloseReconciliation(CaptureCloseState.END, self._active_handle)
 
@@ -567,7 +562,7 @@ class _PrestartReconciledEndStore(_Store):
         handle = super().open(start)
         if self._first_open:
             self._first_open = False
-            self._active_handle = replace(handle, next_seq=5, last_record_sha256="c" * 64)
+            self._active_handle = replace(handle, next_seq=5)
             self.records.extend(
                 (
                     EventRecord(
@@ -1071,7 +1066,7 @@ def test_partial_prestart_failure_releases_attempted_overflow_before_carrier_pop
     blackout_id = capture._submitted_blackout_id
     assert blackout_id is not None
     recovered = RecoveredCapture(
-        EventHandle(blackout_id, "partial-segment", "event.jsonl", 1, "a" * 64),
+        EventHandle(blackout_id, "partial-segment", "event.jsonl", 1),
         "boot-a",
         RecoveredObservation("boot-a", _observation("OB", 30).wall_time_utc.isoformat(), 30, {}),
     )

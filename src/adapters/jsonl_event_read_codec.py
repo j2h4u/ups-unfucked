@@ -7,7 +7,6 @@ state may use these functions after performing any required write-side repair.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
@@ -31,10 +30,9 @@ from src.adapters.jsonl_record_codec import (
     MAX_SEGMENT_REFS,
     _bounded_error,
     _decode_record_line,
-    _deduplicate_and_validate_chain,
+    _deduplicate_and_validate_sequence,
     _first_record,
     _flatten_records,
-    _is_sha256,
     _projected_record,
     _records_of_type,
     _StoredRecord,
@@ -49,18 +47,6 @@ from src.application.storage_values import EventProjection, ProjectedEventRecord
 
 class _EventCapacityExceeded(EventCorruptionError):
     """A logical event exceeded its durable projection budget."""
-
-
-def event_file_sha256(path: Path) -> str:
-    """Hash one event file without opening any mutable storage collaborator."""
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-    except OSError as exc:
-        raise EventPersistenceError(f"cannot hash event file: {_bounded_error(exc)}") from exc
-    return digest.hexdigest()
 
 
 def manifest_entries(events_path: Path, blackout_id: str) -> tuple[tuple[str, str | None], ...]:
@@ -78,8 +64,8 @@ def manifest_entries(events_path: Path, blackout_id: str) -> tuple[tuple[str, st
         if len(entries) > MAX_SEGMENT_REFS * 2:
             raise EventCorruptionError("segment manifest contains too many entries")
     latest: dict[str, str | None] = {}
-    for token, damaged in entries:
-        latest[token] = damaged
+    for token, _damaged in entries:
+        latest[token] = None
     return tuple(latest.items())
 
 
@@ -94,8 +80,9 @@ def segment_sources(
     sources: list[tuple[str, Path, bool]] = []
     for token, damaged in manifest_entries(events_path, blackout_id):
         path = events_path / token
-        if damaged is not None and not path.exists():
-            path = events_path / f"corrupt-{damaged}-{token}"
+        corrupt_path = events_path / f"corrupt-{token}"
+        if not path.exists() and corrupt_path.exists():
+            path = corrupt_path
             is_corrupt = True
         else:
             is_corrupt = False
@@ -104,22 +91,9 @@ def segment_sources(
                 continue
             raise EventCorruptionError(f"manifest-referenced event segment is missing: {token}")
         _lstat_regular(path, "event segment")
-        if damaged is not None and event_file_sha256(path) != damaged:
-            raise EventCorruptionError("segment manifest hash does not match bytes")
         sources.append((token, path, is_corrupt))
     sources.sort(key=lambda item: (_segment_order_key(item[0]), item[1].name))
     return tuple((path, corrupt) for _name, path, corrupt in sources)
-
-
-def damaged_hashes(events_path: Path, blackout_id: str) -> tuple[str, ...]:
-    """Return preserved damaged-segment hashes in durable segment order."""
-    ordered = [
-        (token, damaged)
-        for token, damaged in manifest_entries(events_path, blackout_id)
-        if damaged is not None
-    ]
-    ordered.sort(key=lambda item: _segment_order_key(item[0]))
-    return tuple(digest for _original, digest in ordered if digest is not None)
 
 
 def event_total_bytes(
@@ -203,7 +177,7 @@ def trusted_prefix(
                     break
                 try:
                     candidate = _decode_record_line(line)
-                    records = _deduplicate_and_validate_chain((*records, candidate))
+                    records = _deduplicate_and_validate_sequence((*records, candidate))
                 except _EventCapacityExceeded:
                     raise
                 except (EventConflictError, EventCorruptionError):
@@ -229,7 +203,7 @@ def trusted_segment_prefixes(
         prefix = (
             trusted_prefix(events_path, path, blackout_id)
             if is_corrupt
-            else _deduplicate_and_validate_chain(read_all_records(events_path, path))
+            else _deduplicate_and_validate_sequence(read_all_records(events_path, path))
         )
         if any(record.blackout_id != blackout_id for record in prefix):
             raise EventConflictError("event reference blackout ID does not match its records")
@@ -246,7 +220,6 @@ def project_event(
     reserved_paths: Collection[str] = (),
 ) -> EventProjection:
     """Project one event entirely from durable bytes and manifests."""
-    sources = segment_sources(events_path, blackout_id, reserved_paths=reserved_paths)
     prefixes = trusted_segment_prefixes(
         events_path,
         blackout_id,
@@ -256,13 +229,7 @@ def project_event(
     start = _first_record(stored_records, "start")
     end = _first_record(stored_records, "end")
     outcome = _first_record(stored_records, "outcome")
-    _validate_segmented_record_order(
-        prefixes,
-        start=start,
-        end=end,
-        outcome=outcome,
-        segment_file_hashes=tuple(event_file_sha256(path) for path, _ in sources),
-    )
+    _validate_segmented_record_order(prefixes, start=start, end=end, outcome=outcome)
     public_prefixes = tuple(
         tuple(_projected_record(record) for record in prefix) for prefix in prefixes
     )
@@ -276,8 +243,7 @@ def build_projection(
     records: tuple[ProjectedEventRecord, ...],
     events_path: Path,
 ) -> EventProjection:
-    """Build the public projection from records and damaged-segment receipts."""
-    damaged = damaged_hashes(events_path, blackout_id)
+    """Build the public projection from records and durable segment boundaries."""
     return EventProjection(
         _first_record(records, "start"),
         _records_of_type(records, "observation"),
@@ -290,8 +256,6 @@ def build_projection(
         ),
         _first_record(records, "outcome"),
         prefixes,
-        damaged[:16],
-        max(0, len(damaged) - 16),
         records,
     )
 
@@ -333,7 +297,6 @@ def _read_pending_item_ownership(events_path: Path, value: Any, owned: set[str])
         "segment_ids",
         "final_path_token",
         "frozen_stage",
-        "last_record_hash",
     }
     if not isinstance(value, dict) or set(value) != expected:
         raise EventCorruptionError("processing registry fields do not match schema")
@@ -413,15 +376,12 @@ def _decode_manifest_line(line: bytes, blackout_id: str) -> tuple[str, str | Non
         value = json.loads(line)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EventCorruptionError("segment manifest is invalid") from exc
-    if not isinstance(value, dict) or set(value) != {"path_token", "damaged_sha256"}:
+    if not isinstance(value, dict) or set(value) != {"path_token"}:
         raise EventCorruptionError("segment manifest fields are invalid")
     token = value["path_token"]
-    damaged = value["damaged_sha256"]
     if not isinstance(token, str) or not _event_belongs_to(token, blackout_id):
         raise EventCorruptionError("segment manifest path is invalid")
-    if damaged is not None and (not isinstance(damaged, str) or not _is_sha256(damaged)):
-        raise EventCorruptionError("segment manifest damaged hash is invalid")
-    return token, damaged
+    return token, None
 
 
 def _event_belongs_to(filename: str, blackout_id: str) -> bool:

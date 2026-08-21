@@ -252,12 +252,6 @@ def _evidence_damage(projection: EventProjection) -> tuple[str, ...]:
         f"gap: {_string(record.payload.get('reason')) or 'unspecified'}"
         for record in projection.gaps
     ]
-    if projection.damaged_segment_hashes:
-        reasons.append(
-            f"capture damage: {len(projection.damaged_segment_hashes)} damaged segment(s)"
-        )
-    if projection.damaged_segment_overflow:
-        reasons.append(f"capture damage overflow: {projection.damaged_segment_overflow}")
     return tuple(reasons)
 
 

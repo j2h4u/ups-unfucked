@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import errno
-import hashlib
 import json
 import os
 import stat
@@ -24,10 +23,8 @@ from src.adapters.jsonl_errors import (
 )
 from src.adapters.jsonl_filesystem import JsonlFilesystem
 from src.adapters.jsonl_record_codec import (
-    EMPTY_SHA256,
     MAX_FIXED_LINE_BYTES,
     MAX_REGISTRY_BYTES,
-    _is_sha256,
     _strict_json_loads,
     _validate_path_token,
     _validate_uuid4_hex,
@@ -44,21 +41,16 @@ class ReportNotice:
     sequence: int
     blackout_id: str
     segment_filename: str
-    summary_sha256: str
-    index_head_sha256: str
-    previous_notice_sha256: str
-    notice_sha256: str
 
     @property
-    def identity(self) -> tuple[str, str, str]:
-        return self.blackout_id, self.segment_filename, self.summary_sha256
+    def identity(self) -> tuple[str, str]:
+        return self.blackout_id, self.segment_filename
 
 
 @dataclass(frozen=True, slots=True)
 class OutboxCursor:
     offset: int
     next_sequence: int
-    previous_notice_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,41 +58,25 @@ class _NoticeInput:
     sequence: int
     blackout_id: str
     segment_filename: str
-    summary_sha256: str
-    index_head_sha256: str
-    previous_notice_sha256: str
 
 
-def _notice_without_hash(value: _NoticeInput) -> dict[str, Any]:
+def _notice_value(value: _NoticeInput) -> dict[str, Any]:
     return {
         "schema_version": OUTBOX_SCHEMA_VERSION,
         "sequence": value.sequence,
         "blackout_id": value.blackout_id,
         "segment_filename": value.segment_filename,
-        "summary_sha256": value.summary_sha256,
-        "index_head_sha256": value.index_head_sha256,
-        "previous_notice_sha256": value.previous_notice_sha256,
     }
 
 
-def _validated_hash(value: Any) -> str:
-    if not isinstance(value, str) or not _is_sha256(value):
-        raise EventValidationError("report outbox hash is invalid")
-    return value
-
-
 def _encode_notice(notice: ReportNotice) -> bytes:
-    body = _notice_without_hash(
+    value = _notice_value(
         _NoticeInput(
             notice.sequence,
             notice.blackout_id,
             notice.segment_filename,
-            notice.summary_sha256,
-            notice.index_head_sha256,
-            notice.previous_notice_sha256,
         )
     )
-    value = {**body, "notice_sha256": notice.notice_sha256}
     raw = canonical_json_bytes(value) + b"\n"
     if len(raw) > MAX_FIXED_LINE_BYTES:
         raise EventValidationError("report outbox notice exceeds its bound")
@@ -112,36 +88,21 @@ def make_notice(**values: Any) -> ReportNotice:
     sequence = values.get("sequence")
     blackout_id = values.get("blackout_id")
     segment_filename = values.get("segment_filename")
-    summary_sha256 = values.get("summary_sha256")
-    index_head_sha256 = values.get("index_head_sha256")
-    previous_notice_sha256 = values.get("previous_notice_sha256")
     if not isinstance(blackout_id, str) or not isinstance(segment_filename, str):
         raise EventValidationError("report outbox identity is invalid")
     _validate_uuid4_hex(blackout_id, "blackout_id")
     _validate_path_token(segment_filename)
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
         raise EventValidationError("report outbox sequence is invalid")
-    summary_sha256 = _validated_hash(summary_sha256)
-    index_head_sha256 = _validated_hash(index_head_sha256)
-    previous_notice_sha256 = _validated_hash(previous_notice_sha256)
     value = _NoticeInput(
         sequence,
         blackout_id,
         segment_filename,
-        summary_sha256,
-        index_head_sha256,
-        previous_notice_sha256,
     )
-    body = _notice_without_hash(value)
-    digest = hashlib.sha256(canonical_json_bytes(body)).hexdigest()
     return ReportNotice(
         value.sequence,
         value.blackout_id,
         value.segment_filename,
-        value.summary_sha256,
-        value.index_head_sha256,
-        value.previous_notice_sha256,
-        digest,
     )
 
 
@@ -157,10 +118,6 @@ def _decode_notice(raw: bytes) -> ReportNotice:
         "sequence",
         "blackout_id",
         "segment_filename",
-        "summary_sha256",
-        "index_head_sha256",
-        "previous_notice_sha256",
-        "notice_sha256",
     }:
         raise EventCorruptionError("report outbox fields do not match schema")
     if canonical_json_bytes(value) + b"\n" != raw:
@@ -170,14 +127,9 @@ def _decode_notice(raw: bytes) -> ReportNotice:
             sequence=value["sequence"],
             blackout_id=value["blackout_id"],
             segment_filename=value["segment_filename"],
-            summary_sha256=value["summary_sha256"],
-            index_head_sha256=value["index_head_sha256"],
-            previous_notice_sha256=value["previous_notice_sha256"],
         )
     except EventValidationError as exc:
         raise EventCorruptionError("report outbox values are invalid") from exc
-    if result.notice_sha256 != value["notice_sha256"]:
-        raise EventCorruptionError("report outbox hash does not match bytes")
     return result
 
 
@@ -203,8 +155,6 @@ class JsonlReportOutbox:
         *,
         blackout_id: str,
         segment_filename: str,
-        summary_sha256: str,
-        index_head_sha256: str,
     ) -> ReportNotice:
         with self._lock:
             cursor, tail_notice = self._tail_state()
@@ -212,9 +162,6 @@ class JsonlReportOutbox:
                 sequence=cursor.next_sequence,
                 blackout_id=blackout_id,
                 segment_filename=segment_filename,
-                summary_sha256=summary_sha256,
-                index_head_sha256=index_head_sha256,
-                previous_notice_sha256=cursor.previous_notice_sha256,
             )
             # The index append-intent is held until this notice is durable. A
             # retry therefore can only duplicate the current tail, not an older
@@ -244,17 +191,15 @@ class JsonlReportOutbox:
             cursor = self._read_cursor()
             result: list[ReportNotice] = []
             offset = cursor.offset
-            previous = cursor.previous_notice_sha256
             expected = cursor.next_sequence
             records = self._iter_from(offset)
             try:
                 for notice, next_offset in records:
-                    if notice.sequence != expected or notice.previous_notice_sha256 != previous:
-                        raise EventCorruptionError("report outbox hash chain is broken")
+                    if notice.sequence != expected:
+                        raise EventCorruptionError("report outbox sequence is broken")
                     result.append(notice)
-                    offset, previous, expected = (
+                    offset, expected = (
                         next_offset,
-                        notice.notice_sha256,
                         notice.sequence + 1,
                     )
                     if len(result) == limit:
@@ -272,28 +217,22 @@ class JsonlReportOutbox:
             if found is None:
                 return None
             notice, _ = found
-            if (
-                notice.sequence != cursor.next_sequence
-                or notice.previous_notice_sha256 != cursor.previous_notice_sha256
-            ):
-                raise EventCorruptionError("report outbox hash chain is broken")
+            if notice.sequence != cursor.next_sequence:
+                raise EventCorruptionError("report outbox sequence is broken")
             return notice
 
     def acknowledge(self, notice: ReportNotice) -> None:
         with self._lock:
             self._tail_cursor()
             cursor = self._read_cursor()
-            if (
-                notice.sequence != cursor.next_sequence
-                or notice.previous_notice_sha256 != cursor.previous_notice_sha256
-            ):
+            if notice.sequence != cursor.next_sequence:
                 raise EventConflictError("report outbox acknowledgement is not FIFO")
             found = self._head_record(cursor.offset)
             if found is None or found[0] != notice:
                 raise EventConflictError(
                     "report outbox acknowledgement does not match durable notice"
                 )
-            self._write_cursor(OutboxCursor(found[1], notice.sequence + 1, notice.notice_sha256))
+            self._write_cursor(OutboxCursor(found[1], notice.sequence + 1))
 
     def _head_record(self, offset: int) -> tuple[ReportNotice, int] | None:
         try:
@@ -338,18 +277,18 @@ class JsonlReportOutbox:
         try:
             fd = self._open_read(writable=True)
         except FileNotFoundError:
-            return OutboxCursor(0, 0, EMPTY_SHA256), None
+            return OutboxCursor(0, 0), None
         try:
             size = os.fstat(fd).st_size
             if size == 0:
-                return OutboxCursor(0, 0, EMPTY_SHA256), None
+                return OutboxCursor(0, 0), None
             suffix_offset, suffix = self._read_tail_suffix(fd, size)
             notice, end = self._decode_tail_suffix(suffix_offset, suffix)
             if end < size:
                 self._truncate_tail(fd, end)
             if notice is None:
-                return OutboxCursor(end, 0, EMPTY_SHA256), None
-            return OutboxCursor(end, notice.sequence + 1, notice.notice_sha256), notice
+                return OutboxCursor(end, 0), None
+            return OutboxCursor(end, notice.sequence + 1), notice
         finally:
             os.close(fd)
 
@@ -396,7 +335,7 @@ class JsonlReportOutbox:
 
     def _read_cursor(self) -> OutboxCursor:
         if not self.cursor_path.exists():
-            return OutboxCursor(0, 0, EMPTY_SHA256)
+            return OutboxCursor(0, 0)
         try:
             info = self.cursor_path.lstat()
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
@@ -409,24 +348,21 @@ class JsonlReportOutbox:
         if not isinstance(value, dict) or set(value) != {
             "offset",
             "next_sequence",
-            "previous_notice_sha256",
         }:
             raise EventCorruptionError("report outbox cursor fields are invalid")
         offset = value["offset"]
         sequence = value["next_sequence"]
-        previous = value["previous_notice_sha256"]
         if any(
             isinstance(item, bool) or not isinstance(item, int) or item < 0
             for item in (offset, sequence)
-        ) or not _is_sha256(previous):
+        ):
             raise EventCorruptionError("report outbox cursor values are invalid")
-        return OutboxCursor(offset, sequence, previous)
+        return OutboxCursor(offset, sequence)
 
     def _write_cursor(self, cursor: OutboxCursor) -> None:
         value = {
             "offset": cursor.offset,
             "next_sequence": cursor.next_sequence,
-            "previous_notice_sha256": cursor.previous_notice_sha256,
         }
         raw = canonical_json_bytes(value) + b"\n"
         if self._filesystem is not None:

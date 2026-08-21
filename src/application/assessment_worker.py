@@ -94,8 +94,6 @@ def _historical_summary_is_eligible(summary: EventSummary) -> bool:
     return (
         summary.evidence_class == EvidenceClass.QUALIFYING.value
         and terminal_science_policy(summary.termination).authorizes_science
-        and not summary.damaged_segment_hashes
-        and summary.damaged_segment_overflow == 0
     )
 
 
@@ -436,11 +434,7 @@ def _assess_projection(
     start_payload = projection.start.payload if projection.start is not None else {}
     terminal_policy = _terminal_policy(projection)
     capture_damaged = bool(
-        projection.damaged_segment_hashes
-        or projection.damaged_segment_overflow
-        or projection.gaps
-        or _capture_damaged_termination(projection)
-        or not projection_available
+        projection.gaps or _capture_damaged_termination(projection) or not projection_available
     )
     if durable.assessment is None:
         assessment = assess_evidence(
@@ -551,14 +545,11 @@ def _cohort_steps(
 def _processing_handle(processing: ProcessingRef, projection: EventProjection) -> EventHandle:
     if projection.outcome is not None:
         outcome = projection.outcome
-        if outcome.prev_record_sha256 is None:
-            raise ProjectionInputError("outcome is missing predecessor hash")
         return EventHandle(
             processing.blackout_id,
             outcome.segment_id,
             processing.final_path_token,
             outcome.seq,
-            outcome.prev_record_sha256,
             outcome.event_kind,
         )
     if not projection.records:
@@ -569,7 +560,6 @@ def _processing_handle(processing: ProcessingRef, projection: EventProjection) -
         last.segment_id,
         processing.final_path_token,
         last.seq + 1,
-        last.record_sha256,
         last.event_kind,
     )
 

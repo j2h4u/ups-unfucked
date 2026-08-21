@@ -58,7 +58,7 @@ is the sole mutable scientific model writer.
 
 Each blackout owns an append-only JSONL file under
 `~/.config/ups-battery-monitor/events/`. This event file is authoritative scientific evidence. It
-is hash-linked, synchronised, bounded, and closed with one terminal outcome. Missing samples,
+is sequence-numbered, synchronised, bounded, and closed with one terminal outcome. Missing samples,
 reboot gaps, corruption, and capture damage remain explicit and are never silently interpolated.
 
 `index.jsonl` is a rebuildable bounded summary projection. `active.json` is a bounded work registry.

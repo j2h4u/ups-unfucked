@@ -2,7 +2,6 @@
 
 import errno
 import fcntl
-import hashlib
 import os
 import stat
 import uuid
@@ -78,17 +77,6 @@ def _close_open_fd(fd: int | None, error: BaseException) -> None:
         os.close(fd)
     except OSError as close_error:
         error.add_note(f"descriptor cleanup failed: {_bounded_error(close_error)}")
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as stream:
-            while chunk := stream.read(1024 * 1024):
-                digest.update(chunk)
-    except OSError as exc:
-        raise EventPersistenceError(f"cannot hash {path.name}: {_bounded_error(exc)}") from exc
-    return digest.hexdigest()
 
 
 class JsonlFilesystem:

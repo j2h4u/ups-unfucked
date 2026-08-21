@@ -1,6 +1,5 @@
 """Focused safety regressions for durable JSONL boundaries."""
 
-import hashlib
 import uuid
 from pathlib import Path
 
@@ -8,7 +7,6 @@ import pytest
 
 from src.adapters.jsonl_errors import EventCorruptionError, EventValidationError
 from src.adapters.jsonl_event_store import JsonlEventStore
-from src.adapters.jsonl_event_stream import _corrupt_original_filename
 from src.adapters.jsonl_record_codec import (
     _bounded_start_payload,
     _is_terminal_damage_segment,
@@ -33,9 +31,7 @@ def _record(record_type: str, segment: str = "a" * 32, **payload: object) -> _St
         "boot",
         "2026-08-01T00:00:00.000000Z",
         0,
-        None,
         payload,
-        "b" * 64,
         canonical_line=b"{}\n",
     )
 
@@ -60,15 +56,14 @@ def test_start_payload_rejects_non_object_snapshot() -> None:
     "payload",
     [
         {"previous_segment_id": "wrong"},
-        {"previous_final_record_sha256": "wrong"},
-        {"previous_segment_file_sha256": "wrong"},
+        {"previous_segment_id": "wrong"},
     ],
 )
 def test_gap_links_fail_closed_on_mismatch(payload: dict[str, str]) -> None:
     previous = _record("observation")
     gap = _record("gap", segment="c" * 32, **payload)
     with pytest.raises(EventCorruptionError):
-        _validate_gap_link(gap, previous, "d" * 64)
+        _validate_gap_link(gap, previous)
 
 
 def test_segment_boundaries_accept_gap_and_recovered_damage_terminal() -> None:
@@ -78,7 +73,6 @@ def test_segment_boundaries_accept_gap_and_recovered_damage_terminal() -> None:
         "gap",
         segment="c" * 32,
         previous_segment_id=end.segment_id,
-        previous_final_record_sha256=end.record_sha256,
     )
     damaged = _record(
         "outcome", segment="c" * 32, disposition="rejected", reasons=["capture_damaged"]
@@ -140,26 +134,13 @@ def test_physical_records_cannot_follow_end() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "filename", ["not-corrupt.jsonl", "corrupt-zz.jsonl", "corrupt-" + "a" * 64 + "-bad.txt"]
-)
-def test_corrupt_filename_parser_rejects_non_event_names(filename: str) -> None:
-    assert _corrupt_original_filename(filename) is None
-
-
-def test_corrupt_filename_parser_recovers_original_event_name() -> None:
-    original = "evt-20260801T000000.000Z-" + BLACKOUT + ".jsonl"
-    digest = hashlib.sha256(b"damage").hexdigest()
-    assert _corrupt_original_filename(f"corrupt-{digest}-{original}") == original
-
-
-def test_segment_manifest_reservation_is_idempotent_and_preserves_damage(tmp_path: Path) -> None:
+def test_segment_manifest_reservation_is_idempotent(tmp_path: Path) -> None:
     with JsonlEventStore(tmp_path) as store:
         token = "evt-20260801T000000.000Z-" + BLACKOUT + ".jsonl"
         store._stream._reserve_segment_manifest(token)
-        store._stream._reserve_segment_manifest(token, "a" * 64)
+        store._stream._reserve_segment_manifest(token)
         entries = store._stream._capacity.manifest_entries(BLACKOUT)
-    assert entries == ((token, "a" * 64),)
+    assert entries == ((token, None),)
 
 
 def test_trusted_prefix_stops_at_malformed_or_torn_tail(tmp_path: Path) -> None:

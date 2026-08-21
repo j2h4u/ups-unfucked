@@ -104,7 +104,6 @@ class FakeStore:
         return replace(
             handle,
             next_seq=handle.next_seq + 1,
-            last_record_sha256=f"{handle.next_seq:064x}",
         )
 
     def checkpoint_processing(self, handle, frozen_stage):
@@ -162,9 +161,7 @@ def _record(seq: int, record_type: str, payload, *, second: int) -> ProjectedEve
         boot_id="boot-a",
         wall_time_utc=(NOW + timedelta(seconds=second)).isoformat().replace("+00:00", "Z"),
         monotonic_ns=second * 1_000_000_000,
-        prev_record_sha256=None if seq == 0 else chr(96 + seq) * 64,
         payload=payload,
-        record_sha256=chr(97 + seq) * 64,
     )
 
 
@@ -173,7 +170,6 @@ def _projection(
     status: str = "OB DISCHRG",
     input_voltage_v: float | None = None,
     second: int = 1,
-    damaged: bool = False,
     termination: str = "power_restored",
 ) -> EventProjection:
     snapshot = _snapshot()
@@ -200,14 +196,12 @@ def _projection(
         derived_records=(),
         outcome=None,
         trusted_prefixes=((start, observation, end),),
-        damaged_segment_hashes=(("d" * 64,) if damaged else ()),
-        damaged_segment_overflow=0,
         records=(start, observation, end),
     )
 
 
 def _processing() -> ProcessingRef:
-    return ProcessingRef(BLACKOUT_ID, (SEGMENT_ID,), PATH, "end_durable", "c" * 64)
+    return ProcessingRef(BLACKOUT_ID, (SEGMENT_ID,), PATH, "end_durable")
 
 
 def _prepare(projection: EventProjection, model: FakeModel | None = None):
@@ -224,10 +218,8 @@ def _with_derived_records(
 ) -> EventProjection:
     projected: list[ProjectedEventRecord] = []
     anchor = projection.records[-1]
-    previous_hash = anchor.record_sha256
     for offset, record in enumerate(records, start=1):
         seq = anchor.seq + offset
-        record_hash = f"{seq:064x}"
         projected.append(
             ProjectedEventRecord(
                 schema_version=2,
@@ -239,12 +231,9 @@ def _with_derived_records(
                 boot_id=record.boot_id,
                 wall_time_utc=record.wall_time_utc,
                 monotonic_ns=record.monotonic_ns,
-                prev_record_sha256=previous_hash,
                 payload=record.payload,
-                record_sha256=record_hash,
             )
         )
-        previous_hash = record_hash
     return replace(
         projection,
         derived_records=tuple(projected),
@@ -325,16 +314,12 @@ def test_ready_raw_lb_event_is_marked_for_later_decline_recomputation():
     assert prepared.learning_decision.record_decline_evidence is True
 
 
-def test_gap_and_corruption_refuse_scientific_use_with_exact_classes():
+def test_gap_refuses_scientific_use_with_exact_class():
     gap, _, _ = _prepare(_projection(second=10))
-    corrupt, _, _ = _prepare(_projection(damaged=True))
 
     assert EvidenceReason.RAW_GAP_TOO_LARGE in gap.assessment.reasons.values
     assert gap.assessment.evidence_class == EvidenceClass.OPERATIONAL_ONLY
-    assert corrupt.assessment.evidence_class == EvidenceClass.REJECTED
-    assert EvidenceReason.CAPTURE_DAMAGED in corrupt.assessment.reasons.values
-    assert EvidenceReason.EVENT_NOT_NATURALLY_COMPLETED not in corrupt.assessment.reasons.values
-    assert gap.prepared_commit is corrupt.prepared_commit is None
+    assert gap.prepared_commit is None
 
 
 def test_power_restored_with_stored_gap_remains_rejected_capture_damage():
@@ -561,7 +546,6 @@ class VerticalStore:
         return replace(
             handle,
             next_seq=handle.next_seq + 1,
-            last_record_sha256=f"{handle.next_seq:064x}",
         )
 
     def checkpoint_processing(self, handle, frozen_stage):
@@ -613,9 +597,7 @@ def _step_projection(
             observations[min(second, 239)].boot_id,
             (event_start + timedelta(seconds=second)).isoformat().replace("+00:00", "Z"),
             second * 1_000_000_000,
-            None if seq == 0 else f"{seq - 1:064x}",
             payload,
-            f"{seq:064x}",
         )
 
     start = record(
@@ -635,7 +617,7 @@ def _step_projection(
     )
     end = record(240, "end", {"termination": termination}, 240)
     records = (start, *raw_records, end)
-    return EventProjection(start, raw_records, (), end, (), None, (records,), (), 0, records)
+    return EventProjection(start, raw_records, (), end, (), None, (records,), records)
 
 
 def _summary(blackout_id: str, day: int) -> EventSummary:
@@ -655,10 +637,6 @@ def _summary(blackout_id: str, day: int) -> EventSummary:
         comparison_mode="none",
         ir_estimate_available=True,
         commit_receipt_id=None,
-        damaged_segment_hashes=(),
-        damaged_segment_overflow=0,
-        outcome_record_sha256="5" * 64,
-        event_file_sha256="6" * 64,
     )
 
 
@@ -799,7 +777,6 @@ def test_real_current_plus_three_history_pipeline_commits_one_safe_decrease():
             (BLACKOUT_ID,),
             PATH,
             "end_durable",
-            projections[BLACKOUT_ID].records[-1].record_sha256,
         )
     )
 
@@ -848,7 +825,6 @@ def test_non_restored_terminal_is_operational_and_cannot_prepare_or_commit_learn
             (BLACKOUT_ID,),
             PATH,
             "end_durable",
-            projections[BLACKOUT_ID].records[-1].record_sha256,
         )
     )
 
@@ -889,7 +865,6 @@ def test_upward_cohort_durably_observes_exact_assessment_time_ir_without_commit(
                 (BLACKOUT_ID,),
                 PATH,
                 "end_durable",
-                projections[BLACKOUT_ID].records[-1].record_sha256,
             )
         )
     )
@@ -926,16 +901,11 @@ def test_upward_cohort_durably_observes_exact_assessment_time_ir_without_commit(
 
 
 @pytest.mark.parametrize(
-    ("evidence_class", "damaged_segment_hashes", "damaged_segment_overflow"),
-    (
-        pytest.param("operational_only", (), 0, id="partial-history"),
-        pytest.param("qualifying", ("d" * 64,), 1, id="capture-damaged-history"),
-    ),
+    "evidence_class",
+    (pytest.param("operational_only", id="partial-history"),),
 )
 def test_ineligible_historical_provenance_cannot_teach_or_commit(
     evidence_class: str,
-    damaged_segment_hashes: tuple[str, ...],
-    damaged_segment_overflow: int,
 ):
     history_ids = ("b" * 32, "c" * 32, "d" * 32)
     projections = {
@@ -948,8 +918,6 @@ def test_ineligible_historical_provenance_cannot_teach_or_commit(
         replace(
             _summary(blackout_id, day),
             evidence_class=evidence_class,
-            damaged_segment_hashes=damaged_segment_hashes,
-            damaged_segment_overflow=damaged_segment_overflow,
         )
         for day, blackout_id in enumerate(history_ids, 1)
     )
@@ -963,7 +931,6 @@ def test_ineligible_historical_provenance_cannot_teach_or_commit(
             (BLACKOUT_ID,),
             PATH,
             "end_durable",
-            projections[BLACKOUT_ID].records[-1].record_sha256,
         )
     )
 
@@ -1012,7 +979,6 @@ def test_prepare_race_or_refusal_becomes_deterministic_recorded_only(failure, re
             (BLACKOUT_ID,),
             PATH,
             "end_durable",
-            projections[BLACKOUT_ID].records[-1].record_sha256,
         )
     )
 

@@ -47,16 +47,11 @@ def _is_report_outbox_fd(fd: int) -> bool:
 
 def _notice_values(number: int = 0) -> dict[str, str]:
     blackout_id = uuid.UUID(int=number + 1000, version=4).hex
-    return {
-        "blackout_id": blackout_id,
-        "segment_filename": _segment_token(number, blackout_id),
-        "summary_sha256": f"{number + 1:064x}",
-        "index_head_sha256": f"{number + 1001:064x}",
-    }
+    return {"blackout_id": blackout_id, "segment_filename": _segment_token(number, blackout_id)}
 
 
 def _identity(notice: ReportNotice) -> ReportNoticeIdentity:
-    return ReportNoticeIdentity(notice.blackout_id, notice.segment_filename, notice.summary_sha256)
+    return ReportNoticeIdentity(notice.blackout_id, notice.segment_filename)
 
 
 def _assert_fds_closed(fds: list[int]) -> None:
@@ -111,26 +106,22 @@ def test_report_outbox_survives_twenty_failures_and_restart_without_loss(
 ) -> None:
     events = tmp_path / "events"
     events.mkdir(mode=0o700)
-    expected: list[tuple[str, str, str]] = []
+    expected: list[tuple[str, str]] = []
     outbox = JsonlReportOutbox(events)
     for number in range(20):
         blackout_id = uuid.UUID(int=number + 100, version=4).hex
         segment = _segment_token(number, blackout_id)
-        summary_hash = f"{number + 1:064x}"
-        index_head = f"{number + 101:064x}"
         notice = outbox.append(
             blackout_id=blackout_id,
             segment_filename=segment,
-            summary_sha256=summary_hash,
-            index_head_sha256=index_head,
         )
         expected.append(notice.identity)
 
     with JsonlEventStore(tmp_path) as store:
         pending = store.report_outbox.report_outbox_pending(20)
-        assert tuple(
-            (item.blackout_id, item.segment_filename, item.summary_sha256) for item in pending
-        ) == tuple(expected)
+        assert tuple((item.blackout_id, item.segment_filename) for item in pending) == tuple(
+            expected
+        )
 
     sink = _FailingSink(20)
     for _ in range(20):
@@ -197,7 +188,6 @@ def test_event_store_report_facade_preserves_fifo_conflicts_and_restart_head(
         unknown = ReportNoticeIdentity(
             notices[0].blackout_id,
             notices[0].segment_filename,
-            f"{999:064x}",
         )
         with pytest.raises(EventConflictError, match="not pending"):
             facade.acknowledge_report_notice(unknown)

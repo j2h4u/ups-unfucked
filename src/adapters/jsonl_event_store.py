@@ -28,7 +28,7 @@ from src.adapters.jsonl_record_codec import (
     PROVENANCE_BY_RECORD_TYPE,
     _bounded_start_payload,
     _decode_record_line,
-    _deduplicate_and_validate_chain,
+    _deduplicate_and_validate_sequence,
     _EnvelopeParts,
     _json_mapping,
     _validate_short_ascii,
@@ -203,7 +203,6 @@ class JsonlEventStore:
             tail.segment_id,
             path_token,
             tail.seq + 1,
-            tail.record_sha256,
             tail.event_kind,
         )
         state = CaptureCloseState.ACTIVE
@@ -277,13 +276,11 @@ class JsonlEventStore:
                 start.boot_id,
                 start.wall_time_utc,
                 start.monotonic_ns,
-                None,
                 payload,
                 start.event_kind,
             )
         )
         start_line = canonical_record_line(envelope)
-        start_record = _decode_record_line(start_line)
         preparing = PreparingCaptureRef(
             blackout_id=start.blackout_id,
             segment_id=start.segment_id,
@@ -316,7 +313,6 @@ class JsonlEventStore:
             start.segment_id,
             path_token,
             1,
-            start_record.record_sha256,
             start.event_kind,
         )
 
@@ -344,7 +340,6 @@ class JsonlEventStore:
             capture.segment_id,
             capture.path_token,
             tail.seq + 1,
-            tail.record_sha256,
             tail.event_kind,
         )
         if tail.record_type == "end":
@@ -362,12 +357,11 @@ class JsonlEventStore:
                     ),
                 )
             try:
-                self._registry._move_capture_to_processing(handle, tail.record_sha256)
+                self._registry._move_capture_to_processing(handle)
             except EventCorruptionError:
                 continuation = self._stream._continue_capture_after_corruption(capture, path)
                 self._registry._move_capture_to_processing(
                     continuation,
-                    continuation.last_record_sha256,
                 )
             return None
         if tail.record_type == "outcome":
@@ -407,7 +401,6 @@ class JsonlEventStore:
                 record.boot_id,
                 record.wall_time_utc,
                 record.monotonic_ns,
-                handle.last_record_sha256,
                 _json_mapping(record.payload, "record payload"),
                 record.event_kind,
             )
@@ -424,10 +417,9 @@ class JsonlEventStore:
                 handle.segment_id,
                 handle.path_token,
                 handle.next_seq + 1,
-                last.record_sha256,
                 last.event_kind,
             )
-        if last.seq != handle.next_seq - 1 or last.record_sha256 != handle.last_record_sha256:
+        if last.seq != handle.next_seq - 1:
             raise EventConflictError("event handle does not match the durable tail")
         fd = self._filesystem._open_existing(path, writable=True)
         try:
@@ -439,7 +431,6 @@ class JsonlEventStore:
             handle.segment_id,
             handle.path_token,
             handle.next_seq + 1,
-            candidate.record_sha256,
             candidate.event_kind,
         )
         if record.record_type == "end":
@@ -461,7 +452,6 @@ class JsonlEventStore:
                         ref.segment_ids,
                         ref.final_path_token,
                         frozen_stage,
-                        handle.last_record_sha256,
                     )
                 )
             else:
@@ -483,13 +473,13 @@ class JsonlEventStore:
         records = ()
         try:
             self._stream._repair_torn_tail(path)
-            records = _deduplicate_and_validate_chain(self._stream._read_all_records(path))
+            records = _deduplicate_and_validate_sequence(self._stream._read_all_records(path))
             last = records[-1] if records else None
         except EventCorruptionError:
             handle = self._stream._continue_processing_after_corruption(processing, path)
             processing = self._registry._processing_ref(handle.blackout_id)
             path = self._filesystem._event_path(handle.path_token)
-            records = _deduplicate_and_validate_chain(self._stream._read_all_records(path))
+            records = _deduplicate_and_validate_sequence(self._stream._read_all_records(path))
             last = records[-1] if records else None
         if last is None:
             raise EventCorruptionError("event file is empty")
@@ -501,7 +491,6 @@ class JsonlEventStore:
                 handle.segment_id,
                 handle.path_token,
                 last.seq + 1,
-                last.record_sha256,
                 last.event_kind,
             )
             return self._registry._finish_sealed_projection(sealed_handle, last)
@@ -517,7 +506,6 @@ class JsonlEventStore:
             handle.segment_id,
             handle.path_token,
             durable_outcome.seq + 1,
-            durable_outcome.record_sha256,
             durable_outcome.event_kind,
         )
         return self._registry._finish_sealed_projection(sealed_handle, durable_outcome)
@@ -564,19 +552,15 @@ class _EventReportOutbox:
         *,
         blackout_id: str,
         segment_filename: str,
-        summary_sha256: str,
-        index_head_sha256: str,
     ) -> ReportNotice:
         return self._outbox.append(
             blackout_id=blackout_id,
             segment_filename=segment_filename,
-            summary_sha256=summary_sha256,
-            index_head_sha256=index_head_sha256,
         )
 
     def report_outbox_pending(self, limit: int) -> tuple[ReportNoticeIdentity, ...]:
         return tuple(
-            ReportNoticeIdentity(item.blackout_id, item.segment_filename, item.summary_sha256)
+            ReportNoticeIdentity(item.blackout_id, item.segment_filename)
             for item in self._outbox.pending(limit=limit)
         )
 
@@ -592,5 +576,4 @@ def _notice_matches(item: ReportNotice, notice: ReportNoticeIdentity) -> bool:
     return item.identity == (
         notice.blackout_id,
         notice.segment_filename,
-        notice.summary_sha256,
     )

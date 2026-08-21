@@ -1,6 +1,5 @@
 """Canonical JSONL record bytes and strict schema decoding."""
 
-import hashlib
 import json
 import math
 import re
@@ -39,10 +38,7 @@ MAX_REASON_BYTES = 64
 MAX_REASONS = 8
 MAX_DIAGNOSTIC_ERROR_BYTES = 512
 MAX_PENDING_PROCESSING = 8
-MAX_DAMAGED_HASHES = 16
 MAX_SEGMENT_REFS = 64
-HASH_HEX_LENGTH = 64
-EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 EVENT_FILENAME_RE = re.compile(
     r"^evt-\d{8}T\d{6}\.\d{3}Z-(?P<blackout>[0-9a-f]{32})(?:-seg-(?P<ordinal>\d{6})-(?P<segment>[0-9a-f]{32}))?\.jsonl$"
 )
@@ -72,7 +68,6 @@ class _EnvelopeParts:
     boot_id: str
     wall_time_utc: str
     monotonic_ns: int
-    prev_record_sha256: str | None
     payload: Mapping[str, JsonValue]
     event_kind: EventKind = "blackout"
 
@@ -97,15 +92,9 @@ def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
         raise EventValidationError(f"value is not canonical JSON: {_bounded_error(exc)}") from exc
 
 
-def canonical_record_line(record_without_hash: Mapping[str, Any]) -> bytes:
-    """Hash an envelope without its hash and return its exact stored JSONL line."""
-    if "record_sha256" in record_without_hash:
-        raise EventValidationError("record hash must not be supplied by the caller")
-    canonical = canonical_json_bytes(record_without_hash)
-    digest = hashlib.sha256(canonical).hexdigest()
-    complete = dict(record_without_hash)
-    complete["record_sha256"] = digest
-    line = canonical_json_bytes(complete) + b"\n"
+def canonical_record_line(record: Mapping[str, Any]) -> bytes:
+    """Return one canonical newline-terminated JSONL record."""
+    line = canonical_json_bytes(record) + b"\n"
     if len(line) > MAX_LINE_BYTES:
         raise EventValidationError("encoded record exceeds 128 KiB")
     return line
@@ -181,7 +170,6 @@ def _bounded_start_payload(payload: Mapping[str, JsonValue]) -> Mapping[str, Jso
         bounded[key] = {
             "snapshot_budget_exceeded": True,
             "original_bytes": len(encoded),
-            "original_sha256": hashlib.sha256(encoded).hexdigest(),
         }
     if not exceeded:
         return bounded
@@ -221,7 +209,7 @@ def _optional_nonnegative_int(value: JsonValue, name: str, *, fallback: int) -> 
     return value
 
 
-def _validate_record_without_hash(obj: Mapping[str, Any]) -> None:
+def _validate_record(obj: Mapping[str, Any]) -> None:
     required = {
         "schema_version",
         "record_type",
@@ -232,7 +220,6 @@ def _validate_record_without_hash(obj: Mapping[str, Any]) -> None:
         "boot_id",
         "wall_time_utc",
         "monotonic_ns",
-        "prev_record_sha256",
         "payload",
     }
     if set(obj) not in (required, required | {"event_kind"}):
@@ -271,11 +258,6 @@ def _validate_record_identity_and_clocks(obj: Mapping[str, Any]) -> None:
         or monotonic_ns > 2**63 - 1
     ):
         raise EventValidationError("monotonic_ns is invalid")
-    previous = obj["prev_record_sha256"]
-    if seq == 0 and previous is not None:
-        raise EventValidationError("sequence zero must not have a previous hash")
-    if seq > 0 and (not isinstance(previous, str) or not _is_sha256(previous)):
-        raise EventValidationError("nonzero sequence requires a SHA-256 previous hash")
 
 
 def _decode_record_line(line: bytes) -> _StoredRecord:
@@ -287,50 +269,13 @@ def _decode_record_line(line: bytes) -> _StoredRecord:
         obj = _strict_json_loads(line[:-1])
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise EventCorruptionError("record line is not strict JSON") from exc
-    if not isinstance(obj, dict) or set(obj) not in (
-        {
-            "schema_version",
-            "record_type",
-            "provenance",
-            "blackout_id",
-            "segment_id",
-            "seq",
-            "boot_id",
-            "wall_time_utc",
-            "monotonic_ns",
-            "prev_record_sha256",
-            "payload",
-            "record_sha256",
-        },
-        {
-            "schema_version",
-            "record_type",
-            "provenance",
-            "event_kind",
-            "blackout_id",
-            "segment_id",
-            "seq",
-            "boot_id",
-            "wall_time_utc",
-            "monotonic_ns",
-            "prev_record_sha256",
-            "payload",
-            "record_sha256",
-        },
-    ):
+    if not isinstance(obj, dict):
         raise EventCorruptionError("record fields do not match schema v2")
-    digest = obj.pop("record_sha256")
     try:
-        _validate_record_without_hash(obj)
+        _validate_record(obj)
     except EventValidationError as exc:
         raise EventCorruptionError(str(exc)) from exc
-    canonical_without_hash = canonical_json_bytes(obj)
-    expected_hash = hashlib.sha256(canonical_without_hash).hexdigest()
-    if digest != expected_hash:
-        raise EventCorruptionError("record SHA-256 mismatch")
-    complete = dict(obj)
-    complete["record_sha256"] = digest
-    canonical_line = canonical_json_bytes(complete) + b"\n"
+    canonical_line = canonical_json_bytes(obj) + b"\n"
     if line != canonical_line:
         raise EventCorruptionError("record line is not canonical JSON")
     payload = obj["payload"]
@@ -347,15 +292,13 @@ def _decode_record_line(line: bytes) -> _StoredRecord:
         obj["boot_id"],
         obj["wall_time_utc"],
         obj["monotonic_ns"],
-        obj["prev_record_sha256"],
         payload,
-        digest,
         event_kind,
         canonical_line,
     )
 
 
-def _deduplicate_and_validate_chain(
+def _deduplicate_and_validate_sequence(
     records: Sequence[_StoredRecord],
 ) -> tuple[_StoredRecord, ...]:
     by_seq: dict[int, _StoredRecord] = {}
@@ -371,9 +314,6 @@ def _deduplicate_and_validate_chain(
     for expected_seq, record in enumerate(ordered):
         if record.seq != expected_seq:
             raise EventCorruptionError("record sequence is not contiguous")
-        expected_previous = None if expected_seq == 0 else ordered[expected_seq - 1].record_sha256
-        if record.prev_record_sha256 != expected_previous:
-            raise EventCorruptionError("record hash chain is broken")
     return tuple(ordered)
 
 
@@ -388,9 +328,7 @@ def _projected_record(record: _StoredRecord) -> ProjectedEventRecord:
         record.boot_id,
         record.wall_time_utc,
         record.monotonic_ns,
-        record.prev_record_sha256,
         record.payload,
-        record.record_sha256,
         record.event_kind,
     )
 
@@ -401,7 +339,6 @@ def _processing_handle(ref: ProcessingRef, last: _StoredRecord) -> EventHandle:
         last.segment_id,
         ref.final_path_token,
         last.seq + 1,
-        last.record_sha256,
         last.event_kind,
     )
 
@@ -432,30 +369,21 @@ def _validate_segmented_record_order(
     start: _StoredRecord | None,
     end: _StoredRecord | None,
     outcome: _StoredRecord | None,
-    segment_file_hashes: Sequence[str] | None = None,
 ) -> None:
     records = tuple(record for prefix in prefixes for record in prefix)
     if start is None or records[0].record_type != "start":
         raise EventCorruptionError("event must begin with exactly one start record")
-    _validate_segment_boundaries(prefixes, segment_file_hashes=segment_file_hashes)
+    _validate_segment_boundaries(prefixes)
     _validate_terminal_record_order(records, end=end, outcome=outcome)
 
 
 def _validate_segment_boundaries(
     prefixes: Sequence[Sequence[_StoredRecord]],
-    *,
-    segment_file_hashes: Sequence[str] | None = None,
 ) -> None:
     nonempty_prefixes = tuple(prefix for prefix in prefixes if prefix)
     for position, prefix in enumerate(nonempty_prefixes[1:], start=1):
         if prefix[0].record_type == "gap":
-            _validate_gap_link(
-                prefix[0],
-                nonempty_prefixes[position - 1][-1],
-                segment_file_hashes[position - 1]
-                if segment_file_hashes and position - 1 < len(segment_file_hashes)
-                else None,
-            )
+            _validate_gap_link(prefix[0], nonempty_prefixes[position - 1][-1])
             continue
         if not _is_terminal_damage_segment(
             prefix,
@@ -470,21 +398,11 @@ def _validate_segment_boundaries(
 def _validate_gap_link(
     gap: _StoredRecord,
     previous: _StoredRecord,
-    previous_file_sha256: str | None,
 ) -> None:
     payload = gap.payload
     linked_segment = payload.get("previous_segment_id")
     if linked_segment is not None and linked_segment != previous.segment_id:
         raise EventCorruptionError("continuation GAP links the wrong previous segment")
-    linked_final = payload.get("previous_final_record_sha256")
-    if linked_final is not None and linked_final != previous.record_sha256:
-        raise EventCorruptionError("continuation GAP links the wrong previous final record")
-    linked_file = payload.get("previous_segment_file_sha256")
-    if linked_file is not None:
-        if not isinstance(linked_file, str) or not _is_sha256(linked_file):
-            raise EventCorruptionError("continuation GAP file hash is invalid")
-        if previous_file_sha256 is not None and linked_file != previous_file_sha256:
-            raise EventCorruptionError("continuation GAP links the wrong previous file")
 
 
 def _is_terminal_damage_segment(
@@ -690,12 +608,6 @@ def _optional_finite_nonnegative(payload: Mapping[str, JsonValue], key: str) -> 
     ):
         raise EventValidationError(f"{key} must be a finite non-negative number")
     return float(value)
-
-
-def _is_sha256(value: Any) -> bool:
-    if not isinstance(value, str) or len(value) != HASH_HEX_LENGTH:
-        return False
-    return all(character in "0123456789abcdef" for character in value)
 
 
 def _bounded_error(error: BaseException | str) -> str:

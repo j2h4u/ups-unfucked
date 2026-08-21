@@ -4,7 +4,6 @@ import json
 import os
 import stat
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,9 +12,6 @@ from src.adapters.jsonl_errors import (
     EventCorruptionError,
     EventPathError,
     EventValidationError,
-)
-from src.adapters.jsonl_event_read_codec import (
-    damaged_hashes as read_damaged_hashes,
 )
 from src.adapters.jsonl_event_read_codec import (
     ensure_path_within_limit as read_ensure_path_within_limit,
@@ -35,7 +31,7 @@ from src.adapters.jsonl_event_read_codec import (
 from src.adapters.jsonl_event_read_codec import (
     validate_before_full_read as read_validate_before_full_read,
 )
-from src.adapters.jsonl_filesystem import JsonlFilesystem, _file_sha256
+from src.adapters.jsonl_filesystem import JsonlFilesystem
 from src.adapters.jsonl_record_codec import (
     CAPTURE_APPEND_LIMIT,
     EVENT_FILENAME_RE,
@@ -57,13 +53,6 @@ if TYPE_CHECKING:
     from src.adapters.jsonl_work_registry import JsonlWorkRegistry
 
 
-@dataclass(frozen=True, slots=True)
-class PreparedCapacityContinuation:
-    """Durable evidence needed by the stream to create a continuation segment."""
-
-    damaged_sha256: str
-
-
 class JsonlEventCapacity:
     """Own manifest discovery, aggregate byte accounting, and size continuation state."""
 
@@ -77,14 +66,14 @@ class JsonlEventCapacity:
         self._filesystem = filesystem
         self._registry = registry
 
-    def reserve_segment_manifest(self, path_token: str, damaged_sha256: str | None = None) -> None:
+    def reserve_segment_manifest(self, path_token: str) -> None:
         """Record an exact segment path before its event file is created."""
         match = EVENT_FILENAME_RE.fullmatch(path_token)
         if match is None:
             raise EventPathError("manifest path token is not an event filename")
         blackout_id = match.group("blackout")
         manifest = self._events_path / f"segments-{blackout_id}.jsonl"
-        value = {"path_token": path_token, "damaged_sha256": damaged_sha256}
+        value = {"path_token": path_token}
         line = json.dumps(value, sort_keys=True, separators=(",", ":")).encode() + b"\n"
         if len(line) > 512:
             raise EventValidationError("segment manifest line exceeds its bound")
@@ -101,12 +90,7 @@ class JsonlEventCapacity:
                     raise EventCorruptionError("segment manifest is invalid") from exc
                 if decoded == value:
                     return
-                if (
-                    isinstance(decoded, dict)
-                    and decoded.get("path_token") == path_token
-                    and decoded.get("damaged_sha256") is not None
-                    and damaged_sha256 is None
-                ):
+                if isinstance(decoded, dict) and decoded.get("path_token") == path_token:
                     return
         fd = self._filesystem._open_append_or_create(manifest, mode=0o600)
         try:
@@ -123,9 +107,6 @@ class JsonlEventCapacity:
             blackout_id,
             reserved_paths=self._reserved_paths(),
         )
-
-    def damaged_hashes(self, blackout_id: str) -> tuple[str, ...]:
-        return read_damaged_hashes(self._events_path, blackout_id)
 
     def event_total_bytes(self, blackout_id: str) -> int:
         return read_event_total_bytes(
@@ -178,7 +159,6 @@ class JsonlEventCapacity:
                 last.segment_id,
                 path.name,
                 last.seq + 1,
-                last.record_sha256,
                 last.event_kind,
             )
         return None
@@ -188,15 +168,13 @@ class JsonlEventCapacity:
         handle: EventHandle,
         path: Path,
         last: _StoredRecord | None,
-    ) -> PreparedCapacityContinuation:
+    ) -> None:
         if last is None:
             raise EventCorruptionError("capacity-limited event has no durable tail")
         capture = self._registry()._read_registry().capture
         if not isinstance(capture, CapturingEventRef) or capture.blackout_id != handle.blackout_id:
             raise EventConflictError("capacity-limited capture is no longer active")
-        damaged_sha256 = _file_sha256(path)
-        self.reserve_segment_manifest(path.name, damaged_sha256)
-        return PreparedCapacityContinuation(damaged_sha256)
+        self.reserve_segment_manifest(path.name)
 
     def activate_capacity_continuation(self, handle: EventHandle) -> None:
         registry = self._registry()._read_registry()

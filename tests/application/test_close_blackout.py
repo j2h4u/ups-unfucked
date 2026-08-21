@@ -49,7 +49,6 @@ class TransactionStore:
         advanced = replace(
             handle,
             next_seq=handle.next_seq + 1,
-            last_record_sha256=f"{handle.next_seq:064x}",
         )
         if record.record_type == "learning_decision":
             self.capture_active = "blackout-b"
@@ -99,9 +98,7 @@ def _physical_record(seq: int, record_type: str) -> ProjectedEventRecord:
         boot_id="boot-a",
         wall_time_utc="2026-08-16T00:00:00Z",
         monotonic_ns=seq,
-        prev_record_sha256=None if seq == 0 else "a" * 64,
         payload={"termination": "power_restored"} if record_type == "end" else {},
-        record_sha256=chr(98 + seq) * 64,
     )
 
 
@@ -116,14 +113,12 @@ def _projection() -> EventProjection:
         (),
         None,
         ((start, end),),
-        (),
-        0,
         (start, end),
     )
 
 
 def _request() -> CloseRequest:
-    processing = ProcessingRef(BLACKOUT_ID, (SEGMENT_ID,), PATH, "end_durable", "c" * 64)
+    processing = ProcessingRef(BLACKOUT_ID, (SEGMENT_ID,), PATH, "end_durable")
     return CloseRequest(processing)
 
 
@@ -243,7 +238,7 @@ def _plan(
     )
     return PreparedClose(
         request=_request(),
-        handle=EventHandle(BLACKOUT_ID, SEGMENT_ID, PATH, 2, "c" * 64),
+        handle=EventHandle(BLACKOUT_ID, SEGMENT_ID, PATH, 2),
         projection=projection,
         assessment=_assessment(),
         comparison=_comparison(),
