@@ -50,13 +50,13 @@ def _notice_values(number: int = 0) -> dict[str, str]:
     return {
         "blackout_id": blackout_id,
         "segment_filename": _segment_token(number, blackout_id),
-        "locator_sha256": f"{number + 1:064x}",
+        "summary_sha256": f"{number + 1:064x}",
         "index_head_sha256": f"{number + 1001:064x}",
     }
 
 
 def _identity(notice: ReportNotice) -> ReportNoticeIdentity:
-    return ReportNoticeIdentity(notice.blackout_id, notice.segment_filename, notice.locator_sha256)
+    return ReportNoticeIdentity(notice.blackout_id, notice.segment_filename, notice.summary_sha256)
 
 
 def _assert_fds_closed(fds: list[int]) -> None:
@@ -116,12 +116,12 @@ def test_report_outbox_survives_twenty_failures_and_restart_without_loss(
     for number in range(20):
         blackout_id = uuid.UUID(int=number + 100, version=4).hex
         segment = _segment_token(number, blackout_id)
-        locator = f"{number + 1:064x}"
+        summary_hash = f"{number + 1:064x}"
         index_head = f"{number + 101:064x}"
         notice = outbox.append(
             blackout_id=blackout_id,
             segment_filename=segment,
-            locator_sha256=locator,
+            summary_sha256=summary_hash,
             index_head_sha256=index_head,
         )
         expected.append(notice.identity)
@@ -129,7 +129,7 @@ def test_report_outbox_survives_twenty_failures_and_restart_without_loss(
     with JsonlEventStore(tmp_path) as store:
         pending = store.report_outbox.report_outbox_pending(20)
         assert tuple(
-            (item.blackout_id, item.segment_filename, item.locator_sha256) for item in pending
+            (item.blackout_id, item.segment_filename, item.summary_sha256) for item in pending
         ) == tuple(expected)
 
     sink = _FailingSink(20)

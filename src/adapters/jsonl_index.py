@@ -64,10 +64,6 @@ from src.adapters.jsonl_summary_codec import (
     _decode_summary_line,
     _encode_summary,
 )
-from src.adapters.jsonl_summary_locator import (
-    JsonlSummaryLocatorStore,
-    locator_from_projection,
-)
 from src.application.storage_values import (
     EpochIndexScan,
     EpochIndexTail,
@@ -322,7 +318,6 @@ class JsonlIndex(JsonlIndexRebuildSupport):
         self._stream = stream
         self._registry = registry
         self._catalog = catalog
-        self._locator_store = JsonlSummaryLocatorStore(self._events_path, filesystem)
         self._report_outbox = JsonlReportOutbox(self._events_path, filesystem)
         self._large_event_cursor = JsonlLargeEventCursor(self._events_path, filesystem)
         self._metadata = IndexMetadataStore(
@@ -541,7 +536,7 @@ class JsonlIndex(JsonlIndexRebuildSupport):
         if projection.outcome is None:
             raise ProjectionUnavailableError(f"rebuild target is not terminal: {entry.path_token}")
         summary = self._summary_for(entry.path_token, projection)
-        self._write_or_verify_locator(summary, projection, entry.catalog_seq)
+        self._summary_digest(summary, projection)
         self._metadata._append_summary(self._rebuild_path, summary, _encode_summary(summary))
         return True, size
 
@@ -695,26 +690,21 @@ class JsonlIndex(JsonlIndexRebuildSupport):
         destination = self._projection_destination()
         line = _encode_summary(summary)
         if destination == self._index_path and destination.exists():
-            try:
-                locator = self._locator_store.read(summary.blackout_id)
-            except EventCorruptionError:
-                locator = None
-            if locator is not None:
-                self._locator_store.verify_segments(locator)
-                head = self._metadata._read_index_head()
-                catalog_count = self._catalog.snapshot().entry_count
-                if locator.summary_line != line:
-                    raise EventConflictError("summary locator conflicts with summary bytes")
-                if head["count"] >= catalog_count:
-                    return
+            projection = self._stream().project(
+                EventRef(summary.blackout_id, summary.segment_filename)
+            )
+            if self._summary_digest(summary, projection) != hashlib.sha256(line).hexdigest():
+                raise EventConflictError("event projection conflicts with summary bytes")
+            head = self._metadata._read_index_head()
+            catalog_count = self._catalog.snapshot().entry_count
+            if head["count"] >= catalog_count:
+                return
         self._metadata._append_summary(destination, summary, line)
 
     def _commit_summary(self, summary: EventSummary, projection: EventProjection) -> None:
-        """Commit locator, summary, head/outbox receipts as one retryable lane."""
+        """Commit summary, head/outbox receipts as one retryable lane."""
         line = _encode_summary(summary)
-        snapshot = self._catalog.snapshot()
-        terminal_seq = max(0, snapshot.entry_count - 1)
-        locator_hash = self._write_or_verify_locator(summary, projection, terminal_seq)
+        summary_hash = self._summary_digest(summary, projection)
         destination = self._projection_destination()
         offset = destination.stat().st_size if destination.exists() else 0
         cursor = self._read_cursor_if_present()
@@ -725,7 +715,7 @@ class JsonlIndex(JsonlIndexRebuildSupport):
             "offset": offset,
             "summary_line": line.decode("utf-8"),
             "summary_sha256": hashlib.sha256(line).hexdigest(),
-            "outbox_identity": [summary.blackout_id, summary.segment_filename, locator_hash],
+            "outbox_identity": [summary.blackout_id, summary.segment_filename, summary_hash],
             "phase": "prepared",
         }
         self._metadata._write_append_intent(intent)
@@ -734,32 +724,18 @@ class JsonlIndex(JsonlIndexRebuildSupport):
         self._report_outbox.append(
             blackout_id=summary.blackout_id,
             segment_filename=summary.segment_filename,
-            locator_sha256=locator_hash,
+            summary_sha256=summary_hash,
             index_head_sha256=self._index_head_hash(),
         )
         self._metadata._clear_append_intent()
 
-    def _write_or_verify_locator(
-        self,
-        summary: EventSummary,
-        projection: EventProjection,
-        terminal_seq: int,
-    ) -> str:
-        """Persist one immutable logical-event root or verify its exact retry."""
+    def _summary_digest(self, summary: EventSummary, projection: EventProjection) -> str:
+        """Verify the terminal projection and return its canonical summary digest."""
         line = _encode_summary(summary)
-        sources = self._stream()._capacity.segment_sources(summary.blackout_id)
-        locator = locator_from_projection(
-            events_path=self._events_path,
-            final_path_token=summary.segment_filename,
-            outcome_record_sha256=summary.outcome_record_sha256,
-            summary_line=line,
-            terminal_catalog_seq=terminal_seq,
-            projection=projection,
-            segment_sources=sources,
-        )
-        locator_hash = self._locator_store.write(locator)
-        self._locator_store.verify_segments(locator)
-        return locator_hash
+        derived = _encode_summary(self._summary_for(summary.segment_filename, projection))
+        if derived != line:
+            raise EventConflictError("event projection conflicts with summary bytes")
+        return hashlib.sha256(line).hexdigest()
 
     def _index_head_hash(self) -> str:
         """Return the durable head digest used to bind an outbox notice."""
@@ -780,7 +756,7 @@ class JsonlIndex(JsonlIndexRebuildSupport):
         self._report_outbox.append(
             blackout_id=identity[0],
             segment_filename=identity[1],
-            locator_sha256=identity[2],
+            summary_sha256=identity[2],
             index_head_sha256=self._index_head_hash(),
         )
         self._metadata._clear_append_intent()

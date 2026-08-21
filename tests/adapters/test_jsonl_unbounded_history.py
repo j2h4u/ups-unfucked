@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import uuid
@@ -13,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from src.adapters.jsonl_errors import EventConflictError, EventCorruptionError
+from src.adapters.jsonl_errors import EventConflictError
 from src.adapters.jsonl_event_catalog import _encode_entry
 from src.adapters.jsonl_event_store import JsonlEventStore
 from src.adapters.jsonl_filesystem import JsonlFilesystem
@@ -21,15 +20,9 @@ from src.adapters.jsonl_index_merge import IndexMergeCoordinator, IndexMergePath
 from src.adapters.jsonl_record_codec import (
     EMPTY_SHA256,
     _decode_record_line,
-    _validate_segment_boundaries,
     canonical_record_line,
 )
 from src.adapters.jsonl_summary_codec import _encode_summary
-from src.adapters.jsonl_summary_locator import (
-    JsonlSummaryLocatorStore,
-    LocatorSegment,
-    make_locator,
-)
 from src.application.storage_values import EventSummary
 
 _EPOCH = "epoch-a"
@@ -361,80 +354,6 @@ def test_merge_owner_sorts_deduplicates_and_rejects_conflicting_summaries(
     )
     with pytest.raises(EventConflictError, match="summary duplicate key"):
         conflicting.begin({"phase": "project"})
-
-
-def _locator_fixture(root: Path) -> tuple[JsonlSummaryLocatorStore, str, Path]:
-    events = root / "events"
-    events.mkdir(parents=True, exist_ok=True)
-    events.chmod(0o700)
-    blackout_id = uuid.UUID(int=77, version=4).hex
-    first_segment_id = uuid.UUID(int=78, version=4).hex
-    final_segment_id = uuid.UUID(int=79, version=4).hex
-    first_token = _token(77, blackout_id)
-    final_token = _token(78, blackout_id)
-    first_line = _record_line(_RecordSpec("start", blackout_id, first_segment_id, 0, None, {}))
-    final_line = _record_line(_RecordSpec("start", blackout_id, final_segment_id, 0, None, {}))
-    path = events / first_token
-    path.write_bytes(first_line)
-    path.chmod(0o400)
-    final_path = events / final_token
-    final_path.write_bytes(final_line)
-    final_path.chmod(0o400)
-    summary = replace(_summary(76), blackout_id=blackout_id, segment_filename=final_token)
-    summary_line = _encode_summary(summary)
-    locator = make_locator(
-        blackout_id=blackout_id,
-        final_path_token=final_token,
-        outcome_record_sha256=summary.outcome_record_sha256,
-        summary_line=summary_line,
-        terminal_catalog_seq=0,
-        segments=(
-            LocatorSegment(
-                first_segment_id,
-                first_token,
-                hashlib.sha256(first_line).hexdigest(),
-                _decode_record_line(first_line).record_sha256,
-            ),
-            LocatorSegment(
-                final_segment_id,
-                final_token,
-                hashlib.sha256(final_line).hexdigest(),
-                _decode_record_line(final_line).record_sha256,
-            ),
-        ),
-    )
-    store = JsonlSummaryLocatorStore(events)
-    store.write(locator)
-    return store, blackout_id, path
-
-
-def test_locator_earlier_segment_mutation_and_wrong_continuation_fail_closed(
-    tmp_path: Path,
-) -> None:
-    locator_store, blackout_id, path = _locator_fixture(tmp_path)
-    locator_store.verify_segments(locator_store.read(blackout_id))
-    path.chmod(0o600)
-    path.write_bytes(path.read_bytes() + b"mutation")
-    with pytest.raises(EventCorruptionError, match="segment bytes changed"):
-        locator_store.verify_segments(locator_store.read(blackout_id))
-
-    first_line = _record_line(
-        _RecordSpec("start", blackout_id, uuid.UUID(int=79, version=4).hex, 0, None, {})
-    )
-    first = _decode_record_line(first_line)
-    second_line = _record_line(
-        _RecordSpec(
-            "gap",
-            blackout_id,
-            uuid.UUID(int=80, version=4).hex,
-            1,
-            first.record_sha256,
-            {"previous_segment_id": uuid.UUID(int=81, version=4).hex},
-        )
-    )
-    second = _decode_record_line(second_line)
-    with pytest.raises(EventCorruptionError, match="wrong previous segment"):
-        _validate_segment_boundaries(((first,), (second,)))
 
 
 def test_epoch_scan_reports_older_boundary_but_not_current_epoch_truncation(

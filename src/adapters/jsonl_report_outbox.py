@@ -44,14 +44,14 @@ class ReportNotice:
     sequence: int
     blackout_id: str
     segment_filename: str
-    locator_sha256: str
+    summary_sha256: str
     index_head_sha256: str
     previous_notice_sha256: str
     notice_sha256: str
 
     @property
     def identity(self) -> tuple[str, str, str]:
-        return self.blackout_id, self.segment_filename, self.locator_sha256
+        return self.blackout_id, self.segment_filename, self.summary_sha256
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +66,7 @@ class _NoticeInput:
     sequence: int
     blackout_id: str
     segment_filename: str
-    locator_sha256: str
+    summary_sha256: str
     index_head_sha256: str
     previous_notice_sha256: str
 
@@ -77,7 +77,7 @@ def _notice_without_hash(value: _NoticeInput) -> dict[str, Any]:
         "sequence": value.sequence,
         "blackout_id": value.blackout_id,
         "segment_filename": value.segment_filename,
-        "locator_sha256": value.locator_sha256,
+        "summary_sha256": value.summary_sha256,
         "index_head_sha256": value.index_head_sha256,
         "previous_notice_sha256": value.previous_notice_sha256,
     }
@@ -95,7 +95,7 @@ def _encode_notice(notice: ReportNotice) -> bytes:
             notice.sequence,
             notice.blackout_id,
             notice.segment_filename,
-            notice.locator_sha256,
+            notice.summary_sha256,
             notice.index_head_sha256,
             notice.previous_notice_sha256,
         )
@@ -112,7 +112,7 @@ def make_notice(**values: Any) -> ReportNotice:
     sequence = values.get("sequence")
     blackout_id = values.get("blackout_id")
     segment_filename = values.get("segment_filename")
-    locator_sha256 = values.get("locator_sha256")
+    summary_sha256 = values.get("summary_sha256")
     index_head_sha256 = values.get("index_head_sha256")
     previous_notice_sha256 = values.get("previous_notice_sha256")
     if not isinstance(blackout_id, str) or not isinstance(segment_filename, str):
@@ -121,14 +121,14 @@ def make_notice(**values: Any) -> ReportNotice:
     _validate_path_token(segment_filename)
     if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
         raise EventValidationError("report outbox sequence is invalid")
-    locator_sha256 = _validated_hash(locator_sha256)
+    summary_sha256 = _validated_hash(summary_sha256)
     index_head_sha256 = _validated_hash(index_head_sha256)
     previous_notice_sha256 = _validated_hash(previous_notice_sha256)
     value = _NoticeInput(
         sequence,
         blackout_id,
         segment_filename,
-        locator_sha256,
+        summary_sha256,
         index_head_sha256,
         previous_notice_sha256,
     )
@@ -138,7 +138,7 @@ def make_notice(**values: Any) -> ReportNotice:
         value.sequence,
         value.blackout_id,
         value.segment_filename,
-        value.locator_sha256,
+        value.summary_sha256,
         value.index_head_sha256,
         value.previous_notice_sha256,
         digest,
@@ -157,7 +157,7 @@ def _decode_notice(raw: bytes) -> ReportNotice:
         "sequence",
         "blackout_id",
         "segment_filename",
-        "locator_sha256",
+        "summary_sha256",
         "index_head_sha256",
         "previous_notice_sha256",
         "notice_sha256",
@@ -170,7 +170,7 @@ def _decode_notice(raw: bytes) -> ReportNotice:
             sequence=value["sequence"],
             blackout_id=value["blackout_id"],
             segment_filename=value["segment_filename"],
-            locator_sha256=value["locator_sha256"],
+            summary_sha256=value["summary_sha256"],
             index_head_sha256=value["index_head_sha256"],
             previous_notice_sha256=value["previous_notice_sha256"],
         )
@@ -203,7 +203,7 @@ class JsonlReportOutbox:
         *,
         blackout_id: str,
         segment_filename: str,
-        locator_sha256: str,
+        summary_sha256: str,
         index_head_sha256: str,
     ) -> ReportNotice:
         with self._lock:
@@ -212,7 +212,7 @@ class JsonlReportOutbox:
                 sequence=cursor.next_sequence,
                 blackout_id=blackout_id,
                 segment_filename=segment_filename,
-                locator_sha256=locator_sha256,
+                summary_sha256=summary_sha256,
                 index_head_sha256=index_head_sha256,
                 previous_notice_sha256=cursor.previous_notice_sha256,
             )
