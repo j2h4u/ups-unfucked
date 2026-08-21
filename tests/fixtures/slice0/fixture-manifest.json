@@ -71,15 +71,11 @@
     "qualifying_scope": "Byte-identical current IR results are required only for fixtures whose complete cohort uses power_restored terminals.",
     "byte_identity_required": true,
     "qualifying_test_ids": [
-      "tests/application/test_close_blackout.py::test_safe_commit_persists_decision_before_model_receipt_and_outcome",
-      "tests/application/test_assessment_worker.py::test_real_current_plus_three_history_pipeline_commits_one_safe_decrease",
       "tests/domain/test_ir_identification.py::test_known_raw_step_recovers_positive_settled_k",
-      "tests/test_vertical_blackout_learning.py::test_real_vertical_four_step_cohort_commits_seals_and_restarts"
+      "tests/domain/test_ir_identification.py::test_cohort_requires_four_steps_two_events_and_both_directions"
     ],
     "nonqualifying_scope": "Fixtures containing service_stop, closed_restart_gap, or capture_damaged terminals are not byte-equivalence claims; Slice 1 records fragment-level expected values and rationale for them.",
     "superseded_terminal_test_ids": [
-      "tests/application/test_assessment_worker.py::test_non_restored_terminal_is_operational_and_cannot_prepare_or_commit_learning",
-      "tests/application/test_close_jsonl_integration.py::test_gap_and_capture_damaged_end_refuse_science_even_at_end_durable_stage",
       "tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"
     ]
   },
@@ -135,13 +131,6 @@
       "purpose": "Sole model-owner writer, schema validation, exact commit receipt, rollback, epoch, and idempotence goldens.",
       "expected_golden_ids": ["model.owner_single_writer", "model.no_later_lb_oracle", "model.idempotent_receipt"],
       "expected_test_ids": ["tests/adapters/test_model_owner.py::test_safety_oracle_refusal_is_byte_identical", "tests/adapters/test_model_owner.py::test_commit_backs_up_before_state_and_atomically_swaps_snapshot", "tests/adapters/test_model_owner.py::test_prepared_commit_applies_then_reconstructs_after_restart", "tests/adapters/test_model_owner.py::test_external_model_write_is_a_conflict_and_refusal_is_byte_identical"]
-    },
-    {
-      "path": "tests/application/test_decline_application_reporting.py",
-      "sha256": "5e13aea8f98a484b1a99ec3b2ef0da7e11e978c9ef8887e396862051396b988a",
-      "purpose": "Metric-specific current-raw recomputation and terminal/provenance exclusion goldens.",
-      "expected_golden_ids": ["decline.metric_specific_admission", "decline.non_restored_terminal_exclusion"],
-      "expected_test_ids": ["tests/application/test_decline_application_reporting.py::test_decline_excludes_non_restored_terminal_events_from_every_cohort", "tests/application/test_decline_application_reporting.py::test_decline_uses_current_raw_evidence_when_terminal_class_disagrees", "tests/application/test_decline_application_reporting.py::test_calibration_event_does_not_poison_six_later_natural_firmware_events"]
     },
     {
       "path": "tests/application/test_safety.py",

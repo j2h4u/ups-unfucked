@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from src.application.report_reconstruction import canonical_report_bytes
 from src.application.storage_values import CaptureQueueHealth, StorageHealth
 from src.domain.reasons import DeclineReason
 from src.domain.values import DeclineVerdict, PlainLanguageReport, ReserveCohortStatus
@@ -21,7 +20,7 @@ class JournaldReportSink:
         self._on_report = on_report
 
     def publish(self, report: PlainLanguageReport) -> None:
-        lines = tuple(canonical_report_bytes(report).decode("utf-8").splitlines())
+        lines = tuple(" ".join(line.split())[:MAX_ALERT_TEXT] for line in report.lines[:8])
         logger.info(
             " | ".join(lines),
             extra={

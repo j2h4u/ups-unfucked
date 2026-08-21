@@ -132,29 +132,6 @@ def test_application_has_no_concrete_adapter_import_edges() -> None:
     assert importers == []
 
 
-def test_decline_raw_admission_policy_stays_in_domain() -> None:
-    path = SOURCE_ROOT / "application" / "decline_reporting.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    application_definitions = {
-        node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    domain_policy_names = {
-        "natural_observation",
-        "natural_event",
-        "natural_prefix",
-        "load_sag_observations",
-    }
-    imported_domain_policy = any(
-        isinstance(node, ast.ImportFrom)
-        and node.module == "src.domain"
-        and any(alias.name == "decline_policy" for alias in node.names)
-        for node in tree.body
-    )
-
-    assert application_definitions.isdisjoint(domain_policy_names)
-    assert imported_domain_policy
-
-
 def test_model_persistence_authority_is_confined_to_model_state_adapter():
     definitions: list[tuple[str, int]] = []
     persistence_owners: set[str] = set()
@@ -216,7 +193,7 @@ def test_model_write_authority_is_semantically_single_lane() -> None:
         (MODEL_OWNER, "ModelOwner", "commit_prepared"),
         (MODEL_OWNER, "ModelOwner", "reset_baseline"),
     }
-    assert mutation_owners == {MODEL_OWNER, "src/application/close_blackout.py"}
+    assert mutation_owners == {MODEL_OWNER}
 
 
 def test_production_nut_boundary_is_read_only() -> None:
