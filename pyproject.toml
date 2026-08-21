@@ -118,7 +118,7 @@ type = "forbidden"
 source_modules = [
     "src.adapters.jsonl_errors",
     "src.adapters.minimal_event_file",
-    "src.adapters.minimal_jsonl",
+    "src.adapters.telemetry_jsonl",
 ]
 forbidden_modules = [
     "src.adapters.model_owner",
@@ -145,7 +145,7 @@ source_modules = [
 forbidden_modules = [
     "src.adapters.jsonl_errors",
     "src.adapters.minimal_event_file",
-    "src.adapters.minimal_jsonl",
+    "src.adapters.telemetry_jsonl",
 ]
 [tool.pyright]
 include = ["src", "scripts"]

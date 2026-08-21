@@ -19,7 +19,7 @@ _FORBIDDEN_FIXTURE_TARGETS = {
     "forbidden_application_jsonl.py": "src/application/architecture_jsonl_violation.py",
     "forbidden_application_alerter.py": "src/application/architecture_alerter_violation.py",
     "forbidden_math_application.py": "src/battery_math/architecture_violation.py",
-    "forbidden_event_file_model_peer.py": "src/adapters/minimal_jsonl.py",
+    "forbidden_event_file_model_peer.py": "src/adapters/telemetry_jsonl.py",
 }
 
 
@@ -176,7 +176,7 @@ def test_import_linter_declares_nested_adapter_family_boundaries() -> None:
         for contract in contracts
         if contract["name"] == "Event-file adapter internals do not reach model or NUT adapters"
     )
-    assert "src.adapters.minimal_jsonl" in nested_sources
+    assert "src.adapters.telemetry_jsonl" in nested_sources
     assert "src.adapters.minimal_event_file" in nested_sources
 
 
