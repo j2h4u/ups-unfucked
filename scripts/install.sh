@@ -21,7 +21,7 @@ This script:
 2. Installs systemd service unit
 3. Configures NUT dummy-ups (idempotent)
 4. Switches upsmon to virtual UPS (idempotent)
-5. Installs MOTD scripts (install dir templated in for the bundled CLI)
+5. Installs the live NUT health MOTD script (UPS address templated)
 6. Enables and starts the service
 7. Verifies virtual UPS is readable by NUT
 
@@ -775,22 +775,20 @@ else
     log_info "No cyberpower entry found in $UPSMON_CONF (manual config may be needed)"
 fi
 
-# === MOTD SCRIPTS ===
-# All three modules read prepared data from `python3 -m src.motd_status`, so the
-# install dir (REPO_ROOT) is templated into each via @INSTALL_DIR@ at deploy time —
-# the same mechanism used for the systemd unit above. No jq dependency.
+# === MOTD SCRIPT ===
+# The live health module reads NUT directly; only its UPS address is templated
+# into the installed copy, using the same mechanism as the systemd unit above.
 
 MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 
 if [[ -d "$MOTD_DIR" ]]; then
-    for motd_name in 51-ups.sh 51-ups-health.sh; do
+    for motd_name in 51-ups-health.sh; do
         motd_src="$REPO_ROOT/scripts/motd/$motd_name"
         motd_dst="$MOTD_DIR/$motd_name"
         if [[ "$DRY_RUN" == "yes" ]]; then
             echo "[DRY-RUN] Would install (templated) $motd_src -> $motd_dst"
         else
-            sed -e "s|@INSTALL_DIR@|$REPO_ROOT|g" \
-                -e "s|@UPS_NUT_ADDRESS@|${UPS_VIRTUAL_NAME}@localhost|g" \
+            sed -e "s|@UPS_NUT_ADDRESS@|${UPS_VIRTUAL_NAME}@localhost|g" \
                 "$motd_src" > "$motd_dst"
             chmod +x "$motd_dst"
             log_ok "MOTD script installed to $motd_dst"
@@ -872,7 +870,7 @@ log_info ""
 log_info "Next steps:"
 log_info "  1. Verify UPS status: upsc ${UPS_VIRTUAL_NAME}@localhost | head"
 log_info "  2. View daemon logs: journalctl -u ups-battery-monitor -f"
-log_info "  3. Check MOTD: bash ~/scripts/motd/51-ups-health.sh"
+log_info "  3. Check live UPS MOTD: bash ~/scripts/motd/51-ups-health.sh"
 log_info ""
 log_info "Optional: Configure upsmon for automated shutdown (see CONTEXT.md)"
 log_info ""

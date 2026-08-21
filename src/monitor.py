@@ -78,8 +78,6 @@ class PollPublisher(Protocol):
 
     def publish(self, publication: SafetyPublication) -> None: ...
 
-    def record_error(self, error: BaseException) -> None: ...
-
     def record_channel_error(self, channel: str, error: BaseException | str) -> None: ...
 
     def clear_channel_error(self, channel: str) -> None: ...
@@ -386,7 +384,6 @@ def build_daemon(
     config: Config,
     *,
     virtual_ups_path: Path,
-    health_path: Path,
 ) -> MonitorDaemon:
     """Wire the safety loop and direct raw-telemetry side channel."""
     publication_age_s = telemetry_loss_grace_s(
@@ -406,7 +403,6 @@ def build_daemon(
     )
     exporter = VirtualUpsExporter(
         virtual_ups_path=virtual_ups_path,
-        health_path=health_path,
         max_publication_age_s=publication_age_s,
     )
     telemetry_writer = TelemetryJsonlWriter(config.model_dir)
@@ -438,11 +434,6 @@ def parse_args(args: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=Path("/run/ups-battery-monitor/ups-virtual.dev"),
     )
-    parser.add_argument(
-        "--health-path",
-        type=Path,
-        default=Path("/run/ups-battery-monitor/ups-health.json"),
-    )
     return parser.parse_args(args)
 
 
@@ -454,7 +445,6 @@ def main() -> None:
         daemon = build_daemon(
             config,
             virtual_ups_path=arguments.virtual_ups_path,
-            health_path=arguments.health_path,
         )
     except (ConfigError, OSError, RuntimeError, ValueError) as exc:
         logger.critical("Monitor startup failed: %s", exc, exc_info=True)

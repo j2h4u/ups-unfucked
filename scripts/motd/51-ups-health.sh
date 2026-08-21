@@ -7,7 +7,7 @@
 
 set -o pipefail
 
-# Source color definitions (should exist from 51-ups.sh or similar)
+# Source optional shared color definitions when present.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/colors.sh" ]]; then
     source "$SCRIPT_DIR/colors.sh"

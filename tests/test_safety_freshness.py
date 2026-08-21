@@ -76,7 +76,6 @@ def test_poll_loss_uses_grace_then_explicit_lb_fail_safe(tmp_path: Path) -> None
     now = [0.0]
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
         max_publication_age_s=2.0,
         monotonic_clock=lambda: now[0],
     )
@@ -141,7 +140,6 @@ def test_steady_state_loss_keeps_last_output_until_derived_deadline(
     now = [0.0]
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
         max_publication_age_s=30.0,
         monotonic_clock=lambda: now[0],
     )
@@ -165,7 +163,6 @@ def test_steady_state_recovery_before_derived_deadline_restores_fresh(
     now = [0.0]
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
         max_publication_age_s=30.0,
         monotonic_clock=lambda: now[0],
     )
@@ -237,7 +234,6 @@ def test_no_file_cold_start_repeated_loss_stays_unavailable_without_synthetic_lb
     output = tmp_path / "ups.dev"
     exporter = VirtualUpsExporter(
         virtual_ups_path=output,
-        health_path=tmp_path / "health.json",
         max_publication_age_s=2.0,
         monotonic_clock=lambda: now[0],
     )
@@ -268,7 +264,6 @@ def test_stale_previous_output_is_replaced_by_explicit_fail_safe(tmp_path: Path)
     os.utime(output, (old, old))
     exporter = VirtualUpsExporter(
         virtual_ups_path=output,
-        health_path=tmp_path / "health.json",
         max_publication_age_s=2.0,
         monotonic_clock=lambda: 0.0,
     )
@@ -285,7 +280,6 @@ def test_fresh_recovery_clears_only_publication_failure(tmp_path: Path) -> None:
     now = [0.0]
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
         max_publication_age_s=1.0,
         monotonic_clock=lambda: now[0],
     )
@@ -306,7 +300,6 @@ def test_failed_fail_safe_invalidates_old_output(tmp_path: Path, monkeypatch) ->
     now = [0.0]
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
         max_publication_age_s=1.0,
         monotonic_clock=lambda: now[0],
     )
@@ -326,7 +319,6 @@ def test_failed_fail_safe_invalidates_old_output(tmp_path: Path, monkeypatch) ->
 def test_blocked_publication_is_detected_by_deadline(tmp_path: Path, monkeypatch) -> None:
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
         publication_deadline_s=0.02,
     )
 
@@ -691,7 +683,6 @@ def test_blocked_output_invalidation_is_detected_by_deadline(
     output.write_text("ups.status: OL\n", encoding="utf-8")
     exporter = VirtualUpsExporter(
         virtual_ups_path=output,
-        health_path=tmp_path / "health.json",
         publication_deadline_s=0.02,
     )
 
@@ -814,7 +805,6 @@ def test_nested_deadline_restores_handler_after_inner_exception() -> None:
 def test_non_main_safety_publication_fails_closed_without_unbounded_write(tmp_path: Path) -> None:
     exporter = VirtualUpsExporter(
         virtual_ups_path=tmp_path / "ups.dev",
-        health_path=tmp_path / "health.json",
     )
     observation = _observation()
     snapshot = _snapshot()

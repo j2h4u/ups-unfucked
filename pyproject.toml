@@ -63,7 +63,7 @@ name = "Production dependencies point inward"
 type = "layers"
 layers = [
     "src.monitor : src.monitor_config",
-    "src.adapters : src.alerter : src.motd_status : src.nut_client : src.virtual_ups_exporter",
+    "src.adapters : src.nut_client : src.virtual_ups_exporter",
     "src.application",
     "src.domain",
     "src.ema_filter : src.battery_math",
@@ -75,8 +75,6 @@ type = "forbidden"
 source_modules = ["src.domain", "src.application"]
 forbidden_modules = [
     "src.adapters",
-    "src.alerter",
-    "src.motd_status",
     "src.nut_client",
     "src.virtual_ups_exporter",
 ]
@@ -92,21 +90,16 @@ forbidden_modules = [
     "src.monitor",
     "src.monitor_config",
     "src.virtual_ups_exporter",
-    "src.alerter",
 ]
 
 [[tool.importlinter.contracts]]
 name = "Top-level adapters do not import peer adapters"
 type = "forbidden"
 source_modules = [
-    "src.alerter",
-    "src.motd_status",
     "src.nut_client",
     "src.virtual_ups_exporter",
 ]
 forbidden_modules = [
-    "src.alerter",
-    "src.motd_status",
     "src.nut_client",
     "src.virtual_ups_exporter",
 ]

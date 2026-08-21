@@ -51,9 +51,6 @@ class _Publisher:
     def publish(self, publication: SafetyPublication) -> None:
         self.publications.append(publication)
 
-    def record_error(self, _error: BaseException) -> None:
-        return None
-
     def record_channel_error(self, channel: str, error: BaseException | str) -> None:
         self.channels.append((channel, error))
 
