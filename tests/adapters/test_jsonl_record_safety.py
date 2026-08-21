@@ -15,6 +15,7 @@ from src.adapters.jsonl_record_codec import (
     _StoredRecord,
     _validate_gap_link,
     _validate_segment_boundaries,
+    _validate_terminal_record_order,
 )
 from src.application.storage_values import EventStart
 
@@ -35,7 +36,7 @@ def _record(record_type: str, segment: str = "a" * 32, **payload: object) -> _St
         None,
         payload,
         "b" * 64,
-        b"{}\n",
+        canonical_line=b"{}\n",
     )
 
 
@@ -89,6 +90,54 @@ def test_segment_boundaries_accept_gap_and_recovered_damage_terminal() -> None:
 def test_segment_boundaries_reject_non_gap_continuation() -> None:
     with pytest.raises(EventCorruptionError, match="begin with a gap"):
         _validate_segment_boundaries(((_record("start"),), (_record("observation"),)))
+
+
+@pytest.mark.parametrize("record_type", ["start", "end", "outcome"])
+def test_terminal_records_reject_duplicate_terminal_types(record_type: str) -> None:
+    start = _record("start")
+    end = _record("end")
+    outcome = _record("outcome", disposition="recorded_only")
+    records = [start, end, outcome]
+    duplicate = _record(record_type, disposition="recorded_only")
+    records.insert(1, duplicate)
+
+    with pytest.raises(EventCorruptionError, match=f"multiple {record_type} records"):
+        _validate_terminal_record_order(tuple(records), end=end, outcome=outcome)
+
+
+def test_terminal_outcome_must_be_last_record() -> None:
+    start = _record("start")
+    end = _record("end")
+    outcome = _record("outcome", disposition="recorded_only")
+
+    with pytest.raises(EventCorruptionError, match="follow terminal outcome"):
+        _validate_terminal_record_order(
+            (start, end, outcome, _record("observation")),
+            end=end,
+            outcome=outcome,
+        )
+
+
+def test_non_rejected_outcome_requires_end_but_rejected_outcome_does_not() -> None:
+    start = _record("start")
+    non_rejected = _record("outcome", disposition="recorded_only")
+    with pytest.raises(EventCorruptionError, match="requires an end record"):
+        _validate_terminal_record_order((start, non_rejected), end=None, outcome=non_rejected)
+
+    rejected = _record("outcome", disposition="rejected")
+    _validate_terminal_record_order((start, rejected), end=None, outcome=rejected)
+
+
+def test_physical_records_cannot_follow_end() -> None:
+    start = _record("start")
+    end = _record("end")
+
+    with pytest.raises(EventCorruptionError, match="follow end"):
+        _validate_terminal_record_order(
+            (start, end, _record("observation")),
+            end=end,
+            outcome=None,
+        )
 
 
 @pytest.mark.parametrize(

@@ -38,6 +38,8 @@ class JsonlOutcomeResolver:
             self.stream._damaged_hashes(handle.blackout_id)
         )
         payload = _json_mapping(outcome.payload, "outcome payload")
+        if outcome.event_kind != handle.event_kind:
+            raise EventConflictError("terminal outcome event kind does not match event handle")
         if damaged:
             payload = self.stream._capture_damaged_payload(handle.blackout_id)
         boot_id = last.boot_id if damaged else outcome.boot_id
@@ -62,6 +64,7 @@ class JsonlOutcomeResolver:
                 monotonic_ns,
                 previous_hash,
                 payload,
+                handle.event_kind,
             )
         )
         line = canonical_record_line(envelope)

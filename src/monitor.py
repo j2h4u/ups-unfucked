@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from src.adapters.jsonl_event_store import JsonlEventStore
 from src.adapters.model_owner import ModelOwner
@@ -24,9 +24,16 @@ from src.application.capture_blackout import BlackoutCapture, RuntimeErrorBounda
 from src.application.capture_writer import CaptureCommandKind, CaptureWriter
 from src.application.degraded_startup import DeferredEventStore, EventStorageUnavailable
 from src.application.errors import StoragePortConflict, StoragePortError
+from src.application.history_query import HistoryReadPort
 from src.application.model_port import ModelSnapshotPort
-from src.application.ports import CloseablePort, PhysicalTelemetryPort
+from src.application.ports import (
+    AssessmentQueryEventStorePort,
+    CloseablePort,
+    PhysicalTelemetryPort,
+    StartupRecoveryEventStorePort,
+)
 from src.application.publication_freshness import telemetry_loss_grace_s
+from src.application.recharge_capture import RechargeCapture
 from src.application.reporting_scheduler import (
     ReportingScheduler,
     ReportingSchedulerDependencies,
@@ -42,7 +49,7 @@ from src.application.safety import (
 )
 from src.application.safety_oracle import no_later_lb_oracle
 from src.application.startup_recovery import StartupRecovery, recover_startup_metadata
-from src.application.storage_values import RecoveredCapture
+from src.application.storage_values import EventProjection, EventRef, RecoveredCapture
 from src.domain.lifecycle import classify_physical_observation, is_capture_candidate
 from src.domain.readiness import ReadinessState, initial_readiness_state, update_readiness
 from src.domain.values import (
@@ -72,6 +79,8 @@ logger = logging.getLogger("ups-battery-monitor")
 
 STICKY_RECOVERY_DEADLINE_SEC = 5.0
 SHUTDOWN_CAPTURE_FLUSH_TIMEOUT_SEC = 5.0
+RECONCILIATION_START_UTC = "0001-01-01T00:00:00Z"
+RECONCILIATION_END_UTC = "9999-12-31T23:59:59.999999Z"
 
 
 class InvalidObservationBoundary(RuntimeErrorBoundary):
@@ -142,6 +151,7 @@ class RuntimeDependencies:
     coordinator: BackgroundCoordinator
     store: CloseablePort
     recovered_capture: RecoveredCapture | None = None
+    recharge: RechargeCapture | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +184,7 @@ class MonitorDaemon:
         self._coordinator = dependencies.coordinator
         self._store = dependencies.store
         self._recovered_capture = dependencies.recovered_capture
+        self._recharge = dependencies.recharge
         self._ema = ema_filter or EMAFilter(
             window_sec=config.ema_window_sec,
             poll_interval_sec=config.polling_interval,
@@ -196,6 +207,7 @@ class MonitorDaemon:
         self._poll_sequence = 0
         self._consecutive_errors = 0
         self._last_observation: PhysicalObservation | None = None
+        self._restart_reconciliation_done = False
 
     def start(self) -> None:
         if self._started:
@@ -259,6 +271,7 @@ class MonitorDaemon:
         self._latch = calculation.next_latch
         self._readiness, readiness = update_readiness(self._readiness, observation)
         self._coordinator.after_first_safety_publication()
+        self._capture_recharge(observation, physical_kind)
         capture_accepted = self._capture_after_publication(
             observation,
             snapshot,
@@ -275,6 +288,32 @@ class MonitorDaemon:
             )
             self.request_stop()
         return PollResult(observation, snapshot, calculation, publication, capture_accepted)
+
+    def _capture_recharge(
+        self, observation: PhysicalObservation, physical_kind: BlackoutKind
+    ) -> None:
+        recharge = self._recharge
+        if recharge is None or not self._coordinator.capture_enabled:
+            return
+        if physical_kind == BlackoutKind.ONLINE:
+            restored_blackout_id = recharge.consume_pending_restoration()
+            if restored_blackout_id is not None:
+                accepted = recharge.begin(observation, preceding_blackout_id=restored_blackout_id)
+                if accepted:
+                    recharge.acknowledge_pending_restoration(restored_blackout_id)
+                    self._restart_reconciliation_done = True
+                return
+            if not self._restart_reconciliation_done:
+                projections = _restart_recharge_projections(self._store)
+                if recharge.reconcile_restart(observation, projections):
+                    self._restart_reconciliation_done = True
+            recharge.observe(observation)
+            return
+        if is_capture_candidate(observation):
+            recharge.supersede_by_blackout(
+                observation,
+                blackout_id=self._capture.active_blackout_id,
+            )
 
     def _safety_kind(self, physical_kind: BlackoutKind) -> BlackoutKind:
         safety_kind = conservative_safety_kind(physical_kind)
@@ -471,6 +510,7 @@ class MonitorDaemon:
         steps = (
             ("Background coordinator", self._coordinator.stop),
             ("Shutdown capture boundary", self._shutdown_capture_boundary),
+            ("Shutdown recharge boundary", self._shutdown_recharge_boundary),
             ("Capture writer", lambda: self._writer.stop(drain=True)),
             ("Event store", self._store.close),
             ("Model owner", self._close_model_owner),
@@ -479,6 +519,16 @@ class MonitorDaemon:
         for label, action in steps:
             first_error = self._attempt_shutdown_step(label, action, first_error)
         return first_error
+
+    def _shutdown_recharge_boundary(self) -> None:
+        if self._recharge is None or self._last_observation is None:
+            return
+        if self._recharge.service_stop(self._last_observation):
+            return
+        if self._writer.wait_for_lifecycle_capacity(SHUTDOWN_CAPTURE_FLUSH_TIMEOUT_SEC):
+            if self._recharge.service_stop(self._last_observation):
+                return
+        raise RuntimeError("shutdown recharge boundary could not be queued")
 
     def _attempt_shutdown_step(
         self,
@@ -556,6 +606,7 @@ def build_daemon(
         "scientific event storage deferred until first safety publication"
     )
     deferred_store = DeferredEventStore(startup_error)
+    recharge = RechargeCapture(deferred_store, writer)
 
     def load_store() -> StartupRecovery:
         try:
@@ -577,6 +628,10 @@ def build_daemon(
             deferred_store.degrade(exc)
             candidate.close()
             raise
+        recovered = startup.recovered_capture
+        if recovered is not None and recovered.event_kind == "recharge":
+            recharge.recover(recovered)
+            startup = StartupRecovery(None, startup.pending_processing)
         deferred_store.activate(candidate)
         return startup
 
@@ -620,7 +675,7 @@ def build_daemon(
                 on_startup_recovered=exporter.clear_startup_degraded,
             ),
         )
-        capture = BlackoutCapture(store, writer)
+        capture = BlackoutCapture(store, writer, on_power_restored=recharge.on_power_restored)
         return MonitorDaemon(
             config,
             RuntimeDependencies(
@@ -631,6 +686,7 @@ def build_daemon(
                 writer=writer,
                 coordinator=coordinator,
                 store=store,
+                recharge=recharge,
             ),
         )
     except BaseException:
@@ -685,6 +741,32 @@ def _validate_observation(observation: PhysicalObservation) -> None:
         raise RuntimeErrorBoundary("battery voltage is missing or invalid")
     if load is None or not math.isfinite(load) or not 0.0 <= load <= 100.0:
         raise RuntimeErrorBoundary("UPS load is missing or invalid")
+
+
+def _restart_recharge_projections(store: CloseablePort) -> tuple[EventProjection, ...]:
+    """Read sealed and bounded pending ordinary events for restart handoff."""
+    history = cast(HistoryReadPort, store)
+    projections = list(
+        history.sealed_event_projections(
+            RECONCILIATION_START_UTC,
+            RECONCILIATION_END_UTC,
+            event_kind="blackout",
+        )
+    )
+    projections.extend(
+        history.sealed_event_projections(
+            RECONCILIATION_START_UTC,
+            RECONCILIATION_END_UTC,
+            event_kind="recharge",
+        )
+    )
+    startup = cast(StartupRecoveryEventStorePort, store)
+    query = cast(AssessmentQueryEventStorePort, store)
+    for pending in startup.work_registry().pending_processing:
+        projection = query.project(EventRef(pending.blackout_id, pending.final_path_token))
+        if projection.event_kind in {"blackout", "recharge"}:
+            projections.append(projection)
+    return tuple(projections)
 
 
 if __name__ == "__main__":

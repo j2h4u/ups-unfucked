@@ -17,11 +17,27 @@ from src.adapters.jsonl_errors import (
 )
 from src.adapters.jsonl_event_capacity import (
     JsonlEventCapacity,
+)
+from src.adapters.jsonl_event_read_codec import (
     _EventCapacityExceeded,
+)
+from src.adapters.jsonl_event_read_codec import (
+    damaged_hashes as read_damaged_hashes,
+)
+from src.adapters.jsonl_event_read_codec import (
+    last_record as read_last_record,
+)
+from src.adapters.jsonl_event_read_codec import (
+    project_event as read_project_event,
+)
+from src.adapters.jsonl_event_read_codec import (
+    read_all_records as read_all_event_records,
+)
+from src.adapters.jsonl_event_read_codec import (
+    trusted_prefix as read_trusted_prefix,
 )
 from src.adapters.jsonl_filesystem import JsonlFilesystem, _file_sha256, _read_exact_fd
 from src.adapters.jsonl_record_codec import (
-    DERIVED_RECORD_TYPES,
     MAX_DAMAGED_HASHES,
     MAX_LINE_BYTES,
     MAX_SEGMENT_REFS,
@@ -29,20 +45,14 @@ from src.adapters.jsonl_record_codec import (
     JsonValue,
     _bounded_error,
     _decode_record_line,
-    _deduplicate_and_validate_chain,
     _EnvelopeParts,
-    _first_record,
-    _flatten_records,
     _is_sha256,
     _parse_utc,
-    _projected_record,
-    _records_of_type,
     _StoredRecord,
     _validate_record_without_hash,
-    _validate_segmented_record_order,
     canonical_record_line,
 )
-from src.adapters.jsonl_summary_codec import _bounded_tail_lines, _iter_complete_lines
+from src.adapters.jsonl_summary_codec import _bounded_tail_lines
 
 if TYPE_CHECKING:
     from src.adapters.jsonl_work_registry import JsonlWorkRegistry
@@ -52,7 +62,6 @@ from src.application.storage_values import (
     EventProjection,
     EventRef,
     ProcessingRef,
-    ProjectedEventRecord,
     RecoveredCapture,
     RecoveredObservation,
     SealedEventRef,
@@ -146,13 +155,14 @@ class JsonlEventStream:
         self._capacity.reserve_segment_manifest(path_token, damaged_sha256)
 
     def _damaged_hashes(self, blackout_id: str) -> tuple[str, ...]:
-        return self._capacity.damaged_hashes(blackout_id)
+        return read_damaged_hashes(self._events_path, blackout_id)
 
     def _record_envelope(self, parts: _EnvelopeParts) -> dict[str, Any]:
         envelope = {
             "schema_version": SCHEMA_VERSION,
             "record_type": parts.record_type,
             "provenance": parts.provenance,
+            "event_kind": parts.event_kind,
             "blackout_id": parts.blackout_id,
             "segment_id": parts.segment_id,
             "seq": parts.seq,
@@ -213,45 +223,17 @@ class JsonlEventStream:
             os.close(fd)
 
     def _last_record(self, path: Path) -> _StoredRecord | None:
-        info = path.stat()
-        if info.st_size == 0:
-            return None
-        lines = _bounded_tail_lines(path, 1, MAX_LINE_BYTES)
-        if not lines:
-            return None
-        return _decode_record_line(lines[-1])
+        return read_last_record(path)
 
     def _read_all_records(self, path: Path) -> tuple[_StoredRecord, ...]:
-        self._capacity.validate_before_full_read(path)
-        records: list[_StoredRecord] = []
-        for line in _iter_complete_lines(path, MAX_LINE_BYTES):
-            records.append(_decode_record_line(line))
-        return tuple(records)
+        return read_all_event_records(self._events_path, path)
 
     def _trusted_prefix(
         self,
         path: Path,
         blackout_id: str | None = None,
     ) -> tuple[_StoredRecord, ...]:
-        records: tuple[_StoredRecord, ...] = ()
-        try:
-            self._capacity.validate_before_full_read(path, blackout_id)
-            with path.open("rb") as stream:
-                for line in stream:
-                    if not line.endswith(b"\n") or len(line) > MAX_LINE_BYTES:
-                        break
-                    try:
-                        candidate = _decode_record_line(line)
-                        records = _deduplicate_and_validate_chain((*records, candidate))
-                    except _EventCapacityExceeded:
-                        raise
-                    except (EventConflictError, EventCorruptionError):
-                        break
-        except OSError as exc:
-            raise EventPersistenceError(
-                f"cannot read trusted prefix: {_bounded_error(exc)}"
-            ) from exc
-        return records
+        return read_trusted_prefix(self._events_path, path, blackout_id)
 
     def _resolve_append_tail(
         self,
@@ -299,9 +281,13 @@ class JsonlEventStream:
         raw_observation = physical.payload.get("observation")
         payload = (
             physical.payload
-            if physical.record_type == "observation" or not isinstance(raw_observation, Mapping)
+            if physical.event_kind == "recharge"
+            or physical.record_type == "observation"
+            or not isinstance(raw_observation, Mapping)
             else raw_observation
         )
+        start = projection.start
+        first = start or physical
         return RecoveredCapture(
             handle,
             physical.boot_id,
@@ -311,29 +297,13 @@ class JsonlEventStream:
                 physical.monotonic_ns,
                 payload,
             ),
+            RecoveredObservation(
+                first.boot_id,
+                first.wall_time_utc,
+                first.monotonic_ns,
+                first.payload,
+            ),
         )
-
-    def _trusted_segment_prefixes(
-        self,
-        expected_blackout_id: str,
-    ) -> tuple[tuple[_StoredRecord, ...], ...]:
-        sources = self._capacity.segment_sources(expected_blackout_id)
-        if not sources:
-            raise EventCorruptionError("event has no discoverable segment")
-        self._capacity.event_total_bytes(expected_blackout_id)
-        prefixes: list[tuple[_StoredRecord, ...]] = []
-        for path, is_corrupt in sources:
-            if is_corrupt:
-                prefix = self._trusted_prefix(path, expected_blackout_id)
-            else:
-                self._repair_torn_tail(path)
-                prefix = _deduplicate_and_validate_chain(self._read_all_records(path))
-            if any(record.blackout_id != expected_blackout_id for record in prefix):
-                raise EventConflictError("event reference blackout ID does not match its records")
-            prefixes.append(prefix)
-        if not any(prefixes):
-            raise EventCorruptionError("event contains no trusted record")
-        return tuple(prefixes)
 
     def _continue_capture_after_capacity(
         self,
@@ -353,30 +323,6 @@ class JsonlEventStream:
             reason="event_size_limit",
         )
         return continued
-
-    def _build_projection(
-        self,
-        blackout_id: str,
-        prefixes: tuple[tuple[ProjectedEventRecord, ...], ...],
-        records: tuple[ProjectedEventRecord, ...],
-    ) -> EventProjection:
-        damaged = self._damaged_hashes(blackout_id)
-        return EventProjection(
-            _first_record(records, "start"),
-            _records_of_type(records, "observation"),
-            _records_of_type(records, "gap"),
-            _first_record(records, "end"),
-            tuple(
-                record
-                for record in records
-                if record.record_type in DERIVED_RECORD_TYPES and record.record_type != "outcome"
-            ),
-            _first_record(records, "outcome"),
-            prefixes,
-            damaged[:MAX_DAMAGED_HASHES],
-            max(0, len(damaged) - MAX_DAMAGED_HASHES),
-            records,
-        )
 
     def _continue_capture_after_corruption(
         self,
@@ -475,6 +421,7 @@ class JsonlEventStream:
                     "previous_segment_file_sha256": damaged_sha256,
                     "previous_final_record_sha256": prefix[-1].record_sha256 if prefix else None,
                 },
+                prefix[-1].event_kind if prefix else "blackout",
             )
         )
         line = canonical_record_line(envelope)
@@ -486,7 +433,14 @@ class JsonlEventStream:
         finally:
             os.close(fd)
         self._filesystem.sync_storage_directory(self._events_path)
-        return EventHandle(blackout_id, segment_id, path_token, 1, gap.record_sha256)
+        return EventHandle(
+            blackout_id,
+            segment_id,
+            path_token,
+            1,
+            gap.record_sha256,
+            gap.event_kind,
+        )
 
     def _create_capture_damaged_terminal_segment(
         self,
@@ -517,6 +471,7 @@ class JsonlEventStream:
                 self._monotonic_clock_ns(),
                 None,
                 self._capture_damaged_payload(blackout_id),
+                prefix[-1].event_kind,
             )
         )
         line = canonical_record_line(envelope)
@@ -528,7 +483,14 @@ class JsonlEventStream:
         finally:
             os.close(fd)
         self._filesystem.sync_storage_directory(self._events_path)
-        return EventHandle(blackout_id, segment_id, path_token, 1, outcome.record_sha256)
+        return EventHandle(
+            blackout_id,
+            segment_id,
+            path_token,
+            1,
+            outcome.record_sha256,
+            outcome.event_kind,
+        )
 
     def _capture_damaged_payload(self, blackout_id: str) -> Mapping[str, JsonValue]:
         damaged = self._damaged_hashes(blackout_id)
@@ -566,23 +528,14 @@ class JsonlEventStream:
         """Project all trusted segment prefixes; never consult the summary index."""
         expected_blackout_id = ref.blackout_id
         sources = self._capacity.segment_sources(expected_blackout_id)
-        prefixes = self._trusted_segment_prefixes(expected_blackout_id)
-        stored_records = _flatten_records(prefixes)
-        start = _first_record(stored_records, "start")
-        end = _first_record(stored_records, "end")
-        outcome = _first_record(stored_records, "outcome")
-        _validate_segmented_record_order(
-            prefixes,
-            start=start,
-            end=end,
-            outcome=outcome,
-            segment_file_hashes=tuple(_file_sha256(path) for path, _ in sources),
+        for path, is_corrupt in sources:
+            if not is_corrupt:
+                self._repair_torn_tail(path)
+        return read_project_event(
+            self._events_path,
+            expected_blackout_id,
+            reserved_paths=self._capacity._reserved_paths(),
         )
-        public_prefixes = tuple(
-            tuple(_projected_record(record) for record in prefix) for prefix in prefixes
-        )
-        public_records = _flatten_records(public_prefixes)
-        return self._build_projection(expected_blackout_id, public_prefixes, public_records)
 
     def _recover_corrupt_capture(
         self,
