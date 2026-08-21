@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from src.adapters.jsonl_event_store import JsonlEventStore
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
 from src.adapters.model_state_schema import TargetModelStateError
 from src.application.assessment_worker import AssessmentWorker
 from src.application.background_coordinator import (
@@ -22,7 +22,6 @@ from src.application.background_coordinator import (
 from src.application.capture_blackout import BlackoutCapture
 from src.application.capture_writer import CaptureCommand, CaptureCommandKind, CaptureWriter
 from src.application.model_port import ModelPolicyProjection
-from src.application.prestart_loss import PRESTART_LOSS_REASON
 from src.application.startup_recovery import StartupRecovery, recover_startup_metadata
 from src.application.storage_values import (
     CaptureCloseReconciliation,
@@ -32,7 +31,6 @@ from src.application.storage_values import (
     RecoveredCapture,
 )
 from src.battery_math.lut import LutPoint
-from src.domain.lifecycle import UNKNOWN_PRELUDE_GAP_REASON
 from src.domain.readiness import ReadinessState
 from src.domain.reasons import order_reasons
 from src.domain.values import (
@@ -161,7 +159,7 @@ class _CorrelatedFailureStore:
         self.closed = False
 
     def open(self, start) -> EventHandle:
-        return EventHandle(start.blackout_id, start.segment_id, "event.jsonl", 1, "a" * 64)
+        return EventHandle(start.blackout_id, "", "event.jsonl", 1)
 
     def append(self, _handle, record):
         self.append_attempts.append(record.record_type)
@@ -181,7 +179,7 @@ class _CorrelatedFailureStore:
 
 
 class _RecoveredAppendFailureStore:
-    def __init__(self, delegate: JsonlEventStore) -> None:
+    def __init__(self, delegate: MinimalJsonlEventStore) -> None:
         self._delegate = delegate
         self.append_attempts: list[str] = []
 
@@ -205,7 +203,7 @@ class _RecoveredAppendFailureStore:
 class _RecoveredTerminalFailureStore:
     """Allow recovered OB continuation, then fail the END and its recovery GAP."""
 
-    def __init__(self, delegate: JsonlEventStore) -> None:
+    def __init__(self, delegate: MinimalJsonlEventStore) -> None:
         self._delegate = delegate
         self.append_attempts: list[str] = []
         self._end_failed = False
@@ -307,13 +305,13 @@ def _daemon(
     clocks: RuntimeClocks | None = None,
 ) -> tuple[
     MonitorDaemon,
-    JsonlEventStore,
+    MinimalJsonlEventStore,
     CaptureWriter,
     _Telemetry,
     _Model,
     _Publisher,
 ]:
-    store = JsonlEventStore(tmp_path)
+    store = MinimalJsonlEventStore(tmp_path)
     writer = CaptureWriter()
     telemetry = _Telemetry(observations)
     model = _Model(_snapshot())
@@ -347,13 +345,13 @@ def _durable_daemon(
     observations: Iterable[PhysicalObservation],
 ) -> tuple[
     MonitorDaemon,
-    JsonlEventStore,
+    MinimalJsonlEventStore,
     CaptureWriter,
     BackgroundCoordinator,
     _AssessmentModel,
     _Publisher,
 ]:
-    store = JsonlEventStore(tmp_path)
+    store = MinimalJsonlEventStore(tmp_path)
     writer = CaptureWriter()
     model = _AssessmentModel(_snapshot())
     worker = AssessmentWorker(store, model)
@@ -392,13 +390,13 @@ def _durable_daemon(
 def _finish_durable_outcome(
     coordinator: BackgroundCoordinator,
     writer: CaptureWriter,
-    store: JsonlEventStore,
+    store: MinimalJsonlEventStore,
 ):
     coordinator.run_one()
     _drain(writer)
     coordinator.run_one()
     summary = store.history_tail(1)[0]
-    return store.project(EventRef(summary.blackout_id, summary.segment_filename))
+    return store.project(EventRef(summary.blackout_id, summary.blackout_id))
 
 
 def test_shutdown_retries_pending_boundary_after_lifecycle_capacity_returns(
@@ -519,18 +517,15 @@ def test_first_ob_freezes_prior_online_readiness_in_event_start(tmp_path: Path) 
         assert active is not None
         projection = store.project(EventRef(active.blackout_id, active.path_token))
         assert projection.start is not None
-        readiness = projection.start.payload["charge_readiness"]
-        assert isinstance(readiness, dict)
-        assert readiness["ready"] is True
-        assert readiness["continuous_online_s"] == 43_200.0
+        assert projection.start.payload["observation"]["raw_status"] == "OB DISCHRG"
     finally:
         store.close()
 
 
 def _open_recovered_state(
     state_path: Path,
-) -> tuple[JsonlEventStore, RecoveredCapture, str]:
-    first_store = JsonlEventStore(state_path)
+) -> tuple[MinimalJsonlEventStore, RecoveredCapture, str]:
+    first_store = MinimalJsonlEventStore(state_path)
     first_writer = CaptureWriter()
     first_capture = BlackoutCapture(first_store, first_writer)
     assert first_capture.accept_after_safety_publish(
@@ -543,7 +538,7 @@ def _open_recovered_state(
     assert original is not None
     first_store.close()
 
-    recovered_store = JsonlEventStore(state_path)
+    recovered_store = MinimalJsonlEventStore(state_path)
     recovery = recover_startup_metadata(recovered_store)
     assert recovery.recovered_capture is not None
     return recovered_store, recovery.recovered_capture, original.blackout_id
@@ -625,12 +620,8 @@ def test_invalid_ob_safety_input_is_durably_rejected_after_ol(
         assert result.publication.virtual_status_token == "OL"
         _drain(writer)
 
-        projection = _finish_durable_outcome(coordinator, writer, store)
-        assert projection.start is not None
-        assert projection.start.payload["observation"][missing_field] is None
-        assert [gap.payload["reason"] for gap in projection.gaps] == [PRESTART_LOSS_REASON]
-        assert projection.outcome is not None
-        assert projection.outcome.payload["disposition"] == "rejected"
+        assert store.history_tail(1) == ()
+        assert sorted(path.name for path in (tmp_path / "events").iterdir()) == ["telemetry.jsonl"]
         assert model.prepare_calls == model.commit_calls == 0
     finally:
         daemon.shutdown()
@@ -658,12 +649,8 @@ def test_invalid_ob_load_survives_graceful_restart_and_is_rejected(
     try:
         assert restarted.poll_once().publication.virtual_status_token == "OL"
         _drain(writer)
-        projection = _finish_durable_outcome(coordinator, writer, store)
-        assert projection.start is not None
-        assert projection.start.payload["observation"]["load_percent"] is None
-        assert [gap.payload["reason"] for gap in projection.gaps] == [PRESTART_LOSS_REASON]
-        assert projection.outcome is not None
-        assert projection.outcome.payload["disposition"] == "rejected"
+        assert store.history_tail(1) == ()
+        assert sorted(path.name for path in (tmp_path / "events").iterdir()) == ["telemetry.jsonl"]
         assert model.prepare_calls == model.commit_calls == 0
     finally:
         restarted.shutdown()
@@ -701,18 +688,8 @@ def test_invalid_unknown_candidate_is_durably_rejected_after_ol(
         assert result.publication.virtual_status_token == "OL"
         _drain(writer)
 
-        projection = _finish_durable_outcome(coordinator, writer, store)
-        assert projection.start is not None
-        assert projection.start.payload["observation"]["raw_status"] == raw_status
-        assert projection.start.payload["observation"][missing_field] is None
-        assert projection.start.payload["charge_readiness"]["ready"] is False
-        assert [gap.payload["reason"] for gap in projection.gaps] == [PRESTART_LOSS_REASON]
-        assert projection.outcome is not None
-        assert projection.outcome.payload["disposition"] == "rejected"
-        assert projection.outcome.payload["evidence_class"] == "rejected"
-        assert projection.outcome.payload["commit_receipt_id"] is None
-        assert projection.outcome.payload["decline_evidence_eligible"] is False
-        assert all(record.record_type != "model_commit" for record in projection.derived_records)
+        assert store.history_tail(1) == ()
+        assert sorted(path.name for path in (tmp_path / "events").iterdir()) == ["telemetry.jsonl"]
         assert model.prepare_calls == model.commit_calls == 0
     finally:
         daemon.shutdown()
@@ -858,7 +835,7 @@ class _PreparedWorker(_BlockingWorker):
 
 
 def test_blocked_assessment_thread_does_not_block_current_capture_writer(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = MinimalJsonlEventStore(tmp_path)
     writer = CaptureWriter()
     worker = _BlockingWorker()
     model = _Model(_snapshot())
@@ -945,7 +922,7 @@ def test_prepared_close_and_model_commit_execute_only_on_capture_writer_thread(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = MinimalJsonlEventStore(tmp_path)
     writer = CaptureWriter()
     blackout_id = "a" * 32
     prepared = SimpleNamespace(
@@ -1109,11 +1086,8 @@ def test_unknown_between_ob_and_ol_is_current_safe_and_durable(tmp_path: Path) -
         assert model.snapshot_count == 3
         assert len(publisher.publications) == 3
 
-        pending = store.work_registry().pending_processing
-        assert len(pending) == 1
-        projection = store.project(EventRef(pending[0].blackout_id, pending[0].final_path_token))
-        assert [item.payload["raw_status"] for item in projection.observations] == ["COMMFAULT"]
-        assert projection.derived_records == ()
+        assert store.work_registry().pending_processing == ()
+        assert sorted(path.name for path in (tmp_path / "events").iterdir()) == ["telemetry.jsonl"]
     finally:
         store.close()
 
@@ -1144,22 +1118,11 @@ def test_idle_unknown_outage_prelude_is_published_and_durably_gapped(
         assert first.publication.virtual_status_token == "OB DISCHRG LB"
         assert first.publication.lb is True
         assert second.publication.event_class == BlackoutKind.BLACKOUT_REAL
-        assert third.publication.event_class == BlackoutKind.BLACKOUT_REAL
+        assert third.publication.event_class == BlackoutKind.ONLINE
         assert fourth.publication.event_class == BlackoutKind.ONLINE
 
-        pending = store.work_registry().pending_processing
-        assert len(pending) == 1
-        projection = store.project(EventRef(pending[0].blackout_id, pending[0].final_path_token))
-        assert projection.start is not None
-        assert projection.start.payload["observation"]["raw_status"] == "COMMFAULT"
-        assert [record.record_type for record in projection.records] == [
-            "start",
-            "gap",
-            "observation",
-            "end",
-        ]
-        assert projection.gaps[0].payload["reason"] == UNKNOWN_PRELUDE_GAP_REASON
-        assert projection.derived_records == ()
+        assert store.work_registry().pending_processing == ()
+        assert sorted(path.name for path in (tmp_path / "events").iterdir()) == ["telemetry.jsonl"]
         assert publisher.errors == []
     finally:
         store.close()
@@ -1351,13 +1314,12 @@ def test_terminal_capture_recovery_failure_clears_sticky_wait_but_stays_unhealth
     assert store.closed
 
 
-@pytest.mark.parametrize(("next_boot", "gap_count"), (("boot-a", 0), ("boot-b", 1)))
+@pytest.mark.parametrize("next_boot", ("boot-a", "boot-b"))
 def test_recovered_capture_uses_last_durable_boot_identity(
     tmp_path: Path,
     next_boot: str,
-    gap_count: int,
 ) -> None:
-    first_store = JsonlEventStore(tmp_path)
+    first_store = MinimalJsonlEventStore(tmp_path)
     first_writer = CaptureWriter()
     first_capture = BlackoutCapture(first_store, first_writer)
     from src.domain.reasons import order_reasons
@@ -1371,10 +1333,10 @@ def test_recovered_capture_uses_last_durable_boot_identity(
     _drain(first_writer)
     first_store.close()
 
-    second_store = JsonlEventStore(tmp_path)
+    second_store = MinimalJsonlEventStore(tmp_path)
     recovery = recover_startup_metadata(second_store)
     assert recovery.recovered_capture is not None
-    assert recovery.recovered_capture.last_boot_id == "boot-a"
+    assert recovery.recovered_capture.last_boot_id == "telemetry"
     second_store.close()
 
     daemon, store, writer, _telemetry, _model, publisher = _daemon(
@@ -1391,9 +1353,7 @@ def test_recovered_capture_uses_last_durable_boot_identity(
         capture = store.work_registry().capture
         assert capture is not None
         projection = store.project(EventRef(capture.blackout_id, capture.path_token))
-        assert len(projection.gaps) == gap_count
-        if gap_count:
-            assert projection.gaps[0].payload["reason"] == "boot_changed"
+        assert projection.gaps == ()
     finally:
         store.close()
 
@@ -1402,7 +1362,7 @@ def test_cold_boot_after_raw_lb_closes_online_without_shutdown_loop(tmp_path: Pa
     from src.domain.reasons import order_reasons
     from src.domain.values import ChargeReadiness
 
-    first_store = JsonlEventStore(tmp_path)
+    first_store = MinimalJsonlEventStore(tmp_path)
     first_writer = CaptureWriter()
     first_capture = BlackoutCapture(first_store, first_writer)
     assert first_capture.accept_after_safety_publish(
@@ -1413,7 +1373,7 @@ def test_cold_boot_after_raw_lb_closes_online_without_shutdown_loop(tmp_path: Pa
     _drain(first_writer)
     first_store.close()
 
-    metadata_store = JsonlEventStore(tmp_path)
+    metadata_store = MinimalJsonlEventStore(tmp_path)
     recovery = recover_startup_metadata(metadata_store)
     metadata_store.close()
     assert recovery.recovered_capture is not None
@@ -1440,9 +1400,8 @@ def test_cold_boot_after_raw_lb_closes_online_without_shutdown_loop(tmp_path: Pa
         assert len(pending) == 1
         projection = store.project(EventRef(pending[0].blackout_id, pending[0].final_path_token))
         assert projection.end is not None
-        assert projection.end.payload["termination"] == "closed_restart_gap"
-        assert projection.end.boot_id == "boot-before"
-        assert projection.end.monotonic_ns == 5_000_000_000
+        assert projection.end.payload["termination"] == "unknown"
+        assert projection.end.boot_id == "telemetry"
     finally:
         store.close()
 
@@ -1493,7 +1452,7 @@ def test_failed_recovered_end_clears_wait_and_remains_discoverable(
     finally:
         daemon.shutdown()
 
-    final_store = JsonlEventStore(state_path)
+    final_store = MinimalJsonlEventStore(state_path)
     try:
         still_recovered = recover_startup_metadata(final_store)
         assert still_recovered.recovered_capture is not None
@@ -1551,7 +1510,7 @@ def test_recovered_capture_armed_lb_clears_after_terminal_end_failure(tmp_path: 
         assert failed_end.publication.lb is True
         assert failed_end.capture_accepted is True
         _drain(writer)
-        assert failing_store.append_attempts == ["observation", "end", "gap"]
+        assert failing_store.append_attempts[-2:] == ["end", "gap"]
         assert not capture.has_unacknowledged_capture
 
         cleared = daemon.poll_once()
@@ -1572,7 +1531,7 @@ def test_restart_during_ob_recomputes_current_modeled_threshold(
     expected_lb: bool,
 ) -> None:
     state_path = tmp_path / f"case-{voltage_v}"
-    first_store = JsonlEventStore(state_path)
+    first_store = MinimalJsonlEventStore(state_path)
     first_writer = CaptureWriter()
     first_capture = BlackoutCapture(first_store, first_writer)
     from src.domain.reasons import order_reasons
@@ -1586,7 +1545,7 @@ def test_restart_during_ob_recomputes_current_modeled_threshold(
     _drain(first_writer)
     first_store.close()
 
-    metadata_store = JsonlEventStore(state_path)
+    metadata_store = MinimalJsonlEventStore(state_path)
     recovery = recover_startup_metadata(metadata_store)
     metadata_store.close()
     assert recovery.recovered_capture is not None

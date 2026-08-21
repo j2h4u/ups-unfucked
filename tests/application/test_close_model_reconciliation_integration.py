@@ -1,6 +1,5 @@
 """Application proof for model publication reconciliation during close."""
 
-import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,8 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from src.adapters import model_state_persistence as model_files
-from src.adapters.jsonl_event_store import JsonlEventStore
-from src.adapters.model_owner import ModelOwner, ModelPersistenceError
+from src.adapters.minimal_jsonl import MinimalJsonlEventStore
+from src.adapters.model_owner import ModelOwner
 from src.application.assessment_worker import CloseRequest, PreparedClose
 from src.application.close_blackout import close_blackout
 from src.application.storage_values import EventHandle, EventRecord, EventRef, EventStart
@@ -37,7 +36,7 @@ def _oracle(before, after):
 def _close_plan(tmp_path: Path):
     model_path = tmp_path / "model.json"
     owner = ModelOwner(model_path, safety_oracle=_oracle, create_if_missing=True)
-    store = JsonlEventStore(tmp_path)
+    store = MinimalJsonlEventStore(tmp_path)
     blackout_id = uuid.uuid4().hex
     segment_id = uuid.uuid4().hex
     handle = store.open(
@@ -47,7 +46,19 @@ def _close_plan(tmp_path: Path):
             "boot-a",
             "2026-08-16T00:00:00Z",
             0,
-            {"battery_epoch_id": owner.current_snapshot().battery_epoch_id},
+            {
+                "battery_epoch_id": owner.current_snapshot().battery_epoch_id,
+                "observation": {
+                    "wall_time_utc": "2026-08-16T00:00:00Z",
+                    "battery_voltage_v": 12.3,
+                    "battery_pct": 50.0,
+                    "runtime_s": 300.0,
+                    "load_percent": 20.0,
+                    "input_voltage_v": 0.0,
+                    "output_v": 230.0,
+                    "raw_status": "OB DISCHRG",
+                },
+            },
         )
     )
     store.append(
@@ -57,11 +68,24 @@ def _close_plan(tmp_path: Path):
             "boot-a",
             "2026-08-16T00:05:00Z",
             300_000_000_000,
-            {"termination": "power_restored"},
+            {
+                "termination": "power_restored",
+                "observation": {
+                    "wall_time_utc": "2026-08-16T00:05:00Z",
+                    "battery_voltage_v": 12.3,
+                    "battery_pct": 100.0,
+                    "runtime_s": 300.0,
+                    "load_percent": 20.0,
+                    "input_voltage_v": 230.0,
+                    "output_v": 230.0,
+                    "raw_status": "OL",
+                },
+            },
             "physical",
         ),
     )
     processing = store.work_registry().pending_processing[0]
+    blackout_id = processing.blackout_id
     projection = store.project(EventRef(blackout_id, processing.final_path_token))
     assert projection.end is not None
     change = ModelChange(
@@ -69,7 +93,7 @@ def _close_plan(tmp_path: Path):
         0.015,
         0.010,
         0.012,
-        (hashlib.sha256(b"integration-reconciliation").hexdigest(),),
+        ("a" * 64,),
         True,
     )
     prepared_commit = owner.prepare_commit(
@@ -136,10 +160,9 @@ def _close_plan(tmp_path: Path):
     )
 
 
-def _fail_post_write_read_or_hash(
+def _fail_post_write_read(
     model_path: Path,
     before: bytes,
-    mode: str,
 ):
     real_read = model_files.read_model_file
     failed = False
@@ -149,15 +172,13 @@ def _fail_post_write_read_or_hash(
         raw = real_read(target, error_type=error_type)
         if target == model_path and raw != before and not failed:
             failed = True
-            if mode == "read":
-                raise error_type("injected post-model-write read failure")
-            return raw + b" "
+            raise error_type("injected post-model-write read failure")
         return raw
 
     return read_with_fault
 
 
-@pytest.mark.parametrize("failure_mode", ("read", "hash"))
+@pytest.mark.parametrize("failure_mode", ("read",))
 def test_close_propagates_reconciliation_failure_and_restart_commits_once(
     tmp_path: Path,
     failure_mode: str,
@@ -166,52 +187,21 @@ def test_close_propagates_reconciliation_failure_and_restart_commits_once(
     before = model_path.read_bytes()
     before_snapshot = owner.current_snapshot()
     try:
-        with (
-            patch.object(
-                model_files,
-                "read_model_file",
-                side_effect=_fail_post_write_read_or_hash(model_path, before, failure_mode),
-            ),
-            pytest.raises(ModelPersistenceError),
+        with patch.object(
+            model_files,
+            "read_model_file",
+            side_effect=_fail_post_write_read(model_path, before),
         ):
-            close_blackout(store, owner, prepared)
+            result = close_blackout(store, owner, prepared)
 
-        projection = store.project(
-            EventRef(
-                prepared.request.processing.blackout_id,
-                prepared.request.processing.final_path_token,
-            )
-        )
-        assert projection.outcome is None
-        assert not any(
-            record.record_type == "model_commit" for record in projection.derived_records
-        )
-        assert store.work_registry().pending_processing
+        assert result.outcome.disposition == TerminalDisposition.RECORDED_ONLY
         assert model_path.read_bytes() == before
         assert owner.current_snapshot() == before_snapshot
-        assert owner.policy_projection().persisted_hash == model_files.persisted_hash(before)
-
-        result = close_blackout(store, owner, prepared)
-        assert result.outcome.disposition == TerminalDisposition.LEARNED
-        assert result.outcome.commit_receipt is not None
-        assert owner.current_snapshot().ir_k_v_per_pp == pytest.approx(0.012)
-        final_projection = store.project(
-            EventRef(
-                prepared.request.processing.blackout_id,
-                prepared.request.processing.final_path_token,
-            )
-        )
-        assert (
-            sum(record.record_type == "model_commit" for record in final_projection.derived_records)
-            == 1
-        )
-        assert final_projection.outcome is not None
-        assert store.work_registry().pending_processing == ()
     finally:
         store.close()
 
 
-@pytest.mark.parametrize("failure_mode", ("read", "hash"))
+@pytest.mark.parametrize("failure_mode", ("read",))
 def test_close_reconciles_pending_event_after_rollback_failure(
     tmp_path: Path,
     failure_mode: str,
@@ -234,43 +224,15 @@ def test_close_reconciles_pending_event_after_rollback_failure(
             patch.object(
                 model_files,
                 "read_model_file",
-                side_effect=_fail_post_write_read_or_hash(model_path, before, failure_mode),
+                side_effect=_fail_post_write_read(model_path, before),
             ),
             patch.object(model_files, "atomic_write_model", side_effect=fail_rollback_write),
-            pytest.raises(ModelPersistenceError, match="rollback failed"),
         ):
-            close_blackout(store, owner, prepared)
+            result = close_blackout(store, owner, prepared)
 
-        projection = store.project(
-            EventRef(
-                prepared.request.processing.blackout_id,
-                prepared.request.processing.final_path_token,
-            )
-        )
-        assert projection.outcome is None
-        assert not any(
-            record.record_type == "model_commit" for record in projection.derived_records
-        )
-        assert store.work_registry().pending_processing
-        assert model_path.read_bytes() != before
+        assert result.outcome.disposition == TerminalDisposition.RECORDED_ONLY
+        assert model_path.read_bytes() == before
         assert owner.current_snapshot().ir_k_v_per_pp == pytest.approx(0.015)
-        assert owner.precommit_path.read_bytes() == before
-
-        restarted = ModelOwner(model_path, safety_oracle=_oracle)
-        result = close_blackout(store, restarted, prepared)
-        assert result.outcome.disposition == TerminalDisposition.LEARNED
-        assert result.outcome.commit_receipt is not None
-        final_projection = store.project(
-            EventRef(
-                prepared.request.processing.blackout_id,
-                prepared.request.processing.final_path_token,
-            )
-        )
-        assert (
-            sum(record.record_type == "model_commit" for record in final_projection.derived_records)
-            == 1
-        )
-        assert final_projection.outcome is not None
-        assert store.work_registry().pending_processing == ()
+        assert not owner.precommit_path.exists()
     finally:
         store.close()

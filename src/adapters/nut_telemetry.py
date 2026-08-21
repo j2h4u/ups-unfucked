@@ -60,6 +60,9 @@ def observation_from_nut_reply(
         voltage_token_quantum_v=_token_quantum(voltage_token),
         load_percent=_finite_float(values.get("ups.load")),
         input_voltage_v=_finite_float(values.get("input.voltage")),
+        battery_pct=_finite_float(values.get("battery.charge")),
+        runtime_s=_finite_float(values.get("battery.runtime")),
+        output_v=_finite_float(values.get("output.voltage")),
     )
 
 

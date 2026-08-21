@@ -48,8 +48,12 @@ _OBSERVATION_FIELDS = frozenset(
         "voltage_token_quantum_v",
         "load_percent",
         "input_voltage_v",
+        "battery_pct",
+        "runtime_s",
+        "output_v",
     }
 )
+_LEGACY_OBSERVATION_FIELDS = _OBSERVATION_FIELDS - {"battery_pct", "runtime_s", "output_v"}
 _SNAPSHOT_FIELDS = frozenset(
     {
         "schema_revision",
@@ -159,7 +163,7 @@ def project_snapshot(projection: EventProjection) -> FrozenModelSnapshot:
 
 def parse_observation(raw: object, index: int) -> PhysicalObservation:
     value = mapping(raw, f"observation[{index}]")
-    if frozenset(value) != _OBSERVATION_FIELDS:
+    if frozenset(value) not in {_OBSERVATION_FIELDS, _LEGACY_OBSERVATION_FIELDS}:
         raise ProjectionInputError(f"observation[{index}] has invalid fields")
     try:
         return PhysicalObservation(
@@ -172,6 +176,9 @@ def parse_observation(raw: object, index: int) -> PhysicalObservation:
             voltage_token_quantum_v=optional_float(value["voltage_token_quantum_v"]),
             load_percent=optional_float(value["load_percent"]),
             input_voltage_v=optional_float(value["input_voltage_v"]),
+            battery_pct=optional_float(value.get("battery_pct")),
+            runtime_s=optional_float(value.get("runtime_s")),
+            output_v=optional_float(value.get("output_v")),
         )
     except (TypeError, ValueError) as exc:
         raise ProjectionInputError(f"observation[{index}] is invalid") from exc

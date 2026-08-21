@@ -198,6 +198,9 @@ class PhysicalObservation:
     voltage_token_quantum_v: float | None
     load_percent: float | None
     input_voltage_v: float | None
+    battery_pct: float | None = None
+    runtime_s: float | None = None
+    output_v: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

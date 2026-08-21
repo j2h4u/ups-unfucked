@@ -352,7 +352,7 @@ class AssessmentWorker:
             return selection_input.durable
         historical, overflow, history_available = self._historical_candidates(
             selection_input.blackout_id,
-            selection_input.snapshot.battery_epoch_id,
+            selection_input.snapshot,
         )
         return select_ir_cohort(
             (*selection_input.current_steps, *historical),
@@ -370,49 +370,33 @@ class AssessmentWorker:
     def _historical_candidates(
         self,
         current_blackout_id: str,
-        battery_epoch_id: str,
+        current_snapshot: FrozenModelSnapshot,
     ) -> tuple[tuple[CohortStep, ...], int, bool]:
         overflow = 0
-        available = False
-        candidates: list[CohortStep] = []
         try:
             tail = self._store.history_tail_for_epoch(
-                battery_epoch_id,
+                current_snapshot.battery_epoch_id,
                 HISTORICAL_COHORT_LIMIT,
             )
             overflow = tail.overflow_count
-            eligible_summaries = tuple(
-                summary for summary in tail.summaries if _historical_summary_is_eligible(summary)
+            summaries = _eligible_historical_summaries(tail.summaries)
+            if not _historical_tail_is_usable(
+                tail.scan_complete,
+                summaries,
+                current_blackout_id,
+                current_snapshot,
+            ):
+                return (), overflow, False
+            candidates = _collect_historical_candidates(
+                self._store,
+                summaries,
+                current_snapshot,
             )
-            available = tail.scan_complete and not any(
-                summary.battery_epoch_id != battery_epoch_id
-                or summary.blackout_id == current_blackout_id
-                for summary in eligible_summaries
-            )
-            if available:
-                for summary in eligible_summaries:
-                    projection = self._store.project(
-                        EventRef(summary.blackout_id, summary.segment_filename)
-                    )
-                    snapshot = project_snapshot(projection)
-                    if (
-                        snapshot.battery_epoch_id != battery_epoch_id
-                        or snapshot.battery_epoch_id != summary.battery_epoch_id
-                        or not _terminal_policy(projection).authorizes_science
-                    ):
-                        available = False
-                        break
-                    candidates.extend(
-                        _cohort_steps(
-                            summary.blackout_id,
-                            projection,
-                            snapshot,
-                            _event_started_utc(projection),
-                        )
-                    )
+            if candidates is None:
+                return (), overflow, False
+            return candidates, overflow, True
         except Exception:
-            available = False
-        return (tuple(candidates) if available else ()), overflow, available
+            return (), overflow, False
 
 
 def _assess_projection(
@@ -423,13 +407,28 @@ def _assess_projection(
     projection_available = True
     try:
         observations = project_observations(projection)
-        snapshot = project_snapshot(projection)
         started_utc = _event_started_utc(projection)
+        snapshot = project_snapshot(projection)
     except ProjectionInputError:
-        observations = ()
-        snapshot = current_snapshot
-        started_utc = _event_time(projection)
-        projection_available = False
+        if _projection_omits_frozen_snapshot(projection):
+            try:
+                observations = project_observations(projection)
+                started_utc = _event_started_utc(projection)
+            except ProjectionInputError:
+                observations = ()
+                started_utc = _event_time(projection)
+                projection_available = False
+            else:
+                # Minimal JSONL deliberately has no model payload.  Its
+                # samples are assessed against the model currently owning
+                # the worker, which is the only snapshot available for this
+                # event and is therefore supported by definition.
+                snapshot = current_snapshot
+        else:
+            observations = ()
+            snapshot = current_snapshot
+            started_utc = _event_time(projection)
+            projection_available = False
 
     start_payload = projection.start.payload if projection.start is not None else {}
     terminal_policy = _terminal_policy(projection)
@@ -482,6 +481,93 @@ def _assess_projection(
         assessment,
         comparison,
     )
+
+
+def _projection_omits_frozen_snapshot(projection: EventProjection) -> bool:
+    start = projection.start
+    if start is None or not isinstance(start.payload, Mapping):
+        return False
+    return "frozen_model" not in start.payload
+
+
+def _historical_summary_supports_current_snapshot(
+    summary: EventSummary,
+    current_snapshot: FrozenModelSnapshot,
+) -> bool:
+    return summary.battery_epoch_id == current_snapshot.battery_epoch_id
+
+
+def _eligible_historical_summaries(
+    summaries: tuple[EventSummary, ...],
+) -> tuple[EventSummary, ...]:
+    return tuple(summary for summary in summaries if _historical_summary_is_eligible(summary))
+
+
+def _historical_tail_is_usable(
+    scan_complete: bool,
+    summaries: tuple[EventSummary, ...],
+    current_blackout_id: str,
+    current_snapshot: FrozenModelSnapshot,
+) -> bool:
+    return scan_complete and all(
+        summary.battery_epoch_id == current_snapshot.battery_epoch_id
+        and summary.blackout_id != current_blackout_id
+        for summary in summaries
+    )
+
+
+def _historical_snapshot(
+    summary: EventSummary,
+    projection: EventProjection,
+    current_snapshot: FrozenModelSnapshot,
+) -> FrozenModelSnapshot | None:
+    try:
+        snapshot = project_snapshot(projection)
+    except ProjectionInputError:
+        if not (
+            _projection_omits_frozen_snapshot(projection)
+            and _historical_summary_supports_current_snapshot(summary, current_snapshot)
+        ):
+            return None
+        snapshot = current_snapshot
+    if snapshot.battery_epoch_id != current_snapshot.battery_epoch_id:
+        return None
+    if snapshot.battery_epoch_id != summary.battery_epoch_id:
+        return None
+    if not _terminal_policy(projection).authorizes_science:
+        return None
+    return snapshot
+
+
+def _historical_candidate(
+    store: AssessmentQueryEventStorePort,
+    summary: EventSummary,
+    current_snapshot: FrozenModelSnapshot,
+) -> tuple[CohortStep, ...] | None:
+    projection = store.project(EventRef(summary.blackout_id, summary.segment_filename))
+    snapshot = _historical_snapshot(summary, projection, current_snapshot)
+    if snapshot is None:
+        return None
+    return _cohort_steps(
+        summary.blackout_id,
+        projection,
+        snapshot,
+        _event_started_utc(projection),
+    )
+
+
+def _collect_historical_candidates(
+    store: AssessmentQueryEventStorePort,
+    summaries: tuple[EventSummary, ...],
+    current_snapshot: FrozenModelSnapshot,
+) -> tuple[CohortStep, ...] | None:
+    candidates: list[CohortStep] = []
+    for summary in summaries:
+        candidate = _historical_candidate(store, summary, current_snapshot)
+        if candidate is None:
+            return None
+        candidates.extend(candidate)
+    return tuple(candidates)
 
 
 def _current_cohort_steps(

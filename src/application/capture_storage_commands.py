@@ -126,7 +126,7 @@ def append_end(
             boot_id=observation.boot_id,
             wall_time_utc=_utc_text(observation.wall_time_utc),
             monotonic_ns=observation.monotonic_ns,
-            payload={"termination": termination},
+            payload={"termination": termination, "observation": json_value(observation)},
             provenance="physical",
         ),
     )

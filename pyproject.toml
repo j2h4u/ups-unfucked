@@ -113,18 +113,12 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "JSONL adapter internals do not reach model or NUT adapters"
+name = "Event-file adapter internals do not reach model or NUT adapters"
 type = "forbidden"
 source_modules = [
     "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_capacity",
-    "src.adapters.jsonl_event_store",
-    "src.adapters.jsonl_event_stream",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_health_report",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-    "src.adapters.jsonl_work_registry",
+    "src.adapters.minimal_event_file",
+    "src.adapters.minimal_jsonl",
 ]
 forbidden_modules = [
     "src.adapters.model_owner",
@@ -137,7 +131,7 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Model and NUT adapter internals do not reach JSONL adapters"
+name = "Model and NUT adapter internals do not reach event-file adapters"
 type = "forbidden"
 source_modules = [
     "src.adapters.model_owner",
@@ -150,13 +144,8 @@ source_modules = [
 ]
 forbidden_modules = [
     "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_store",
-    "src.adapters.jsonl_event_stream",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_health_report",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-    "src.adapters.jsonl_work_registry",
+    "src.adapters.minimal_event_file",
+    "src.adapters.minimal_jsonl",
 ]
 [tool.pyright]
 include = ["src", "scripts"]

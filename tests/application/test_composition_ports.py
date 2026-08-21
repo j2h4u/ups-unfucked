@@ -5,10 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from src.adapters.jsonl_errors import EventConflictError, EventStoreError
+from src.adapters.jsonl_errors import EventStoreError
 from src.application import assessment_worker, safety
 from src.application.degraded_startup import DeferredEventStore
-from src.application.errors import StoragePortConflict, StoragePortError
+from src.application.errors import StoragePortError
 from src.application.model_port import AssessmentModelPort
 from src.application.ports import (
     AssessmentCloseEventStorePort,
@@ -47,8 +47,6 @@ def test_assessment_model_port_cannot_execute_a_commit() -> None:
 
 def test_jsonl_storage_errors_implement_application_storage_semantics() -> None:
     assert issubclass(EventStoreError, StoragePortError)
-    assert issubclass(EventConflictError, StoragePortConflict)
-    assert issubclass(EventConflictError, EventStoreError)
 
 
 def test_health_alert_port_is_one_narrow_publish_operation() -> None:

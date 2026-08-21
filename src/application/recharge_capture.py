@@ -143,36 +143,11 @@ class RechargeCapture:
                 return True
             if self._pending_restoration_blackout_id is not None:
                 return False
-            recharge_links = {
-                _optional_string(start.payload.get("preceding_blackout_id"))
-                for projection in projections
-                if projection.event_kind == "recharge" and (start := projection.start) is not None
-            }
-            candidates = [
-                projection
-                for projection in projections
-                if projection.event_kind == "blackout"
-                and projection.end is not None
-                and projection.end.payload.get("termination") == "power_restored"
-                and projection.start is not None
-                and projection.start.blackout_id not in recharge_links
-            ]
-            if not candidates:
+            candidate = _restart_candidate(projections)
+            if candidate is None:
                 return False
-            candidate = max(
-                candidates,
-                key=lambda item: item.end.wall_time_utc if item.end is not None else "",
-            )
-            end = candidate.end
-            start = candidate.start
-            if end is None or start is None:
-                return False
-            gap = (
-                end.wall_time_utc,
-                _utc(observation),
-                "process restarted before recharge start was durable",
-            )
-            blackout_id = start.blackout_id
+            blackout_id, restoration_utc = candidate
+            gap = _restart_gap_from_restart(restoration_utc, observation)
         return self._begin(observation, _StartDetails(blackout_id, restart_gap=gap))
 
     def on_power_restored(self, blackout_id: str) -> None:
@@ -583,6 +558,38 @@ def _restoration_id(recovered: RecoveredCapture) -> str:
     payload = recovered.first_observation.payload if recovered.first_observation else {}
     return _string_value(payload.get("restoration_observation_id")) or observation_identity(
         _observation_from_record_payload(recovered.last_observation.payload)
+    )
+
+
+def _restart_candidate(
+    projections: Sequence[EventProjection],
+) -> tuple[str, str] | None:
+    """Return the newest unlinked blackout restoration, if one exists."""
+    recharge_links = {
+        _optional_string(start.payload.get("preceding_blackout_id"))
+        for projection in projections
+        if projection.event_kind == "recharge" and (start := projection.start) is not None
+    }
+    candidates = [
+        (projection.start.blackout_id, projection.end.wall_time_utc)
+        for projection in projections
+        if projection.event_kind == "blackout"
+        and projection.end is not None
+        and projection.end.payload.get("termination") == "power_restored"
+        and projection.start is not None
+        and projection.start.blackout_id not in recharge_links
+    ]
+    return max(candidates, key=lambda item: item[1]) if candidates else None
+
+
+def _restart_gap_from_restart(
+    restoration_utc: str,
+    observation: PhysicalObservation,
+) -> tuple[str, str, str]:
+    return (
+        restoration_utc,
+        _utc(observation),
+        "process restarted before recharge start was durable",
     )
 
 

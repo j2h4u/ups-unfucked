@@ -10,7 +10,7 @@ exact = true
 [[modules]]
 path = "src.monitor"
 depends_on = [
-    "src.adapters.jsonl_event_store",
+    "src.adapters.minimal_jsonl",
     "src.adapters.model_owner",
     "src.adapters.nut_telemetry",
     "src.alerter",
@@ -40,7 +40,6 @@ layer = "battery_math"
 
 [[modules]]
 path = "src.adapters"
-depends_on = ["src.adapters.jsonl_filesystem", "src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec", "src.application"]
 layer = "adapters"
 
 [[modules]]
@@ -49,105 +48,17 @@ depends_on = ["src.application"]
 layer = "adapters"
 
 [[modules]]
-path = "src.adapters.jsonl_event_store"
+path = "src.adapters.minimal_event_file"
+depends_on = ["src.adapters.jsonl_errors"]
+layer = "adapters"
+
+[[modules]]
+path = "src.adapters.minimal_jsonl"
 depends_on = [
     "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_history",
-    "src.adapters.jsonl_event_stream",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_health_report",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_work_registry",
+    "src.adapters.minimal_event_file",
     "src.application",
-    "src.domain", "src.adapters",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_event_history"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_read_codec",
-    "src.adapters.jsonl_record_codec",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_event_read_codec"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_history_store"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_history",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_event_capacity"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_read_codec",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_event_stream"
-depends_on = [
-    "src.adapters.jsonl_event_capacity",
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_event_read_codec",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_record_codec",
-    "src.adapters.jsonl_summary_codec",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_filesystem"
-depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_health_report"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_record_codec",
-    "src.application",
-]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_record_codec"
-depends_on = ["src.adapters.jsonl_errors", "src.application"]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_summary_codec"
-depends_on = ["src.adapters.jsonl_errors", "src.adapters.jsonl_record_codec"]
-layer = "adapters"
-
-[[modules]]
-path = "src.adapters.jsonl_work_registry"
-depends_on = [
-    "src.adapters.jsonl_errors",
-    "src.adapters.jsonl_filesystem",
-    "src.adapters.jsonl_record_codec",
-    "src.application",
+    "src.domain",
 ]
 layer = "adapters"
 

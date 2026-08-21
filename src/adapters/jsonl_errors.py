@@ -1,8 +1,6 @@
 """Explicit errors raised by the JSONL persistence boundary."""
 
 from src.application.errors import (
-    DurableCaptureTerminalError,
-    StoragePortConflict,
     StoragePortCorruption,
     StoragePortError,
 )
@@ -20,17 +18,5 @@ class EventPathError(EventStoreError):
     """A storage path is unsafe or has unexpected permissions/type."""
 
 
-class EventPersistenceError(EventStoreError):
-    """A filesystem mutation or durability operation failed."""
-
-
-class EventConflictError(StoragePortConflict, EventStoreError):
-    """An idempotency key already exists with different canonical bytes."""
-
-
 class EventCorruptionError(StoragePortCorruption, EventStoreError):
     """Evidence contains non-tail corruption and science must fail closed."""
-
-
-class ProcessingBacklogFullError(DurableCaptureTerminalError, EventStoreError):
-    """All processing slots were occupied, so the event was durably rejected."""

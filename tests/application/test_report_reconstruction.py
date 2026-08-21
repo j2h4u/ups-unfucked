@@ -108,7 +108,6 @@ def _projection(
     observed_increase: ObservedLoadSagIncrease | None = None,
 ) -> EventProjection:
     outcome = ProjectedEventRecord(
-        2,
         "outcome",
         "derived",
         BLACKOUT_ID,
@@ -120,7 +119,6 @@ def _projection(
         _outcome_payload(observed_increase),
     )
     start = ProjectedEventRecord(
-        2,
         "start",
         "physical",
         BLACKOUT_ID,
@@ -162,7 +160,6 @@ class _Store:
         assert limit == 1
         return (
             EventSummary(
-                2,
                 BLACKOUT_ID,
                 SEGMENT,
                 WHEN,
@@ -174,7 +171,6 @@ class _Store:
                 2,
                 "e" * 32,
                 False,
-                "none",
                 False,
                 None,
             ),

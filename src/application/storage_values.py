@@ -111,8 +111,6 @@ class PreparingCaptureRef:
     blackout_id: str
     segment_id: str
     path_token: str
-    canonical_start_record_utf8: str
-    tag: Literal["preparing"] = "preparing"
     event_kind: EventKind = "blackout"
 
 
@@ -121,7 +119,6 @@ class CapturingEventRef:
     blackout_id: str
     segment_id: str
     path_token: str
-    tag: Literal["capturing"] = "capturing"
     event_kind: EventKind = "blackout"
 
 
@@ -131,10 +128,8 @@ type CaptureRef = PreparingCaptureRef | CapturingEventRef
 @dataclass(frozen=True, slots=True)
 class ProcessingRef:
     blackout_id: str
-    segment_ids: tuple[str, ...]
     final_path_token: str
     frozen_stage: str
-    tag: Literal["processing"] = "processing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +146,6 @@ class EventRef:
 
 @dataclass(frozen=True, slots=True)
 class ProjectedEventRecord:
-    schema_version: int
     record_type: str
     provenance: str
     blackout_id: str
@@ -186,7 +180,6 @@ class EventProjection:
 
 @dataclass(frozen=True, slots=True)
 class EventSummary:
-    schema_version: int
     blackout_id: str
     segment_filename: str
     started_utc: str
@@ -198,7 +191,6 @@ class EventSummary:
     observation_count: int
     battery_epoch_id: str | None
     comparison_available: bool
-    comparison_mode: Literal["full", "short_window", "none"]
     ir_estimate_available: bool
     commit_receipt_id: str | None
 
@@ -235,7 +227,6 @@ class EpochHistoryScan:
 @dataclass(frozen=True, slots=True)
 class SealedEventRef:
     blackout_id: str
-    segment_ids: tuple[str, ...]
     final_path_token: str
 
 
