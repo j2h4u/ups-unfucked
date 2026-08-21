@@ -20,6 +20,7 @@ from src.adapters.jsonl_errors import (
 )
 from src.application.storage_values import (
     EventHandle,
+    EventKind,
     ProcessingRef,
     ProjectedEventRecord,
 )
@@ -51,6 +52,7 @@ DERIVED_RECORD_TYPES = frozenset(
     {"assessment", "comparison", "ir_estimate", "learning_decision", "model_commit", "outcome"}
 )
 RECORD_TYPES = PHYSICAL_RECORD_TYPES | SYSTEM_RECORD_TYPES | DERIVED_RECORD_TYPES
+EVENT_KINDS = frozenset({"blackout", "recharge"})
 PROVENANCE_BY_RECORD_TYPE = {
     **dict.fromkeys(PHYSICAL_RECORD_TYPES, "physical"),
     **dict.fromkeys(SYSTEM_RECORD_TYPES, "system"),
@@ -72,13 +74,14 @@ class _EnvelopeParts:
     monotonic_ns: int
     prev_record_sha256: str | None
     payload: Mapping[str, JsonValue]
+    event_kind: EventKind = "blackout"
 
 
 @dataclass(frozen=True)
 class _StoredRecord(ProjectedEventRecord):
     """Private codec record retaining exact bytes for duplicate adjudication."""
 
-    canonical_line: bytes
+    canonical_line: bytes = b""
 
 
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
@@ -232,7 +235,7 @@ def _validate_record_without_hash(obj: Mapping[str, Any]) -> None:
         "prev_record_sha256",
         "payload",
     }
-    if set(obj) != required:
+    if set(obj) not in (required, required | {"event_kind"}):
         raise EventValidationError("record envelope fields do not match schema v2")
     if obj["schema_version"] != SCHEMA_VERSION:
         raise EventValidationError("record schema version is not 2")
@@ -242,6 +245,9 @@ def _validate_record_without_hash(obj: Mapping[str, Any]) -> None:
         raise EventValidationError("unknown record type")
     if provenance != PROVENANCE_BY_RECORD_TYPE[record_type]:
         raise EventValidationError("record provenance does not match record type")
+    event_kind = obj.get("event_kind", "blackout")
+    if event_kind not in EVENT_KINDS:
+        raise EventValidationError("event kind must be blackout or recharge")
     _validate_record_identity_and_clocks(obj)
     if not isinstance(obj["payload"], dict):
         raise EventValidationError("record payload must be an object")
@@ -281,20 +287,37 @@ def _decode_record_line(line: bytes) -> _StoredRecord:
         obj = _strict_json_loads(line[:-1])
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise EventCorruptionError("record line is not strict JSON") from exc
-    if not isinstance(obj, dict) or set(obj) != {
-        "schema_version",
-        "record_type",
-        "provenance",
-        "blackout_id",
-        "segment_id",
-        "seq",
-        "boot_id",
-        "wall_time_utc",
-        "monotonic_ns",
-        "prev_record_sha256",
-        "payload",
-        "record_sha256",
-    }:
+    if not isinstance(obj, dict) or set(obj) not in (
+        {
+            "schema_version",
+            "record_type",
+            "provenance",
+            "blackout_id",
+            "segment_id",
+            "seq",
+            "boot_id",
+            "wall_time_utc",
+            "monotonic_ns",
+            "prev_record_sha256",
+            "payload",
+            "record_sha256",
+        },
+        {
+            "schema_version",
+            "record_type",
+            "provenance",
+            "event_kind",
+            "blackout_id",
+            "segment_id",
+            "seq",
+            "boot_id",
+            "wall_time_utc",
+            "monotonic_ns",
+            "prev_record_sha256",
+            "payload",
+            "record_sha256",
+        },
+    ):
         raise EventCorruptionError("record fields do not match schema v2")
     digest = obj.pop("record_sha256")
     try:
@@ -313,6 +336,7 @@ def _decode_record_line(line: bytes) -> _StoredRecord:
     payload = obj["payload"]
     if not isinstance(payload, dict):
         raise EventCorruptionError("record payload is not an object")
+    event_kind = obj.get("event_kind", "blackout")
     return _StoredRecord(
         obj["schema_version"],
         obj["record_type"],
@@ -326,6 +350,7 @@ def _decode_record_line(line: bytes) -> _StoredRecord:
         obj["prev_record_sha256"],
         payload,
         digest,
+        event_kind,
         canonical_line,
     )
 
@@ -366,6 +391,7 @@ def _projected_record(record: _StoredRecord) -> ProjectedEventRecord:
         record.prev_record_sha256,
         record.payload,
         record.record_sha256,
+        record.event_kind,
     )
 
 
@@ -376,6 +402,7 @@ def _processing_handle(ref: ProcessingRef, last: _StoredRecord) -> EventHandle:
         ref.final_path_token,
         last.seq + 1,
         last.record_sha256,
+        last.event_kind,
     )
 
 
@@ -499,12 +526,42 @@ def _validate_terminal_record_order(
 
 
 def _validate_unique_terminal_records(records: Sequence[_StoredRecord]) -> None:
-    if sum(record.record_type == "start" for record in records) != 1:
-        raise EventCorruptionError("event contains multiple start records")
-    if sum(record.record_type == "end" for record in records) > 1:
-        raise EventCorruptionError("event contains multiple end records")
-    if sum(record.record_type == "outcome" for record in records) > 1:
-        raise EventCorruptionError("event contains multiple outcome records")
+    _validate_terminal_record_count(
+        records,
+        "start",
+        minimum=1,
+        maximum=1,
+        error_message="event contains multiple start records",
+    )
+    _validate_terminal_record_count(
+        records,
+        "end",
+        minimum=0,
+        maximum=1,
+        error_message="event contains multiple end records",
+    )
+    _validate_terminal_record_count(
+        records,
+        "outcome",
+        minimum=0,
+        maximum=1,
+        error_message="event contains multiple outcome records",
+    )
+
+
+def _validate_terminal_record_count(
+    records: Sequence[_StoredRecord],
+    record_type: str,
+    *,
+    minimum: int,
+    maximum: int,
+    error_message: str,
+) -> None:
+    count = sum(record.record_type == record_type for record in records)
+    if count < minimum:
+        raise EventCorruptionError(error_message)
+    if count > maximum:
+        raise EventCorruptionError(error_message)
 
 
 def _validate_outcome_position(
@@ -513,12 +570,26 @@ def _validate_outcome_position(
     end: _StoredRecord | None,
     outcome: _StoredRecord | None,
 ) -> None:
-    if outcome is not None and records[-1].record_type != "outcome":
+    if outcome is None:
+        return
+    _validate_outcome_is_last(records)
+    _validate_outcome_has_end_or_is_rejected(end, outcome)
+
+
+def _validate_outcome_is_last(records: Sequence[_StoredRecord]) -> None:
+    if records[-1].record_type != "outcome":
         raise EventCorruptionError("records follow terminal outcome")
-    if outcome is not None and end is None:
-        disposition = outcome.payload.get("disposition")
-        if disposition != "rejected":
-            raise EventCorruptionError("non-rejected outcome requires an end record")
+
+
+def _validate_outcome_has_end_or_is_rejected(
+    end: _StoredRecord | None,
+    outcome: _StoredRecord,
+) -> None:
+    if end is not None:
+        return
+    if outcome.payload.get("disposition") == "rejected":
+        return
+    raise EventCorruptionError("non-rejected outcome requires an end record")
 
 
 def _validate_post_end_records(

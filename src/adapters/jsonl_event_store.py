@@ -7,7 +7,7 @@ record, stream, registry, index, and filesystem lanes provide the internals.
 import fcntl
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any, Self
 
@@ -22,7 +22,7 @@ from src.adapters.jsonl_filesystem import JsonlFilesystem
 from src.adapters.jsonl_health_report import storage_health
 from src.adapters.jsonl_outcome_commit import JsonlOutcomeResolver
 from src.adapters.jsonl_record_codec import (
-    EVENT_FILENAME_RE,
+    EVENT_KINDS,
     MAX_PENDING_PROCESSING,
     MAX_REASON_BYTES,
     PROVENANCE_BY_RECORD_TYPE,
@@ -120,25 +120,8 @@ class JsonlEventStore:
             self._commit_sealed,
         )
 
-        def owned_event_paths() -> frozenset[str]:
-            registry = self._registry._read_registry()
-            owned = {registry.capture.path_token} if registry.capture is not None else set()
-            for pending in registry.pending_processing:
-                owned.add(pending.final_path_token)
-                owned.update(
-                    path.name
-                    for path in events_path.iterdir()
-                    if (match := EVENT_FILENAME_RE.fullmatch(path.name)) is not None
-                    and match.group("blackout") == pending.blackout_id
-                    and match.group("segment") in pending.segment_ids
-                )
-            return frozenset(owned)
-
         self._history_reader = JsonlEventHistory(
             events_path,
-            self._filesystem,
-            self._stream,
-            owned_event_paths,
         )
         self.report_outbox = _EventReportOutbox(JsonlReportOutbox(events_path, self._filesystem))
         stream_ref = self._stream
@@ -172,6 +155,27 @@ class JsonlEventStore:
         """Read only the bounded registry; no event history is opened."""
         return self._registry._read_registry()
 
+    def sealed_event_projections(
+        self,
+        start_utc: str,
+        end_utc: str,
+        *,
+        event_kind: str = "blackout",
+    ) -> tuple[EventProjection, ...]:
+        """Read sealed ordinary-event projections for one UTC half-open range."""
+        return self._history_reader.sealed_projections(
+            start_utc,
+            end_utc,
+            event_kind=event_kind,
+        )
+
+    def sealed_recharge_projections_for_blackouts(
+        self,
+        blackout_ids: Collection[str],
+    ) -> tuple[EventProjection, ...]:
+        """Read sealed recharge episodes linked to selected blackout IDs."""
+        return self._history_reader.sealed_recharge_projections_for_blackouts(blackout_ids)
+
     def reconcile_damaged_close(
         self,
         blackout_id: str,
@@ -200,6 +204,7 @@ class JsonlEventStore:
             path_token,
             tail.seq + 1,
             tail.record_sha256,
+            tail.event_kind,
         )
         state = CaptureCloseState.ACTIVE
         if projection.outcome is not None:
@@ -247,6 +252,8 @@ class JsonlEventStore:
         )
 
     def _commit_sealed(self, path_token: str, projection: EventProjection) -> None:
+        if projection.event_kind != "blackout":
+            return
         self._history_reader.commit_notice(path_token, projection, self.report_outbox._append)
 
     def open(self, start: EventStart) -> EventHandle:
@@ -256,6 +263,8 @@ class JsonlEventStore:
             raise EventConflictError("a blackout capture is already active")
         _validate_uuid4_hex(start.blackout_id, "blackout_id")
         _validate_uuid4_hex(start.segment_id, "segment_id")
+        if start.event_kind not in EVENT_KINDS:
+            raise EventValidationError("event kind must be blackout or recharge")
         path_token = _initial_event_filename(start.wall_time_utc, start.blackout_id)
         payload = _bounded_start_payload(_json_mapping(start.payload, "start payload"))
         envelope = self._stream._record_envelope(
@@ -270,6 +279,7 @@ class JsonlEventStore:
                 start.monotonic_ns,
                 None,
                 payload,
+                start.event_kind,
             )
         )
         start_line = canonical_record_line(envelope)
@@ -279,6 +289,7 @@ class JsonlEventStore:
             segment_id=start.segment_id,
             path_token=path_token,
             canonical_start_record_utf8=start_line.decode("utf-8"),
+            event_kind=start.event_kind,
         )
         self._filesystem._trip("before_registry_prepare")
         self._registry._write_registry(WorkRegistry(preparing, registry.pending_processing))
@@ -292,7 +303,12 @@ class JsonlEventStore:
         finally:
             os.close(fd)
         self._filesystem.sync_storage_directory(self._events_path)
-        capturing = CapturingEventRef(start.blackout_id, start.segment_id, path_token)
+        capturing = CapturingEventRef(
+            start.blackout_id,
+            start.segment_id,
+            path_token,
+            event_kind=start.event_kind,
+        )
         self._registry._write_registry(WorkRegistry(capturing, registry.pending_processing))
         self._filesystem._trip("after_registry_capturing")
         return EventHandle(
@@ -301,6 +317,7 @@ class JsonlEventStore:
             path_token,
             1,
             start_record.record_sha256,
+            start.event_kind,
         )
 
     def recover_startup(self) -> RecoveredCapture | None:
@@ -328,6 +345,7 @@ class JsonlEventStore:
             capture.path_token,
             tail.seq + 1,
             tail.record_sha256,
+            tail.event_kind,
         )
         if tail.record_type == "end":
             if len(registry.pending_processing) >= MAX_PENDING_PROCESSING:
@@ -340,6 +358,7 @@ class JsonlEventStore:
                         tail.monotonic_ns,
                         tail.payload,
                         "physical",
+                        tail.event_kind,
                     ),
                 )
             try:
@@ -370,13 +389,7 @@ class JsonlEventStore:
 
     def append(self, handle: EventHandle, record: EventRecord) -> EventHandle:
         """Append and fdatasync one complete record before acknowledging it."""
-        if record.record_type == "outcome":
-            raise EventValidationError("terminal outcome must be written through seal()")
-        expected_provenance = PROVENANCE_BY_RECORD_TYPE.get(record.record_type)
-        if expected_provenance is None:
-            raise EventValidationError(f"unknown record type: {record.record_type!r}")
-        if record.provenance != expected_provenance:
-            raise EventValidationError("record provenance does not match its record type")
+        _validate_append_record(handle, record)
         self._registry._require_handle_registered(handle)
         handle, path, last = self._stream._resolve_append_tail(
             handle,
@@ -396,6 +409,7 @@ class JsonlEventStore:
                 record.monotonic_ns,
                 handle.last_record_sha256,
                 _json_mapping(record.payload, "record payload"),
+                record.event_kind,
             )
         )
         line = canonical_record_line(envelope)
@@ -411,6 +425,7 @@ class JsonlEventStore:
                 handle.path_token,
                 handle.next_seq + 1,
                 last.record_sha256,
+                last.event_kind,
             )
         if last.seq != handle.next_seq - 1 or last.record_sha256 != handle.last_record_sha256:
             raise EventConflictError("event handle does not match the durable tail")
@@ -425,6 +440,7 @@ class JsonlEventStore:
             handle.path_token,
             handle.next_seq + 1,
             candidate.record_sha256,
+            candidate.event_kind,
         )
         if record.record_type == "end":
             next_handle = self._registry._finish_end_transition(next_handle, record, path)
@@ -456,6 +472,10 @@ class JsonlEventStore:
 
     def seal(self, handle: EventHandle, outcome: TerminalOutcomeRecord) -> SealedEventRef:
         """Durably write outcome, seal, project summary, then remove processing ref."""
+        if outcome.event_kind not in EVENT_KINDS:
+            raise EventValidationError("event kind must be blackout or recharge")
+        if outcome.event_kind != handle.event_kind:
+            raise EventConflictError("outcome event kind does not match its event handle")
         processing = self._registry._processing_ref(handle.blackout_id)
         if processing.final_path_token != handle.path_token:
             handle = self._registry._handle_from_processing_ref(processing)
@@ -482,6 +502,7 @@ class JsonlEventStore:
                 handle.path_token,
                 last.seq + 1,
                 last.record_sha256,
+                last.event_kind,
             )
             return self._registry._finish_sealed_projection(sealed_handle, last)
         durable_outcome = self._outcome_resolver.resolve(
@@ -497,6 +518,7 @@ class JsonlEventStore:
             handle.path_token,
             durable_outcome.seq + 1,
             durable_outcome.record_sha256,
+            durable_outcome.event_kind,
         )
         return self._registry._finish_sealed_projection(sealed_handle, durable_outcome)
 
@@ -515,6 +537,20 @@ class JsonlEventStore:
             handle,
             TerminalOutcomeRecord("adapter", "1970-01-01T00:00:00Z", 0, {}),
         )
+
+
+def _validate_append_record(handle: EventHandle, record: EventRecord) -> None:
+    if record.record_type == "outcome":
+        raise EventValidationError("terminal outcome must be written through seal()")
+    expected_provenance = PROVENANCE_BY_RECORD_TYPE.get(record.record_type)
+    if expected_provenance is None:
+        raise EventValidationError(f"unknown record type: {record.record_type!r}")
+    if record.provenance != expected_provenance:
+        raise EventValidationError("record provenance does not match its record type")
+    if record.event_kind not in EVENT_KINDS:
+        raise EventValidationError("event kind must be blackout or recharge")
+    if record.event_kind != handle.event_kind:
+        raise EventConflictError("record event kind does not match its event handle")
 
 
 class _EventReportOutbox:

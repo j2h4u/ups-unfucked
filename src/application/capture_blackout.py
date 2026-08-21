@@ -71,7 +71,7 @@ class _BlackoutCaptureRecovery:
         if recovered is None or recovered.blackout_id != blackout_id:
             with capture._submission_lock:
                 retention = capture._prestart_loss.retain(start)
-                capture._reset_prestart_submission_locked(start.observation)
+                self.reset_prestart_submission_locked(start.observation)
             if retention is PrestartRetention.AGGREGATED:
                 return RecoveryDisposition.TERMINAL_SUCCESS
             capture._writer.clear_failed_scope(blackout_id)
@@ -220,8 +220,11 @@ class _BlackoutCaptureRecovery:
                 None,
                 LifecycleSignal.CAPTURE_END_DURABLE,
             ).state_after
+        capture._on_power_restored(recovered.handle.blackout_id)
 
-    def mark_end_durable(self, observation: PhysicalObservation) -> None:
+    def mark_end_durable(
+        self, observation: PhysicalObservation, blackout_id: str | None = None
+    ) -> None:
         capture = self._capture
         with capture._submission_lock:
             capture._unknown_prelude_pending = False
@@ -230,6 +233,8 @@ class _BlackoutCaptureRecovery:
                 observation,
                 LifecycleSignal.CAPTURE_END_DURABLE,
             ).state_after
+        if blackout_id is not None:
+            capture._on_power_restored(blackout_id)
 
     def mark_end_submitted(self, state: LifecycleState) -> None:
         capture = self._capture
@@ -237,6 +242,46 @@ class _BlackoutCaptureRecovery:
         capture._submitted_boot_id = None
         capture._submitted_blackout_id = None
         capture._lifecycle_state = state
+
+    def accept_prestart_result(
+        self, result: PrestartRecoveryResult, observation: PhysicalObservation
+    ) -> None:
+        capture = self._capture
+        with capture._submission_lock:
+            _settle_prestart_overflow(capture._prestart_loss, result)
+            capture._prestart_loss.mark_durable()
+            if result.handle is None:
+                capture._unknown_prelude_pending = False
+                capture._session.clear()
+                capture._submitted_boot_id = None
+                capture._submitted_blackout_id = None
+                signal = LifecycleSignal.CAPTURE_END_DURABLE
+            else:
+                capture._session.attach(result.handle)
+                if result.current_kind != BlackoutKind.UNKNOWN:
+                    capture._unknown_prelude_pending = False
+                signal = LifecycleSignal.CAPTURE_PREPARED
+            capture._lifecycle_state = advance_lifecycle(
+                capture._lifecycle_state, observation, signal
+            ).state_after
+
+    def reset_prestart_submission(
+        self,
+        observation: PhysicalObservation,
+        overflow_delivery: OverflowDeliveryReservation | None,
+    ) -> None:
+        capture = self._capture
+        with capture._submission_lock:
+            capture._prestart_loss.release_overflow_delivery(overflow_delivery)
+            self.reset_prestart_submission_locked(observation)
+
+    def reset_prestart_submission_locked(self, observation: PhysicalObservation) -> None:
+        capture = self._capture
+        capture._submitted_boot_id = None
+        capture._submitted_blackout_id = None
+        capture._lifecycle_state = advance_lifecycle(
+            capture._lifecycle_state, observation, LifecycleSignal.START_REJECTED
+        ).state_after
 
 
 class BlackoutCapture:
@@ -248,6 +293,7 @@ class BlackoutCapture:
         writer: CaptureWriter,
         *,
         monotonic_clock: Callable[[], float] | None = None,
+        on_power_restored: Callable[[str], None] | None = None,
     ) -> None:
         self._store = store
         self._writer = writer
@@ -269,9 +315,10 @@ class BlackoutCapture:
         self._last_observation: PhysicalObservation | None = None
         self._unknown_prelude_pending = False
         self._prestart_loss = PrestartLossTracker()
+        self._on_power_restored = on_power_restored or (lambda _blackout_id: None)
         recovery_callbacks = PrestartRecoveryCallbacks(
-            self._accept_prestart_result,
-            self._reset_prestart_submission,
+            self._capture_recovery.accept_prestart_result,
+            self._capture_recovery.reset_prestart_submission,
             self._capture_recovery.close_partial_prestart,
         )
         self._prestart_recovery = PrestartRecoveryLane(store, writer, recovery_callbacks)
@@ -338,6 +385,12 @@ class BlackoutCapture:
                 LifecycleState.CAPTURING,
                 LifecycleState.PROCESSING,
             }
+
+    @property
+    def active_blackout_id(self) -> str | None:
+        """Expose the immutable active identity for linked post-restoration capture."""
+        with self._submission_lock:
+            return self._submitted_blackout_id
 
     def expire_sticky_recovery(self, reason: str) -> bool:
         """Stop waiting for blocked storage and disable learning for its event."""
@@ -494,7 +547,7 @@ class BlackoutCapture:
         )
         if not accepted:
             self._prestart_loss.retain(start)
-            self._reset_prestart_submission_locked(observation)
+            self._capture_recovery.reset_prestart_submission_locked(observation)
         return accepted
 
     def _accept_active(
@@ -513,7 +566,7 @@ class BlackoutCapture:
         barrier_result = self._boundary_recovery.retry_before_active_observation(
             BoundaryRetryRequest(blackout_id, observation, snapshot, readiness, kind),
             BoundaryRetryCallbacks(
-                self._capture_recovery.mark_end_durable,
+                lambda restored: self._capture_recovery.mark_end_durable(restored, blackout_id),
                 lambda: self._capture_recovery.mark_end_submitted(LifecycleState.PROCESSING),
                 failure,
             ),
@@ -535,7 +588,9 @@ class BlackoutCapture:
                 blackout_id,
                 observation,
                 "power_restored",
-                on_durable=lambda: self._capture_recovery.mark_end_durable(observation),
+                on_durable=lambda: self._capture_recovery.mark_end_durable(
+                    observation, blackout_id
+                ),
                 on_failure=failure(CaptureCommandKind.END),
             )
             if accepted:
@@ -699,43 +754,6 @@ class BlackoutCapture:
                 self._lifecycle_state, observation, LifecycleSignal.START_REJECTED
             ).state_after
         return accepted
-
-    def _accept_prestart_result(
-        self, result: PrestartRecoveryResult, observation: PhysicalObservation
-    ) -> None:
-        with self._submission_lock:
-            _settle_prestart_overflow(self._prestart_loss, result)
-            self._prestart_loss.mark_durable()
-            if result.handle is None:
-                self._unknown_prelude_pending = False
-                self._session.clear()
-                self._submitted_boot_id = None
-                self._submitted_blackout_id = None
-                signal = LifecycleSignal.CAPTURE_END_DURABLE
-            else:
-                self._session.attach(result.handle)
-                if result.current_kind != BlackoutKind.UNKNOWN:
-                    self._unknown_prelude_pending = False
-                signal = LifecycleSignal.CAPTURE_PREPARED
-            self._lifecycle_state = advance_lifecycle(
-                self._lifecycle_state, observation, signal
-            ).state_after
-
-    def _reset_prestart_submission(
-        self,
-        observation: PhysicalObservation,
-        overflow_delivery: OverflowDeliveryReservation | None,
-    ) -> None:
-        with self._submission_lock:
-            self._prestart_loss.release_overflow_delivery(overflow_delivery)
-            self._reset_prestart_submission_locked(observation)
-
-    def _reset_prestart_submission_locked(self, observation: PhysicalObservation) -> None:
-        self._submitted_boot_id = None
-        self._submitted_blackout_id = None
-        self._lifecycle_state = advance_lifecycle(
-            self._lifecycle_state, observation, LifecycleSignal.START_REJECTED
-        ).state_after
 
 
 def _required_blackout_id(value: str | None) -> str:

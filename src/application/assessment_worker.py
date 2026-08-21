@@ -559,6 +559,7 @@ def _processing_handle(processing: ProcessingRef, projection: EventProjection) -
             processing.final_path_token,
             outcome.seq,
             outcome.prev_record_sha256,
+            outcome.event_kind,
         )
     if not projection.records:
         raise ProjectionInputError("event projection is empty")
@@ -569,6 +570,7 @@ def _processing_handle(processing: ProcessingRef, projection: EventProjection) -
         processing.final_path_token,
         last.seq + 1,
         last.record_sha256,
+        last.event_kind,
     )
 
 

@@ -7,7 +7,7 @@ used by the health reporter; all scientific mutations remain unavailable.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Protocol, cast
 
 from src.application.errors import StoragePortError
@@ -62,6 +62,19 @@ class _DeferredStoreDelegate(
     @property
     def report_outbox(self) -> ReportOutboxEventStorePort: ...
 
+    def sealed_event_projections(
+        self,
+        start_utc: str,
+        end_utc: str,
+        *,
+        event_kind: str = "blackout",
+    ) -> tuple[EventProjection, ...]: ...
+
+    def sealed_recharge_projections_for_blackouts(
+        self,
+        blackout_ids: Collection[str],
+    ) -> tuple[EventProjection, ...]: ...
+
 
 class DegradedEventStore:
     """No-capture store that keeps safety/reporting construction deterministic."""
@@ -104,6 +117,23 @@ class DegradedEventStore:
 
     def recover_startup(self) -> RecoveredCapture | None:
         raise EventStorageUnavailable(f"startup_degraded: {self.reason}")
+
+    def sealed_event_projections(
+        self,
+        start_utc: str,
+        end_utc: str,
+        *,
+        event_kind: str = "blackout",
+    ) -> tuple[EventProjection, ...]:
+        del start_utc, end_utc, event_kind
+        return ()
+
+    def sealed_recharge_projections_for_blackouts(
+        self,
+        blackout_ids: Collection[str],
+    ) -> tuple[EventProjection, ...]:
+        del blackout_ids
+        return ()
 
     def checkpoint_processing(self, handle: EventHandle, frozen_stage: str) -> None:
         del handle, frozen_stage
@@ -209,6 +239,25 @@ class DeferredEventStore:
 
     def work_registry(self) -> WorkRegistry:
         return self._target().work_registry()
+
+    def sealed_event_projections(
+        self,
+        start_utc: str,
+        end_utc: str,
+        *,
+        event_kind: str = "blackout",
+    ) -> tuple[EventProjection, ...]:
+        return self._target().sealed_event_projections(
+            start_utc,
+            end_utc,
+            event_kind=event_kind,
+        )
+
+    def sealed_recharge_projections_for_blackouts(
+        self,
+        blackout_ids: Collection[str],
+    ) -> tuple[EventProjection, ...]:
+        return self._target().sealed_recharge_projections_for_blackouts(blackout_ids)
 
     def checkpoint_processing(self, handle: EventHandle, frozen_stage: str) -> None:
         self._target().checkpoint_processing(handle, frozen_stage)

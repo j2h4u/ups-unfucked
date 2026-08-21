@@ -85,12 +85,14 @@ def _capture_ref_dict(ref: CaptureRef | None) -> JsonValue:
             "segment_id": ref.segment_id,
             "path_token": ref.path_token,
             "canonical_start_record_utf8": ref.canonical_start_record_utf8,
+            "event_kind": ref.event_kind,
         }
     return {
         "tag": ref.tag,
         "blackout_id": ref.blackout_id,
         "segment_id": ref.segment_id,
         "path_token": ref.path_token,
+        "event_kind": ref.event_kind,
     }
 
 
@@ -113,7 +115,7 @@ def _decode_capture_ref(value: Any) -> CaptureRef | None:
     tag = value.get("tag")
     common = {"tag", "blackout_id", "segment_id", "path_token"}
     expected = common | ({"canonical_start_record_utf8"} if tag == "preparing" else set())
-    if set(value) != expected:
+    if set(value) not in (expected, expected | {"event_kind"}):
         raise EventCorruptionError("capture registry fields do not match its tag")
     blackout_id = _require_uuid4_hex(value.get("blackout_id"), "blackout_id")
     segment_id = _require_uuid4_hex(value.get("segment_id"), "segment_id")
@@ -121,13 +123,27 @@ def _decode_capture_ref(value: Any) -> CaptureRef | None:
     if not isinstance(path_token, str):
         raise EventCorruptionError("capture path token is invalid")
     _validate_path_token(path_token)
+    event_kind = value.get("event_kind", "blackout")
+    if event_kind not in {"blackout", "recharge"}:
+        raise EventCorruptionError("capture event kind is invalid")
     if tag == "preparing":
         frozen = value.get("canonical_start_record_utf8")
         if not isinstance(frozen, str) or len(frozen.encode("utf-8")) > MAX_LINE_BYTES:
             raise EventCorruptionError("preparing start bytes are invalid or unbounded")
-        return PreparingCaptureRef(blackout_id, segment_id, path_token, frozen)
+        return PreparingCaptureRef(
+            blackout_id,
+            segment_id,
+            path_token,
+            frozen,
+            event_kind=event_kind,
+        )
     if tag == "capturing":
-        return CapturingEventRef(blackout_id, segment_id, path_token)
+        return CapturingEventRef(
+            blackout_id,
+            segment_id,
+            path_token,
+            event_kind=event_kind,
+        )
     raise EventCorruptionError("unknown capture registry tag")
 
 
@@ -204,6 +220,7 @@ class JsonlWorkRegistry:
             or start.seq != 0
             or start.blackout_id != preparing.blackout_id
             or start.segment_id != preparing.segment_id
+            or start.event_kind != preparing.event_kind
         ):
             raise EventCorruptionError("preparing ref contains a mismatched start record")
         path = self._filesystem._event_path(preparing.path_token)
@@ -240,6 +257,7 @@ class JsonlWorkRegistry:
             preparing.blackout_id,
             preparing.segment_id,
             preparing.path_token,
+            event_kind=preparing.event_kind,
         )
         self._write_registry(WorkRegistry(capturing, pending))
         return capturing
@@ -262,6 +280,7 @@ class JsonlWorkRegistry:
             ref.final_path_token,
             tail.seq + 1,
             tail.record_sha256,
+            tail.event_kind,
         )
 
     def _move_capture_to_processing(self, handle: EventHandle, last_hash: str) -> None:
@@ -311,6 +330,7 @@ class JsonlWorkRegistry:
                     "ir_estimate_available": False,
                     "reasons": ["processing_backlog_full"],
                 },
+                handle.event_kind,
             )
         )
         line = canonical_record_line(envelope)
@@ -328,6 +348,7 @@ class JsonlWorkRegistry:
             handle.path_token,
             handle.next_seq + 1,
             outcome.record_sha256,
+            outcome.event_kind,
         )
         self._finish_sealed_projection(sealed_handle, outcome)
         raise ProcessingBacklogFullError(
@@ -342,6 +363,7 @@ class JsonlWorkRegistry:
             and capture.blackout_id == handle.blackout_id
             and capture.segment_id == handle.segment_id
             and capture.path_token == handle.path_token
+            and capture.event_kind == handle.event_kind
         ):
             return
         if any(

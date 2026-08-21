@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 
+EventKind = Literal["blackout", "recharge"]
+
 
 @dataclass(frozen=True, slots=True)
 class EventStart:
@@ -19,6 +21,7 @@ class EventStart:
     wall_time_utc: str
     monotonic_ns: int
     payload: Mapping[str, Any]
+    event_kind: EventKind = "blackout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +32,7 @@ class EventRecord:
     monotonic_ns: int
     payload: Mapping[str, Any]
     provenance: Literal["physical", "system", "derived"]
+    event_kind: EventKind = "blackout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +41,7 @@ class TerminalOutcomeRecord:
     wall_time_utc: str
     monotonic_ns: int
     payload: Mapping[str, Any]
+    event_kind: EventKind = "blackout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +51,7 @@ class EventHandle:
     path_token: str
     next_seq: int
     last_record_sha256: str
+    event_kind: EventKind = "blackout"
 
 
 class CaptureCloseState(StrEnum):
@@ -78,6 +84,11 @@ class RecoveredCapture:
     handle: EventHandle
     last_boot_id: str
     last_observation: RecoveredObservation
+    first_observation: RecoveredObservation | None = None
+
+    @property
+    def event_kind(self) -> EventKind:
+        return self.handle.event_kind
 
     @property
     def blackout_id(self) -> str:
@@ -107,6 +118,7 @@ class PreparingCaptureRef:
     path_token: str
     canonical_start_record_utf8: str
     tag: Literal["preparing"] = "preparing"
+    event_kind: EventKind = "blackout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +127,7 @@ class CapturingEventRef:
     segment_id: str
     path_token: str
     tag: Literal["capturing"] = "capturing"
+    event_kind: EventKind = "blackout"
 
 
 type CaptureRef = PreparingCaptureRef | CapturingEventRef
@@ -156,6 +169,7 @@ class ProjectedEventRecord:
     prev_record_sha256: str | None
     payload: Mapping[str, Any]
     record_sha256: str
+    event_kind: EventKind = "blackout"
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +184,14 @@ class EventProjection:
     damaged_segment_hashes: tuple[str, ...]
     damaged_segment_overflow: int
     records: tuple[ProjectedEventRecord, ...]
+
+    @property
+    def event_kind(self) -> EventKind:
+        """Return the strict kind carried by the event's start record."""
+        start = self.start
+        if start is None:
+            return "blackout"
+        return start.event_kind
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,14 +1,18 @@
 """Direct sealed-event history projection for the JSONL event store."""
 
 import hashlib
-import stat
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 from src.adapters.jsonl_errors import EventCorruptionError, EventPathError, EventValidationError
-from src.adapters.jsonl_event_stream import JsonlEventStream
-from src.adapters.jsonl_filesystem import JsonlFilesystem, _file_sha256
+from src.adapters.jsonl_event_read_codec import (
+    damaged_hashes,
+    event_file_sha256,
+    project_event,
+    sealed_event_paths,
+)
 from src.adapters.jsonl_record_codec import (
     EVENT_FILENAME_RE,
     MAX_DAMAGED_HASHES,
@@ -23,7 +27,6 @@ from src.application.storage_values import (
     EpochHistoryScan,
     EpochHistoryTail,
     EventProjection,
-    EventRef,
     EventSummary,
 )
 
@@ -31,17 +34,8 @@ from src.application.storage_values import (
 class JsonlEventHistory:
     """Enumerate sealed event files and derive terminal summaries in memory."""
 
-    def __init__(
-        self,
-        events_path: Path,
-        filesystem: JsonlFilesystem,
-        stream: JsonlEventStream,
-        owned_paths: Callable[[], frozenset[str]],
-    ) -> None:
+    def __init__(self, events_path: Path) -> None:
         self._events_path = events_path
-        self._filesystem = filesystem
-        self._stream = stream
-        self._owned_paths = owned_paths
 
     def tail(self, limit: int) -> tuple[EventSummary, ...]:
         return self._history()[:limit] if limit else ()
@@ -58,6 +52,60 @@ class JsonlEventHistory:
             True,
         )
 
+    def sealed_projections(
+        self,
+        start_utc: str,
+        end_utc: str,
+        *,
+        event_kind: str = "blackout",
+    ) -> tuple[EventProjection, ...]:
+        """Project sealed ordinary events whose start is in ``[start,end)``."""
+        if event_kind not in {"blackout", "recharge"}:
+            raise EventValidationError("event kind must be blackout or recharge")
+        start = _parse_range_bound(start_utc, "start_utc")
+        end = _parse_range_bound(end_utc, "end_utc")
+        if start >= end:
+            raise ValueError("history range must be non-empty and ordered")
+        projections: list[EventProjection] = []
+        for path in sealed_event_paths(self._events_path):
+            projection = self._sealed_projection(path, event_kind)
+            if projection is None or projection.start is None:
+                continue
+            event_start = _parse_range_bound(projection.start.wall_time_utc, "event start")
+            if start <= event_start < end:
+                projections.append(projection)
+        return tuple(projections)
+
+    def sealed_recharge_projections_for_blackouts(
+        self,
+        blackout_ids: Collection[str],
+    ) -> tuple[EventProjection, ...]:
+        """Read sealed recharge episodes linked to selected blackout IDs."""
+        linked_ids = frozenset(blackout_ids)
+        if not linked_ids:
+            return ()
+        projections: list[EventProjection] = []
+        for path in sealed_event_paths(self._events_path):
+            projection = self._sealed_projection(path, "recharge")
+            if projection is None or projection.start is None:
+                continue
+            preceding = projection.start.payload.get("preceding_blackout_id")
+            if isinstance(preceding, str) and preceding in linked_ids:
+                projections.append(projection)
+        return tuple(projections)
+
+    def _sealed_projection(
+        self,
+        path: Path,
+        event_kind: str,
+    ) -> EventProjection | None:
+        projection = project_event(self._events_path, _blackout_id(path))
+        if projection.event_kind != event_kind or projection.start is None:
+            return None
+        if projection.outcome is None:
+            raise EventCorruptionError(f"sealed event has no terminal outcome: {path.name}")
+        return projection
+
     def commit_notice(
         self, path_token: str, projection: EventProjection, append: Callable[..., object]
     ) -> None:
@@ -71,33 +119,23 @@ class JsonlEventHistory:
         )
 
     def _history(self) -> tuple[EventSummary, ...]:
-        owned_paths = self._owned_paths()
         summaries = [
             summary
-            for path in self._events_path.iterdir()
-            if path.name.startswith("evt-")
-            for summary in (self._summary_for_path(path, owned_paths),)
+            for path in sealed_event_paths(self._events_path)
+            for summary in (self._summary_for_path(path),)
             if summary is not None
         ]
         summaries.sort(key=lambda item: (item.started_utc, item.segment_filename), reverse=True)
         return tuple(summaries)
 
-    def _summary_for_path(self, path: Path, owned_paths: frozenset[str]) -> EventSummary | None:
-        match = EVENT_FILENAME_RE.fullmatch(path.name)
-        if match is None:
-            raise EventPathError(f"event filename is invalid: {path.name}")
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-            raise EventPathError(f"event path is not a regular file: {path.name}")
-        if stat.S_IMODE(info.st_mode) != 0o400:
-            if path.name in owned_paths:
-                return None
-            raise EventCorruptionError(f"sealed event has unexpected permissions: {path.name}")
-        projection = self._stream.project(EventRef(match.group("blackout"), path.name))
+    def _summary_for_path(self, path: Path) -> EventSummary | None:
+        projection = project_event(self._events_path, _blackout_id(path))
+        if projection.event_kind != "blackout":
+            return None
         if projection.outcome is None:
             raise EventCorruptionError(f"sealed event has no terminal outcome: {path.name}")
         terminal_segment = projection.outcome.segment_id
-        filename_segment = match.group("segment")
+        filename_segment = _event_segment(path)
         if filename_segment is None and (
             projection.start is None or projection.start.segment_id != terminal_segment
         ):
@@ -121,7 +159,7 @@ class JsonlEventHistory:
             comparison_mode = "short_window"
         elif raw_comparison_mode not in {None, "none"}:
             raise EventValidationError("invalid comparison mode in outcome")
-        damaged = self._stream._damaged_hashes(start.blackout_id)
+        damaged = damaged_hashes(self._events_path, start.blackout_id)
         summary = EventSummary(
             schema_version=SCHEMA_VERSION,
             blackout_id=start.blackout_id,
@@ -141,7 +179,31 @@ class JsonlEventHistory:
             damaged_segment_hashes=damaged[:MAX_DAMAGED_HASHES],
             damaged_segment_overflow=max(0, len(damaged) - MAX_DAMAGED_HASHES),
             outcome_record_sha256=outcome.record_sha256,
-            event_file_sha256=_file_sha256(self._filesystem._event_path(path_token)),
+            event_file_sha256=event_file_sha256(self._events_path / path_token),
         )
         _encode_summary(summary)
         return summary
+
+
+def _parse_range_bound(value: str, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise EventValidationError(f"{label} is not an ISO-8601 UTC timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise EventValidationError(f"{label} must include a UTC offset")
+    return parsed.astimezone(timezone.utc)
+
+
+def _blackout_id(path: Path) -> str:
+    match = EVENT_FILENAME_RE.fullmatch(path.name)
+    if match is None:
+        raise EventPathError(f"event filename is invalid: {path.name}")
+    return match.group("blackout")
+
+
+def _event_segment(path: Path) -> str | None:
+    match = EVENT_FILENAME_RE.fullmatch(path.name)
+    if match is None:
+        raise EventPathError(f"event filename is invalid: {path.name}")
+    return match.group("segment")
