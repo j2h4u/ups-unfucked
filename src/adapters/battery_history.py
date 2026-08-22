@@ -87,15 +87,10 @@ def summarize_episode(records: list[dict[str, Any]]) -> dict[str, Any] | None:
         return None
     start_index, end_index = bounds
     discharge = records[start_index : end_index + 1]
+    start_at = _parse_timestamp(str(discharge[0].get("at")))
+    end_at = _parse_timestamp(str(discharge[-1].get("at")))
     start = _timestamp(str(discharge[0].get("at")))
-    end = _timestamp(str(discharge[-1].get("at")))
-    duration = max(
-        0.0,
-        (
-            datetime.fromisoformat(end.replace("Z", "+00:00"))
-            - datetime.fromisoformat(start.replace("Z", "+00:00"))
-        ).total_seconds(),
-    )
+    duration = max(0, round((end_at - start_at).total_seconds()))
     discharge_percentages = [
         float(row["battery_pct"]) for row in discharge if _finite_number(row.get("battery_pct"))
     ]
@@ -145,11 +140,7 @@ def _is_on_battery(record: dict[str, Any]) -> bool:
 
 def _is_self_test(record: dict[str, Any]) -> bool:
     status = str(record.get("status", "")).split()
-    return "CAL" in status or (
-        "OB" in status
-        and _finite_number(record.get("input_v"))
-        and float(record["input_v"]) >= 100.0
-    )
+    return "CAL" in status
 
 
 def _finite_number(value: Any) -> bool:
@@ -157,7 +148,12 @@ def _finite_number(value: Any) -> bool:
 
 
 def _timestamp(value: str) -> str:
+    moment = _parse_timestamp(value)
+    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _parse_timestamp(value: str) -> datetime:
     moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if moment.tzinfo is None:
         raise ValueError("history timestamp must include a timezone")
-    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return moment.astimezone(timezone.utc)
