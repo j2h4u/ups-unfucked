@@ -6,6 +6,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from src.adapters.jsonl_errors import EventStoreError
 from src.adapters.minimal_event_file import read
 
