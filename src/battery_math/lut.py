@@ -64,25 +64,5 @@ def _interpolated_soc(voltage_v: float, lut: FrozenLut) -> float | None:
     return None
 
 
-def inverse_lut_voltage(soc: float, lut: FrozenLut) -> float:
-    """Return clamped voltage for SoC using the same immutable LUT."""
-    if not lut or not isfinite(soc):
-        return 0.0
-    if soc >= lut[0].soc:
-        return lut[0].voltage_v
-    if soc <= lut[-1].soc:
-        return lut[-1].voltage_v
-
-    for upper, lower in zip(lut, lut[1:], strict=False):
-        if upper.soc >= soc >= lower.soc:
-            soc_span = lower.soc - upper.soc
-            if soc_span == 0.0:
-                return upper.voltage_v
-            fraction = (soc - upper.soc) / soc_span
-            return upper.voltage_v + fraction * (lower.voltage_v - upper.voltage_v)
-
-    return lut[-1].voltage_v
-
-
 def _clamp_soc(soc: float) -> float:
     return max(0.0, min(1.0, soc))

@@ -70,9 +70,7 @@ def test_domain_policy_unknown_is_not_online() -> None:
 
 def test_calculation_uses_one_frozen_snapshot() -> None:
     snapshot = FrozenModelSnapshot(
-        schema_revision="2",
         evaluation_revision="1",
-        battery_epoch_id="a" * 32,
         scientific_fingerprint="b" * 64,
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
@@ -162,7 +160,6 @@ def test_publication_keeps_raw_lb_separate_from_modeled_decision() -> None:
         raw_status="OB DISCHRG LB",
         battery_voltage_raw="13.00",
         battery_voltage_v=13.0,
-        voltage_token_quantum_v=0.01,
         load_percent=20.0,
         input_voltage_v=0.0,
     )
@@ -174,16 +171,13 @@ def test_publication_keeps_raw_lb_separate_from_modeled_decision() -> None:
     publication = make_safety_publication(raw, safe_calculation)
 
     assert publication.raw_lb_observed
-    assert not publication.lb
     assert not publication.modeled_lb
     assert not publication.hard_floor_lb
 
 
 def _snapshot() -> FrozenModelSnapshot:
     return FrozenModelSnapshot(
-        schema_revision="2",
         evaluation_revision="1",
-        battery_epoch_id="a" * 32,
         scientific_fingerprint="b" * 64,
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,

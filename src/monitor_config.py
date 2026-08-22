@@ -17,7 +17,6 @@ CONFIG_DIR = Path.home() / ".config" / "ups-battery-monitor"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 POLL_INTERVAL_SEC = 1
-REPORTING_INTERVAL_SEC = 60
 EMA_WINDOW_SEC = 120
 NUT_HOST = "localhost"
 NUT_PORT = 3493
@@ -40,7 +39,6 @@ class Config:
     nut_port: int = NUT_PORT
     nut_timeout: float = NUT_TIMEOUT_SEC
     polling_interval: int = POLL_INTERVAL_SEC
-    reporting_interval: int = REPORTING_INTERVAL_SEC
     ema_window_sec: int = EMA_WINDOW_SEC
 
     def __post_init__(self) -> None:
@@ -54,8 +52,6 @@ class Config:
             raise ConfigError("capacity_ah must be positive")
         if self.polling_interval != POLL_INTERVAL_SEC:
             raise ConfigError("physical polling interval is fixed at one second")
-        if self.reporting_interval <= 0:
-            raise ConfigError("reporting_interval must be positive")
         if self.ema_window_sec <= 0:
             raise ConfigError("ema_window_sec must be positive")
         if not 1 <= self.nut_port <= 65535:

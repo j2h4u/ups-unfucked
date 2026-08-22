@@ -23,14 +23,6 @@ class NUTTelemetryPort(Protocol):
     def get_ups_vars_with_tokens(self) -> tuple[dict[str, float | str], dict[str, str]]: ...
 
 
-class StrictNUTTelemetryPort(Protocol):
-    """Least-authority read port for the capability-baseline producer."""
-
-    def get_ups_vars_with_tokens_strict(
-        self,
-    ) -> tuple[dict[str, float | str], dict[str, str]]: ...
-
-
 def _validate_nut_identifier(value: str, label: str) -> None:
     """Validate a NUT protocol identifier (ups_name, var_name, cmd_name).
 
@@ -177,52 +169,3 @@ class NUTClient:
                 values[var_name] = value
                 tokens[var_name] = raw_value
             return values, tokens
-
-    def get_ups_vars_with_tokens_strict(self) -> tuple[dict[str, float | str], dict[str, str]]:
-        """Fetch one complete ordinary LIST VAR reply with strict line validation.
-
-        The established method intentionally ignores unrecognised protocol lines for
-        compatibility with the daemon's safety path.  The Slice-0 producer needs a
-        stronger boundary: every line in the ordinary reply must be a well-formed
-        ``VAR`` line, variable names may not repeat, and the BEGIN/END envelope must
-        identify this client.  This method still sends only ``LIST VAR``.
-        """
-        with self._socket_session():
-            assert self.sock is not None
-            self.sock.sendall(f"LIST VAR {self.ups_name}\n".encode())
-            raw = self._recv_until(f"END LIST VAR {self.ups_name}")
-            lines = raw.splitlines()
-            expected_begin = f"BEGIN LIST VAR {self.ups_name}"
-            expected_end = f"END LIST VAR {self.ups_name}"
-            if not lines or lines[0] != expected_begin or lines[-1] != expected_end:
-                raise ValueError("incomplete LIST VAR envelope")
-
-            values: dict[str, float | str] = {}
-            tokens: dict[str, str] = {}
-            for line in lines[1:-1]:
-                parsed = self._parse_strict_var_line(line)
-                var_name, value, raw_value = parsed
-                if var_name in values:
-                    raise ValueError(f"duplicate LIST VAR key: {var_name}")
-                values[var_name] = value
-                tokens[var_name] = raw_value
-            if not values:
-                raise ValueError("LIST VAR reply contains no variables")
-            return values, tokens
-
-    def _parse_strict_var_line(self, line: str) -> tuple[str, float | str, str]:
-        prefix = f"VAR {self.ups_name} "
-        if not line.startswith(prefix):
-            raise ValueError("LIST VAR reply contains a non-VAR line")
-        remainder = line[len(prefix) :]
-        name, separator, quoted = remainder.partition(' "')
-        if not separator or not quoted.endswith('"'):
-            raise ValueError("malformed LIST VAR value")
-        raw_value = quoted[:-1]
-        if not name or not _NUT_SAFE_NAME.fullmatch(name) or '"' in raw_value:
-            raise ValueError("malformed LIST VAR key or value")
-        try:
-            value: float | str = float(raw_value)
-        except ValueError:
-            value = raw_value
-        return name, value, raw_value

@@ -52,7 +52,6 @@ class SafetyCalculation:
     charge_percent: int
     runtime_minutes: float
     virtual_status: str
-    shutdown_imminent: bool
     modeled_lb: bool
     hard_floor_lb: bool
     virtual_lb_source: VirtualLbSource | None
@@ -65,7 +64,6 @@ class SafetyPublication:
     """Complete safety output; raw firmware LB is diagnostic-only."""
 
     virtual_status_token: str
-    lb: bool
     raw_status: str
     raw_lb_observed: bool
     event_class: BlackoutKind
@@ -122,7 +120,6 @@ def calculate_safety(
         charge_percent=int(round(max(0.0, min(1.0, soc)) * 100.0)),
         runtime_minutes=remaining,
         virtual_status=decision.virtual_status,
-        shutdown_imminent=decision.virtual_status == NUT_STATUS_LOW_BATTERY,
         modeled_lb=decision.modeled_lb,
         hard_floor_lb=decision.hard_floor_lb,
         virtual_lb_source=decision.next_latch.source,
@@ -138,7 +135,6 @@ def make_safety_publication(
     """Join physical diagnostics to an already completed model-only decision."""
     return SafetyPublication(
         virtual_status_token=calculation.virtual_status,
-        lb=calculation.shutdown_imminent,
         raw_status=observation.raw_status,
         raw_lb_observed=raw_lb_observed(observation),
         event_class=calculation.event_class,

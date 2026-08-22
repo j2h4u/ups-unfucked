@@ -56,7 +56,6 @@ path = "src.adapters.model_owner"
 depends_on = [
     "src.adapters.model_state_persistence",
     "src.adapters.model_state_schema",
-    "src.application",
     "src.battery_math",
     "src.domain",
 ]

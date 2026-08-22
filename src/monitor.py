@@ -26,12 +26,9 @@ from src.application.safety import (
     conservative_safety_kind,
     make_safety_publication,
 )
-from src.application.safety_oracle import no_later_lb_oracle
 from src.domain.lifecycle import classify_physical_observation
-from src.domain.readiness import ReadinessState, initial_readiness_state, update_readiness
 from src.domain.values import (
     BlackoutKind,
-    ChargeReadiness,
     FrozenModelSnapshot,
     PhysicalObservation,
 )
@@ -54,6 +51,7 @@ except ImportError:
 
 logger = logging.getLogger("ups-battery-monitor")
 
+
 class InvalidObservationBoundary(RuntimeErrorBoundary):
     """A physical outage was observed but cannot enter the safety calculation."""
 
@@ -63,13 +61,11 @@ class InvalidObservationBoundary(RuntimeErrorBoundary):
         *,
         observation: PhysicalObservation,
         snapshot: FrozenModelSnapshot,
-        readiness: ChargeReadiness | None,
         physical_kind: BlackoutKind,
     ) -> None:
         super().__init__(str(error))
         self.observation = observation
         self.snapshot = snapshot
-        self.readiness = readiness
         self.physical_kind = physical_kind
 
 
@@ -148,14 +144,10 @@ class MonitorDaemon:
         self._sleeper = clocks.sleep
         self._notifier = clocks.notify
         self._latch = SafetyLatch()
-        self._readiness: ReadinessState = initial_readiness_state()
         self._running = False
         self._started = False
         self._closed = False
         self._fatal_error: SafetyPublicationError | None = None
-        self._poll_sequence = 0
-        self._consecutive_errors = 0
-        self._last_observation: PhysicalObservation | None = None
 
     def start(self) -> None:
         if self._started:
@@ -176,7 +168,6 @@ class MonitorDaemon:
                 error,
                 observation=observation,
                 snapshot=snapshot,
-                readiness=None,
                 physical_kind=physical_kind,
             ) from error
         voltage = observation.battery_voltage_v
@@ -204,7 +195,6 @@ class MonitorDaemon:
             observation=observation,
             snapshot=snapshot,
             calculation=calculation,
-            poll_sequence=self._poll_sequence,
             poll_latency_ms=max(0.0, (self._monotonic_clock() - started) * 1000.0),
         )
         self._publisher.stage(context)
@@ -212,11 +202,7 @@ class MonitorDaemon:
         self._publisher.clear_channel_error("poll")
 
         self._latch = calculation.next_latch
-        self._readiness, _ = update_readiness(self._readiness, observation)
         self._write_telemetry(observation, physical_kind)
-        self._last_observation = observation
-        self._poll_sequence += 1
-        self._consecutive_errors = 0
         return PollResult(observation, snapshot, calculation, publication)
 
     def _write_telemetry(
@@ -244,25 +230,28 @@ class MonitorDaemon:
                 keep_running, published = self._run_poll_iteration()
                 if not keep_running:
                     break
-                if published:
-                    if not ready_sent:
-                        self._notifier("READY=1")
-                        ready_sent = True
-                if (
-                    self._running
-                    and self._publisher.watchdog_healthy
-                ):
-                    self._notifier("WATCHDOG=1")
-                next_deadline += float(self.config.polling_interval)
-                now = self._monotonic_clock()
-                if next_deadline <= now:
-                    next_deadline = now
-                else:
-                    self._sleeper(next_deadline - now)
+                ready_sent = self._notify_iteration(published, ready_sent)
+                next_deadline = self._wait_for_next_poll(next_deadline)
         finally:
             self.shutdown()
         if self._fatal_error is not None:
             raise self._fatal_error
+
+    def _notify_iteration(self, published: bool, ready_sent: bool) -> bool:
+        if published and not ready_sent:
+            self._notifier("READY=1")
+            ready_sent = True
+        if self._running and self._publisher.watchdog_healthy:
+            self._notifier("WATCHDOG=1")
+        return ready_sent
+
+    def _wait_for_next_poll(self, next_deadline: float) -> float:
+        next_deadline += float(self.config.polling_interval)
+        now = self._monotonic_clock()
+        if next_deadline <= now:
+            return now
+        self._sleeper(next_deadline - now)
+        return next_deadline
 
     def _run_poll_iteration(self) -> tuple[bool, bool]:
         try:
@@ -283,7 +272,6 @@ class MonitorDaemon:
         return True, True
 
     def _handle_poll_failure(self, error: BaseException) -> tuple[bool, bool]:
-        self._consecutive_errors += 1
         self._publisher.record_channel_error("poll", error)
         logger.warning(
             "Safety poll unavailable: %s",
@@ -305,7 +293,6 @@ class MonitorDaemon:
         continued, _ = self._handle_poll_failure(error)
         if not continued:
             return False, False
-        self._last_observation = error.observation
         return True, False
 
     def _handle_publication_failure(
@@ -314,7 +301,6 @@ class MonitorDaemon:
         *,
         fail_safe: bool = False,
     ) -> None:
-        self._consecutive_errors += 1
         self._publisher.record_channel_error("poll", error)
         self._fatal_error = error
         self.request_stop()
@@ -395,11 +381,6 @@ def build_daemon(
     model = ModelOwner.open_runtime(
         config.model_dir / "model.json",
         rated_capacity_ah=config.capacity_ah,
-        safety_oracle=lambda before, after: no_later_lb_oracle(
-            before,
-            after,
-            shutdown_threshold_minutes=config.shutdown_minutes,
-        ),
     )
     exporter = VirtualUpsExporter(
         virtual_ups_path=virtual_ups_path,

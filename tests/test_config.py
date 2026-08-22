@@ -18,7 +18,6 @@ from src.monitor_config import Config, ConfigError, load_config
         ({"capacity_ah": True}, "capacity_ah must be positive"),
         ({"capacity_ah": 0.0}, "capacity_ah must be positive"),
         ({"polling_interval": 2}, "fixed at one second"),
-        ({"reporting_interval": 0}, "reporting_interval must be positive"),
         ({"ema_window_sec": 0}, "ema_window_sec must be positive"),
         ({"nut_port": 0}, "nut_port must be between 1 and 65535"),
         ({"nut_port": 65536}, "nut_port must be between 1 and 65535"),

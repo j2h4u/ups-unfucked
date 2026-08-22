@@ -16,7 +16,9 @@ def _script():
 
 
 def _row(at: str, status: str, battery_pct: float) -> dict[str, object]:
-    return sample(at, 13.3, battery_pct, 600.0, 20.0, 0.0 if "OB" in status else 230.0, 230.0, status)
+    return sample(
+        at, 13.3, battery_pct, 600.0, 20.0, 0.0 if "OB" in status else 230.0, 230.0, status
+    )
 
 
 def _write(root: Path, rows: list[dict[str, object]]) -> Path:

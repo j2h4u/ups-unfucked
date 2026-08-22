@@ -22,9 +22,7 @@ class _Telemetry:
 class _Model:
     def current_snapshot(self) -> FrozenModelSnapshot:
         return FrozenModelSnapshot(
-            "2",
             "1",
-            "a" * 32,
             "b" * 64,
             7.2,
             12.0,
@@ -77,7 +75,6 @@ def _observation(status: str, battery_pct: float) -> PhysicalObservation:
         status,
         "13.3",
         13.3,
-        0.01,
         20.0,
         0.0 if status.startswith("OB") else 230.0,
         battery_pct=battery_pct,
