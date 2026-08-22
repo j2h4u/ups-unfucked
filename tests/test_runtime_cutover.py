@@ -65,8 +65,9 @@ class _Publisher:
     def record_channel_error(self, channel: str, error: BaseException | str) -> None:
         self.channels.append((channel, error))
 
-    def clear_channel_error(self, _channel: str) -> None:
-        return None
+    def clear_channel_error(self, channel: str) -> None:
+        if channel not in {"poll", "storage"}:
+            raise ValueError(f"unknown error channel: {channel}")
 
     def invalidate_output(self) -> None:
         return None
