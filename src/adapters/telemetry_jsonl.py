@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from src.adapters.battery_history import BatteryHistory
 from src.adapters.minimal_event_file import MinimalEvent, append, sample
@@ -26,6 +27,7 @@ class TelemetryJsonlWriter:
         self._history = BatteryHistory(self._path.with_name("history.jsonl"))
         self._episode_active = False
         self._episode_records: list[dict[str, object]] = []
+        self._completed_episode: tuple[dict[str, object], ...] | None = None
         self._silent_window = (
             timedelta(seconds=silent_window_sec) if silent_window_sec is not None else None
         )
@@ -65,6 +67,7 @@ class TelemetryJsonlWriter:
             records = self._episode_records
             self._episode_records = []
             self._history.episode(records)
+            self._completed_episode = tuple(records)
             return True
         if observation.battery_pct != 100.0:
             return False
@@ -75,6 +78,34 @@ class TelemetryJsonlWriter:
             self._post_full_until = None
         self._remember_silent_observation(observation)
         return False
+
+    def take_completed_episode(self) -> tuple[dict[str, object], ...] | None:
+        """Return a newly closed episode once, after its telemetry is durable."""
+        completed = self._completed_episode
+        self._completed_episode = None
+        return completed
+
+    def event_kinds(self) -> dict[str, str]:
+        """Expose the small history index needed to avoid repeat feedback."""
+        return self._history.event_kinds()
+
+    def record_model_update(
+        self,
+        *,
+        at: str,
+        event_at: str,
+        evidence_at: str,
+        changes: dict[str, tuple[Any, Any]],
+        reason: str,
+    ) -> None:
+        """Append one transparent feedback result to the existing history."""
+        self._history.model_update(
+            at=at,
+            event_at=event_at,
+            evidence_at=evidence_at,
+            changes=changes,
+            reason=reason,
+        )
 
     def _remember_silent_observation(self, observation: PhysicalObservation) -> None:
         if self._silent_window is None:

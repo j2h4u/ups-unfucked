@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.adapters.battery_history import summarize_episode
+from src.adapters.battery_history import BatteryHistory, summarize_episode
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
 from src.domain.values import BlackoutKind, PhysicalObservation
 
@@ -86,3 +86,34 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
             "efc": 0.0,
         },
     ]
+
+
+def test_model_update_records_exact_change_reason_and_event(tmp_path: Path) -> None:
+    path = tmp_path / "events" / "history.jsonl"
+    history = BatteryHistory(path)
+
+    history.model_update(
+        at="2026-08-22T00:01:00Z",
+        event_at="2026-08-22T00:00:00Z",
+        evidence_at="2026-08-22T00:00:30Z",
+        changes={"physics.ir_compensation.k_volts_per_percent": (0.025, 0.023)},
+        reason="stable natural-blackout load step",
+    )
+
+    assert _rows(path) == [
+        {
+            "kind": "model_update",
+            "at": "2026-08-22T00:01:00Z",
+            "event_at": "2026-08-22T00:00:00Z",
+            "evidence_at": "2026-08-22T00:00:30Z",
+            "changes": {
+                "physics.ir_compensation.k_volts_per_percent": {
+                    "from": 0.025,
+                    "to": 0.023,
+                    "delta": -0.002,
+                }
+            },
+            "reason": "stable natural-blackout load step",
+        }
+    ]
+    assert history.event_kinds() == {"2026-08-22T00:00:00Z": "model_update"}

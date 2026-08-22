@@ -25,6 +25,46 @@ class BatteryHistory:
         if summary is not None:
             self._append(summary)
 
+    def model_update(
+        self,
+        *,
+        at: str,
+        event_at: str,
+        evidence_at: str,
+        changes: dict[str, tuple[Any, Any]],
+        reason: str,
+    ) -> None:
+        """Record the exact, human-readable effect of one feedback pass."""
+        rendered = {
+            field: {"from": before, "to": after, "delta": round(after - before, 12)}
+            for field, (before, after) in changes.items()
+        }
+        self._append(
+            {
+                "kind": "model_update",
+                "at": _timestamp(at),
+                "event_at": _timestamp(event_at),
+                "evidence_at": _timestamp(evidence_at),
+                "changes": rendered,
+                "reason": reason,
+            }
+        )
+
+    def event_kinds(self) -> dict[str, str]:
+        """Return classifications and successful feedback applications by event time."""
+        if not self._path.exists():
+            return {}
+        result: dict[str, str] = {}
+        for line in self._path.read_text().splitlines():
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("history record must be an object")
+            kind = record.get("kind")
+            event_at = record.get("event_at") if kind == "model_update" else record.get("at")
+            if kind in {"blackout", "self_test", "model_update"} and isinstance(event_at, str):
+                result[event_at] = str(kind)
+        return result
+
     def _append(self, record: dict[str, Any]) -> None:
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n"

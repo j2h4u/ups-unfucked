@@ -18,6 +18,9 @@ It is append-only and contains blackout, test, and recharge samples, including u
 pre/post context when available. Keep raw lines unchanged. `scripts/blackout-history.py` reads this
 file and prints a compact history; it is not a separate persistence layer.
 
+`events/history.jsonl` is the compact derived journal. In addition to episode summaries, it records
+the exact before/after values and reason whenever natural-blackout feedback changes `model.json`.
+
 ## Automatic quick self-test
 
 When the physical UPS is OL100 and telemetry shows no blackout or calibration/self-test for 14 days,

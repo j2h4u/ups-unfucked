@@ -1,5 +1,6 @@
-"""Runtime owner for one validated, immutable model snapshot."""
+"""Runtime owner for one validated model and its immutable published snapshot."""
 
+import copy
 import threading
 from collections.abc import Mapping
 from pathlib import Path
@@ -57,6 +58,7 @@ class ModelOwner:
             files.atomic_write_model(self.model_path, schema.canonical_json(state))
         else:
             raise schema.TargetModelStateError(f"target model does not exist: {self.model_path}")
+        self._state = copy.deepcopy(state)
         self._snapshot = self._snapshot_from_state(state)
 
     def adopt_writer_lock(self, writer_lock_fd: int) -> None:
@@ -74,6 +76,31 @@ class ModelOwner:
     def current_snapshot(self) -> FrozenModelSnapshot:
         with self._lock:
             return self._snapshot
+
+    def apply_ir_k(self, value: float) -> tuple[float, float] | None:
+        """Atomically replace the one model field authorized for feedback."""
+        with self._lock:
+            self._require_writer_lock()
+            candidate = copy.deepcopy(self._state)
+            physics = candidate["physics"]
+            assert isinstance(physics, dict)
+            ir = physics["ir_compensation"]
+            assert isinstance(ir, dict)
+            before = float(ir["k_volts_per_percent"])
+            ir["k_volts_per_percent"] = value
+            schema.validate_target_state(candidate, source=str(self.model_path))
+            after = float(ir["k_volts_per_percent"])
+            if before == after:
+                return None
+            next_snapshot = self._snapshot_from_state(candidate)
+            files.atomic_write_model(self.model_path, schema.canonical_json(candidate))
+            self._state = candidate
+            self._snapshot = next_snapshot
+            return before, after
+
+    def _require_writer_lock(self) -> None:
+        if self._writer_lock_fd is None:
+            raise files.ModelStateFileError("model changes require ownership of the writer lock")
 
     def _snapshot_from_state(self, state: Mapping[str, Any]) -> FrozenModelSnapshot:
         physics = state["physics"]
