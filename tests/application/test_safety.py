@@ -70,8 +70,6 @@ def test_domain_policy_unknown_is_not_online() -> None:
 
 def test_calculation_uses_one_frozen_snapshot() -> None:
     snapshot = FrozenModelSnapshot(
-        evaluation_revision="1",
-        scientific_fingerprint="b" * 64,
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
@@ -80,8 +78,8 @@ def test_calculation_uses_one_frozen_snapshot() -> None:
         ir_k_v_per_pp=0.015,
         ir_reference_load_percent=0.0,
         lut=(
-            LutPoint(13.7, 1.0, "standard"),
-            LutPoint(10.8, 0.0, "anchor"),
+            LutPoint(13.7, 1.0),
+            LutPoint(10.8, 0.0),
         ),
     )
 
@@ -177,8 +175,6 @@ def test_publication_keeps_raw_lb_separate_from_modeled_decision() -> None:
 
 def _snapshot() -> FrozenModelSnapshot:
     return FrozenModelSnapshot(
-        evaluation_revision="1",
-        scientific_fingerprint="b" * 64,
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
@@ -187,7 +183,7 @@ def _snapshot() -> FrozenModelSnapshot:
         ir_k_v_per_pp=0.015,
         ir_reference_load_percent=0.0,
         lut=(
-            LutPoint(13.7, 1.0, "standard"),
-            LutPoint(10.8, 0.0, "anchor"),
+            LutPoint(13.7, 1.0),
+            LutPoint(10.8, 0.0),
         ),
     )

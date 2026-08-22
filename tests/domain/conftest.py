@@ -43,8 +43,6 @@ def observation_factory():
 @pytest.fixture
 def frozen_snapshot():
     return FrozenModelSnapshot(
-        evaluation_revision="eval-1",
-        scientific_fingerprint="f" * 64,
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
@@ -53,9 +51,9 @@ def frozen_snapshot():
         ir_k_v_per_pp=0.015,
         ir_reference_load_percent=0.0,
         lut=(
-            LutPoint(13.7, 1.0, "standard"),
-            LutPoint(12.7, 0.7, "standard"),
-            LutPoint(11.7, 0.3, "standard"),
-            LutPoint(10.8, 0.0, "anchor"),
+            LutPoint(13.7, 1.0),
+            LutPoint(12.7, 0.7),
+            LutPoint(11.7, 0.3),
+            LutPoint(10.8, 0.0),
         ),
     )

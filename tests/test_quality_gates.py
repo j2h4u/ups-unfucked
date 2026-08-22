@@ -174,6 +174,7 @@ def test_import_linter_declares_nested_adapter_family_boundaries() -> None:
         for contract in contracts
         if contract["name"] == "Event-file adapter internals do not reach model or NUT adapters"
     )
+    assert "src.adapters.battery_history" in nested_sources
     assert "src.adapters.telemetry_jsonl" in nested_sources
     assert "src.adapters.minimal_event_file" in nested_sources
 

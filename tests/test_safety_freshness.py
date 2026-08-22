@@ -32,8 +32,6 @@ from src.virtual_ups_exporter.atomic_publication_cleanup import cleanup_atomic_p
 
 def _snapshot() -> FrozenModelSnapshot:
     return FrozenModelSnapshot(
-        "1",
-        "b" * 64,
         7.2,
         12.0,
         510.0,
@@ -41,7 +39,7 @@ def _snapshot() -> FrozenModelSnapshot:
         1.2,
         0.012,
         0.0,
-        (LutPoint(13.7, 1.0, "standard"), LutPoint(10.8, 0.0, "anchor")),
+        (LutPoint(13.7, 1.0), LutPoint(10.8, 0.0)),
     )
 
 

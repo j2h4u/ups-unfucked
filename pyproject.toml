@@ -108,6 +108,7 @@ forbidden_modules = [
 name = "Event-file adapter internals do not reach model or NUT adapters"
 type = "forbidden"
 source_modules = [
+    "src.adapters.battery_history",
     "src.adapters.jsonl_errors",
     "src.adapters.minimal_event_file",
     "src.adapters.telemetry_jsonl",
@@ -129,6 +130,7 @@ source_modules = [
     "src.adapters.nut_telemetry",
 ]
 forbidden_modules = [
+    "src.adapters.battery_history",
     "src.adapters.jsonl_errors",
     "src.adapters.minimal_event_file",
     "src.adapters.telemetry_jsonl",

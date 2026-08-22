@@ -14,24 +14,11 @@
     "baseline_commit_status": "pending_exact_tree_commit"
   },
   "current_schema_and_model_identity": {
-    "target_model_schema_revision": "domain-jsonl-v2",
-    "target_model_evaluation_revision": "domain-jsonl-v2",
     "jsonl_record_schema_version": 2,
-    "model_parameter_authorized_for_automatic_learning": "ir_k_v_per_pp",
-    "model_reference_load_percent": 0.0,
-    "target_model_scientific_fingerprint": {
-      "algorithm": "sha256",
-      "source": "src/adapters/model_state_schema.py::scientific_fingerprint",
-      "fields_source": "src/adapters/model_state_schema.py::SCIENTIFIC_FINGERPRINT_FIELDS",
-      "value": "state-dependent; no single live model file is present in this repository"
-    },
-    "release_a_source_schema": "Release-A",
-    "registered_release_a_fixture_scientific_fingerprint": "97a021ad753b4dabb166ce7599a5398b7fce08b41ddc4f4f60df3fd8e03fa0d8",
-    "legacy_safety_fixture_snapshot_values": {
-      "schema_revision": "2",
-      "evaluation_revision": "1",
-      "note": "Values used by the existing FrozenModelSnapshot safety/oracle fixtures; target persistence identity above is authoritative."
-    }
+    "target_model_keys": ["soh", "physics", "lut"],
+    "physics_keys": ["peukert_exponent", "ir_compensation"],
+    "ir_compensation_keys": ["k_volts_per_percent"],
+    "lut_entry_keys": ["v", "soc"]
   },
   "terminal_policy": {
     "current_terminal_dispositions": [
@@ -87,8 +74,8 @@
     {
       "path": "src/adapters/model_state_schema.py",
       "sha256": "675c4ad553602252873c7fc010404597095e8471ae5a17d556f02b94f403a4b3",
-      "purpose": "Current target model schema, identity fields, fingerprint algorithm, and IR policy bounds.",
-      "expected_golden_ids": ["model.target_schema_domain_jsonl_v2", "model.ir_reference_zero_frame"],
+      "purpose": "Current strict predictor schema and validation.",
+      "expected_golden_ids": ["model.strict_predictor_schema", "model.ir_reference_zero_frame"],
       "expected_test_ids": []
     },
     {
