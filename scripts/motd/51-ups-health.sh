@@ -1,6 +1,6 @@
 #!/bin/bash
 # MOTD module: UPS battery health status
-# Displays: status icon, charge%, runtime, load%, SoH%, replacement date
+# Displays: status icon, charge%, runtime, load%, and health percentage
 # Colors: green (healthy), yellow (warning), red (critical)
 #
 # Live UPS metrics come from NUT (upsc) — no jq or bundled CLI dependency.
@@ -34,7 +34,6 @@ charge=$(echo "$ups_data" | grep "^battery.charge:" | cut -d' ' -f2 | cut -d'.' 
 runtime=$(echo "$ups_data" | grep "^battery.runtime:" | cut -d' ' -f2)
 load=$(echo "$ups_data" | grep "^ups.load:" | cut -d' ' -f2 | cut -d'.' -f1)
 soh_pct=$(echo "$ups_data" | grep "^battery.health:" | cut -d' ' -f2 | cut -d'.' -f1)
-replacement_date=""
 
 # Format runtime: convert seconds to minutes/hours
 if [[ -n "$runtime" && "$runtime" -gt 0 ]] 2>/dev/null; then
@@ -79,21 +78,4 @@ else
     icon="?"
 fi
 
-# Replacement date suffix (only shown when prediction exists)
-repl_suffix=""
-if [[ -n "$replacement_date" ]]; then
-    repl_color="$DIM"
-    # Color red if within 3 months
-    if [[ "$replacement_date" =~ ^[0-9]{4}-[0-9]{2} ]]; then
-        current_date=$(date +%s)
-        repl_date_sec=$(date -d "$replacement_date" +%s 2>/dev/null || echo "$current_date")
-        days_diff=$(( (repl_date_sec - current_date) / 86400 ))
-        if [[ $days_diff -le 90 ]]; then
-            repl_color="$RED"
-        fi
-    fi
-    repl_suffix=" ${DIM}·${NC} replace by ${repl_color}${replacement_date}${NC}"
-fi
-
 # Output single line
-echo -e "  ${st_color}${icon}${NC} UPS: ${st_label}${NC} ${DIM}·${NC} charge ${charge}% ${DIM}·${NC} runtime ${rt_fmt} ${DIM}·${NC} load ${load}% ${DIM}·${NC} health ${soh_color}${soh_fmt}${NC}${repl_suffix}"

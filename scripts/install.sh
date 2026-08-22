@@ -116,10 +116,6 @@ SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
 SERVICE_DST="/etc/systemd/system/ups-battery-monitor.service"
 VIRTUAL_DRIVER_SRC="$REPO_ROOT/systemd/nut-driver@${UPS_VIRTUAL_NAME}.service"
 VIRTUAL_DRIVER_DST="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service"
-LEGACY_DROPIN_DIR="/etc/systemd/system/nut-driver@${UPS_VIRTUAL_NAME}.service.d"
-LEGACY_DROPIN_DST="$LEGACY_DROPIN_DIR/nut-driver-virtual.conf"
-STALE_MONITOR_DROPIN_DIR="/etc/systemd/system/ups-battery-monitor.service.d"
-STALE_MONITOR_DROPIN_DST="$STALE_MONITOR_DROPIN_DIR/20-stable-worktree.conf"
 TARGET_WANTS_LINK="/etc/systemd/system/nut-driver.target.wants/nut-driver@${UPS_VIRTUAL_NAME}.service"
 MONITOR_WANTS_DIR="/etc/systemd/system/ups-battery-monitor.service.wants"
 MONITOR_WANTS_LINK="$MONITOR_WANTS_DIR/nut-driver@${UPS_VIRTUAL_NAME}.service"
@@ -221,33 +217,6 @@ backup_transaction_file() {
     else
         : > "$TRANSACTION_ROOT/$name.absent"
     fi
-}
-
-validate_dropin_path() {
-    local parent="$1"
-    local target="$2"
-
-    if [[ -L "$parent" ]]; then
-        log_error "Refusing symlink drop-in parent: $parent"
-        return 1
-    fi
-    if [[ -e "$parent" && ! -d "$parent" ]]; then
-        log_error "Drop-in parent is not a directory: $parent"
-        return 1
-    fi
-    assert_restore_target_safe "$target"
-}
-
-retire_stale_monitor_dropin() {
-    validate_dropin_path "$STALE_MONITOR_DROPIN_DIR" "$STALE_MONITOR_DROPIN_DST"
-    if [[ "$DRY_RUN" == "yes" ]]; then
-        echo "[DRY-RUN] Would remove stale monitor drop-in: $STALE_MONITOR_DROPIN_DST"
-        return
-    fi
-    if [[ -e "$STALE_MONITOR_DROPIN_DST" || -L "$STALE_MONITOR_DROPIN_DST" ]]; then
-        rm -- "$STALE_MONITOR_DROPIN_DST"
-    fi
-    log_ok "Stale monitor drop-in retired: $STALE_MONITOR_DROPIN_DST"
 }
 
 # shellcheck disable=SC2317 # Called from the installation transaction and tests.
@@ -485,10 +454,6 @@ rollback_transaction() {
     fi
     restore_transaction_file "$SERVICE_DST" service || rollback_status=1
     restore_transaction_file "$VIRTUAL_DRIVER_DST" virtual-driver || rollback_status=1
-    restore_transaction_file "$LEGACY_DROPIN_DST" legacy-dropin || rollback_status=1
-    if [[ -n "${STALE_MONITOR_DROPIN_DST:-}" ]]; then
-        restore_transaction_file "$STALE_MONITOR_DROPIN_DST" stale-monitor-dropin || rollback_status=1
-    fi
     restore_transaction_file "$NUT_CONFIG" nut-config || rollback_status=1
     restore_transaction_file "$UPSMON_CONF" upsmon || rollback_status=1
     restore_transaction_link "$TARGET_WANTS_LINK" target-wants || rollback_status=1
@@ -539,8 +504,7 @@ trap finish_transaction EXIT
 
 # === PRIVATE BATTERY STATE ===
 # The daemon writes one strict model and per-blackout JSONL files below this
-# directory. Refuse symlinks before mutation. A Release-A global journal, when
-# present, is archived byte-for-byte but never created or opened by the candidate.
+# directory. Refuse symlinks before mutation.
 
 ensure_private_state() {
     # consts
@@ -548,13 +512,12 @@ ensure_private_state() {
     local -r state_dir="$config_dir/ups-battery-monitor"
     local -r events_dir="$state_dir/events"
     local -r model="$state_dir/model.json"
-    local -r legacy_journal="$state_dir/discharge-events-v1.jsonl"
 
     # vars
     local path
 
     # code
-    for path in "$INSTALL_HOME" "$config_dir" "$state_dir" "$events_dir" "$model" "$legacy_journal"; do
+    for path in "$INSTALL_HOME" "$config_dir" "$state_dir" "$events_dir" "$model"; do
         if [[ -L "$path" ]]; then
             log_error "Refusing symlink in battery state path: $path"
             exit 1
@@ -577,11 +540,6 @@ ensure_private_state() {
         log_error "Battery model is not a regular file: $model"
         exit 1
     fi
-    if [[ -e "$legacy_journal" && ! -f "$legacy_journal" ]]; then
-        log_error "Archived legacy journal is not a regular file: $legacy_journal"
-        exit 1
-    fi
-
     # Stop an existing writer before changing any shared private state. The
     # final service restart below starts it again after installation completes.
     if systemctl is-active --quiet ups-battery-monitor 2>/dev/null; then
@@ -600,9 +558,6 @@ ensure_private_state() {
         echo "[DRY-RUN] Would ensure per-blackout event directory: $events_dir (owner=$RUN_USER, mode=0700)"
         if [[ ! -e "$model" ]]; then
             echo "[DRY-RUN] Would explicitly provision strict target model: $model (owner=$RUN_USER, mode=0600)"
-        fi
-        if [[ -e "$legacy_journal" ]]; then
-            echo "[DRY-RUN] Would preserve archived legacy journal byte-for-byte: $legacy_journal"
         fi
         return
     fi
@@ -626,11 +581,6 @@ ModelOwner(
     fi
     chmod 600 -- "$model"
     chown --no-dereference "$RUN_USER:$RUN_USER" "$model"
-    if [[ -e "$legacy_journal" ]]; then
-        chmod 600 -- "$legacy_journal"
-        chown --no-dereference "$RUN_USER:$RUN_USER" "$legacy_journal"
-        log_ok "Archived legacy journal preserved byte-for-byte: $legacy_journal"
-    fi
     log_ok "Private target model and per-blackout event state ready: $state_dir"
 }
 
@@ -638,17 +588,10 @@ TRANSACTION_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ups-battery-monitor-install.XXXXX
 chmod 700 -- "$TRANSACTION_ROOT"
 backup_transaction_file "$SERVICE_DST" service
 backup_transaction_file "$VIRTUAL_DRIVER_DST" virtual-driver
-backup_transaction_file "$LEGACY_DROPIN_DST" legacy-dropin
-validate_dropin_path "$STALE_MONITOR_DROPIN_DIR" "$STALE_MONITOR_DROPIN_DST"
-backup_transaction_file "$STALE_MONITOR_DROPIN_DST" stale-monitor-dropin
 backup_transaction_file "$NUT_CONFIG" nut-config
 backup_transaction_file "$UPSMON_CONF" upsmon
 backup_transaction_link "$TARGET_WANTS_LINK" target-wants
 backup_transaction_link "$MONITOR_WANTS_LINK" monitor-wants
-if [[ -L "$LEGACY_DROPIN_DIR" || ( -e "$LEGACY_DROPIN_DIR" && ! -d "$LEGACY_DROPIN_DIR" ) ]]; then
-    log_error "Legacy drop-in parent is not a directory: $LEGACY_DROPIN_DIR"
-    exit 1
-fi
 if [[ -L "$MONITOR_WANTS_DIR" || ( -e "$MONITOR_WANTS_DIR" && ! -d "$MONITOR_WANTS_DIR" ) ]]; then
     log_error "Monitor wants parent is not a directory: $MONITOR_WANTS_DIR"
     exit 1
@@ -677,15 +620,7 @@ else
     install --owner=root --group=root --mode=0644 -- "$STAGED_DRIVER" "$VIRTUAL_DRIVER_DST"
     log_ok "Exact virtual NUT driver installed to $VIRTUAL_DRIVER_DST"
     remove_owned_link "$TARGET_WANTS_LINK"
-    if [[ -L "$LEGACY_DROPIN_DST" || ( -e "$LEGACY_DROPIN_DST" && ! -f "$LEGACY_DROPIN_DST" ) ]]; then
-        log_error "Legacy NUT drop-in is not a regular file: $LEGACY_DROPIN_DST"
-        exit 1
-    fi
-    rm -f -- "$LEGACY_DROPIN_DST"
-    log_ok "Legacy enumerator-owned virtual driver drop-in retired"
 fi
-
-retire_stale_monitor_dropin
 
 log_info "Reloading systemd daemon..."
 run_cmd systemctl daemon-reload
