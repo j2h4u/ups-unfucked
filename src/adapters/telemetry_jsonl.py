@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from src.adapters.battery_history import BatteryHistory
+from src.adapters.jsonl_errors import EventCorruptionError
 from src.adapters.minimal_event_file import MinimalEvent, append, sample
 from src.adapters.minimal_event_file import read as _read
 from src.domain.values import BlackoutKind, PhysicalObservation
@@ -15,9 +17,9 @@ from src.domain.values import BlackoutKind, PhysicalObservation
 class TelemetryJsonlWriter:
     """Append only samples that carry physical outage/recharge evidence.
 
-    The in-memory episode flag deliberately is not recovered from disk.  A
-    daemon restart while charging writes the first below-full sample; a daemon
-    starting on an ordinary full online UPS remains quiet until a new episode.
+    An unfinished OB/CAL tail is recovered from the append-only stream so a
+    daemon restart can close it on the first OL observation.  Ordinary OL
+    tails remain silent until a new episode starts.
     """
 
     def __init__(
@@ -28,11 +30,27 @@ class TelemetryJsonlWriter:
         self._episode_active = False
         self._episode_records: list[dict[str, object]] = []
         self._completed_episode: tuple[dict[str, object], ...] | None = None
+        self._restore_active_episode()
         self._silent_window = (
             timedelta(seconds=silent_window_sec) if silent_window_sec is not None else None
         )
         self._silent_observations: list[PhysicalObservation] = []
         self._post_full_until: datetime | None = None
+
+    def _restore_active_episode(self) -> None:
+        if not self._path.exists():
+            return
+        try:
+            records = _read(self._path).records
+        except EventCorruptionError:
+            return
+        if not records or not _active_status(records[-1].get("status")):
+            return
+        start = len(records) - 1
+        while start > 0 and not _online_status(records[start - 1].get("status")):
+            start -= 1
+        self._episode_records = [dict(record) for record in records[start:]]
+        self._episode_active = True
 
     def write(self, observation: PhysicalObservation, physical_kind: BlackoutKind) -> bool:
         """Append one eligible sample; return whether a line was written."""
@@ -89,23 +107,18 @@ class TelemetryJsonlWriter:
         """Expose the small history index needed to avoid repeat feedback."""
         return self._history.event_kinds()
 
-    def record_model_update(
-        self,
-        *,
-        at: str,
-        event_at: str,
-        evidence_at: str,
-        changes: dict[str, tuple[Any, Any]],
-        reason: str,
-    ) -> None:
-        """Append one transparent feedback result to the existing history."""
-        self._history.model_update(
-            at=at,
-            event_at=event_at,
-            evidence_at=evidence_at,
-            changes=changes,
-            reason=reason,
-        )
+    def record_ir_observation(self, observation: Mapping[str, Any] | object) -> bool:
+        """Persist an extracted IR observation in the existing history file."""
+        values = _observation_values(observation)
+        return self._history.ir_observation(**values)
+
+    def ir_observations(self) -> list[dict[str, Any]]:
+        """Expose persisted, not-yet-consumed IR observations."""
+        return self._history.ir_observations()
+
+    def upsert_model_update(self, receipt: Mapping[str, Any]) -> bool:
+        """Recover a model receipt into history idempotently."""
+        return self._history.upsert_model_update(receipt)
 
     def _remember_silent_observation(self, observation: PhysicalObservation) -> None:
         if self._silent_window is None:
@@ -136,6 +149,25 @@ def _sample(observation: PhysicalObservation) -> dict[str, object]:
     )
 
 
+def _observation_values(observation: Mapping[str, Any] | object) -> dict[str, Any]:
+    if isinstance(observation, Mapping):
+
+        def get(key: str) -> Any:
+            return observation[key]
+    else:
+
+        def get(key: str) -> Any:
+            return getattr(observation, key)
+
+    return {
+        "event_at": str(get("event_at")),
+        "estimate": float(get("estimate")),
+        "evidence_at": str(get("evidence_at")),
+        "uncertainty": float(get("uncertainty")),
+        "reason": str(get("reason")),
+    }
+
+
 def _observation_time(observation: PhysicalObservation) -> datetime:
     at = observation.wall_time_utc
     if at.tzinfo is None:
@@ -149,6 +181,15 @@ def _post_full_deadline(
     if observation.battery_pct != 100.0 or window is None:
         return None
     return _observation_time(observation) + window
+
+
+def _active_status(status: object) -> bool:
+    flags = str(status).split()
+    return "OB" in flags or "CAL" in flags
+
+
+def _online_status(status: object) -> bool:
+    return "OL" in str(status).split()
 
 
 def read(path: Path) -> MinimalEvent:

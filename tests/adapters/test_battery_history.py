@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.adapters.battery_history import BatteryHistory, summarize_episode
+from src.adapters.battery_history import BatteryHistory, canonical_timestamp, summarize_episode
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
 from src.domain.values import BlackoutKind, PhysicalObservation
 
@@ -152,24 +152,107 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
     ]
 
 
-def test_model_update_records_exact_change_reason_and_event(tmp_path: Path) -> None:
+def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path: Path) -> None:
     path = tmp_path / "events" / "history.jsonl"
+    path.parent.mkdir()
+    path.write_text(
+        '{"kind":"model_update","at":"2026-08-22T00:01:00.900Z",'
+        '"event_at":"2026-08-22T00:00:00.900Z","evidence_at":"2026-08-22T00:00:30.1Z",'
+        '"changes":{"soh":{"from":1.0,"to":0.9,"delta":-0.1}},"reason":"old"}\n'
+    )
     history = BatteryHistory(path)
 
-    history.model_update(
-        at="2026-08-22T00:01:00Z",
-        event_at="2026-08-22T00:00:00Z",
-        evidence_at="2026-08-22T00:00:30Z",
-        changes={"physics.ir_compensation.k_volts_per_percent": (0.025, 0.023)},
-        reason="stable natural-blackout load step",
+    assert canonical_timestamp("2026-08-22T05:00:00.999+05:00") == "2026-08-22T00:00:00Z"
+    assert history.event_kinds() == {"2026-08-22T00:00:00Z": "model_update"}
+    assert not history.upsert_model_update(
+        {
+            "event_at": "2026-08-22T00:00:00.2Z",
+            "evidence_at": "2026-08-22T00:00:31.2Z",
+            "changes": {"soh": {"from": 1.0, "to": 0.8, "delta": -0.2}},
+            "reason": "new",
+        }
     )
+    assert len(path.read_text().splitlines()) == 1
 
+
+def test_history_recovers_minimal_model_receipt_exactly_once(tmp_path: Path) -> None:
+    path = tmp_path / "events" / "history.jsonl"
+    history = BatteryHistory(path)
+    receipt = {
+        "event_at": "2026-08-22T00:00:00Z",
+        "evidence_at": "2026-08-22T00:00:30Z",
+        "changes": {
+            "soh": {
+                "from": 1.0,
+                "to": 0.92,
+                "delta": -0.08,
+                "evidence_at": "2026-08-22T00:00:31Z",
+                "reason": "curve evidence",
+            }
+        },
+        "reason": "natural blackout",
+    }
+
+    assert history.upsert_model_update(receipt)
+    assert not history.upsert_model_update(receipt)
     assert _rows(path) == [
         {
             "kind": "model_update",
-            "at": "2026-08-22T00:01:00Z",
+            "at": "2026-08-22T00:00:30Z",
             "event_at": "2026-08-22T00:00:00Z",
             "evidence_at": "2026-08-22T00:00:30Z",
+            "changes": receipt["changes"],
+            "reason": "natural blackout",
+        }
+    ]
+
+
+def test_ir_observations_are_compact_canonical_and_distinct(tmp_path: Path) -> None:
+    path = tmp_path / "events" / "history.jsonl"
+    history = BatteryHistory(path)
+
+    assert history.ir_observation(
+        event_at="2026-08-22T05:00:00.900+05:00",
+        estimate=0.023,
+        evidence_at="2026-08-22T00:00:20.1Z",
+        uncertainty=0.001,
+        reason="stable load step",
+    )
+    assert not history.ir_observation(
+        event_at="2026-08-22T00:00:00.2Z",
+        estimate=0.024,
+        evidence_at="2026-08-22T00:00:21Z",
+        uncertainty=0.001,
+        reason="replay",
+    )
+    assert history.ir_observations() == [
+        {
+            "kind": "ir_observation",
+            "event_at": "2026-08-22T00:00:00Z",
+            "estimate": 0.023,
+            "evidence_at": "2026-08-22T00:00:20Z",
+            "uncertainty": 0.001,
+            "reason": "stable load step",
+        }
+    ]
+
+
+def test_ir_observations_after_last_ir_model_update_only(tmp_path: Path) -> None:
+    history = BatteryHistory(tmp_path / "events" / "history.jsonl")
+    for second in (0, 1, 2):
+        history.ir_observation(
+            event_at=f"2026-08-22T00:00:0{second}Z",
+            estimate=0.023,
+            evidence_at=f"2026-08-22T00:00:1{second}Z",
+            uncertainty=0.001,
+            reason="stable load step",
+        )
+    history.upsert_model_update(
+        {
+            "kind": "model_update",
+            "at": "2026-08-22T00:00:30Z",
+            "event_at": "2026-08-22T00:00:02Z",
+            "evidence_at": "2026-08-22T00:00:20Z",
             "changes": {
                 "physics.ir_compensation.k_volts_per_percent": {
                     "from": 0.025,
@@ -177,7 +260,15 @@ def test_model_update_records_exact_change_reason_and_event(tmp_path: Path) -> N
                     "delta": -0.002,
                 }
             },
-            "reason": "stable natural-blackout load step",
+            "reason": "cohort",
         }
-    ]
-    assert history.event_kinds() == {"2026-08-22T00:00:00Z": "model_update"}
+    )
+    history.ir_observation(
+        event_at="2026-08-22T00:00:03Z",
+        estimate=0.022,
+        evidence_at="2026-08-22T00:00:31Z",
+        uncertainty=0.001,
+        reason="stable load step",
+    )
+
+    assert [row["event_at"] for row in history.ir_observations()] == ["2026-08-22T00:00:03Z"]

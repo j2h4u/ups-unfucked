@@ -88,7 +88,7 @@ def append(path: Path, record: Mapping[str, Any]) -> None:
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
     fd = os.open(path, flags, 0o600)
     try:
-        os.write(fd, line)
+        _write_all(fd, line)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -150,3 +150,13 @@ def _utc_text(value: str) -> str:
     _validate_timestamp(value)
     moment = datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
     return moment.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    """Write a complete JSONL record even when the syscall is short."""
+    offset = 0
+    while offset < len(data):
+        written = os.write(fd, data[offset:])
+        if written <= 0:
+            raise OSError("telemetry write made no progress")
+        offset += written
