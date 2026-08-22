@@ -37,7 +37,7 @@ def test_episode_summary_classifies_natural_depth_and_efc() -> None:
     assert summarize_episode(rows) == {
         "kind": "blackout",
         "at": "2026-08-22T00:00:00Z",
-        "duration_s": 20.0,
+        "duration_s": 20,
         "depth_pct": 60.0,
         "efc": 0.6,
     }
@@ -53,9 +53,70 @@ def test_episode_uses_last_pre_blackout_charge_as_depth_baseline() -> None:
     assert summarize_episode(rows) == {
         "kind": "blackout",
         "at": "2026-08-22T00:00:01Z",
-        "duration_s": 10.0,
+        "duration_s": 10,
         "depth_pct": 6.0,
         "efc": 0.06,
+    }
+
+
+def test_ordinary_ob_with_mains_input_is_not_a_self_test() -> None:
+    rows = [
+        {
+            "at": "2026-08-15T23:08:21.882803Z",
+            "status": "OB DISCHRG",
+            "battery_pct": 100.0,
+            "input_v": 247.0,
+        },
+        {
+            "at": "2026-08-15T23:34:43.882803Z",
+            "status": "OB DISCHRG",
+            "battery_pct": 0.0,
+            "input_v": 0.0,
+        },
+        {
+            "at": "2026-08-15T23:34:44.882803Z",
+            "status": "OL CHRG",
+            "battery_pct": 10.0,
+            "input_v": 247.0,
+        },
+    ]
+
+    summary = summarize_episode(rows)
+
+    assert summary is not None
+    assert summary["kind"] == "blackout"
+    assert summary["duration_s"] == 1583
+    assert type(summary["duration_s"]) is int
+
+
+def test_mixed_ob_cal_episode_remains_a_self_test() -> None:
+    rows = [
+        {
+            "at": "2026-08-22T00:00:00Z",
+            "status": "OB DISCHRG",
+            "battery_pct": 100.0,
+            "input_v": 0.0,
+        },
+        {
+            "at": "2026-08-22T00:00:01Z",
+            "status": "CAL DISCHRG",
+            "battery_pct": 99.0,
+            "input_v": 230.0,
+        },
+        {
+            "at": "2026-08-22T00:00:02Z",
+            "status": "OL CHRG",
+            "battery_pct": 100.0,
+            "input_v": 230.0,
+        },
+    ]
+
+    assert summarize_episode(rows) == {
+        "kind": "self_test",
+        "at": "2026-08-22T00:00:00Z",
+        "duration_s": 2,
+        "depth_pct": 1.0,
+        "efc": 0.01,
     }
 
 
@@ -70,18 +131,21 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
     writer.write(_observation("OL CHRG", 100.0, 50), BlackoutKind.ONLINE)
 
     rows = _rows(tmp_path / "events" / "history.jsonl")
+    history_lines = (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    assert '"duration_s":20,' in history_lines[0]
+    assert '"duration_s":10,' in history_lines[1]
     assert rows == [
         {
             "kind": "blackout",
             "at": "2026-08-22T00:00:00Z",
-            "duration_s": 20.0,
+            "duration_s": 20,
             "depth_pct": 60.0,
             "efc": 0.6,
         },
         {
             "kind": "self_test",
             "at": "2026-08-22T00:00:40Z",
-            "duration_s": 10.0,
+            "duration_s": 10,
             "depth_pct": 0.0,
             "efc": 0.0,
         },

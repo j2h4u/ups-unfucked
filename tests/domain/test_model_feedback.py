@@ -72,15 +72,22 @@ def _rows(*, status: str = "OB DISCHRG", input_v: float = 0.0) -> list[dict[str,
 
 
 def _curve_rows(
-    *, start_voltage: float = 12.8, end_voltage: float = 11.5, load: float = 20.0
+    *,
+    start_voltage: float = 12.8,
+    end_voltage: float = 11.5,
+    load: float = 20.0,
+    cadence_s: float = 1.0,
+    points: int = 301,
 ) -> list[dict[str, object]]:
     start = datetime(2026, 8, 22, tzinfo=timezone.utc)
     rows: list[dict[str, object]] = []
-    for index in range(301):
-        voltage = start_voltage + (end_voltage - start_voltage) * index / 300.0
+    for index in range(points):
+        voltage = start_voltage + (end_voltage - start_voltage) * index / (points - 1)
         rows.append(
             {
-                "at": (start + timedelta(seconds=index)).isoformat().replace("+00:00", "Z"),
+                "at": (start + timedelta(seconds=index * cadence_s))
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "battery_v": voltage,
                 "battery_pct": 100.0 - index,
                 "runtime_s": 1000.0 - index,
@@ -131,6 +138,17 @@ def test_clean_step_before_later_low_battery_sample_remains_usable() -> None:
 
     assert proposal is not None
     assert proposal.to_value == pytest.approx(0.018)
+
+
+def test_natural_load_step_accepts_stale_high_input_prefix() -> None:
+    rows = _rows()
+    for row in rows[1:3]:
+        row["input_v"] = 230.0
+
+    proposal = propose_model_feedback(rows, _snapshot(0.020))
+
+    assert proposal is not None
+    assert proposal.field == "physics.ir_compensation.k_volts_per_percent"
 
 
 def test_upward_estimate_is_observation_only() -> None:
@@ -202,3 +220,32 @@ def test_soh_curve_rejects_cal_and_out_of_range_load() -> None:
 
     assert propose_soh_feedback(cal, _snapshot(soh=0.80)) is None
     assert propose_soh_feedback(too_high, _snapshot(soh=0.80)) is None
+
+
+def test_soh_curve_accepts_stale_high_input_prefix() -> None:
+    rows = _curve_rows(points=305)
+    for row in rows[:3]:
+        row["input_v"] = 230.0
+
+    proposal = propose_soh_feedback(rows, _snapshot(soh=0.80))
+
+    assert proposal is not None
+    assert proposal.field == "soh"
+
+
+def test_soh_curve_accepts_historical_eleven_second_cadence() -> None:
+    proposal = propose_soh_feedback(_curve_rows(cadence_s=11.0, points=31), _snapshot(soh=0.80))
+
+    assert proposal is not None
+    assert proposal.field == "soh"
+
+
+def test_soh_curve_rejects_a_large_timestamp_gap() -> None:
+    rows = _curve_rows(cadence_s=11.0, points=31)
+    for row in rows[15:]:
+        at = row["at"]
+        assert isinstance(at, str)
+        timestamp = datetime.fromisoformat(at.replace("Z", "+00:00")) + timedelta(seconds=120)
+        row["at"] = timestamp.isoformat().replace("+00:00", "Z")
+
+    assert propose_soh_feedback(rows, _snapshot(soh=0.80)) is None

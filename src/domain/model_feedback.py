@@ -29,6 +29,7 @@ _MIN_LOAD_STEP = 15.0
 _PLATEAU_POINTS = 5
 _MAX_PLATEAU_STD = 2.0
 _MAX_GAP_S = 2.5
+_MAX_CURVE_CADENCE_MULTIPLIER = 1.5
 _IR_FIELD = "physics.ir_compensation.k_volts_per_percent"
 _SOH_FIELD = "soh"
 _MIN_SOH = 0.05
@@ -140,7 +141,7 @@ def _natural_event(rows: Sequence[Mapping[str, Any]]) -> list[tuple[datetime, fl
     if "OL" not in str(rows[end].get("status", "")).split():
         return None
     event_rows = rows[start:end]
-    if any(_is_self_test(row) for row in event_rows):
+    if any(_is_cal(row) for row in event_rows):
         return None
     parsed: list[tuple[datetime, float, float]] = []
     for row in event_rows:
@@ -262,15 +263,9 @@ def _is_ob(row: Mapping[str, Any]) -> bool:
     return "OB" in str(row.get("status", "")).split()
 
 
-def _is_self_test(row: Mapping[str, Any]) -> bool:
+def _is_cal(row: Mapping[str, Any]) -> bool:
     status = str(row.get("status", "")).split()
-    input_v = row.get("input_v")
-    return "CAL" in status or (
-        isinstance(input_v, (int, float))
-        and not isinstance(input_v, bool)
-        and math.isfinite(input_v)
-        and input_v >= 100.0
-    )
+    return "CAL" in status
 
 
 def _has_lb(row: Mapping[str, Any]) -> bool:
@@ -310,13 +305,11 @@ def _soh_event(
     for row in rows[start:]:
         if not _is_ob(row):
             break
-        if _is_self_test(row):
+        if _is_cal(row):
             return None
         sample = _curve_sample(row)
         if sample is None:
             return None
-        if parsed and (sample[0] - parsed[-1][0]).total_seconds() > _MAX_GAP_S:
-            break
         parsed.append(sample)
     return parsed if len(parsed) >= 2 else None
 
@@ -428,8 +421,10 @@ def _curve_loads_valid(event: list[tuple[datetime, float, float, float, bool]]) 
 def _curve_q_is_valid(
     event: list[tuple[datetime, float, float, float, bool]], snapshot: FrozenModelSnapshot
 ) -> bool:
+    if not _curve_cadence_is_valid(event):
+        return False
     return all(
-        0.0 < (current[0] - previous[0]).total_seconds() <= _MAX_GAP_S
+        0.0 < (current[0] - previous[0]).total_seconds()
         and peukert_runtime_hours(
             (previous[2] + current[2]) / 2.0,
             snapshot.rated_capacity_ah,
@@ -440,6 +435,19 @@ def _curve_q_is_valid(
         > 0.0
         for previous, current in zip(event, event[1:], strict=False)
     )
+
+
+def _curve_cadence_is_valid(
+    event: list[tuple[datetime, float, float, float, bool]],
+) -> bool:
+    intervals = tuple(
+        (current[0] - previous[0]).total_seconds()
+        for previous, current in zip(event, event[1:], strict=False)
+    )
+    if not intervals or any(interval <= 0.0 for interval in intervals):
+        return False
+    cadence = median(intervals)
+    return all(interval <= cadence * _MAX_CURVE_CADENCE_MULTIPLIER for interval in intervals)
 
 
 def _curve_q(
