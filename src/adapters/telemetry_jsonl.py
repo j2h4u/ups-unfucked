@@ -26,6 +26,7 @@ class TelemetryJsonlWriter:
             timedelta(seconds=silent_window_sec) if silent_window_sec is not None else None
         )
         self._silent_observations: list[PhysicalObservation] = []
+        self._post_full_until: datetime | None = None
 
     def write(self, observation: PhysicalObservation, physical_kind: BlackoutKind) -> bool:
         """Append one eligible sample; return whether a line was written."""
@@ -33,23 +34,34 @@ class TelemetryJsonlWriter:
             self._flush_silent_observations()
             append(self._path, _sample(observation))
             self._episode_active = True
+            self._post_full_until = None
             return True
         elif physical_kind == BlackoutKind.ONLINE:
-            if observation.battery_pct is not None and observation.battery_pct < 100.0:
-                append(self._path, _sample(observation))
-                self._silent_observations.clear()
-                self._episode_active = True
-                return True
-            elif not self._episode_active:
-                if observation.battery_pct == 100.0:
-                    self._remember_silent_observation(observation)
-                return False
-        else:
-            return False
+            return self._write_online(observation)
+        return False
 
-        append(self._path, _sample(observation))
-        self._episode_active = False
-        return True
+    def _write_online(self, observation: PhysicalObservation) -> bool:
+        if observation.battery_pct is not None and observation.battery_pct < 100.0:
+            self._flush_silent_observations()
+            append(self._path, _sample(observation))
+            self._silent_observations.clear()
+            self._episode_active = True
+            self._post_full_until = None
+            return True
+        if self._episode_active:
+            append(self._path, _sample(observation))
+            self._episode_active = False
+            self._post_full_until = _post_full_deadline(observation, self._silent_window)
+            return True
+        if observation.battery_pct != 100.0:
+            return False
+        if self._post_full_until is not None:
+            if _observation_time(observation) <= self._post_full_until:
+                append(self._path, _sample(observation))
+                return True
+            self._post_full_until = None
+        self._remember_silent_observation(observation)
+        return False
 
     def _remember_silent_observation(self, observation: PhysicalObservation) -> None:
         if self._silent_window is None:
@@ -85,3 +97,11 @@ def _observation_time(observation: PhysicalObservation) -> datetime:
     if at.tzinfo is None:
         at = at.replace(tzinfo=timezone.utc)
     return at.astimezone(timezone.utc)
+
+
+def _post_full_deadline(
+    observation: PhysicalObservation, window: timedelta | None
+) -> datetime | None:
+    if observation.battery_pct != 100.0 or window is None:
+        return None
+    return _observation_time(observation) + window
