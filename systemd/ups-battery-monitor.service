@@ -15,6 +15,7 @@ WatchdogSec=120
 # User, WorkingDirectory, PYTHONPATH, and ReadWritePaths are filled in by install.sh (sudo bash scripts/install.sh).
 User=@RUN_USER@
 Group=@RUN_USER@
+SupplementaryGroups=nut
 RuntimeDirectory=ups-battery-monitor
 RuntimeDirectoryPreserve=restart
 WorkingDirectory=@INSTALL_DIR@

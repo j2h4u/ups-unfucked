@@ -167,6 +167,13 @@ def test_notify_service_waits_indefinitely_for_physical_startup():
     assert service["WatchdogSec"] == "120"
 
 
+def test_monitor_can_read_existing_nut_command_credentials():
+    """The daemon uses the existing root:nut config without copying credentials."""
+    service = parse_service_file(SERVICE_FILE_PATH)["Service"]
+
+    assert service["SupplementaryGroups"] == "nut"
+
+
 def test_stopped_monitor_invalidates_virtual_ups_snapshot():
     """A dead monitor cannot leave dummy-ups serving stale virtual OL."""
     service = parse_service_file(SERVICE_FILE_PATH)["Service"]
