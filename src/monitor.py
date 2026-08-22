@@ -3,16 +3,20 @@
 import argparse
 import logging
 import math
+import shlex
 import signal
+import subprocess
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
 from src.adapters.model_owner import ModelOwner
 from src.adapters.nut_telemetry import NutTelemetry
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
+from src.adapters.telemetry_jsonl import read as read_telemetry
 from src.application.model_port import ModelSnapshotPort
 from src.application.ports import CloseablePort, PhysicalTelemetryPort
 from src.application.publication_freshness import telemetry_loss_grace_s
@@ -50,6 +54,11 @@ except ImportError:
 
 
 logger = logging.getLogger("ups-battery-monitor")
+
+QUICK_SELF_TEST_ADDRESS = "cyberpower@localhost"
+QUICK_SELF_TEST_COMMAND = "test.battery.start.quick"
+NUT_COMMAND_CONFIG_PATH = Path("/etc/nut/upsmon.conf")
+QUICK_SELF_TEST_COOLDOWN = timedelta(days=14)
 
 
 class InvalidObservationBoundary(RuntimeErrorBoundary):
@@ -148,6 +157,8 @@ class MonitorDaemon:
         self._started = False
         self._closed = False
         self._fatal_error: SafetyPublicationError | None = None
+        self._last_self_test_check_date: date | None = None
+        self._first_valid_observation_monotonic_ns: int | None = None
 
     def start(self) -> None:
         if self._started:
@@ -170,6 +181,8 @@ class MonitorDaemon:
                 snapshot=snapshot,
                 physical_kind=physical_kind,
             ) from error
+        if self._first_valid_observation_monotonic_ns is None:
+            self._first_valid_observation_monotonic_ns = observation.monotonic_ns
         voltage = observation.battery_voltage_v
         load = observation.load_percent
         assert voltage is not None and load is not None
@@ -203,7 +216,40 @@ class MonitorDaemon:
 
         self._latch = calculation.next_latch
         self._write_telemetry(observation, physical_kind)
+        self._maybe_run_quick_self_test(observation, physical_kind)
         return PollResult(observation, snapshot, calculation, publication)
+
+    def _maybe_run_quick_self_test(
+        self, observation: PhysicalObservation, physical_kind: BlackoutKind
+    ) -> None:
+        """Try the quick test at most once per UTC day, without touching safety."""
+        now = _utc(observation.wall_time_utc)
+        if not self._self_test_horizon_elapsed(observation):
+            return
+        check_date = now.date()
+        if self._last_self_test_check_date == check_date:
+            return
+        self._last_self_test_check_date = check_date
+        if physical_kind != BlackoutKind.ONLINE or observation.battery_pct != 100.0:
+            return
+        telemetry_path = self.config.model_dir / "events" / "telemetry.jsonl"
+        try:
+            if _has_recent_quick_test_or_blackout(telemetry_path, now):
+                return
+        except (OSError, RuntimeError, ValueError):
+            logger.warning("Quick UPS self-test skipped: telemetry is invalid")
+            return
+        try:
+            _run_quick_self_test()
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            logger.warning("Quick UPS self-test skipped: NUT command failed")
+
+    def _self_test_horizon_elapsed(self, observation: PhysicalObservation) -> bool:
+        first = self._first_valid_observation_monotonic_ns
+        if first is None:
+            return False
+        horizon_ns = self.config.ema_window_sec * 1_000_000_000
+        return observation.monotonic_ns - first >= horizon_ns
 
     def _write_telemetry(
         self, observation: PhysicalObservation, physical_kind: BlackoutKind
@@ -449,6 +495,73 @@ def _validate_observation(observation: PhysicalObservation) -> None:
         raise RuntimeErrorBoundary("battery voltage is missing or invalid")
     if load is None or not math.isfinite(load) or not 0.0 <= load <= 100.0:
         raise RuntimeErrorBoundary("UPS load is missing or invalid")
+
+
+def _utc(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _has_recent_quick_test_or_blackout(path: Path, now: datetime) -> bool:
+    if not path.exists():
+        return False
+    records = read_telemetry(path).records
+    cutoff = now - QUICK_SELF_TEST_COOLDOWN
+    for record in records:
+        status = record["status"]
+        if not isinstance(status, str) or not {"OB", "CAL"}.intersection(status.split()):
+            continue
+        at = record["at"]
+        if not isinstance(at, str):
+            raise ValueError("telemetry timestamp is invalid")
+        timestamp = datetime.fromisoformat(at.removesuffix("Z") + "+00:00")
+        if timestamp >= cutoff:
+            return True
+    return False
+
+
+def _run_quick_self_test() -> None:
+    username, password = _read_nut_command_credentials()
+    try:
+        result = subprocess.run(
+            [
+                "upscmd",
+                "-u",
+                username,
+                "-p",
+                password,
+                QUICK_SELF_TEST_ADDRESS,
+                QUICK_SELF_TEST_COMMAND,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError("NUT command could not be started") from error
+    if result.returncode != 0:
+        raise RuntimeError("NUT command returned an error")
+    logger.info("Quick UPS self-test started")
+
+
+def _read_nut_command_credentials() -> tuple[str, str]:
+    try:
+        lines = NUT_COMMAND_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise RuntimeError("NUT command credentials are unavailable") from error
+    for line in lines:
+        try:
+            fields = shlex.split(line, comments=True)
+        except ValueError as error:
+            raise RuntimeError("NUT command configuration is malformed") from error
+        if not fields or fields[0] != "MONITOR":
+            continue
+        if len(fields) < 5 or not fields[3] or not fields[4]:
+            raise RuntimeError("NUT command credentials are malformed")
+        return fields[3], fields[4]
+    raise RuntimeError("NUT command credentials are unavailable")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
+import pytest
+
+import src.monitor as monitor
+from src.adapters.minimal_event_file import sample
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
 from src.application.safety import SafetyPublication
 from src.battery_math.lut import LutPoint
@@ -67,10 +72,10 @@ class _Publisher:
         return True
 
 
-def _observation(status: str, battery_pct: float) -> PhysicalObservation:
+def _observation(status: str, battery_pct: float, *, monotonic_ns: int = 1) -> PhysicalObservation:
     return PhysicalObservation(
         "boot",
-        1,
+        monotonic_ns,
         datetime(2026, 8, 22, tzinfo=timezone.utc),
         status,
         "13.3",
@@ -133,3 +138,139 @@ def test_telemetry_storage_error_is_health_only(tmp_path: Path) -> None:
 
     assert result.publication is publisher.publications[0]
     assert publisher.channels and publisher.channels[0][0] == "storage"
+
+
+def _write_event(tmp_path: Path, status: str, at: str) -> None:
+    event_path = tmp_path / "events" / "telemetry.jsonl"
+    event_path.parent.mkdir()
+    event_path.write_text(
+        json.dumps(sample(at, 13.3, 80.0, 600.0, 20.0, 230.0, 230.0, status)) + "\n"
+    )
+
+
+def _command_config(tmp_path: Path) -> Path:
+    path = tmp_path / "upsmon.conf"
+    path.write_text("MONITOR cyberpower-virtual@localhost 1 test-user [REDACTED_SECRET] primary\n")
+    return path
+
+
+def test_quick_self_test_waits_for_ema_horizon_then_runs_once(tmp_path: Path, monkeypatch) -> None:
+    command_config = _command_config(tmp_path)
+    monkeypatch.setattr(monitor, "NUT_COMMAND_CONFIG_PATH", command_config)
+    command = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(monitor.subprocess, "run", command)
+    daemon = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=60_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=122_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+
+    daemon.poll_once()
+    daemon.poll_once()
+    command.assert_not_called()
+    daemon.poll_once()
+    daemon.poll_once()
+
+    command.assert_called_once()
+    assert command.call_args.args[0][-2:] == ["cyberpower@localhost", "test.battery.start.quick"]
+
+
+@pytest.mark.parametrize("status", ["OB DISCHRG", "CAL"])
+def test_quick_self_test_respects_recent_natural_blackout_and_self_test(
+    tmp_path: Path, monkeypatch, status: str
+) -> None:
+    command_config = _command_config(tmp_path)
+    monkeypatch.setattr(monitor, "NUT_COMMAND_CONFIG_PATH", command_config)
+    command = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(monitor.subprocess, "run", command)
+    _write_event(tmp_path, status, "2026-08-21T00:00:00Z")
+    daemon = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+
+    daemon.poll_once()
+    daemon.poll_once()
+
+    command.assert_not_called()
+
+
+@pytest.mark.parametrize("status, battery_pct", [("OL", 99.0), ("OB DISCHRG", 100.0)])
+def test_quick_self_test_requires_full_online_ups(
+    tmp_path: Path, monkeypatch, status: str, battery_pct: float
+) -> None:
+    command_config = _command_config(tmp_path)
+    monkeypatch.setattr(monitor, "NUT_COMMAND_CONFIG_PATH", command_config)
+    command = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(monitor.subprocess, "run", command)
+    daemon = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation(status, battery_pct, monotonic_ns=121_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+
+    daemon.poll_once()
+    daemon.poll_once()
+
+    command.assert_not_called()
+
+
+def test_quick_self_test_skips_malformed_telemetry_without_affecting_publication(
+    tmp_path: Path, monkeypatch
+) -> None:
+    command_config = _command_config(tmp_path)
+    monkeypatch.setattr(monitor, "NUT_COMMAND_CONFIG_PATH", command_config)
+    command = Mock(return_value=Mock(returncode=0))
+    monkeypatch.setattr(monitor.subprocess, "run", command)
+    event_path = tmp_path / "events" / "telemetry.jsonl"
+    event_path.parent.mkdir()
+    event_path.write_text("not-json\n")
+    daemon = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+
+    result = daemon.poll_once()
+    result = daemon.poll_once()
+
+    command.assert_not_called()
+    assert result.publication
+
+
+def test_quick_self_test_failure_is_health_only_and_not_retried_same_day(
+    tmp_path: Path, monkeypatch
+) -> None:
+    command_config = _command_config(tmp_path)
+    monkeypatch.setattr(monitor, "NUT_COMMAND_CONFIG_PATH", command_config)
+    command = Mock(return_value=Mock(returncode=1))
+    monkeypatch.setattr(monitor.subprocess, "run", command)
+    daemon = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+
+    first = daemon.poll_once()
+    second = daemon.poll_once()
+
+    command.assert_called_once()
+    assert first.publication and second.publication

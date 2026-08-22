@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.adapters.minimal_event_file import append, sample
+from src.adapters.minimal_event_file import MinimalEvent, append, sample
+from src.adapters.minimal_event_file import read as _read
 from src.domain.values import BlackoutKind, PhysicalObservation
 
 
@@ -105,3 +106,8 @@ def _post_full_deadline(
     if observation.battery_pct != 100.0 or window is None:
         return None
     return _observation_time(observation) + window
+
+
+def read(path: Path) -> MinimalEvent:
+    """Read the canonical strict telemetry stream for composition callers."""
+    return _read(path)
