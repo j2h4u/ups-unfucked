@@ -28,8 +28,6 @@ k_transition_v_per_pp  # FALSE POSITIVE: LoadStepEstimate JSONL field (domain/va
 record_history  # FALSE POSITIVE: LearningDecision JSONL field (domain/values.py)
 scientific_fingerprint_before  # FALSE POSITIVE: ModelCommitReceipt JSONL field (domain/values.py)
 reference_reparameterization  # FALSE POSITIVE: ModelCommitReceipt JSONL field (domain/values.py)
-continuous_online_s  # FALSE POSITIVE: ChargeReadiness JSONL field (domain/values.py)
-trailing_voltage_span_v  # FALSE POSITIVE: ChargeReadiness JSONL field (domain/values.py)
 
 # Health/publication projections use dataclasses.asdict(), so these fields are
 # read reflectively by the JSON health publisher rather than by name.

@@ -14,11 +14,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from src.adapters.jsonl_errors import EventCorruptionError, EventPathError, EventValidationError
 
-EventKind = Literal["blackout", "recharge"]
 TELEMETRY_FILENAME = "telemetry.jsonl"
 SAMPLE_FIELDS = frozenset(
     {"at", "battery_v", "battery_pct", "runtime_s", "load_pct", "input_v", "output_v", "status"}
@@ -33,30 +32,8 @@ class MinimalEvent:
     records: tuple[dict[str, Any], ...]
 
     @property
-    def kind(self) -> EventKind:
+    def kind(self) -> str:
         return "blackout"
-
-    @property
-    def started_at(self) -> str:
-        if not self.records:
-            raise EventCorruptionError("telemetry stream is empty")
-        return str(self.records[0]["at"])
-
-
-def event_filename(events_dir: Path, kind: EventKind, started_at: str) -> str:
-    del events_dir, kind, started_at
-    return TELEMETRY_FILENAME
-
-
-def parse_filename(name: str) -> tuple[EventKind, str, int]:
-    if name != TELEMETRY_FILENAME:
-        raise EventPathError(f"invalid telemetry filename: {name}")
-    return "blackout", "", 1
-
-
-def header(kind: EventKind, started_at: str) -> dict[str, Any]:
-    del kind, started_at
-    raise EventValidationError("telemetry stream has no header records")
 
 
 def sample(at: str, battery_v: float | None, *fields: Any, **named: Any) -> dict[str, Any]:
@@ -97,16 +74,6 @@ def sample(at: str, battery_v: float | None, *fields: Any, **named: Any) -> dict
     return value
 
 
-def gap(at: str, reason: str) -> dict[str, Any]:
-    del at, reason
-    raise EventValidationError("telemetry stream has no gap records")
-
-
-def end(ended_at: str, reason: str, **learning: Any) -> dict[str, Any]:
-    del ended_at, reason, learning
-    raise EventValidationError("telemetry stream has no end records")
-
-
 def encode(record: Mapping[str, Any]) -> bytes:
     _validate_sample(record)
     return (
@@ -129,17 +96,6 @@ def append(path: Path, record: Mapping[str, Any]) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
-
-
-def create_event(
-    events_dir: Path,
-    kind: EventKind,
-    started_at: str,
-    facts: Mapping[str, Any] | None = None,
-) -> Path:
-    del kind, started_at, facts
-    events_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return events_dir / TELEMETRY_FILENAME
 
 
 def read(path: Path) -> MinimalEvent:
@@ -165,27 +121,6 @@ def read(path: Path) -> MinimalEvent:
             raise EventCorruptionError(f"invalid telemetry sample: {exc}") from exc
         records.append(dict(value))
     return MinimalEvent(path, tuple(records))
-
-
-def scan(events_dir: Path) -> tuple[MinimalEvent, ...]:
-    path = events_dir / TELEMETRY_FILENAME
-    if not path.exists():
-        return ()
-    return (read(path),)
-
-
-def open_event(events_dir: Path) -> MinimalEvent | None:
-    path = events_dir / TELEMETRY_FILENAME
-    if not path.exists():
-        return None
-    event = read(path)
-    if event.records and _is_active_status(str(event.records[-1]["status"])):
-        return event
-    return None
-
-
-def _is_active_status(status: str) -> bool:
-    return status.startswith("OB") or (status.startswith("OL") and "CHRG" in status)
 
 
 def _validate_sample(value: Mapping[str, Any]) -> None:

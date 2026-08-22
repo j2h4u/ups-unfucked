@@ -64,19 +64,6 @@
         "status": "superseded",
         "superseded_by": "Slice-1 consumer-specific fragment admission"
       }
-    ],
-    "historical_policy_test_id": "tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"
-  },
-  "ir_output_freeze": {
-    "qualifying_scope": "Byte-identical current IR results are required only for fixtures whose complete cohort uses power_restored terminals.",
-    "byte_identity_required": true,
-    "qualifying_test_ids": [
-      "tests/domain/test_ir_identification.py::test_known_raw_step_recovers_positive_settled_k",
-      "tests/domain/test_ir_identification.py::test_cohort_requires_four_steps_two_events_and_both_directions"
-    ],
-    "nonqualifying_scope": "Fixtures containing service_stop, closed_restart_gap, or capture_damaged terminals are not byte-equivalence claims; Slice 1 records fragment-level expected values and rationale for them.",
-    "superseded_terminal_test_ids": [
-      "tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"
     ]
   },
   "historical_873_receipt": {
@@ -102,28 +89,14 @@
       "sha256": "675c4ad553602252873c7fc010404597095e8471ae5a17d556f02b94f403a4b3",
       "purpose": "Current target model schema, identity fields, fingerprint algorithm, and IR policy bounds.",
       "expected_golden_ids": ["model.target_schema_domain_jsonl_v2", "model.ir_reference_zero_frame"],
-      "expected_test_ids": ["tests/adapters/test_model_owner.py::test_target_validator_rejects_invalid_schema_and_policy"]
-    },
-    {
-      "path": "src/domain/evidence.py",
-      "sha256": "1b73fd189dd2f62331d1c43ac7923ba81d0b19f45e323d143943dc9f9e162fc9",
-      "purpose": "Historical global terminal-science policy and evidence admission boundary to be superseded in Slice 1.",
-      "expected_golden_ids": ["terminal.global_power_restored_only_historical"],
-      "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
+      "expected_test_ids": []
     },
     {
       "path": "src/domain/values.py",
       "sha256": "3a50b5a2987104001bedd0ceb95e4898f64be5e3ae13d46b81e99f8fc71dc085",
-      "purpose": "Current terminal-disposition enum, terminal facts, and frozen model snapshot value contract.",
-      "expected_golden_ids": ["terminal.dispositions.learned_recorded_only_rejected"],
-      "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
-    },
-    {
-      "path": "tests/adapters/test_model_owner.py",
-      "sha256": "922351eacdda1d2092814983bd664c0043ab92d2be9669d0c88e56526627da44",
-      "purpose": "Sole model-owner writer, schema validation, exact commit receipt, rollback, epoch, and idempotence goldens.",
-      "expected_golden_ids": ["model.owner_single_writer", "model.no_later_lb_oracle", "model.idempotent_receipt"],
-      "expected_test_ids": ["tests/adapters/test_model_owner.py::test_safety_oracle_refusal_is_byte_identical", "tests/adapters/test_model_owner.py::test_commit_backs_up_before_state_and_atomically_swaps_snapshot", "tests/adapters/test_model_owner.py::test_prepared_commit_applies_then_reconstructs_after_restart", "tests/adapters/test_model_owner.py::test_external_model_write_is_a_conflict_and_refusal_is_byte_identical"]
+      "purpose": "Current frozen model snapshot and physical observation value contract.",
+      "expected_golden_ids": [],
+      "expected_test_ids": []
     },
     {
       "path": "tests/application/test_safety.py",
@@ -131,41 +104,6 @@
       "purpose": "Pinned Release-A safety statuses, frozen snapshot calculation, raw-LB separation, and latch goldens.",
       "expected_golden_ids": ["safety.pinned_release_a_status_matrix", "safety.raw_lb_is_diagnostic"],
       "expected_test_ids": ["tests/application/test_safety.py::test_safety_decision_matches_pinned_release_a_golden", "tests/application/test_safety.py::test_calculation_uses_one_frozen_snapshot", "tests/application/test_safety.py::test_publication_keeps_raw_lb_separate_from_modeled_decision"]
-    },
-    {
-      "path": "tests/application/test_safety_oracle.py",
-      "sha256": "9ef1b3e23dc92ef94ada96c26d57d8d646997689414c9fa86064c691064c1f8c",
-      "purpose": "Dense safety oracle direction and reference-frame rejection goldens.",
-      "expected_golden_ids": ["safety.no_later_lb_oracle"],
-      "expected_test_ids": ["tests/application/test_safety_oracle.py::test_downward_k_is_never_less_conservative_in_reference_zero_frame", "tests/application/test_safety_oracle.py::test_upward_k_is_rejected", "tests/application/test_safety_oracle.py::test_nonzero_reference_frame_is_rejected_before_grid"]
-    },
-    {
-      "path": "tests/domain/test_evidence_comparison.py",
-      "sha256": "f88f4ec97fc6bfbdfd52424705ac6a6154b52216ae8bc680fa98db8beeb5c041",
-      "purpose": "Raw-evidence comparison boundaries, gap/unknown refusal, and frozen-snapshot residual goldens.",
-      "expected_golden_ids": ["ir.comparison_frozen_snapshot", "ir.comparison_gap_boundaries"],
-      "expected_test_ids": ["tests/domain/test_evidence_comparison.py::test_comparison_uses_frozen_snapshot_and_signed_residual", "tests/domain/test_evidence_comparison.py::test_cal_and_raw_gap_fail_evidence_closed"]
-    },
-    {
-      "path": "tests/domain/test_ir_identification.py",
-      "sha256": "ab298cd4cd946368fb804cc8fd43cd5bcbcae6bf3ecf55e32d14e8dc672174ac",
-      "purpose": "Existing qualifying IR step, status/gap/boot boundaries, anti-feedback, and cohort goldens.",
-      "expected_golden_ids": ["ir.step_qualification", "ir.cohort_four_steps_two_events"],
-      "expected_test_ids": ["tests/domain/test_ir_identification.py::test_known_raw_step_recovers_positive_settled_k", "tests/domain/test_ir_identification.py::test_ir_signature_cannot_accept_model_outputs", "tests/domain/test_ir_identification.py::test_cohort_requires_four_steps_two_events_and_both_directions", "tests/domain/test_ir_identification.py::test_cohort_requires_three_steps_other_than_the_current_blackout"]
-    },
-    {
-      "path": "tests/domain/test_learning.py",
-      "sha256": "cbef99c21084c7bc7843accaf75c051fd3095053e56b5c6a963695bfef80a54e",
-      "purpose": "Bounded downward-only IR learning, independent evidence identity, policy, epoch, and refusal goldens.",
-      "expected_golden_ids": ["ir.learning_downward_bounded", "ir.learning_no_feedback"],
-      "expected_test_ids": ["tests/domain/test_learning.py::test_valid_decrease_is_bounded_to_twenty_percent", "tests/domain/test_learning.py::test_noise_floor_and_upward_estimate_never_commit", "tests/domain/test_learning.py::test_learning_policy_is_versioned_and_values_cannot_drift"]
-    },
-    {
-      "path": "tests/domain/test_terminal_science_policy.py",
-      "sha256": "13279dc3c728db04a5a75c7ceead1659b82ebc9efa77625e700092c2b14fdd9f",
-      "purpose": "Historical global terminal disposition matrix explicitly superseded by Slice 1.",
-      "expected_golden_ids": ["terminal.global_power_restored_only_historical"],
-      "expected_test_ids": ["tests/domain/test_terminal_science_policy.py::test_terminal_policy_only_authorizes_power_restored"]
     },
     {
       "path": "tests/fixtures/architecture/forbidden_application_jsonl.py",

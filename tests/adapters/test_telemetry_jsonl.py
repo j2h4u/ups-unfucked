@@ -14,7 +14,6 @@ def _observation(status: str, battery_pct: float | None) -> PhysicalObservation:
         raw_status=status,
         battery_voltage_raw="13.3",
         battery_voltage_v=13.3,
-        voltage_token_quantum_v=0.01,
         load_percent=20.0,
         input_voltage_v=0.0 if status.startswith("OB") else 230.0,
         battery_pct=battery_pct,
@@ -24,7 +23,9 @@ def _observation(status: str, battery_pct: float | None) -> PhysicalObservation:
 
 
 def _lines(root: Path) -> list[dict[str, object]]:
-    return [json.loads(line) for line in (root / "events" / "telemetry.jsonl").read_text().splitlines()]
+    return [
+        json.loads(line) for line in (root / "events" / "telemetry.jsonl").read_text().splitlines()
+    ]
 
 
 def test_writer_records_blackout_recharge_and_one_terminal_sample(tmp_path: Path) -> None:

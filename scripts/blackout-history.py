@@ -36,7 +36,11 @@ def _period(arguments: argparse.Namespace) -> tuple[datetime, datetime]:
         return start, start + timedelta(days=1)
     if arguments.month:
         start = datetime.strptime(arguments.month, "%Y-%m").replace(tzinfo=timezone.utc, day=1)
-        end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+        end = (
+            start.replace(year=start.year + 1, month=1)
+            if start.month == 12
+            else start.replace(month=start.month + 1)
+        )
         return start, end
     if arguments.year:
         start = datetime(arguments.year, 1, 1, tzinfo=timezone.utc)
@@ -94,7 +98,11 @@ def main(argv: list[str] | None = None) -> None:
     parser = _parser()
     arguments = parser.parse_args(argv)
     try:
-        state_dir = arguments.state_option or arguments.state_dir or Path.home() / ".config" / "ups-battery-monitor"
+        state_dir = (
+            arguments.state_option
+            or arguments.state_dir
+            or Path.home() / ".config" / "ups-battery-monitor"
+        )
         start, end = _period(arguments)
         path = state_dir / "events" / "telemetry.jsonl"
         episodes = _episodes(path, start, end) if path.exists() else ()

@@ -32,9 +32,7 @@ from src.virtual_ups_exporter.atomic_publication_cleanup import cleanup_atomic_p
 
 def _snapshot() -> FrozenModelSnapshot:
     return FrozenModelSnapshot(
-        "2",
         "1",
-        "a" * 32,
         "b" * 64,
         7.2,
         12.0,
@@ -68,7 +66,7 @@ def _publish_online(exporter: VirtualUpsExporter) -> None:
         inputs=SafetyInputs(13.3, 20.0, BlackoutKind.ONLINE, 5),
         snapshot=snapshot,
     )
-    exporter.stage(PollPublicationContext(observation, snapshot, calculation, 0, 1.0))
+    exporter.stage(PollPublicationContext(observation, snapshot, calculation, 1.0))
     exporter.publish(make_safety_publication(observation, calculation))
 
 
@@ -812,7 +810,7 @@ def test_non_main_safety_publication_fails_closed_without_unbounded_write(tmp_pa
         inputs=SafetyInputs(13.3, 20.0, BlackoutKind.ONLINE, 5),
         snapshot=snapshot,
     )
-    exporter.stage(PollPublicationContext(observation, snapshot, calculation, 0, 1.0))
+    exporter.stage(PollPublicationContext(observation, snapshot, calculation, 1.0))
     failures: list[BaseException] = []
 
     def publish_from_worker() -> None:

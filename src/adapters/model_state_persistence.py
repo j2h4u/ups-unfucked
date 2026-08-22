@@ -13,7 +13,6 @@ import os
 import stat
 import tempfile
 from pathlib import Path
-from typing import Never
 
 MAX_MODEL_BYTES = 4 * 1024 * 1024
 
@@ -44,22 +43,28 @@ def read_model_file(path: Path, *, error_type: type[Exception] = ModelStateFileE
             raise error_type(f"model path is not a regular file: {path}")
         if info.st_size > MAX_MODEL_BYTES:
             raise error_type(f"model file exceeds {MAX_MODEL_BYTES} bytes")
-        chunks: list[bytes] = []
-        remaining = info.st_size
-        while remaining:
-            chunk = os.read(fd, min(remaining, 1024 * 1024))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        raw = b"".join(chunks)
-        if len(raw) != info.st_size:
-            raise error_type(f"short read from model file: {path}")
-        return raw
+        return _read_model_bytes(fd, info.st_size, path, error_type)
     except OSError as exc:
         raise error_type(f"cannot read model file {path}: {exc}") from exc
     finally:
         os.close(fd)
+
+
+def _read_model_bytes(
+    fd: int,
+    expected_size: int,
+    path: Path,
+    error_type: type[Exception],
+) -> bytes:
+    chunks: list[bytes] = []
+    remaining = expected_size
+    while remaining:
+        chunk = os.read(fd, min(remaining, 1024 * 1024))
+        if not chunk:
+            raise error_type(f"short read from model file: {path}")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 def atomic_write_model(path: str | Path, content: str, *, mode: int = 0o600) -> str:
@@ -87,77 +92,6 @@ def atomic_write_model(path: str | Path, content: str, *, mode: int = 0o600) -> 
                 exc.add_note(f"temporary cleanup failed: {cleanup_error}")
         raise
     return content_hash
-
-
-def ensure_verified_backup(path: Path, source_raw: bytes) -> None:
-    """Install or verify an exact pre-transform backup without clobbering it."""
-    if path.exists() or path.is_symlink():
-        if read_model_file(path) != source_raw:
-            raise ModelStateFileError("existing pre-transform backup conflicts with source model")
-        return
-    _install_backup_exclusively(path, source_raw)
-    if read_model_file(path) != source_raw:
-        raise ModelStateFileError("pre-transform backup verification failed")
-
-
-def _install_backup_exclusively(path: Path, source_raw: bytes) -> None:
-    """Publish source bytes without replacing a concurrently created backup."""
-    temporary_fd, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    temporary_path = Path(temporary_name)
-    try:
-        os.fchmod(temporary_fd, 0o600)
-        remaining = memoryview(source_raw)
-        while remaining:
-            written = os.write(temporary_fd, remaining)
-            if written <= 0:
-                raise ModelStateFileError("pre-transform backup write made no progress")
-            remaining = remaining[written:]
-        os.fdatasync(temporary_fd)
-        os.close(temporary_fd)
-        temporary_fd = -1
-        try:
-            os.link(temporary_path, path, follow_symlinks=False)
-        except FileExistsError:
-            if read_model_file(path) != source_raw:
-                raise ModelStateFileError(
-                    "existing pre-transform backup conflicts with source model"
-                )
-        else:
-            sync_directory(path.parent)
-    except OSError as exc:
-        raise ModelStateFileError(f"cannot create pre-transform backup {path}: {exc}") from exc
-    finally:
-        if temporary_fd >= 0:
-            os.close(temporary_fd)
-        temporary_path.unlink(missing_ok=True)
-
-
-def restore_exact_source(
-    path: Path,
-    source_raw: bytes,
-    *,
-    backup: Path,
-    failure: BaseException,
-) -> Never:
-    """Restore exact source bytes after a failed one-shot target publication."""
-    try:
-        current_raw = read_model_file(path)
-        if current_raw != source_raw:
-            atomic_write_model(path, source_raw.decode("utf-8"))
-            if read_model_file(path) != source_raw:
-                raise ModelStateFileError("restored source bytes differ from pre-transform source")
-    except BaseException as rollback_error:
-        error = ModelStateFileError(
-            "target write/verification failed and automatic rollback failed; "
-            f"verified source backup retained at {backup}"
-        )
-        error.add_note(f"original target failure: {failure}")
-        raise error from rollback_error
-    raise ModelStateFileError(
-        f"target write/verification failed; exact source restored: {failure}"
-    ) from failure
 
 
 def sync_directory(path: Path) -> None:

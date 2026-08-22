@@ -43,7 +43,6 @@ class PollPublicationContext:
     observation: PhysicalObservation
     snapshot: FrozenModelSnapshot
     calculation: SafetyCalculation
-    poll_sequence: int
     poll_latency_ms: float
 
 
@@ -253,24 +252,32 @@ class VirtualUpsExporter:
 
     def _record_apparent_transition(self, context: PollPublicationContext) -> None:
         observation = context.observation
-        flags = frozenset(observation.raw_status.split())
-        if "OL" in flags and "OB" not in flags:
+        if self._is_online(observation):
             self._last_online_observation = observation
             return
+        apparent_sag = self._apparent_sag(observation)
+        if apparent_sag is not None:
+            self._last_apparent_sag = apparent_sag
+
+    @staticmethod
+    def _is_online(observation: PhysicalObservation) -> bool:
+        flags = frozenset(observation.raw_status.split())
+        return "OL" in flags and "OB" not in flags
+
+    def _apparent_sag(self, observation: PhysicalObservation) -> _ApparentTransitionSag | None:
+        if "OB" not in observation.raw_status.split():
+            return None
         before = self._last_online_observation
-        if "OB" not in flags or before is None:
-            return
-        if (
-            before.battery_voltage_v is None
-            or observation.battery_voltage_v is None
-            or before.load_percent is None
-            or observation.load_percent is None
-        ):
-            return
-        self._last_apparent_sag = _ApparentTransitionSag(
+        if before is None:
+            return None
+        values = _transition_values(before, observation)
+        if values is None:
+            return None
+        before_voltage, voltage, before_load, load = values
+        return _ApparentTransitionSag(
             observed_utc=observation.wall_time_utc.isoformat(),
-            voltage_drop_v=before.battery_voltage_v - observation.battery_voltage_v,
-            load_delta_percent=observation.load_percent - before.load_percent,
+            voltage_drop_v=before_voltage - voltage,
+            load_delta_percent=load - before_load,
         )
 
     def _freshness_locked(self, now: float) -> PublicationFreshness:
@@ -339,6 +346,19 @@ class VirtualUpsExporter:
             raise SafetyPublicationError("publication runtime disagrees with staged calculation")
         if publication.raw_status != observation.raw_status:
             raise SafetyPublicationError("publication raw status disagrees with staged observation")
+
+
+def _transition_values(
+    before: PhysicalObservation,
+    observation: PhysicalObservation,
+) -> tuple[float, float, float, float] | None:
+    before_voltage = before.battery_voltage_v
+    voltage = observation.battery_voltage_v
+    before_load = before.load_percent
+    load = observation.load_percent
+    if before_voltage is None or voltage is None or before_load is None or load is None:
+        return None
+    return before_voltage, voltage, before_load, load
 
 
 def _nut_value(value: object) -> str:

@@ -33,7 +33,6 @@ def observation_factory():
             raw_status=fields["raw_status"],
             battery_voltage_raw=raw,
             battery_voltage_v=voltage_v,
-            voltage_token_quantum_v=0.001 if voltage_v is not None else None,
             load_percent=fields["load_percent"],
             input_voltage_v=fields["input_voltage_v"],
         )
@@ -44,9 +43,7 @@ def observation_factory():
 @pytest.fixture
 def frozen_snapshot():
     return FrozenModelSnapshot(
-        schema_revision="2",
         evaluation_revision="eval-1",
-        battery_epoch_id="epoch-a",
         scientific_fingerprint="f" * 64,
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,

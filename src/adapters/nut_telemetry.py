@@ -3,7 +3,6 @@
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from src.domain.values import PhysicalObservation
@@ -57,7 +56,6 @@ def observation_from_nut_reply(
         raw_status=_string_or_empty(values.get("ups.status")),
         battery_voltage_raw=voltage_token,
         battery_voltage_v=_finite_float(values.get("battery.voltage")),
-        voltage_token_quantum_v=_token_quantum(voltage_token),
         load_percent=_finite_float(values.get("ups.load")),
         input_voltage_v=_finite_float(values.get("input.voltage")),
         battery_pct=_finite_float(values.get("battery.charge")),
@@ -82,18 +80,3 @@ def _finite_float(value: object) -> float | None:
 
 def _string_or_empty(value: object) -> str:
     return value if isinstance(value, str) else ""
-
-
-def _token_quantum(token: str | None) -> float | None:
-    if token is None:
-        return None
-    try:
-        decimal = Decimal(token)
-    except InvalidOperation:
-        return None
-    if not decimal.is_finite():
-        return None
-    exponent = decimal.as_tuple().exponent
-    if not isinstance(exponent, int):
-        return None
-    return float(Decimal(1).scaleb(exponent))

@@ -153,6 +153,7 @@ def test_model_persistence_authority_is_confined_to_model_state_adapter():
 
 
 def test_model_write_authority_is_semantically_single_lane() -> None:
+    """Runtime ownership may load/provision once, then only exposes snapshots."""
     mutable_methods = frozenset({"commit", "commit_prepared", "reset_baseline"})
     definitions: set[tuple[str, str, str]] = set()
     mutation_owners: set[str] = set()
@@ -184,12 +185,8 @@ def test_model_write_authority_is_semantically_single_lane() -> None:
 
     assert owner_importers == {"src/monitor.py"}
     assert provisioning_calls == []
-    assert definitions == {
-        (MODEL_OWNER, "ModelOwner", "commit"),
-        (MODEL_OWNER, "ModelOwner", "commit_prepared"),
-        (MODEL_OWNER, "ModelOwner", "reset_baseline"),
-    }
-    assert mutation_owners == {MODEL_OWNER}
+    assert definitions == set()
+    assert mutation_owners == set()
 
 
 def test_production_nut_boundary_is_read_only() -> None:

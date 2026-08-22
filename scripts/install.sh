@@ -617,11 +617,9 @@ import sys
 from pathlib import Path
 
 from src.adapters.model_owner import ModelOwner
-from src.application.safety_oracle import no_later_lb_oracle
 
 ModelOwner(
     Path(sys.argv[1]),
-    safety_oracle=no_later_lb_oracle,
     create_if_missing=True,
 )
 ' "$model"
