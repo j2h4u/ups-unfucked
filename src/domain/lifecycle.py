@@ -2,18 +2,13 @@
 
 from src.domain.values import BlackoutKind, PhysicalObservation
 
-TEST_INPUT_VOLTAGE_THRESHOLD_V = 100.0
-
 
 def classify_physical_observation(observation: PhysicalObservation) -> BlackoutKind:
-    """Classify battery operation fail-closed when input voltage is absent or low."""
+    """Classify battery operation from raw status flags, independent of input voltage."""
     flags = frozenset(observation.raw_status.split())
-    if "OB" in flags or "CAL" in flags:
-        if (
-            observation.input_voltage_v is not None
-            and observation.input_voltage_v >= TEST_INPUT_VOLTAGE_THRESHOLD_V
-        ):
-            return BlackoutKind.BLACKOUT_TEST
+    if "CAL" in flags:
+        return BlackoutKind.BLACKOUT_TEST
+    if "OB" in flags:
         return BlackoutKind.BLACKOUT_REAL
     if "OL" in flags:
         return BlackoutKind.ONLINE
