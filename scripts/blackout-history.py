@@ -2,6 +2,7 @@
 """Print natural physical blackouts reconstructed from raw telemetry."""
 
 import argparse
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -55,30 +56,45 @@ def _period(arguments: argparse.Namespace) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _episodes(path: Path, start: datetime, end: datetime) -> tuple[tuple[str, str | None], ...]:
+def _episodes(
+    path: Path,
+    start: datetime,
+    end: datetime,
+    classifications: dict[str, str] | None = None,
+) -> tuple[tuple[str, str | None], ...]:
     found: list[tuple[str, str | None]] = []
-    active: tuple[str, str | None] | None = None
+    active: str | None = None
+    saw_cal = False
     for value in read(path).records:
-        active, episode = _advance(active, value)
-        if episode is not None and start <= _utc(episode[0]) < end:
-            found.append(episode)
-    if active is not None and start <= _utc(active[0]) < end:
-        found.append(active)
+        at = str(value["at"])
+        flags = frozenset(str(value["status"]).split())
+        if "OB" in flags or "CAL" in flags:
+            active = active or at
+            saw_cal = saw_cal or "CAL" in flags
+        elif active is not None and "OL" in flags:
+            kind = (classifications or {}).get(active)
+            if kind == "blackout" or (kind is None and not saw_cal):
+                if start <= _utc(active) < end:
+                    found.append((active, at))
+            active, saw_cal = None, False
+    if active is not None and start <= _utc(active) < end:
+        kind = (classifications or {}).get(active)
+        if kind == "blackout" or (kind is None and not saw_cal):
+            found.append((active, None))
     return tuple(found)
 
 
-def _advance(
-    active: tuple[str, str | None] | None, value: dict[str, object]
-) -> tuple[tuple[str, str | None] | None, tuple[str, str | None] | None]:
-    at = str(value["at"])
-    flags = frozenset(str(value["status"]).split())
-    if "OB" in flags and "CAL" not in flags:
-        if active is not None and active[1] is not None:
-            return (at, None), active
-        return active or (at, None), None
-    if active is not None and "OL" in flags and "OB" not in flags:
-        return None, (active[0], active[1] or at)
-    return active, None
+def _classifications(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    result: dict[str, str] = {}
+    for line_number, line in enumerate(path.read_text().splitlines(), 1):
+        value = json.loads(line)
+        if not isinstance(value, dict):
+            raise ValueError(f"history line {line_number} is not an object")
+        if value.get("kind") in {"blackout", "self_test"}:
+            result[str(value["at"])] = str(value["kind"])
+    return result
 
 
 def _render(start: datetime, end: datetime, episodes: tuple[tuple[str, str | None], ...]) -> str:
@@ -107,8 +123,9 @@ def main(argv: list[str] | None = None) -> None:
         )
         start, end = _period(arguments)
         path = state_dir / "events" / "telemetry.jsonl"
-        episodes = _episodes(path, start, end) if path.exists() else ()
-    except (EventStoreError, OSError, TypeError, ValueError) as error:
+        history = _classifications(state_dir / "events" / "history.jsonl")
+        episodes = _episodes(path, start, end, history) if path.exists() else ()
+    except (EventStoreError, json.JSONDecodeError, OSError, TypeError, ValueError) as error:
         print(f"blackout-history: {error}", file=sys.stderr)
         raise SystemExit(2) from error
     sys.stdout.write(_render(start, end, episodes) + "\n")

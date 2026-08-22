@@ -65,6 +65,30 @@ def test_day_is_half_open_at_next_midnight(tmp_path: Path) -> None:
     assert module._episodes(path, start, end) == (("2026-01-01T23:59:59Z", "2026-01-02T00:00:00Z"),)
 
 
+def test_history_classification_overrides_ambiguous_raw_status(tmp_path: Path) -> None:
+    module = _script()
+    path = _write(
+        tmp_path,
+        [
+            _row("2026-01-01T00:00:00Z", "OB DISCHRG", 90.0),
+            _row("2026-01-01T00:00:01Z", "OL", 100.0),
+            _row("2026-01-02T00:00:00Z", "OB CAL", 90.0),
+            _row("2026-01-02T00:00:01Z", "OL", 100.0),
+        ],
+    )
+    start, end = module._period(module._parser().parse_args(["--year", "2026"]))
+
+    assert module._episodes(
+        path,
+        start,
+        end,
+        {
+            "2026-01-01T00:00:00Z": "self_test",
+            "2026-01-02T00:00:00Z": "blackout",
+        },
+    ) == (("2026-01-02T00:00:00Z", "2026-01-02T00:00:01Z"),)
+
+
 def test_malformed_row_fails_with_concise_error(tmp_path: Path, capsys) -> None:
     module = _script()
     path = tmp_path / "events" / "telemetry.jsonl"
