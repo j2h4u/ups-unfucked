@@ -281,9 +281,6 @@ class MonitorDaemon:
                 self._apply_feedback((completed,))
         except (OSError, RuntimeError, TypeError, ValueError) as error:
             logger.warning("Model feedback unavailable: %s", error)
-            self._publisher.record_channel_error("feedback", error)
-        else:
-            self._publisher.clear_channel_error("feedback")
 
     def _apply_feedback(self, episodes: tuple[tuple[dict[str, object], ...], ...]) -> None:
         event_kinds = self._telemetry_writer.event_kinds()
