@@ -77,8 +77,13 @@ class ModelOwner:
         with self._lock:
             return self._snapshot
 
-    def apply_ir_k(self, value: float) -> tuple[float, float] | None:
-        """Atomically replace the one model field authorized for feedback."""
+    def apply_feedback(
+        self,
+        *,
+        ir_k: float | None = None,
+        soh: float | None = None,
+    ) -> dict[str, tuple[float, float]]:
+        """Atomically replace the explicitly supported feedback fields."""
         with self._lock:
             self._require_writer_lock()
             candidate = copy.deepcopy(self._state)
@@ -86,17 +91,30 @@ class ModelOwner:
             assert isinstance(physics, dict)
             ir = physics["ir_compensation"]
             assert isinstance(ir, dict)
-            before = float(ir["k_volts_per_percent"])
-            ir["k_volts_per_percent"] = value
+            before_ir_k = float(ir["k_volts_per_percent"])
+            before_soh = float(candidate["soh"])
+            if ir_k is not None:
+                ir["k_volts_per_percent"] = ir_k
+            if soh is not None:
+                candidate["soh"] = soh
             schema.validate_target_state(candidate, source=str(self.model_path))
-            after = float(ir["k_volts_per_percent"])
-            if before == after:
-                return None
-            next_snapshot = self._snapshot_from_state(candidate)
+            after_ir_k = float(ir["k_volts_per_percent"])
+            after_soh = float(candidate["soh"])
+            changes: dict[str, tuple[float, float]] = {}
+            if ir_k is not None and before_ir_k != after_ir_k:
+                changes["physics.ir_compensation.k_volts_per_percent"] = (
+                    before_ir_k,
+                    after_ir_k,
+                )
+            if soh is not None and before_soh != after_soh:
+                changes["soh"] = (before_soh, after_soh)
+            if not changes:
+                return changes
             files.atomic_write_model(self.model_path, schema.canonical_json(candidate))
-            self._state = candidate
-            self._snapshot = next_snapshot
-            return before, after
+            persisted, _ = schema.load_target_state(self.model_path)
+            self._state = copy.deepcopy(persisted)
+            self._snapshot = self._snapshot_from_state(persisted)
+            return changes
 
     def _require_writer_lock(self) -> None:
         if self._writer_lock_fd is None:
