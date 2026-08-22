@@ -9,9 +9,9 @@ from src.domain.values import BlackoutKind
     [
         ("OB DISCHRG", 236.0, BlackoutKind.BLACKOUT_REAL),
         ("OB DISCHRG", 0.0, BlackoutKind.BLACKOUT_REAL),
-        ("CAL DISCHRG", 236.0, BlackoutKind.BLACKOUT_TEST),
-        ("CAL DISCHRG", 0.0, BlackoutKind.BLACKOUT_TEST),
-        ("OB CAL DISCHRG", 236.0, BlackoutKind.BLACKOUT_TEST),
+        ("CAL DISCHRG", 236.0, BlackoutKind.BLACKOUT_REAL),
+        ("CAL DISCHRG", 0.0, BlackoutKind.BLACKOUT_REAL),
+        ("OB CAL DISCHRG", 236.0, BlackoutKind.BLACKOUT_REAL),
         ("OL", 236.0, BlackoutKind.ONLINE),
         ("", 236.0, BlackoutKind.UNKNOWN),
     ],
@@ -27,3 +27,12 @@ def test_classification_uses_status_flags_and_not_input_voltage(
 
     assert classify_physical_observation(observation) == expected
     assert observation.input_voltage_v == input_voltage_v
+
+
+def test_explicit_causal_attribution_is_required_for_self_test(observation_factory) -> None:
+    observation = observation_factory(0.0, raw_status="OB CAL DISCHRG")
+
+    assert (
+        classify_physical_observation(observation, attributed_kind=BlackoutKind.BLACKOUT_TEST)
+        == BlackoutKind.BLACKOUT_TEST
+    )

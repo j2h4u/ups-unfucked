@@ -89,7 +89,7 @@ def test_ordinary_ob_with_mains_input_is_not_a_self_test() -> None:
     assert type(summary["duration_s"]) is int
 
 
-def test_mixed_ob_cal_episode_remains_a_self_test() -> None:
+def test_mixed_ob_cal_episode_defaults_to_blackout_without_provenance() -> None:
     rows = [
         {
             "at": "2026-08-22T00:00:00Z",
@@ -112,12 +112,24 @@ def test_mixed_ob_cal_episode_remains_a_self_test() -> None:
     ]
 
     assert summarize_episode(rows) == {
-        "kind": "self_test",
+        "kind": "blackout",
         "at": "2026-08-22T00:00:00Z",
         "duration_s": 2,
         "depth_pct": 1.0,
         "efc": 0.01,
     }
+
+
+def test_episode_summary_uses_explicit_writer_provenance() -> None:
+    rows = [
+        {"at": "2026-08-22T00:00:00Z", "status": "OB CAL", "battery_pct": 100.0},
+        {"at": "2026-08-22T00:00:01Z", "status": "OL", "battery_pct": 99.0},
+    ]
+
+    summary = summarize_episode(rows, physical_kind=BlackoutKind.BLACKOUT_TEST)
+
+    assert summary is not None
+    assert summary["kind"] == "self_test"
 
 
 def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -> None:
