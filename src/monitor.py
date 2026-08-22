@@ -7,7 +7,7 @@ import shlex
 import signal
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +31,7 @@ from src.application.safety import (
     make_safety_publication,
 )
 from src.domain.lifecycle import classify_physical_observation
+from src.domain.model_feedback import propose_model_feedback
 from src.domain.values import (
     BlackoutKind,
     FrozenModelSnapshot,
@@ -103,6 +104,8 @@ class PollPublisher(Protocol):
 class RuntimeModelPort(ModelSnapshotPort, CloseablePort, Protocol):
     """Safety snapshot owner with an explicit runtime lifecycle."""
 
+    def apply_ir_k(self, value: float) -> tuple[float, float] | None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PollResult:
@@ -159,6 +162,7 @@ class MonitorDaemon:
         self._fatal_error: SafetyPublicationError | None = None
         self._last_self_test_check_date: date | None = None
         self._first_valid_observation_monotonic_ns: int | None = None
+        self._feedback_replayed = False
 
     def start(self) -> None:
         if self._started:
@@ -215,7 +219,8 @@ class MonitorDaemon:
         self._publisher.clear_channel_error("poll")
 
         self._latch = calculation.next_latch
-        self._write_telemetry(observation, physical_kind)
+        completed = self._write_telemetry(observation, physical_kind)
+        self._run_model_feedback(completed)
         self._maybe_run_quick_self_test(observation, physical_kind)
         return PollResult(observation, snapshot, calculation, publication)
 
@@ -253,14 +258,54 @@ class MonitorDaemon:
 
     def _write_telemetry(
         self, observation: PhysicalObservation, physical_kind: BlackoutKind
-    ) -> None:
+    ) -> tuple[dict[str, object], ...] | None:
         try:
             self._telemetry_writer.write(observation, physical_kind)
         except OSError as error:
             logger.warning("Telemetry sample unavailable: %s", error)
             self._publisher.record_channel_error("storage", error)
+            return None
         else:
             self._publisher.clear_channel_error("storage")
+            return self._telemetry_writer.take_completed_episode()
+
+    def _run_model_feedback(self, completed: tuple[dict[str, object], ...] | None) -> None:
+        """Apply small post-publication improvements; failures are diagnostic only."""
+        try:
+            if not self._feedback_replayed:
+                self._feedback_replayed = True
+                path = self.config.model_dir / "events" / "telemetry.jsonl"
+                if path.exists():
+                    self._apply_feedback(_closed_episodes(read_telemetry(path).records))
+            elif completed is not None:
+                self._apply_feedback((completed,))
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            logger.warning("Model feedback unavailable: %s", error)
+            self._publisher.record_channel_error("feedback", error)
+        else:
+            self._publisher.clear_channel_error("feedback")
+
+    def _apply_feedback(self, episodes: tuple[tuple[dict[str, object], ...], ...]) -> None:
+        event_kinds = self._telemetry_writer.event_kinds()
+        for episode in episodes:
+            event_at = _event_start(episode)
+            if event_at is None or event_kinds.get(event_at) in {"self_test", "model_update"}:
+                continue
+            proposal = propose_model_feedback(episode, self._model.current_snapshot())
+            if proposal is None:
+                continue
+            field = "physics.ir_compensation.k_volts_per_percent"
+            changed = self._model.apply_ir_k(proposal.to_value)
+            if changed is None:
+                continue
+            self._telemetry_writer.record_model_update(
+                at=str(episode[-1]["at"]),
+                event_at=event_at,
+                evidence_at=proposal.evidence_at,
+                changes={field: changed},
+                reason=proposal.reason,
+            )
+            event_kinds[event_at] = "model_update"
 
     def _safety_kind(self, physical_kind: BlackoutKind) -> BlackoutKind:
         safety_kind = conservative_safety_kind(physical_kind)
@@ -495,6 +540,32 @@ def _validate_observation(observation: PhysicalObservation) -> None:
         raise RuntimeErrorBoundary("battery voltage is missing or invalid")
     if load is None or not math.isfinite(load) or not 0.0 <= load <= 100.0:
         raise RuntimeErrorBoundary("UPS load is missing or invalid")
+
+
+def _closed_episodes(
+    records: Sequence[dict[str, object]],
+) -> tuple[tuple[dict[str, object], ...], ...]:
+    completed: list[tuple[dict[str, object], ...]] = []
+    active: list[dict[str, object]] | None = None
+    for record in records:
+        flags = str(record.get("status", "")).split()
+        if "OB" in flags or "CAL" in flags:
+            active = active or []
+            active.append(record)
+        elif active is not None and "OL" in flags:
+            active.append(record)
+            completed.append(tuple(active))
+            active = None
+    return tuple(completed)
+
+
+def _event_start(records: Sequence[Mapping[str, object]]) -> str | None:
+    for record in records:
+        flags = str(record.get("status", "")).split()
+        at = record.get("at")
+        if ("OB" in flags or "CAL" in flags) and isinstance(at, str):
+            return at
+    return None
 
 
 def _utc(moment: datetime) -> datetime:

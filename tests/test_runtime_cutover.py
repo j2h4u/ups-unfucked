@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -25,6 +25,10 @@ class _Telemetry:
 
 
 class _Model:
+    def __init__(self) -> None:
+        self.ir_k = 0.015
+        self.changes: list[dict[str, object]] = []
+
     def current_snapshot(self) -> FrozenModelSnapshot:
         return FrozenModelSnapshot(
             7.2,
@@ -32,13 +36,19 @@ class _Model:
             510.0,
             1.0,
             1.2,
-            0.015,
+            self.ir_k,
             0.0,
             (LutPoint(13.7, 1.0), LutPoint(10.8, 0.0)),
         )
 
     def close(self) -> None:
         return None
+
+    def apply_ir_k(self, value: float) -> tuple[float, float]:
+        before = self.ir_k
+        self.ir_k = value
+        self.changes.append({"ir_k": value})
+        return before, self.ir_k
 
 
 class _Publisher:
@@ -86,12 +96,17 @@ def _observation(status: str, battery_pct: float, *, monotonic_ns: int = 1) -> P
     )
 
 
-def _daemon(tmp_path: Path, observations: tuple[PhysicalObservation, ...], writer: Any):
+def _daemon(
+    tmp_path: Path,
+    observations: tuple[PhysicalObservation, ...],
+    writer: Any,
+    model: _Model | None = None,
+):
     return MonitorDaemon(
         Config(model_dir=tmp_path),
         RuntimeDependencies(
             telemetry=_Telemetry(observations),
-            model=_Model(),
+            model=model or _Model(),
             publisher=_Publisher(),
             telemetry_writer=writer,
         ),
@@ -114,6 +129,77 @@ def test_safety_publication_is_followed_by_minimal_telemetry(tmp_path: Path) -> 
     ]
     assert len(rows) == 4
     assert len(rows[0]) == 8
+
+
+def test_closed_natural_blackout_applies_and_audits_bounded_feedback(tmp_path: Path) -> None:
+    start = datetime(2026, 8, 22, tzinfo=timezone.utc)
+    observations = []
+    for index in range(12):
+        high_load = index >= 6
+        observations.append(
+            PhysicalObservation(
+                "boot",
+                index * 1_000_000_000,
+                start + timedelta(seconds=index),
+                "OB DISCHRG",
+                None,
+                12.6 - 0.001 * index - (0.3 if high_load else 0.0),
+                40.0 if high_load else 20.0,
+                0.0,
+                battery_pct=90.0,
+                runtime_s=600.0,
+                output_v=230.0,
+            )
+        )
+    observations.append(
+        PhysicalObservation(
+            "boot",
+            12_000_000_000,
+            start + timedelta(seconds=12),
+            "OL CHRG",
+            None,
+            12.3,
+            40.0,
+            230.0,
+            battery_pct=90.0,
+            runtime_s=600.0,
+            output_v=230.0,
+        )
+    )
+    observations.append(
+        PhysicalObservation(
+            "boot",
+            13_000_000_000,
+            start + timedelta(seconds=13),
+            "OL",
+            None,
+            13.3,
+            40.0,
+            230.0,
+            battery_pct=100.0,
+            runtime_s=1800.0,
+            output_v=230.0,
+        )
+    )
+    model = _Model()
+    model.ir_k = 0.025
+    daemon = _daemon(tmp_path, tuple(observations), TelemetryJsonlWriter(tmp_path), model)
+
+    for _ in observations:
+        daemon.poll_once()
+
+    assert model.ir_k == pytest.approx(0.023)
+    history = [
+        json.loads(line)
+        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    ]
+    update = next(row for row in history if row["kind"] == "model_update")
+    assert update["event_at"] == "2026-08-22T00:00:00Z"
+    assert update["changes"]["physics.ir_compensation.k_volts_per_percent"] == {
+        "from": 0.025,
+        "to": pytest.approx(0.023),
+        "delta": pytest.approx(-0.002),
+    }
 
 
 def test_telemetry_storage_error_is_health_only(tmp_path: Path) -> None:

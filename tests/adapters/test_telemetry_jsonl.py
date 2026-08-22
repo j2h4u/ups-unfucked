@@ -49,6 +49,10 @@ def test_writer_records_blackout_recharge_and_one_terminal_sample(tmp_path: Path
     assert len(rows) == 4
     assert all(len(row) == 8 for row in rows)
     assert rows[-1]["battery_pct"] == 100.0
+    completed = writer.take_completed_episode()
+    assert completed is not None
+    assert completed[-1]["status"] == "OL"
+    assert writer.take_completed_episode() is None
 
 
 def test_full_online_start_is_silent_but_recharge_restart_is_recorded(tmp_path: Path) -> None:
