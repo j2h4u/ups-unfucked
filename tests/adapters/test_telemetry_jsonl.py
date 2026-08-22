@@ -88,9 +88,78 @@ def test_recorded_recharge_clears_silent_samples_without_duplicates(tmp_path: Pa
 
     rows = _lines(tmp_path)
     assert [row["at"] for row in rows] == [
+        "2026-08-22T00:00:00Z",
         "2026-08-22T00:00:01Z",
         "2026-08-22T00:00:02Z",
         "2026-08-22T00:00:03Z",
+    ]
+
+
+def test_silent_context_flushes_before_recharge_precursor_and_cal(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=120)
+    for offset_sec in (2, 0, 1):
+        assert not writer.write(
+            _observation("OL", 100.0, offset_sec=offset_sec), BlackoutKind.ONLINE
+        )
+
+    precursor = _observation("OL", 99.0, offset_sec=3)
+    calibration = _observation("CAL", 99.0, offset_sec=4)
+    assert writer.write(precursor, BlackoutKind.ONLINE)
+    assert writer.write(calibration, BlackoutKind.BLACKOUT_TEST)
+
+    assert [row["at"] for row in _lines(tmp_path)] == [
+        "2026-08-22T00:00:00Z",
+        "2026-08-22T00:00:01Z",
+        "2026-08-22T00:00:02Z",
+        "2026-08-22T00:00:03Z",
+        "2026-08-22T00:00:04Z",
+    ]
+
+
+def test_full_online_keeps_recording_for_tail_then_buffers_silently(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=3)
+    assert writer.write(_observation("OB DISCHRG", 90.0, offset_sec=0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL", 100.0, offset_sec=1), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=2), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=4), BlackoutKind.ONLINE)
+    assert not writer.write(_observation("OL", 100.0, offset_sec=5), BlackoutKind.ONLINE)
+    assert not writer.write(_observation("OL", 100.0, offset_sec=6), BlackoutKind.ONLINE)
+
+    assert writer.write(_observation("OB DISCHRG", 90.0, offset_sec=7), BlackoutKind.BLACKOUT_REAL)
+    assert [row["at"] for row in _lines(tmp_path)] == [
+        f"2026-08-22T00:00:0{offset_sec}Z" for offset_sec in (0, 1, 2, 4, 5, 6, 7)
+    ]
+
+
+def test_below_full_relapse_restarts_post_full_tail(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=3)
+    assert writer.write(_observation("OB DISCHRG", 90.0, offset_sec=0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL", 100.0, offset_sec=1), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=2), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 99.0, offset_sec=3), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=4), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=6), BlackoutKind.ONLINE)
+    assert not writer.write(_observation("OL", 100.0, offset_sec=8), BlackoutKind.ONLINE)
+
+    assert writer.write(_observation("OB DISCHRG", 90.0, offset_sec=9), BlackoutKind.BLACKOUT_REAL)
+    assert [row["at"] for row in _lines(tmp_path)] == [
+        f"2026-08-22T00:00:0{offset_sec}Z" for offset_sec in (0, 1, 2, 3, 4, 6, 8, 9)
+    ]
+
+
+def test_event_during_post_full_tail_resets_episode_without_duplicates(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=3)
+    assert writer.write(_observation("OB DISCHRG", 90.0, offset_sec=0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL", 100.0, offset_sec=1), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=2), BlackoutKind.ONLINE)
+    assert writer.write(_observation("CAL", 100.0, offset_sec=3), BlackoutKind.BLACKOUT_TEST)
+    assert writer.write(_observation("OL", 100.0, offset_sec=4), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL", 100.0, offset_sec=6), BlackoutKind.ONLINE)
+    assert not writer.write(_observation("OL", 100.0, offset_sec=8), BlackoutKind.ONLINE)
+
+    assert writer.write(_observation("OB DISCHRG", 90.0, offset_sec=9), BlackoutKind.BLACKOUT_REAL)
+    assert [row["at"] for row in _lines(tmp_path)] == [
+        f"2026-08-22T00:00:0{offset_sec}Z" for offset_sec in (0, 1, 2, 3, 4, 6, 8, 9)
     ]
 
 
