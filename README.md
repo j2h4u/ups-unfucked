@@ -14,9 +14,9 @@ compact and honest.
   pre-event and post-event context where available; missing values stay missing.
 - `events/history.jsonl` keeps compact event aggregates, and `scripts/blackout-history.py` prints
   recorded natural blackouts without requiring an operator to scan raw samples.
-- A closed natural blackout may make one small downward correction to the model's load-sag
-  compensation when raw voltage and load contain a stable independent step. Every applied change,
-  its size, source event, and reason are appended to `events/history.jsonl`.
+- A closed natural blackout may produce bounded automatic feedback from a raw load-step IR
+  observation and a censored-curve, runtime-effective SoH observation. Every applied change, its
+  size, source event, and reason are appended to `events/history.jsonl`.
 - If no blackout or calibration/self-test has occurred for 14 days and the UPS is at OL100, the
   daemon may run one automatic quick self-test. The result is operational evidence, never a
   capacity or battery-health claim.

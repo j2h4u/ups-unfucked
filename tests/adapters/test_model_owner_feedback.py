@@ -13,25 +13,42 @@ def _owner(tmp_path: Path) -> ModelOwner:
     return ModelOwner.open_runtime(tmp_path / "model.json", create_if_missing=True)
 
 
-def test_apply_ir_k_persists_audit_values_and_refreshes_snapshot(tmp_path: Path) -> None:
+def test_apply_feedback_persists_atomic_pair_and_refreshes_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
     owner = _owner(tmp_path)
     try:
-        changes = owner.apply_ir_k(0.012)
+        writes = 0
+        original_write = schema.files.atomic_write_model
 
-        assert changes == (0.015, 0.012)
+        def count_write(*args, **kwargs):
+            nonlocal writes
+            writes += 1
+            return original_write(*args, **kwargs)
+
+        monkeypatch.setattr(schema.files, "atomic_write_model", count_write)
+        changes = owner.apply_feedback(ir_k=0.012, soh=0.92)
+
+        assert changes == {
+            "physics.ir_compensation.k_volts_per_percent": (0.015, 0.012),
+            "soh": (1.0, 0.92),
+        }
+        assert writes == 1
         snapshot = owner.current_snapshot()
         assert snapshot.ir_k_v_per_pp == 0.012
+        assert snapshot.soh == 0.92
         persisted, _ = schema.load_target_state(tmp_path / "model.json")
         assert persisted["physics"]["ir_compensation"]["k_volts_per_percent"] == 0.012
+        assert persisted["soh"] == 0.92
     finally:
         owner.close()
 
 
-def test_apply_ir_k_requires_lock_and_noop_does_not_write(tmp_path: Path, monkeypatch) -> None:
+def test_apply_feedback_requires_lock_and_noop_does_not_write(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "model.json"
     owner = ModelOwner(path, create_if_missing=True)
     with pytest.raises(ModelStateFileError, match="writer lock"):
-        owner.apply_ir_k(0.012)
+        owner.apply_feedback(ir_k=0.012)
 
     owner = _owner(tmp_path)
     try:
@@ -42,20 +59,22 @@ def test_apply_ir_k_requires_lock_and_noop_does_not_write(tmp_path: Path, monkey
             writes += 1
 
         monkeypatch.setattr("src.adapters.model_owner.files.atomic_write_model", count_write)
-        assert owner.apply_ir_k(0.015) is None
+        assert owner.apply_feedback() == {}
+        assert owner.apply_feedback(ir_k=0.015, soh=1.0) == {}
         assert writes == 0
     finally:
         owner.close()
 
 
-def test_apply_ir_k_rejects_invalid_candidate_without_mutation(tmp_path: Path) -> None:
+def test_apply_feedback_rejects_invalid_candidate_without_mutation(tmp_path: Path) -> None:
     owner = _owner(tmp_path)
     try:
         before = owner.current_snapshot()
         with pytest.raises(schema.TargetModelStateError):
-            owner.apply_ir_k(float("nan"))
+            owner.apply_feedback(ir_k=float("nan"), soh=0.9)
         assert owner.current_snapshot() == before
         persisted, _ = schema.load_target_state(tmp_path / "model.json")
         assert persisted["physics"]["ir_compensation"]["k_volts_per_percent"] == 0.015
+        assert persisted["soh"] == 1.0
     finally:
         owner.close()

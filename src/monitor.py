@@ -31,7 +31,7 @@ from src.application.safety import (
     make_safety_publication,
 )
 from src.domain.lifecycle import classify_physical_observation
-from src.domain.model_feedback import propose_model_feedback
+from src.domain.model_feedback import propose_model_feedback, propose_soh_feedback
 from src.domain.values import (
     BlackoutKind,
     FrozenModelSnapshot,
@@ -104,7 +104,12 @@ class PollPublisher(Protocol):
 class RuntimeModelPort(ModelSnapshotPort, CloseablePort, Protocol):
     """Safety snapshot owner with an explicit runtime lifecycle."""
 
-    def apply_ir_k(self, value: float) -> tuple[float, float] | None: ...
+    def apply_feedback(
+        self,
+        *,
+        ir_k: float | None = None,
+        soh: float | None = None,
+    ) -> dict[str, tuple[float, float]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,19 +293,38 @@ class MonitorDaemon:
             event_at = _event_start(episode)
             if event_at is None or event_kinds.get(event_at) in {"self_test", "model_update"}:
                 continue
-            proposal = propose_model_feedback(episode, self._model.current_snapshot())
-            if proposal is None:
+            snapshot = self._model.current_snapshot()
+            ir_proposal = propose_model_feedback(episode, snapshot)
+            soh_proposal = propose_soh_feedback(episode, snapshot)
+            ir_k = (
+                ir_proposal.to_value
+                if ir_proposal is not None
+                and ir_proposal.field == "physics.ir_compensation.k_volts_per_percent"
+                else None
+            )
+            soh = (
+                soh_proposal.to_value
+                if soh_proposal is not None and soh_proposal.field == "soh"
+                else None
+            )
+            if ir_k is None and soh is None:
                 continue
-            field = "physics.ir_compensation.k_volts_per_percent"
-            changed = self._model.apply_ir_k(proposal.to_value)
-            if changed is None:
+            changes = self._model.apply_feedback(ir_k=ir_k, soh=soh)
+            if not changes:
                 continue
             self._telemetry_writer.record_model_update(
                 at=str(episode[-1]["at"]),
                 event_at=event_at,
-                evidence_at=proposal.evidence_at,
-                changes={field: changed},
-                reason=proposal.reason,
+                evidence_at=(
+                    ir_proposal.evidence_at
+                    if "physics.ir_compensation.k_volts_per_percent" in changes
+                    and ir_proposal is not None
+                    else soh_proposal.evidence_at
+                    if "soh" in changes and soh_proposal is not None
+                    else event_at
+                ),
+                changes=changes,
+                reason="natural blackout runtime feedback",
             )
             event_kinds[event_at] = "model_update"
 
