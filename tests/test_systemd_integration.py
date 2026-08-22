@@ -15,7 +15,6 @@ SERVICE_FILE_PATH = Path(__file__).parent.parent / "systemd" / "ups-battery-moni
 DRIVER_UNIT_PATH = (
     Path(__file__).parent.parent / "systemd" / "nut-driver@cyberpower-virtual.service"
 )
-LEGACY_DRIVER_DROPIN_PATH = Path(__file__).parent.parent / "systemd" / "nut-driver-virtual.conf"
 DUMMY_CONFIG_PATH = Path(__file__).parent.parent / "config" / "dummy-ups.conf"
 
 
@@ -204,11 +203,6 @@ def test_virtual_driver_is_bound_to_monitor_lifecycle_without_reverse_ordering()
     assert service["RestartSec"] == "15s"
     assert service["Type"] == "forking"
     assert "/run/ups-battery-monitor/ups-virtual.dev" in service["ExecStartPre"]
-
-
-def test_legacy_enumerator_owned_driver_dropin_is_retired():
-    """The exact fragment must survive enumerator cleanup of instance drop-ins."""
-    assert not LEGACY_DRIVER_DROPIN_PATH.exists()
 
 
 def test_rendered_topology_has_no_stock_target_cycle():

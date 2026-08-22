@@ -31,10 +31,6 @@ class MinimalEvent:
     path: Path
     records: tuple[dict[str, Any], ...]
 
-    @property
-    def kind(self) -> str:
-        return "blackout"
-
 
 def sample(at: str, battery_v: float | None, *fields: Any, **named: Any) -> dict[str, Any]:
     """Build the fixed eight-field ordinary sample record.

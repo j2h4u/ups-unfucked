@@ -1,28 +1,12 @@
-# UPS telemetry JSONL
+# Telemetry JSONL
 
-All useful UPS telemetry lives in one chronological file:
+The monitor writes one append-only stream:
 
-```text
-~/.config/ups-battery-monitor/events/telemetry.jsonl
-```
+`~/.config/ups-battery-monitor/events/telemetry.jsonl`
 
-Every line is an independent sample with exactly eight fields:
+Each line is a JSON object describing one physical UPS observation. The stream may contain ordinary
+online samples, blackout samples, quick-test samples, and recharge samples. The recorder keeps up to
+120 seconds of context before and after a detected event when samples are available.
 
-```json
-{"at":"2026-08-21T14:37:44Z","battery_v":13.6,"battery_pct":82,"runtime_s":900,"load_pct":19,"input_v":0,"output_v":230,"status":"OB DISCHRG"}
-```
-
-The monitor writes samples while the UPS is discharging or recharging. It stops
-after the UPS reports ordinary online operation at 100% charge. Blackout and
-recharge intervals are reconstructed from `status`, `battery_pct`, and `at`;
-the file contains no headers, IDs, hashes, sequence numbers, gaps, summaries,
-or sidecars.
-
-The one-time converter merges legacy event files into this stream. Fields that
-the old journal did not record are written as `null`; values are never invented.
-Run it only while the monitor is stopped:
-
-```text
-python3 scripts/migrate-jsonl-remove-hashes.py /path/to/events
-python3 scripts/migrate-jsonl-remove-hashes.py /path/to/events --apply
-```
+This file is the raw record. Values that NUT did not provide are `null`; derived output and CLI
+summaries must not overwrite or masquerade as raw evidence.
