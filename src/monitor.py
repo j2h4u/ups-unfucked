@@ -386,7 +386,10 @@ def build_daemon(
         virtual_ups_path=virtual_ups_path,
         max_publication_age_s=publication_age_s,
     )
-    telemetry_writer = TelemetryJsonlWriter(config.model_dir)
+    telemetry_writer = TelemetryJsonlWriter(
+        config.model_dir,
+        silent_window_sec=config.ema_window_sec,
+    )
     client = NUTClient(
         host=config.nut_host,
         port=config.nut_port,

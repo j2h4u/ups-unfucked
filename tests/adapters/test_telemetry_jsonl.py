@@ -1,16 +1,21 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
+import src.adapters.telemetry_jsonl as telemetry_jsonl
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
 from src.domain.values import BlackoutKind, PhysicalObservation
 
 
-def _observation(status: str, battery_pct: float | None) -> PhysicalObservation:
+def _observation(
+    status: str, battery_pct: float | None, *, offset_sec: int = 0
+) -> PhysicalObservation:
     return PhysicalObservation(
         boot_id="boot",
         monotonic_ns=1,
-        wall_time_utc=datetime(2026, 8, 22, tzinfo=timezone.utc),
+        wall_time_utc=datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(seconds=offset_sec),
         raw_status=status,
         battery_voltage_raw="13.3",
         battery_voltage_v=13.3,
@@ -51,3 +56,82 @@ def test_full_online_start_is_silent_but_recharge_restart_is_recorded(tmp_path: 
     assert not writer.write(_observation("OL", 100.0), BlackoutKind.ONLINE)
     assert writer.write(_observation("OL CHRG", 99.0), BlackoutKind.ONLINE)
     assert writer.write(_observation("OL", 100.0), BlackoutKind.ONLINE)
+
+
+def test_silent_online_samples_are_time_bounded_and_flush_before_event(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=3)
+
+    for offset_sec in (2, 0, 1, 3, 4, 5):
+        assert not writer.write(
+            _observation("OL", 100.0, offset_sec=offset_sec), BlackoutKind.ONLINE
+        )
+
+    event = _observation("OB DISCHRG", 90.0, offset_sec=6)
+    assert writer.write(event, BlackoutKind.BLACKOUT_REAL)
+
+    rows = _lines(tmp_path)
+    assert [row["at"] for row in rows] == [
+        f"2026-08-22T00:00:0{offset_sec}Z" for offset_sec in range(2, 7)
+    ]
+
+
+def test_recorded_recharge_clears_silent_samples_without_duplicates(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=120)
+    assert not writer.write(_observation("OL", 100.0, offset_sec=0), BlackoutKind.ONLINE)
+    charging = _observation("OL CHRG", 80.0, offset_sec=1)
+    full = _observation("OL", 100.0, offset_sec=2)
+    event = _observation("OB DISCHRG", 90.0, offset_sec=3)
+
+    assert writer.write(charging, BlackoutKind.ONLINE)
+    assert writer.write(full, BlackoutKind.ONLINE)
+    assert writer.write(event, BlackoutKind.BLACKOUT_REAL)
+
+    rows = _lines(tmp_path)
+    assert [row["at"] for row in rows] == [
+        "2026-08-22T00:00:01Z",
+        "2026-08-22T00:00:02Z",
+        "2026-08-22T00:00:03Z",
+    ]
+
+
+def test_silent_online_remains_disk_silent_without_event(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=120)
+    for offset_sec in range(4):
+        assert not writer.write(
+            _observation("OL", 100.0, offset_sec=offset_sec), BlackoutKind.ONLINE
+        )
+
+    assert not (tmp_path / "events" / "telemetry.jsonl").exists()
+
+
+def test_failed_pre_event_flush_preserves_unwritten_samples_for_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=120)
+    for offset_sec in range(2):
+        assert not writer.write(
+            _observation("OL", 100.0, offset_sec=offset_sec), BlackoutKind.ONLINE
+        )
+
+    real_append = telemetry_jsonl.append
+    calls = 0
+
+    def append_once_then_fail(path: Path, record: dict[str, object]) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("full disk")
+        real_append(path, record)
+
+    monkeypatch.setattr(telemetry_jsonl, "append", append_once_then_fail)
+    event = _observation("OB DISCHRG", 90.0, offset_sec=2)
+    with pytest.raises(OSError, match="full disk"):
+        writer.write(event, BlackoutKind.BLACKOUT_REAL)
+
+    monkeypatch.setattr(telemetry_jsonl, "append", real_append)
+    assert writer.write(event, BlackoutKind.BLACKOUT_REAL)
+    assert [row["at"] for row in _lines(tmp_path)] == [
+        "2026-08-22T00:00:00Z",
+        "2026-08-22T00:00:01Z",
+        "2026-08-22T00:00:02Z",
+    ]
