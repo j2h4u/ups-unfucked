@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from src.domain.time import utc_second
+from src.domain.values import BlackoutKind
 
 HISTORY_FILENAME = "history.jsonl"
 
@@ -23,8 +24,13 @@ class BatteryHistory:
             raise ValueError(f"history must be stored as {HISTORY_FILENAME}")
         self._path = path
 
-    def episode(self, records: list[dict[str, Any]]) -> None:
-        summary = summarize_episode(records)
+    def episode(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        physical_kind: BlackoutKind | str | None = None,
+    ) -> None:
+        summary = summarize_episode(records, physical_kind=physical_kind)
         if summary is not None:
             self._append(summary)
 
@@ -139,8 +145,17 @@ class BatteryHistory:
             os.close(fd)
 
 
-def summarize_episode(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Summarize one closed telemetry episode; never invent unavailable values."""
+def summarize_episode(
+    records: list[dict[str, Any]],
+    *,
+    physical_kind: BlackoutKind | str | None = None,
+) -> dict[str, Any] | None:
+    """Summarize one closed episode using explicit daemon provenance.
+
+    Raw ``CAL`` is deliberately ignored for classification.  Missing or
+    unknown provenance is a real blackout, including episodes recovered after
+    a daemon restart.
+    """
     bounds = _discharge_bounds(records)
     if bounds is None:
         return None
@@ -161,7 +176,7 @@ def summarize_episode(records: list[dict[str, Any]]) -> dict[str, Any] | None:
         if baseline is not None and discharge_percentages
         else None
     )
-    kind = "self_test" if any(_is_self_test(row) for row in records) else "blackout"
+    kind = "self_test" if _is_test_kind(physical_kind) else "blackout"
     return {
         "kind": kind,
         "at": start,
@@ -197,9 +212,8 @@ def _is_on_battery(record: dict[str, Any]) -> bool:
     return "OB" in status or "CAL" in status
 
 
-def _is_self_test(record: dict[str, Any]) -> bool:
-    status = str(record.get("status", "")).split()
-    return "CAL" in status
+def _is_test_kind(physical_kind: BlackoutKind | str | None) -> bool:
+    return physical_kind in {BlackoutKind.BLACKOUT_TEST, BlackoutKind.BLACKOUT_TEST.value}
 
 
 def _finite_number(value: Any) -> bool:

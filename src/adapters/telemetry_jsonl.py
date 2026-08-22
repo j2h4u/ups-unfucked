@@ -29,6 +29,7 @@ class TelemetryJsonlWriter:
         self._history = BatteryHistory(self._path.with_name("history.jsonl"))
         self._episode_active = False
         self._episode_records: list[dict[str, object]] = []
+        self._episode_kind: BlackoutKind = BlackoutKind.BLACKOUT_REAL
         self._completed_episode: tuple[dict[str, object], ...] | None = None
         self._restore_active_episode()
         self._silent_window = (
@@ -51,6 +52,9 @@ class TelemetryJsonlWriter:
             start -= 1
         self._episode_records = [dict(record) for record in records[start:]]
         self._episode_active = True
+        # Provenance is process-local; an active tail from a prior daemon is
+        # never allowed to become a self-test after restart.
+        self._episode_kind = BlackoutKind.BLACKOUT_REAL
 
     def write(self, observation: PhysicalObservation, physical_kind: BlackoutKind) -> bool:
         """Append one eligible sample; return whether a line was written."""
@@ -59,6 +63,12 @@ class TelemetryJsonlWriter:
             self._flush_silent_observations()
             row = _sample(observation)
             append(self._path, row)
+            if not self._episode_active:
+                self._episode_kind = (
+                    physical_kind
+                    if physical_kind == BlackoutKind.BLACKOUT_TEST
+                    else BlackoutKind.BLACKOUT_REAL
+                )
             self._episode_active = True
             self._episode_records.extend((*context, row))
             self._post_full_until = None
@@ -72,6 +82,8 @@ class TelemetryJsonlWriter:
             self._flush_silent_observations()
             append(self._path, _sample(observation))
             self._silent_observations.clear()
+            if not self._episode_active:
+                self._episode_kind = BlackoutKind.BLACKOUT_REAL
             self._episode_active = True
             self._episode_records.append(_sample(observation))
             self._post_full_until = None
@@ -84,8 +96,9 @@ class TelemetryJsonlWriter:
             self._post_full_until = _post_full_deadline(observation, self._silent_window)
             records = self._episode_records
             self._episode_records = []
-            self._history.episode(records)
+            self._history.episode(records, physical_kind=self._episode_kind)
             self._completed_episode = tuple(records)
+            self._episode_kind = BlackoutKind.BLACKOUT_REAL
             return True
         if observation.battery_pct != 100.0:
             return False

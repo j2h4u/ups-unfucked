@@ -3,12 +3,21 @@
 from src.domain.values import BlackoutKind, PhysicalObservation
 
 
-def classify_physical_observation(observation: PhysicalObservation) -> BlackoutKind:
-    """Classify battery operation from raw status flags, independent of input voltage."""
+def classify_physical_observation(
+    observation: PhysicalObservation,
+    *,
+    attributed_kind: BlackoutKind | None = None,
+) -> BlackoutKind:
+    """Classify one poll, treating raw UPS flags as noisy battery evidence.
+
+    ``CAL`` is not proof of a self-test: this function only accepts an explicit
+    causal attribution supplied by the daemon.  Without it, every battery
+    episode is conservatively a real blackout.
+    """
     flags = frozenset(observation.raw_status.split())
-    if "CAL" in flags:
-        return BlackoutKind.BLACKOUT_TEST
-    if "OB" in flags:
+    if {"CAL", "OB"}.intersection(flags):
+        if attributed_kind == BlackoutKind.BLACKOUT_TEST:
+            return attributed_kind
         return BlackoutKind.BLACKOUT_REAL
     if "OL" in flags:
         return BlackoutKind.ONLINE

@@ -64,22 +64,20 @@ def _episodes(
 ) -> tuple[tuple[str, str | None], ...]:
     found: list[tuple[str, str | None]] = []
     active: str | None = None
-    saw_cal = False
     for value in read(path).records:
         at = str(value["at"])
         flags = frozenset(str(value["status"]).split())
         if "OB" in flags or "CAL" in flags:
             active = active or at
-            saw_cal = saw_cal or "CAL" in flags
         elif active is not None and "OL" in flags:
             kind = (classifications or {}).get(active)
-            if kind == "blackout" or (kind is None and not saw_cal):
+            if kind != "self_test":
                 if start <= _utc(active) < end:
                     found.append((active, at))
-            active, saw_cal = None, False
+            active = None
     if active is not None and start <= _utc(active) < end:
         kind = (classifications or {}).get(active)
-        if kind == "blackout" or (kind is None and not saw_cal):
+        if kind != "self_test":
             found.append((active, None))
     return tuple(found)
 

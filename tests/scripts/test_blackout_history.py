@@ -28,7 +28,7 @@ def _write(root: Path, rows: list[dict[str, object]]) -> Path:
     return path
 
 
-def test_year_counts_natural_restored_and_unfinished_but_excludes_cal(tmp_path: Path) -> None:
+def test_year_counts_natural_restored_and_unfinished_including_cal(tmp_path: Path) -> None:
     module = _script()
     path = _write(
         tmp_path,
@@ -45,6 +45,7 @@ def test_year_counts_natural_restored_and_unfinished_but_excludes_cal(tmp_path: 
 
     assert module._episodes(path, start, end) == (
         ("2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"),
+        ("2026-01-02T00:00:00Z", "2026-01-02T00:00:01Z"),
         ("2026-01-03T00:00:00Z", None),
     )
 

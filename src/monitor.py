@@ -61,6 +61,10 @@ QUICK_SELF_TEST_ADDRESS = "cyberpower@localhost"
 QUICK_SELF_TEST_COMMAND = "test.battery.start.quick"
 NUT_COMMAND_CONFIG_PATH = Path("/etc/nut/upsmon.conf")
 QUICK_SELF_TEST_COOLDOWN = timedelta(days=14)
+# The 12-second bound covers the 10-second NUT command timeout plus a 2-second
+# polling margin, while keeping an unobserved command from tainting a later
+# natural blackout.
+QUICK_SELF_TEST_ATTRIBUTION_WINDOW_S = 12.0
 
 
 class InvalidObservationBoundary(RuntimeErrorBoundary):
@@ -171,6 +175,8 @@ class MonitorDaemon:
         self._last_self_test_check_date: date | None = None
         self._first_valid_observation_monotonic_ns: int | None = None
         self._feedback_replayed = False
+        self._pending_self_test_until: float | None = None
+        self._episode_kind: BlackoutKind | None = None
 
     def start(self) -> None:
         if self._started:
@@ -187,7 +193,7 @@ class MonitorDaemon:
         started = self._monotonic_clock()
         observation = self._telemetry.read()
         snapshot = self._model.current_snapshot()
-        physical_kind = classify_physical_observation(observation)
+        physical_kind = self._classify_physical_observation(observation)
         try:
             _validate_observation(observation)
         except RuntimeErrorBoundary as error:
@@ -260,6 +266,10 @@ class MonitorDaemon:
             _run_quick_self_test()
         except (OSError, RuntimeError, subprocess.SubprocessError):
             logger.warning("Quick UPS self-test skipped: NUT command failed")
+        else:
+            self._pending_self_test_until = (
+                self._monotonic_clock() + QUICK_SELF_TEST_ATTRIBUTION_WINDOW_S
+            )
 
     def _self_test_horizon_elapsed(self, observation: PhysicalObservation) -> bool:
         first = self._first_valid_observation_monotonic_ns
@@ -267,6 +277,29 @@ class MonitorDaemon:
             return False
         horizon_ns = self.config.ema_window_sec * 1_000_000_000
         return observation.monotonic_ns - first >= horizon_ns
+
+    def _classify_physical_observation(self, observation: PhysicalObservation) -> BlackoutKind:
+        """Classify a poll and retain one causal kind for its battery episode."""
+        flags = frozenset(observation.raw_status.split())
+        if {"OB", "CAL"}.intersection(flags):
+            if self._episode_kind is None:
+                now = self._monotonic_clock()
+                if self._pending_self_test_until is not None and now <= (
+                    self._pending_self_test_until
+                ):
+                    self._episode_kind = BlackoutKind.BLACKOUT_TEST
+                    self._pending_self_test_until = None
+                else:
+                    self._pending_self_test_until = None
+                    self._episode_kind = BlackoutKind.BLACKOUT_REAL
+            return classify_physical_observation(observation, attributed_kind=self._episode_kind)
+        if "OL" in flags:
+            self._episode_kind = None
+        if self._pending_self_test_until is not None and self._monotonic_clock() > (
+            self._pending_self_test_until
+        ):
+            self._pending_self_test_until = None
+        return classify_physical_observation(observation)
 
     def _write_telemetry(
         self, observation: PhysicalObservation, physical_kind: BlackoutKind

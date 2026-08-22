@@ -458,3 +458,147 @@ def test_quick_self_test_failure_is_health_only_and_not_retried_same_day(
 
     command.assert_called_once()
     assert first.publication and second.publication
+
+
+def test_failed_quick_test_cannot_attribute_following_cal_as_self_test(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(monitor, "_run_quick_self_test", Mock(side_effect=RuntimeError("failed")))
+    observations = (
+        _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        _observation("CAL DISCHRG", 99.0, monotonic_ns=122_000_000_000),
+    )
+    daemon = _daemon(tmp_path, observations, TelemetryJsonlWriter(tmp_path))
+
+    daemon.poll_once()
+    daemon.poll_once()
+    result = daemon.poll_once()
+
+    assert result.calculation.event_class == BlackoutKind.BLACKOUT_REAL
+
+
+def test_expired_success_marker_cannot_attribute_following_cal_as_self_test(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(monitor, "_run_quick_self_test", Mock())
+    daemon = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+            _observation("CAL DISCHRG", 99.0, monotonic_ns=122_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+
+    daemon.poll_once()
+    daemon.poll_once()
+    daemon._pending_self_test_until = daemon._monotonic_clock() - 1.0
+    result = daemon.poll_once()
+
+    assert result.calculation.event_class == BlackoutKind.BLACKOUT_REAL
+
+
+def test_successful_command_is_not_provenance_across_daemon_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(monitor, "_run_quick_self_test", Mock())
+    first = _daemon(
+        tmp_path,
+        (
+            _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+            _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+    first.poll_once()
+    first.poll_once()
+
+    second = _daemon(
+        tmp_path,
+        (
+            _observation("CAL DISCHRG", 99.0),
+            _observation("OL", 100.0, monotonic_ns=2),
+        ),
+        TelemetryJsonlWriter(tmp_path),
+    )
+    result = second.poll_once()
+    second.poll_once()
+
+    assert result.calculation.event_class == BlackoutKind.BLACKOUT_REAL
+    history = [
+        json.loads(line)
+        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    ]
+    assert [row["kind"] for row in history] == ["blackout"]
+
+
+def test_successful_quick_test_attributes_one_mixed_battery_episode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = Mock()
+    monkeypatch.setattr(monitor, "_run_quick_self_test", command)
+    observations = (
+        _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        _observation("CAL DISCHRG", 99.0, monotonic_ns=122_000_000_000),
+        _observation("OB DISCHRG", 98.0, monotonic_ns=123_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=124_000_000_000),
+    )
+    daemon = _daemon(tmp_path, observations, TelemetryJsonlWriter(tmp_path))
+
+    results = [daemon.poll_once() for _ in observations]
+
+    assert command.call_count == 1
+    assert results[2].calculation.event_class == BlackoutKind.BLACKOUT_TEST
+    assert results[3].calculation.event_class == BlackoutKind.BLACKOUT_TEST
+    history = [
+        json.loads(line)
+        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    ]
+    assert [row["kind"] for row in history] == ["self_test"]
+
+
+def test_uncommanded_cal_is_real_for_safety_and_history(tmp_path: Path) -> None:
+    observations = (
+        _observation("CAL DISCHRG", 99.0),
+        _observation("OL", 100.0, monotonic_ns=2),
+    )
+    daemon = _daemon(tmp_path, observations, TelemetryJsonlWriter(tmp_path))
+
+    result = daemon.poll_once()
+    daemon.poll_once()
+
+    assert result.calculation.event_class == BlackoutKind.BLACKOUT_REAL
+    history = [
+        json.loads(line)
+        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    ]
+    assert history[0]["kind"] == "blackout"
+
+
+def test_success_marker_is_one_shot_for_the_next_natural_blackout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = Mock()
+    monkeypatch.setattr(monitor, "_run_quick_self_test", command)
+    observations = (
+        _observation("OL", 100.0, monotonic_ns=1_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=121_000_000_000),
+        _observation("CAL DISCHRG", 99.0, monotonic_ns=122_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=123_000_000_000),
+        _observation("OB DISCHRG", 98.0, monotonic_ns=124_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=125_000_000_000),
+    )
+    daemon = _daemon(tmp_path, observations, TelemetryJsonlWriter(tmp_path))
+
+    results = [daemon.poll_once() for _ in observations]
+
+    assert results[2].calculation.event_class == BlackoutKind.BLACKOUT_TEST
+    assert results[4].calculation.event_class == BlackoutKind.BLACKOUT_REAL
+    history = [
+        json.loads(line)
+        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    ]
+    assert [row["kind"] for row in history] == ["self_test", "blackout"]
