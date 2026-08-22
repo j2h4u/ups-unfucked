@@ -5,9 +5,9 @@ import pytest
 from src.battery_math.lut import LutPoint, soc_from_voltage
 
 LUT = (
-    LutPoint(13.4, 1.0, "standard"),
-    LutPoint(12.4, 0.64, "standard"),
-    LutPoint(10.5, 0.0, "anchor"),
+    LutPoint(13.4, 1.0),
+    LutPoint(12.4, 0.64),
+    LutPoint(10.5, 0.0),
 )
 
 

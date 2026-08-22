@@ -21,7 +21,6 @@ class ModelOwner:
         model_path: str | Path,
         *,
         rated_capacity_ah: float = RATED_CAPACITY_AH,
-        evaluation_revision: str = schema.DEFAULT_EVALUATION_REVISION,
         create_if_missing: bool = False,
     ) -> "ModelOwner":
         path = Path(model_path)
@@ -30,7 +29,6 @@ class ModelOwner:
             owner = cls(
                 path,
                 rated_capacity_ah=rated_capacity_ah,
-                evaluation_revision=evaluation_revision,
                 create_if_missing=create_if_missing,
             )
             owner.adopt_writer_lock(lock_fd)
@@ -44,12 +42,10 @@ class ModelOwner:
         model_path: str | Path,
         *,
         rated_capacity_ah: float = RATED_CAPACITY_AH,
-        evaluation_revision: str = schema.DEFAULT_EVALUATION_REVISION,
         create_if_missing: bool = False,
     ) -> None:
         self.model_path = Path(model_path)
         self.rated_capacity_ah = float(rated_capacity_ah)
-        self.evaluation_revision = evaluation_revision
         self._writer_lock_fd: int | None = None
         self._lock = threading.RLock()
         if self.model_path.is_symlink():
@@ -57,7 +53,7 @@ class ModelOwner:
         if self.model_path.exists():
             state, _ = schema.load_target_state(self.model_path)
         elif create_if_missing:
-            state = schema.fresh_target_state(rated_capacity_ah=self.rated_capacity_ah)
+            state = schema.fresh_target_state()
             files.atomic_write_model(self.model_path, schema.canonical_json(state))
         else:
             raise schema.TargetModelStateError(f"target model does not exist: {self.model_path}")
@@ -86,21 +82,17 @@ class ModelOwner:
         assert isinstance(ir, Mapping)
         lut = _snapshot_lut(state["lut"])
         return FrozenModelSnapshot(
-            evaluation_revision=self.evaluation_revision,
-            scientific_fingerprint=schema.scientific_fingerprint(state),
             rated_capacity_ah=self.rated_capacity_ah,
             nominal_voltage_v=NOMINAL_VOLTAGE,
             nominal_power_watts=NOMINAL_POWER_WATTS,
             soh=float(state["soh"]),
             peukert_exponent=float(physics["peukert_exponent"]),
             ir_k_v_per_pp=float(ir["k_volts_per_percent"]),
-            ir_reference_load_percent=float(ir["reference_load_percent"]),
+            ir_reference_load_percent=0.0,
             lut=lut,
         )
 
 
 def _snapshot_lut(raw_lut: object) -> FrozenLut:
     assert isinstance(raw_lut, list)
-    return tuple(
-        LutPoint(float(entry["v"]), float(entry["soc"]), str(entry["source"])) for entry in raw_lut
-    )
+    return tuple(LutPoint(float(entry["v"]), float(entry["soc"])) for entry in raw_lut)

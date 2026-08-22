@@ -230,8 +230,6 @@ class VirtualUpsExporter:
             "input.voltage": observation.input_voltage_v,
             "battery.health": round(snapshot.soh * 100.0),
             "battery.load_sag.coefficient_v_per_load_percent": snapshot.ir_k_v_per_pp,
-            "battery.load_sag.reference_load_percent": snapshot.ir_reference_load_percent,
-            "battery.model.scientific_fingerprint": snapshot.scientific_fingerprint,
             "ups.raw.status": publication.raw_status,
             "ups.raw.lb_observed": publication.raw_lb_observed,
             "ups.safety.lb_source": (

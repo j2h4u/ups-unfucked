@@ -14,7 +14,6 @@ class LutPoint:
 
     voltage_v: float
     soc: float
-    source: str
 
 
 type FrozenLut = tuple[LutPoint, ...]

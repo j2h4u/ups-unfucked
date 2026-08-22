@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src.adapters.battery_history import BatteryHistory
 from src.adapters.minimal_event_file import MinimalEvent, append, sample
 from src.adapters.minimal_event_file import read as _read
 from src.domain.values import BlackoutKind, PhysicalObservation
@@ -22,7 +23,9 @@ class TelemetryJsonlWriter:
         self, model_data_dir: str | Path, *, silent_window_sec: float | None = None
     ) -> None:
         self._path = Path(model_data_dir) / "events" / "telemetry.jsonl"
+        self._history = BatteryHistory(self._path.with_name("history.jsonl"))
         self._episode_active = False
+        self._episode_records: list[dict[str, object]] = []
         self._silent_window = (
             timedelta(seconds=silent_window_sec) if silent_window_sec is not None else None
         )
@@ -32,9 +35,12 @@ class TelemetryJsonlWriter:
     def write(self, observation: PhysicalObservation, physical_kind: BlackoutKind) -> bool:
         """Append one eligible sample; return whether a line was written."""
         if physical_kind in {BlackoutKind.BLACKOUT_REAL, BlackoutKind.BLACKOUT_TEST}:
+            context = [_sample(item) for item in self._silent_observations]
             self._flush_silent_observations()
-            append(self._path, _sample(observation))
+            row = _sample(observation)
+            append(self._path, row)
             self._episode_active = True
+            self._episode_records.extend((*context, row))
             self._post_full_until = None
             return True
         elif physical_kind == BlackoutKind.ONLINE:
@@ -47,12 +53,18 @@ class TelemetryJsonlWriter:
             append(self._path, _sample(observation))
             self._silent_observations.clear()
             self._episode_active = True
+            self._episode_records.append(_sample(observation))
             self._post_full_until = None
             return True
         if self._episode_active:
-            append(self._path, _sample(observation))
+            row = _sample(observation)
+            append(self._path, row)
+            self._episode_records.append(row)
             self._episode_active = False
             self._post_full_until = _post_full_deadline(observation, self._silent_window)
+            records = self._episode_records
+            self._episode_records = []
+            self._history.episode(records)
             return True
         if observation.battery_pct != 100.0:
             return False

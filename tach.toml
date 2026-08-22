@@ -47,8 +47,13 @@ depends_on = ["src.adapters.jsonl_errors"]
 layer = "adapters"
 
 [[modules]]
+path = "src.adapters.battery_history"
+depends_on = []
+layer = "adapters"
+
+[[modules]]
 path = "src.adapters.telemetry_jsonl"
-depends_on = ["src.adapters.minimal_event_file", "src.domain"]
+depends_on = ["src.adapters.battery_history", "src.adapters.minimal_event_file", "src.domain"]
 layer = "adapters"
 
 [[modules]]
@@ -68,7 +73,7 @@ layer = "adapters"
 
 [[modules]]
 path = "src.adapters.model_state_schema"
-depends_on = ["src.adapters.model_state_persistence", "src.battery_math", "src.domain"]
+depends_on = ["src.adapters.model_state_persistence"]
 layer = "adapters"
 
 [[modules]]

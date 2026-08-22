@@ -27,8 +27,6 @@ class _Telemetry:
 class _Model:
     def current_snapshot(self) -> FrozenModelSnapshot:
         return FrozenModelSnapshot(
-            "1",
-            "b" * 64,
             7.2,
             12.0,
             510.0,
@@ -36,7 +34,7 @@ class _Model:
             1.2,
             0.015,
             0.0,
-            (LutPoint(13.7, 1.0, "standard"), LutPoint(10.8, 0.0, "anchor")),
+            (LutPoint(13.7, 1.0), LutPoint(10.8, 0.0)),
         )
 
     def close(self) -> None:
