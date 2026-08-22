@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from src.domain.time import utc_second
 
 HISTORY_FILENAME = "history.jsonl"
 
@@ -25,30 +28,69 @@ class BatteryHistory:
         if summary is not None:
             self._append(summary)
 
-    def model_update(
+    def ir_observation(
         self,
         *,
-        at: str,
         event_at: str,
+        estimate: float,
         evidence_at: str,
-        changes: dict[str, tuple[Any, Any]],
+        uncertainty: float,
         reason: str,
-    ) -> None:
-        """Record the exact, human-readable effect of one feedback pass."""
-        rendered = {
-            field: {"from": before, "to": after, "delta": round(after - before, 12)}
-            for field, (before, after) in changes.items()
-        }
+    ) -> bool:
+        """Persist one compact, repeat-safe IR observation."""
+        event_key = canonical_timestamp(event_at)
+        if self._has_kind("ir_observation", event_key):
+            return False
         self._append(
             {
-                "kind": "model_update",
-                "at": _timestamp(at),
-                "event_at": _timestamp(event_at),
-                "evidence_at": _timestamp(evidence_at),
-                "changes": rendered,
+                "kind": "ir_observation",
+                "event_at": event_key,
+                "estimate": float(estimate),
+                "evidence_at": canonical_timestamp(evidence_at),
+                "uncertainty": float(uncertainty),
                 "reason": reason,
             }
         )
+        return True
+
+    def ir_observations(self) -> list[dict[str, Any]]:
+        """Return distinct observations newer than the last IR model update."""
+        if not self._path.exists():
+            return []
+        last_update: str | None = None
+        rows: list[dict[str, Any]] = []
+        for line in self._path.read_text().splitlines():
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError("history record must be an object")
+            if record.get("kind") == "model_update":
+                changes = record.get("changes")
+                if (
+                    isinstance(changes, Mapping)
+                    and "physics.ir_compensation.k_volts_per_percent" in changes
+                ):
+                    last_update = canonical_timestamp(str(record["event_at"]))
+            elif record.get("kind") == "ir_observation":
+                rows.append(_canonical_observation(record))
+        unique: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            event_at = str(row["event_at"])
+            if last_update is None or event_at > last_update:
+                unique.setdefault(event_at, row)
+        return list(unique.values())
+
+    def upsert_model_update(self, receipt: Mapping[str, Any]) -> bool:
+        """Append one model receipt unless its canonical event key is present.
+
+        The model receipt is deliberately a complete history payload.  This
+        makes recovery after a successful model rename and a failed history
+        append a simple, repeat-safe operation.
+        """
+        record = _canonical_receipt(receipt)
+        if self._has_kind("model_update", record["event_at"]):
+            return False
+        self._append(record)
+        return True
 
     def event_kinds(self) -> dict[str, str]:
         """Return classifications and successful feedback applications by event time."""
@@ -60,10 +102,27 @@ class BatteryHistory:
             if not isinstance(record, dict):
                 raise ValueError("history record must be an object")
             kind = record.get("kind")
-            event_at = record.get("event_at") if kind == "model_update" else record.get("at")
-            if kind in {"blackout", "self_test", "model_update"} and isinstance(event_at, str):
-                result[event_at] = str(kind)
+            event_at = (
+                record.get("event_at")
+                if kind in {"model_update", "ir_observation"}
+                else record.get("at")
+            )
+            if kind in {"blackout", "self_test", "model_update", "ir_observation"} and isinstance(
+                event_at, str
+            ):
+                result[canonical_timestamp(event_at)] = str(kind)
         return result
+
+    def _has_kind(self, kind: str, event_at: str) -> bool:
+        if not self._path.exists():
+            return False
+        for line in self._path.read_text().splitlines():
+            record = json.loads(line)
+            if isinstance(record, dict) and record.get("kind") == kind:
+                value = record.get("event_at", record.get("at"))
+                if isinstance(value, str) and canonical_timestamp(value) == event_at:
+                    return True
+        return False
 
     def _append(self, record: dict[str, Any]) -> None:
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -89,7 +148,7 @@ def summarize_episode(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     discharge = records[start_index : end_index + 1]
     start_at = _parse_timestamp(str(discharge[0].get("at")))
     end_at = _parse_timestamp(str(discharge[-1].get("at")))
-    start = _timestamp(str(discharge[0].get("at")))
+    start = canonical_timestamp(str(discharge[0].get("at")))
     duration = max(0, round((end_at - start_at).total_seconds()))
     discharge_percentages = [
         float(row["battery_pct"]) for row in discharge if _finite_number(row.get("battery_pct"))
@@ -147,9 +206,9 @@ def _finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _timestamp(value: str) -> str:
-    moment = _parse_timestamp(value)
-    return moment.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def canonical_timestamp(value: str) -> str:
+    """Return the canonical UTC event key, with exactly one-second precision."""
+    return utc_second(value)
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -157,3 +216,47 @@ def _parse_timestamp(value: str) -> datetime:
     if moment.tzinfo is None:
         raise ValueError("history timestamp must include a timezone")
     return moment.astimezone(timezone.utc)
+
+
+def _canonical_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    if set(receipt) == {"event_at", "evidence_at", "changes", "reason"}:
+        receipt = {
+            "kind": "model_update",
+            "at": receipt["evidence_at"],
+            **receipt,
+        }
+    required = {"kind", "at", "event_at", "evidence_at", "changes", "reason"}
+    if set(receipt) != required or receipt.get("kind") != "model_update":
+        raise ValueError("model receipt must contain exactly the model_update fields")
+    changes = receipt["changes"]
+    if not isinstance(changes, Mapping) or not changes:
+        raise ValueError("model receipt changes must be a non-empty object")
+    return {
+        "kind": "model_update",
+        "at": canonical_timestamp(str(receipt["at"])),
+        "event_at": canonical_timestamp(str(receipt["event_at"])),
+        "evidence_at": canonical_timestamp(str(receipt["evidence_at"])),
+        "changes": {str(field): dict(change) for field, change in changes.items()},
+        "reason": receipt["reason"],
+    }
+
+
+def _canonical_observation(record: Mapping[str, Any]) -> dict[str, Any]:
+    required = {"kind", "event_at", "estimate", "evidence_at", "uncertainty", "reason"}
+    if set(record) != required or record.get("kind") != "ir_observation":
+        raise ValueError("IR observation has invalid fields")
+    estimate = record["estimate"]
+    uncertainty = record["uncertainty"]
+    if not _finite_number(estimate) or not _finite_number(uncertainty):
+        raise ValueError("IR observation values must be finite")
+    reason = record["reason"]
+    if not isinstance(reason, str) or not reason:
+        raise ValueError("IR observation reason must be non-empty text")
+    return {
+        "kind": "ir_observation",
+        "event_at": canonical_timestamp(str(record["event_at"])),
+        "estimate": float(estimate),
+        "evidence_at": canonical_timestamp(str(record["evidence_at"])),
+        "uncertainty": float(uncertainty),
+        "reason": reason,
+    }

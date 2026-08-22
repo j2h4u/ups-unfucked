@@ -11,7 +11,7 @@ from src.adapters.minimal_event_file import sample
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
 from src.application.safety import SafetyPublication
 from src.battery_math.lut import LutPoint
-from src.domain.model_feedback import ModelFeedbackProposal
+from src.domain.model_feedback import IRObservation, ModelFeedbackProposal
 from src.domain.values import BlackoutKind, FrozenModelSnapshot, PhysicalObservation
 from src.monitor import MonitorDaemon, RuntimeDependencies
 from src.monitor_config import Config
@@ -29,7 +29,8 @@ class _Model:
     def __init__(self) -> None:
         self.ir_k = 0.015
         self.soh = 1.0
-        self.apply_calls: list[dict[str, float | None]] = []
+        self.apply_calls: list[dict[str, object]] = []
+        self.receipt: dict[str, object] | None = None
 
     def current_snapshot(self) -> FrozenModelSnapshot:
         return FrozenModelSnapshot(
@@ -46,19 +47,39 @@ class _Model:
     def close(self) -> None:
         return None
 
+    def last_feedback(self) -> dict[str, object] | None:
+        return self.receipt
+
     def apply_feedback(
-        self, *, ir_k: float | None = None, soh: float | None = None
+        self,
+        *,
+        ir_k: float | None = None,
+        event_receipt: dict[str, object] | None = None,
     ) -> dict[str, tuple[float, float]]:
-        self.apply_calls.append({"ir_k": ir_k, "soh": soh})
+        self.apply_calls.append({"ir_k": ir_k, "event_receipt": event_receipt})
+        if event_receipt is not None and self.receipt is not None:
+            if event_receipt["event_at"] == self.receipt["event_at"]:
+                return {}
         changes: dict[str, tuple[float, float]] = {}
         if ir_k is not None and ir_k != self.ir_k:
             before = self.ir_k
             self.ir_k = ir_k
             changes["physics.ir_compensation.k_volts_per_percent"] = (before, self.ir_k)
-        if soh is not None and soh != self.soh:
-            before_soh = self.soh
-            self.soh = soh
-            changes["soh"] = (before_soh, self.soh)
+        if changes and event_receipt is not None:
+            self.receipt = {
+                "event_at": event_receipt["event_at"],
+                "evidence_at": event_receipt["evidence_at"],
+                "changes": {
+                    field: {
+                        "from": before,
+                        "to": after,
+                        "delta": after - before,
+                        **event_receipt["field_metadata"][field],  # type: ignore[index]
+                    }
+                    for field, (before, after) in changes.items()
+                },
+                "reason": event_receipt["reason"],
+            }
         return changes
 
 
@@ -143,7 +164,9 @@ def test_safety_publication_is_followed_by_minimal_telemetry(tmp_path: Path) -> 
     assert len(rows[0]) == 8
 
 
-def test_closed_natural_blackout_applies_and_audits_bounded_feedback(tmp_path: Path) -> None:
+def test_one_closed_natural_blackout_only_persists_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     start = datetime(2026, 8, 22, tzinfo=timezone.utc)
     observations = []
     for index in range(12):
@@ -194,25 +217,24 @@ def test_closed_natural_blackout_applies_and_audits_bounded_feedback(tmp_path: P
         )
     )
     model = _Model()
-    model.ir_k = 0.025
+    monkeypatch.setattr(
+        monitor,
+        "extract_ir_observation",
+        lambda _rows, *, event_at: IRObservation(event_at, 0.023, event_at, 0.001, "IR"),
+    )
     daemon = _daemon(tmp_path, tuple(observations), TelemetryJsonlWriter(tmp_path), model)
 
     for _ in observations:
         daemon.poll_once()
 
-    assert model.ir_k == pytest.approx(0.023)
+    assert model.ir_k == pytest.approx(0.015)
     history = [
         json.loads(line)
         for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
     ]
-    update = next(row for row in history if row["kind"] == "model_update")
-    assert update["event_at"] == "2026-08-22T00:00:00Z"
-    assert update["changes"]["physics.ir_compensation.k_volts_per_percent"] == {
-        "from": 0.025,
-        "to": pytest.approx(0.023),
-        "delta": pytest.approx(-0.002),
-    }
-    assert model.apply_calls == [{"ir_k": pytest.approx(0.023), "soh": None}]
+    assert [row["kind"] for row in history].count("ir_observation") == 1
+    assert model.ir_k == pytest.approx(0.015)
+    assert model.apply_calls == []
 
 
 def _closed_episode() -> tuple[dict[str, object], ...]:
@@ -222,82 +244,62 @@ def _closed_episode() -> tuple[dict[str, object], ...]:
     )
 
 
-def test_combined_feedback_uses_one_snapshot_write_and_audit_entry(
+def test_three_consistent_observations_use_one_atomic_feedback_write(
     tmp_path: Path, monkeypatch
 ) -> None:
     model = _Model()
     writer = TelemetryJsonlWriter(tmp_path)
     daemon = _daemon(tmp_path, (), writer, model)
-    snapshots: list[FrozenModelSnapshot] = []
+    monkeypatch.setattr(
+        monitor,
+        "extract_ir_observation",
+        lambda _rows, *, event_at: IRObservation(event_at, 0.023, event_at, 0.001, "IR"),
+    )
+    monkeypatch.setattr(
+        monitor,
+        "propose_ir_cohort_feedback",
+        lambda saved, _new, _snapshot: (
+            ModelFeedbackProposal(0.023, "IR cohort", saved[-1]["evidence_at"])
+            if len(saved) >= 3
+            else None
+        ),
+    )
 
-    def ir_proposal(_rows: object, snapshot: FrozenModelSnapshot) -> ModelFeedbackProposal:
-        snapshots.append(snapshot)
-        return ModelFeedbackProposal(
-            to_value=0.023,
-            reason="IR",
-            evidence_at="2026-08-22T00:00:00Z",
+    for index in range(3):
+        episode = (
+            sample(
+                f"2026-08-22T00:00:0{index}Z", 12.6, 90.0, 600.0, 20.0, 0.0, 230.0, "OB DISCHRG"
+            ),
+            sample(f"2026-08-22T00:00:1{index}Z", 12.3, 90.0, 599.0, 20.0, 230.0, 230.0, "OL CHRG"),
         )
+        daemon._apply_feedback((episode,))
 
-    def soh_proposal(_rows: object, snapshot: FrozenModelSnapshot) -> ModelFeedbackProposal:
-        snapshots.append(snapshot)
-        return ModelFeedbackProposal(
-            to_value=0.92,
-            reason="SoH",
-            evidence_at="2026-08-22T00:00:01Z",
-            field="soh",
-        )
-
-    monkeypatch.setattr(monitor, "propose_model_feedback", ir_proposal)
-    monkeypatch.setattr(monitor, "propose_soh_feedback", soh_proposal)
-
-    episode = _closed_episode()
-    daemon._apply_feedback((episode,))
-    daemon._apply_feedback((episode,))
-
-    assert len(snapshots) == 2
-    assert snapshots[0] is snapshots[1]
-    assert model.apply_calls == [{"ir_k": pytest.approx(0.023), "soh": pytest.approx(0.92)}]
+    assert model.apply_calls[0]["ir_k"] == pytest.approx(0.023)
+    assert len(model.apply_calls) == 1
     history = [
         json.loads(line)
         for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
     ]
-    assert len(history) == 1
-    assert history[0]["kind"] == "model_update"
-    assert history[0]["changes"] == {
-        "physics.ir_compensation.k_volts_per_percent": {
-            "from": 0.015,
-            "to": pytest.approx(0.023),
-            "delta": pytest.approx(0.008),
-        },
-        "soh": {"from": 1.0, "to": pytest.approx(0.92), "delta": pytest.approx(-0.08)},
-    }
+    assert [row["kind"] for row in history].count("ir_observation") == 3
+    assert [row["kind"] for row in history].count("model_update") == 1
 
 
-def test_feedback_proposals_that_are_noops_write_no_model_or_audit(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_conflicting_observations_write_no_model_or_audit(tmp_path: Path, monkeypatch) -> None:
     model = _Model()
     writer = TelemetryJsonlWriter(tmp_path)
     daemon = _daemon(tmp_path, (), writer, model)
     monkeypatch.setattr(
         monitor,
-        "propose_model_feedback",
-        lambda _rows, _snapshot: ModelFeedbackProposal(
-            to_value=0.015, reason="IR", evidence_at="2026-08-22T00:00:00Z"
-        ),
+        "extract_ir_observation",
+        lambda _rows, *, event_at: IRObservation(event_at, 0.023, event_at, 0.001, "IR"),
     )
-    monkeypatch.setattr(
-        monitor,
-        "propose_soh_feedback",
-        lambda _rows, _snapshot: ModelFeedbackProposal(
-            to_value=1.0, reason="SoH", evidence_at="2026-08-22T00:00:01Z", field="soh"
-        ),
-    )
+    monkeypatch.setattr(monitor, "propose_ir_cohort_feedback", lambda *_args: None)
 
     daemon._apply_feedback((_closed_episode(),))
 
-    assert model.apply_calls == [{"ir_k": pytest.approx(0.015), "soh": pytest.approx(1.0)}]
-    assert not (tmp_path / "events" / "history.jsonl").exists()
+    assert model.apply_calls == []
+    assert (tmp_path / "events" / "history.jsonl").exists()
+    assert "ir_observation" in (tmp_path / "events" / "history.jsonl").read_text()
 
 
 def test_telemetry_storage_error_is_health_only(tmp_path: Path) -> None:

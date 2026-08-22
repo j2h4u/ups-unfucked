@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from src.adapters import model_state_persistence as files
+from src.domain.time import utc_second
 
 DEFAULT_IR_K_V_PER_PP = 0.015
 DEFAULT_PEUKERT_EXPONENT = 1.2
 TARGET_STATE_KEYS = frozenset({"soh", "physics", "lut"})
+FEEDBACK_STATE_KEY = "last_feedback"
 
 
 class TargetModelStateError(RuntimeError):
@@ -38,17 +40,68 @@ def validate_target_state(state: Mapping[str, Any], *, source: str = "model.json
         raise TargetModelStateError(f"{source}.soh must be > 0")
     _validate_target_physics(state["physics"], source=source)
     _validate_lut(state["lut"], source=source)
+    if FEEDBACK_STATE_KEY in state:
+        _validate_last_feedback(state[FEEDBACK_STATE_KEY], source=source)
 
 
 def _validate_target_object(state: object, *, source: str) -> None:
     if not isinstance(state, Mapping):
         raise TargetModelStateError(f"{source} must contain a JSON object")
     actual_keys = frozenset(state)
-    if actual_keys != TARGET_STATE_KEYS:
+    allowed_keys = TARGET_STATE_KEYS | {FEEDBACK_STATE_KEY}
+    if actual_keys not in {TARGET_STATE_KEYS, allowed_keys}:
         missing = sorted(TARGET_STATE_KEYS - actual_keys)
-        extra = sorted(actual_keys - TARGET_STATE_KEYS)
+        extra = sorted(actual_keys - allowed_keys)
         raise TargetModelStateError(
             f"{source} has invalid target keys (missing={missing}, extra={extra})"
+        )
+
+
+def _validate_last_feedback(value: object, *, source: str) -> None:
+    required = {"event_at", "evidence_at", "changes", "reason"}
+    if not isinstance(value, Mapping) or frozenset(value) != required:
+        raise TargetModelStateError(f"{source}.last_feedback has invalid keys")
+    _validate_feedback_timestamp(value["event_at"], f"{source}.last_feedback.event_at")
+    _validate_feedback_timestamp(value["evidence_at"], f"{source}.last_feedback.evidence_at")
+    if not isinstance(value["reason"], str) or not value["reason"]:
+        raise TargetModelStateError(f"{source}.last_feedback.reason must be non-empty text")
+    _validate_feedback_changes(value["changes"], source=source)
+
+
+def _validate_feedback_timestamp(value: object, name: str) -> None:
+    if not isinstance(value, str):
+        raise TargetModelStateError(f"{name} must be a timestamp")
+    try:
+        canonical = utc_second(value)
+    except (TypeError, ValueError) as exc:
+        raise TargetModelStateError(f"{name} must be a timezone-aware timestamp") from exc
+    if value != canonical:
+        raise TargetModelStateError(f"{name} must use canonical UTC seconds")
+
+
+def _validate_feedback_changes(value: object, *, source: str) -> None:
+    if not isinstance(value, Mapping) or not value:
+        raise TargetModelStateError(f"{source}.last_feedback.changes must be non-empty")
+    for field, change in value.items():
+        _validate_feedback_change(field, change, source=source)
+
+
+def _validate_feedback_change(field: object, change: object, *, source: str) -> None:
+    if not isinstance(field, str) or not isinstance(change, Mapping):
+        raise TargetModelStateError(f"{source}.last_feedback.changes is malformed")
+    allowed = {"from", "to", "delta", "evidence_at", "reason"}
+    if not set(change) <= allowed or not {"from", "to", "delta"} <= set(change):
+        raise TargetModelStateError(f"{source}.last_feedback.changes[{field}] is malformed")
+    _require_finite(change["from"], f"{source}.last_feedback.changes[{field}].from")
+    _require_finite(change["to"], f"{source}.last_feedback.changes[{field}].to")
+    _require_finite(change["delta"], f"{source}.last_feedback.changes[{field}].delta")
+    if "evidence_at" in change:
+        _validate_feedback_timestamp(
+            change["evidence_at"], f"{source}.last_feedback.changes[{field}].evidence_at"
+        )
+    if "reason" in change and (not isinstance(change["reason"], str) or not change["reason"]):
+        raise TargetModelStateError(
+            f"{source}.last_feedback.changes[{field}].reason must be non-empty text"
         )
 
 

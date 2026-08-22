@@ -78,3 +78,45 @@ def test_apply_feedback_rejects_invalid_candidate_without_mutation(tmp_path: Pat
         assert persisted["soh"] == 1.0
     finally:
         owner.close()
+
+
+def test_event_receipt_is_one_atomic_write_and_repeated_event_is_noop(tmp_path: Path) -> None:
+    path = tmp_path / "model.json"
+    receipt = {
+        "event_at": "2026-08-22T00:00:00.999Z",
+        "evidence_at": "2026-08-22T00:00:30.123Z",
+        "reason": "natural blackout",
+        "field_metadata": {
+            "soh": {
+                "evidence_at": "2026-08-22T00:00:31.456Z",
+                "reason": "curve evidence",
+            }
+        },
+    }
+    owner = ModelOwner.open_runtime(path, create_if_missing=True)
+    try:
+        assert owner.apply_feedback(soh=0.92, event_receipt=receipt) == {"soh": (1.0, 0.92)}
+        assert owner.apply_feedback(soh=0.80, event_receipt=receipt) == {}
+        persisted, _ = schema.load_target_state(path)
+        assert persisted["last_feedback"] == {
+            "event_at": "2026-08-22T00:00:00Z",
+            "evidence_at": "2026-08-22T00:00:30Z",
+            "reason": "natural blackout",
+            "changes": {
+                "soh": {
+                    "from": 1.0,
+                    "to": 0.92,
+                    "delta": -0.08,
+                    "evidence_at": "2026-08-22T00:00:31Z",
+                    "reason": "curve evidence",
+                }
+            },
+        }
+    finally:
+        owner.close()
+
+    reopened = ModelOwner.open_runtime(path)
+    try:
+        assert reopened.apply_feedback(soh=0.80, event_receipt=receipt) == {}
+    finally:
+        reopened.close()

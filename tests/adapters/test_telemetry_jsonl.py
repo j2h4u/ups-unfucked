@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import src.adapters.minimal_event_file as minimal_event_file
 import src.adapters.telemetry_jsonl as telemetry_jsonl
 from src.adapters.telemetry_jsonl import TelemetryJsonlWriter
 from src.domain.values import BlackoutKind, PhysicalObservation
@@ -208,3 +209,115 @@ def test_failed_pre_event_flush_preserves_unwritten_samples_for_retry(
         "2026-08-22T00:00:01Z",
         "2026-08-22T00:00:02Z",
     ]
+
+
+def test_rebooted_writer_closes_old_ob_tail_on_full_online_observation(tmp_path: Path) -> None:
+    first = TelemetryJsonlWriter(tmp_path)
+    assert first.write(_observation("OB DISCHRG", 40.0), BlackoutKind.BLACKOUT_REAL)
+
+    rebooted = TelemetryJsonlWriter(tmp_path)
+    assert rebooted.write(_observation("OL", 100.0, offset_sec=1), BlackoutKind.ONLINE)
+
+    rows = _lines(tmp_path)
+    assert [row["status"] for row in rows] == ["OB DISCHRG", "OL"]
+    completed = rebooted.take_completed_episode()
+    assert completed is not None
+    assert [row["status"] for row in completed] == ["OB DISCHRG", "OL"]
+    assert rebooted.take_completed_episode() is None
+
+
+def test_rebooted_writer_continues_ob_tail_without_duplicate_lines(tmp_path: Path) -> None:
+    first = TelemetryJsonlWriter(tmp_path)
+    assert first.write(_observation("OB DISCHRG", 40.0), BlackoutKind.BLACKOUT_REAL)
+
+    rebooted = TelemetryJsonlWriter(tmp_path)
+    assert rebooted.write(
+        _observation("OB DISCHRG", 39.0, offset_sec=1), BlackoutKind.BLACKOUT_REAL
+    )
+    assert rebooted.write(_observation("OL", 100.0, offset_sec=2), BlackoutKind.ONLINE)
+
+    rows = _lines(tmp_path)
+    assert [row["status"] for row in rows] == ["OB DISCHRG", "OB DISCHRG", "OL"]
+    assert len(rows) == 3
+
+
+def test_historical_fractional_timestamp_is_read_and_new_sample_is_whole_second(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events" / "telemetry.jsonl"
+    path.parent.mkdir()
+    historical = {
+        "at": "2026-08-22T00:00:00.123456Z",
+        "battery_v": 13.3,
+        "battery_pct": 40.0,
+        "runtime_s": 600.0,
+        "load_pct": 20.0,
+        "input_v": 0.0,
+        "output_v": 230.0,
+        "status": "OB DISCHRG",
+    }
+    path.write_text(json.dumps(historical) + "\n")
+
+    writer = TelemetryJsonlWriter(tmp_path)
+    assert writer.write(_observation("OL", 100.0, offset_sec=1), BlackoutKind.ONLINE)
+
+    rows = _lines(tmp_path)
+    assert rows[0]["at"] == "2026-08-22T00:00:00.123456Z"
+    assert rows[1]["at"] == "2026-08-22T00:00:01Z"
+
+
+def test_append_handles_short_os_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "events" / "telemetry.jsonl"
+    record = {
+        "at": "2026-08-22T00:00:00Z",
+        "battery_v": 13.3,
+        "battery_pct": 40.0,
+        "runtime_s": 600.0,
+        "load_pct": 20.0,
+        "input_v": 0.0,
+        "output_v": 230.0,
+        "status": "OB DISCHRG",
+    }
+    real_write = minimal_event_file.os.write
+    calls = 0
+
+    def short_write(fd: int, data: bytes) -> int:
+        nonlocal calls
+        calls += 1
+        return real_write(fd, data[: max(1, len(data) // 2)])
+
+    monkeypatch.setattr(minimal_event_file.os, "write", short_write)
+    minimal_event_file.append(path, record)
+
+    assert calls > 1
+    assert minimal_event_file.read(path).records == (record,)
+
+
+def test_writer_exposes_ir_observation_and_idempotent_model_receipt(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path)
+    observation = {
+        "event_at": "2026-08-22T00:00:00.900Z",
+        "estimate": 0.023,
+        "evidence_at": "2026-08-22T00:00:20.9Z",
+        "uncertainty": 0.001,
+        "reason": "stable load step",
+    }
+    assert writer.record_ir_observation(observation)
+    assert not writer.record_ir_observation(observation)
+    receipt = {
+        "event_at": "2026-08-22T00:00:00Z",
+        "evidence_at": "2026-08-22T00:00:20Z",
+        "changes": {
+            "physics.ir_compensation.k_volts_per_percent": {
+                "from": 0.025,
+                "to": 0.023,
+                "delta": -0.002,
+                "evidence_at": "2026-08-22T00:00:20Z",
+                "reason": "cohort",
+            }
+        },
+        "reason": "cohort",
+    }
+    assert writer.upsert_model_update(receipt)
+    assert not writer.upsert_model_update(receipt)
+    assert writer.ir_observations() == []
