@@ -182,7 +182,7 @@ def test_history_records_typed_voltage_response_and_comparable_delta(tmp_path: P
             }
 
         return [
-            *(row(offset, "OL", 13.6) for offset in range(-5, 0)),
+            *(row(offset, "OL", 13.6) for offset in range(-30, 0)),
             row(0, "OB DISCHRG", 13.4),
             row(1, "OB DISCHRG", 13.1),
             *(row(offset, "OB DISCHRG", early_v) for offset in range(2, 7)),
@@ -202,12 +202,42 @@ def test_history_records_typed_voltage_response_and_comparable_delta(tmp_path: P
         "efc": 0.0,
         "load_pct": 15.0,
         "pre_v": 13.6,
-        "early_v": 12.9,
-        "sag_v": 0.7,
+        "early_v": 12.8,
+        "sag_v": 0.8,
         "min_v": 12.8,
         "min_at_s": 7,
     }
     assert second["sag_delta_v"] == 0.2
+
+
+def test_response_includes_voltage_change_after_status_transition() -> None:
+    base = datetime(2026, 8, 22, tzinfo=timezone.utc)
+
+    def row(offset: int, status: str, voltage: float) -> dict[str, object]:
+        return {
+            "at": (base + timedelta(seconds=offset))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "status": status,
+            "battery_pct": 100.0,
+            "battery_v": voltage,
+            "load_pct": 15.0,
+        }
+
+    rows = [
+        *(row(offset, "OL", 13.6) for offset in range(-30, 0)),
+        *(row(offset, "OB DISCHRG", 13.6) for offset in range(0, 12)),
+        *(row(offset, "OB DISCHRG", 12.3) for offset in range(12, 16)),
+        row(16, "OL", 12.3),
+    ]
+
+    summary = summarize_episode(rows)
+
+    assert summary is not None
+    assert summary["pre_v"] == 13.6
+    assert summary["early_v"] == 12.3
+    assert summary["sag_v"] == 1.3
+    assert summary["min_at_s"] == 12
 
 
 def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path: Path) -> None:

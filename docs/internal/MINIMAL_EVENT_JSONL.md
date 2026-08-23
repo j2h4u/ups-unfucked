@@ -15,3 +15,8 @@ The executable, commented field contract is `TelemetrySample` in
 `src/adapters/minimal_event_file.py`. Compact per-episode response fields are defined by
 `EpisodeHistoryRecord` in `src/adapters/battery_history.py`; they remain derived facts and never
 claim measured capacity, internal resistance, or state of health.
+
+The response baseline is the median voltage from the 30 seconds before an episode, provided those
+samples span at least 10 seconds. `early_v` is the minimum reported voltage in the first 15 seconds;
+the window accommodates coarse voltage steps that do not necessarily coincide with the status
+transition.
