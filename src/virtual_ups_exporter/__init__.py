@@ -387,7 +387,7 @@ def _atomic_write_text(path: Path, text: str, *, mode: int, byte_limit: int) -> 
     temporary_identity: tuple[int, int] | None = None
     primary_error: BaseException | None = None
     try:
-        descriptor = os.open(temporary, flags, mode)
+        descriptor = os.open(temporary, flags, 0o600)
         temporary_identity, validation_error = _inspect_publication_temporary(
             descriptor,
             temporary,

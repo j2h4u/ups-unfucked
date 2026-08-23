@@ -375,6 +375,27 @@ def test_alarm_during_cleanup_preserves_primary_write_failure(tmp_path: Path, mo
     assert not tuple(tmp_path.glob(f".{output.name}.*.tmp"))
 
 
+def test_atomic_publication_keeps_temporary_private_until_replace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    output = tmp_path / "ups.dev"
+    create_modes: list[int] = []
+    real_open = os.open
+
+    def tracking_open(*args, **kwargs) -> int:
+        if len(args) >= 3:
+            create_modes.append(args[2])
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr("src.virtual_ups_exporter.os.open", tracking_open)
+
+    _atomic_write_text(output, "payload\n", mode=0o644, byte_limit=1024)
+
+    assert create_modes == [0o600]
+    assert output.stat().st_mode & 0o777 == 0o644
+
+
 def test_fstat_failure_closes_fd_and_removes_owned_temp(
     tmp_path: Path,
     monkeypatch,
