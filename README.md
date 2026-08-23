@@ -73,8 +73,33 @@ scripts/blackout-history.py
 bash ~/scripts/motd/51-ups-health.sh
 ```
 
-The installer is the single supported installation path. Keep NUT bound to localhost for this
-single-host setup.
+The installer is the single supported installation path. It installs and verifies the systemd and
+NUT integration, then enables the monitor. Keep NUT bound to localhost for this single-host setup.
+
+Persistent state lives in `~/.local/state/ups-battery-monitor/`:
+
+- `telemetry.jsonl` is the append-only raw event stream;
+- `history.jsonl` contains compact derived episode summaries and feedback receipts;
+- `model.json` contains validated runtime model state.
+
+Do not edit, truncate, merge, or reconstruct these files by hand.
+
+### Health checks
+
+```bash
+systemctl is-active ups-battery-monitor.service
+upsc cyberpower@localhost ups.status
+upsc cyberpower-virtual@localhost ups.status
+upsc cyberpower-virtual@localhost battery.runtime
+scripts/blackout-history.py
+bash ~/scripts/motd/51-ups-health.sh
+journalctl -u ups-battery-monitor.service --since today --no-pager
+```
+
+The physical and virtual UPS should agree during normal online operation. If the service is
+inactive, inspect its status and journal, then verify the physical UPS independently with `upsc`.
+If physical and virtual status disagree, stop and investigate; do not edit state or start a second
+monitor against the same UPS. `upsmon` remains responsible for host shutdown.
 
 ## Development
 
@@ -82,9 +107,6 @@ single-host setup.
 uv sync --group dev
 just check
 ```
-
-See [PRODUCT.md](PRODUCT.md) for the product statement and
-[docs/OPERATIONS-RUNBOOK.md](docs/OPERATIONS-RUNBOOK.md) for safe read-only checks.
 
 ## Requirements and license
 
