@@ -8,12 +8,47 @@ import os
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from statistics import median
+from typing import Any, NotRequired, TypedDict
 
 from src.domain.time import utc_second
 from src.domain.values import BlackoutKind
 
 HISTORY_FILENAME = "history.jsonl"
+
+
+# Compact facts derived from one closed battery episode.  Response voltages
+# describe observed behavior, never capacity, resistance, or state of health.
+EpisodeHistoryRecord = TypedDict(
+    "EpisodeHistoryRecord",
+    {
+        "kind": str,
+        "at": str,
+        "duration_s": int,
+        "depth_pct": float | None,
+        "efc": float | None,
+        "load_pct": NotRequired[float],
+        "pre_v": NotRequired[float],
+        "early_v": NotRequired[float],
+        "sag_v": NotRequired[float],
+        "min_v": NotRequired[float],
+        "min_at_s": NotRequired[int],
+        "sag_delta_v": NotRequired[float],
+    },
+)
+
+# Complete early-response measurement; absence means the samples were insufficient.
+ResponseMetrics = TypedDict(
+    "ResponseMetrics",
+    {
+        "load_pct": float,
+        "pre_v": float,
+        "early_v": float,
+        "sag_v": float,
+        "min_v": float,
+        "min_at_s": int,
+    },
+)
 
 
 class BatteryHistory:
@@ -32,7 +67,26 @@ class BatteryHistory:
     ) -> None:
         summary = summarize_episode(records, physical_kind=physical_kind)
         if summary is not None:
+            self._add_sag_delta(summary)
             self._append(summary)
+
+    def _add_sag_delta(self, summary: EpisodeHistoryRecord) -> None:
+        load = summary.get("load_pct")
+        sag = summary.get("sag_v")
+        if load is None or sag is None or not self._path.exists():
+            return
+        for line in reversed(self._path.read_text().splitlines()):
+            previous = json.loads(line)
+            if not isinstance(previous, dict) or previous.get("kind") != summary["kind"]:
+                continue
+            previous_load = _finite_float(previous.get("load_pct"))
+            previous_sag = _finite_float(previous.get("sag_v"))
+            if previous_load is None or previous_sag is None:
+                continue
+            if abs(previous_load - load) > 5.0:
+                continue
+            summary["sag_delta_v"] = round(sag - previous_sag, 1)
+            return
 
     def ir_observation(
         self,
@@ -130,7 +184,7 @@ class BatteryHistory:
                     return True
         return False
 
-    def _append(self, record: dict[str, Any]) -> None:
+    def _append(self, record: Mapping[str, Any]) -> None:
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n"
         fd = os.open(
@@ -149,7 +203,7 @@ def summarize_episode(
     records: list[dict[str, Any]],
     *,
     physical_kind: BlackoutKind | str | None = None,
-) -> dict[str, Any] | None:
+) -> EpisodeHistoryRecord | None:
     """Summarize one closed episode using explicit daemon provenance.
 
     Raw ``CAL`` is deliberately ignored for classification.  Missing or
@@ -177,12 +231,64 @@ def summarize_episode(
         else None
     )
     kind = "self_test" if _is_test_kind(physical_kind) else "blackout"
+    summary = EpisodeHistoryRecord(
+        kind=kind,
+        at=start,
+        duration_s=duration,
+        depth_pct=depth,
+        efc=depth / 100.0 if depth is not None else None,
+    )
+    metrics = _response_metrics(records, start_index, end_index, start_at)
+    if metrics is not None:
+        summary["load_pct"] = metrics["load_pct"]
+        summary["pre_v"] = metrics["pre_v"]
+        summary["early_v"] = metrics["early_v"]
+        summary["sag_v"] = metrics["sag_v"]
+        summary["min_v"] = metrics["min_v"]
+        summary["min_at_s"] = metrics["min_at_s"]
+    return summary
+
+
+def _response_metrics(
+    records: list[dict[str, Any]],
+    start_index: int,
+    end_index: int,
+    start_at: datetime,
+) -> ResponseMetrics | None:
+    pre_voltages = [
+        float(row["battery_v"])
+        for row in records[max(0, start_index - 5) : start_index]
+        if _finite_number(row.get("battery_v"))
+    ]
+    early = [
+        row
+        for row in records[start_index : end_index + 1]
+        if 2.0 <= (_parse_timestamp(str(row.get("at"))) - start_at).total_seconds() <= 6.0
+        and _finite_number(row.get("battery_v"))
+        and _finite_number(row.get("load_pct"))
+    ]
+    if len(pre_voltages) < 3 or len(early) < 3:
+        return None
+    early_loads = [float(row["load_pct"]) for row in early]
+    if max(early_loads) - min(early_loads) > 5.0:
+        return None
+    discharge = records[start_index:end_index]
+    voltage_points = [
+        (row, float(row["battery_v"])) for row in discharge if _finite_number(row.get("battery_v"))
+    ]
+    if not voltage_points:
+        return None
+    pre_v = round(float(median(pre_voltages)), 1)
+    early_v = round(float(median(float(row["battery_v"]) for row in early)), 1)
+    min_row, min_v = min(voltage_points, key=lambda point: point[1])
+    min_at_s = round((_parse_timestamp(str(min_row.get("at"))) - start_at).total_seconds())
     return {
-        "kind": kind,
-        "at": start,
-        "duration_s": duration,
-        "depth_pct": depth,
-        "efc": depth / 100.0 if depth is not None else None,
+        "load_pct": round(float(median(early_loads)), 1),
+        "pre_v": pre_v,
+        "early_v": early_v,
+        "sag_v": round(pre_v - early_v, 1),
+        "min_v": round(min_v, 1),
+        "min_at_s": min_at_s,
     }
 
 
@@ -218,6 +324,10 @@ def _is_test_kind(physical_kind: BlackoutKind | str | None) -> bool:
 
 def _finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _finite_float(value: Any) -> float | None:
+    return float(value) if _finite_number(value) else None
 
 
 def canonical_timestamp(value: str) -> str:

@@ -4,7 +4,7 @@ import json
 import math
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict, cast
 
 from src.adapters import model_state_persistence as files
 from src.domain.time import utc_second
@@ -13,6 +13,50 @@ DEFAULT_IR_K_V_PER_PP = 0.015
 DEFAULT_PEUKERT_EXPONENT = 1.2
 TARGET_STATE_KEYS = frozenset({"soh", "physics", "lut"})
 FEEDBACK_STATE_KEY = "last_feedback"
+
+
+IrCompensationState = TypedDict("IrCompensationState", {"k_volts_per_percent": float})
+PhysicsState = TypedDict(
+    "PhysicsState",
+    {"peukert_exponent": float, "ir_compensation": IrCompensationState},
+)
+LutStatePoint = TypedDict("LutStatePoint", {"v": float, "soc": float})
+
+
+FeedbackChangeState = TypedDict(
+    "FeedbackChangeState",
+    {
+        # Persisted names intentionally match the human-readable JSON receipt.
+        "from": float,
+        "to": float,
+        "delta": float,
+        "evidence_at": NotRequired[str],
+        "reason": NotRequired[str],
+    },
+)
+
+
+FeedbackState = TypedDict(
+    "FeedbackState",
+    {
+        "event_at": str,
+        "evidence_at": str,
+        "changes": dict[str, FeedbackChangeState],
+        "reason": str,
+    },
+)
+
+# Complete persisted model.json contract.  Scientific units are documented by
+# the named nested schemas above and validated at the JSON boundary below.
+TargetModelState = TypedDict(
+    "TargetModelState",
+    {
+        "soh": float,
+        "physics": PhysicsState,
+        "lut": list[LutStatePoint],
+        "last_feedback": NotRequired[FeedbackState],
+    },
+)
 
 
 class TargetModelStateError(RuntimeError):
@@ -160,7 +204,7 @@ def _validate_lut_order(value: list[object], *, source: str) -> None:
             raise TargetModelStateError(f"{source}.lut SoC must be non-increasing")
 
 
-def load_target_state(path: Path) -> tuple[dict[str, Any], bytes]:
+def load_target_state(path: Path) -> tuple[TargetModelState, bytes]:
     """Read and validate one target model without changing it."""
     raw = files.read_model_file(path, error_type=TargetModelStateError)
     try:
@@ -169,14 +213,14 @@ def load_target_state(path: Path) -> tuple[dict[str, Any], bytes]:
         raise TargetModelStateError(f"malformed target model {path}: {exc}") from exc
     validate_target_state(decoded, source=str(path))
     assert isinstance(decoded, dict), "validated JSON model must be a dict"
-    return decoded, raw
+    return cast(TargetModelState, decoded), raw
 
 
-def fresh_target_state() -> dict[str, Any]:
+def fresh_target_state() -> TargetModelState:
     """Create a predictor equivalent to the current Release-A defaults."""
     offset = DEFAULT_IR_K_V_PER_PP * 20.0
     lut = [
-        {"v": voltage + offset, "soc": soc}
+        LutStatePoint(v=voltage + offset, soc=soc)
         for voltage, soc in (
             (13.4, 1.00),
             (12.8, 0.85),
@@ -187,7 +231,7 @@ def fresh_target_state() -> dict[str, Any]:
             (10.5, 0.00),
         )
     ]
-    state: dict[str, Any] = {
+    state: TargetModelState = {
         "soh": 1.0,
         "physics": {
             "peukert_exponent": DEFAULT_PEUKERT_EXPONENT,

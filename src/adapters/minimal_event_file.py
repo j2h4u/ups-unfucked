@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from src.adapters.jsonl_errors import EventCorruptionError, EventPathError, EventValidationError
 
@@ -24,15 +24,32 @@ SAMPLE_FIELDS = frozenset(
 )
 
 
+class TelemetrySample(TypedDict):
+    """One physical UPS observation persisted in ``telemetry.jsonl``.
+
+    Numeric fields preserve the precision reported by NUT.  Missing sensor
+    values are JSON ``null``; no field is derived by this wire schema.
+    """
+
+    at: str
+    battery_v: float | None
+    battery_pct: float | None
+    runtime_s: float | None
+    load_pct: float | None
+    input_v: float | None
+    output_v: float | None
+    status: str
+
+
 @dataclass(frozen=True, slots=True)
 class MinimalEvent:
     """Validated stream contents (the name is retained for port compatibility)."""
 
     path: Path
-    records: tuple[dict[str, Any], ...]
+    records: tuple[TelemetrySample, ...]
 
 
-def sample(at: str, battery_v: float | None, *fields: Any, **named: Any) -> dict[str, Any]:
+def sample(at: str, battery_v: float | None, *fields: Any, **named: Any) -> TelemetrySample:
     """Build the fixed eight-field ordinary sample record.
 
     Every encoded record has the new exact schema, including null values for
@@ -56,16 +73,16 @@ def sample(at: str, battery_v: float | None, *fields: Any, **named: Any) -> dict
         input_v = named["input_v"]
         output_v = named["output_v"]
         status = named["status"]
-    value: dict[str, Any] = {
-        "at": _utc_text(at),
-        "battery_v": battery_v,
-        "battery_pct": battery_pct,
-        "runtime_s": runtime_s,
-        "load_pct": load_pct,
-        "input_v": input_v,
-        "output_v": output_v,
-        "status": status,
-    }
+    value = TelemetrySample(
+        at=_utc_text(at),
+        battery_v=battery_v,
+        battery_pct=battery_pct,
+        runtime_s=runtime_s,
+        load_pct=load_pct,
+        input_v=input_v,
+        output_v=output_v,
+        status=status,
+    )
     _validate_sample(value)
     return value
 
@@ -101,7 +118,7 @@ def read(path: Path) -> MinimalEvent:
         lines = path.read_bytes().splitlines(keepends=True)
     except OSError as exc:
         raise EventCorruptionError(f"cannot read telemetry: {path}") from exc
-    records: list[dict[str, Any]] = []
+    records: list[TelemetrySample] = []
     for line in lines:
         if not line.endswith(b"\n"):
             raise EventCorruptionError("telemetry has a torn tail")
@@ -115,7 +132,7 @@ def read(path: Path) -> MinimalEvent:
             _validate_sample(value)
         except EventValidationError as exc:
             raise EventCorruptionError(f"invalid telemetry sample: {exc}") from exc
-        records.append(dict(value))
+        records.append(TelemetrySample(**value))
     return MinimalEvent(path, tuple(records))
 
 

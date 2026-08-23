@@ -4,7 +4,7 @@ import copy
 import threading
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from src.adapters import model_state_persistence as files
 from src.adapters import model_state_schema as schema
@@ -140,7 +140,7 @@ class ModelOwner:
         """Return the durable receipt needed to recover a missing history row."""
         with self._lock:
             receipt = self._state.get(schema.FEEDBACK_STATE_KEY)
-            return copy.deepcopy(receipt) if isinstance(receipt, dict) else None
+            return dict(copy.deepcopy(receipt)) if isinstance(receipt, dict) else None
 
     def _require_writer_lock(self) -> None:
         if self._writer_lock_fd is None:
@@ -201,15 +201,14 @@ def _feedback_receipt(
     event_at: str | None,
     changes: Mapping[str, tuple[float, float]],
     receipt_data: Mapping[str, Any],
-) -> dict[str, Any]:
+) -> schema.FeedbackState:
     assert event_at is not None
-    rendered: dict[str, dict[str, Any]] = {}
+    rendered: dict[str, schema.FeedbackChangeState] = {}
     for field, (before, after) in changes.items():
-        entry: dict[str, Any] = {
-            "from": before,
-            "to": after,
-            "delta": round(after - before, 12),
-        }
+        entry = cast(
+            schema.FeedbackChangeState,
+            {"from": before, "to": after, "delta": round(after - before, 12)},
+        )
         metadata = receipt_data["field_metadata"].get(field, {})
         if "evidence_at" in metadata:
             entry["evidence_at"] = metadata["evidence_at"]
@@ -219,12 +218,12 @@ def _feedback_receipt(
                 raise ValueError(f"event_receipt field reason for {field} must be non-empty text")
             entry["reason"] = field_reason
         rendered[field] = entry
-    return {
-        "event_at": event_at,
-        "evidence_at": receipt_data["evidence_at"],
-        "changes": rendered,
-        "reason": receipt_data["reason"],
-    }
+    return schema.FeedbackState(
+        event_at=event_at,
+        evidence_at=receipt_data["evidence_at"],
+        changes=rendered,
+        reason=receipt_data["reason"],
+    )
 
 
 def _canonical_field_metadata(

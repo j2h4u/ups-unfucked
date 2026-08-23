@@ -14,6 +14,9 @@ compact and honest.
   pre-event and post-event context where available; missing values stay missing.
 - `events/history.jsonl` keeps compact event aggregates, and `scripts/blackout-history.py` prints
   recorded natural blackouts without requiring an operator to scan raw samples.
+- Runtime JSON contracts are typed and documented beside their codecs in
+  `minimal_event_file.py`, `battery_history.py`, and `model_state_schema.py`; decoding validates
+  untrusted file contents before the daemon uses them.
 - A closed natural blackout produces one compact, durable raw load-step IR observation. Three
   consistent observations can produce one bounded automatic IR update; every observation and
   applied change, its size, source event, and reason are appended to `events/history.jsonl`.
@@ -25,6 +28,9 @@ compact and honest.
 
 The monitor reports what its sensors observed. It does not infer exact capacity, state of health,
 temperature, current, or an empty-battery endpoint when those measurements are unavailable.
+
+The fixed NUT name, five-minute shutdown threshold, and stock 7.2 Ah rating live in the frozen
+Python `Config`. This single-host service has no separate runtime configuration file.
 
 ## How it works
 
