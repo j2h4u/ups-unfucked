@@ -10,10 +10,10 @@ compact and honest.
 - Each successful poll publishes the safety state before optional storage, history, and feedback work. `upsmon`
   remains responsible for host shutdown; this daemon sends no power or shutdown commands and may
   send only the guarded quick self-test command described below.
-- A single append-only file, `~/.config/ups-battery-monitor/events/telemetry.jsonl`, records
+- A single append-only file, `~/.local/state/ups-battery-monitor/telemetry.jsonl`, records
   raw physical samples for blackouts, tests, and recharge. Samples include up to 120 seconds of
   pre-event and post-event context where available; missing values stay missing.
-- `events/history.jsonl` keeps compact event aggregates, and `scripts/blackout-history.py` prints
+- `history.jsonl` keeps compact event aggregates, and `scripts/blackout-history.py` prints
   recorded natural blackouts without requiring an operator to scan raw samples. History is derived
   from the raw telemetry and is not the evidence source.
 - Runtime JSON contracts are typed and documented beside their codecs in
@@ -21,7 +21,7 @@ compact and honest.
   untrusted file contents before the daemon uses them.
 - An eligible closed natural blackout may produce one compact, durable load-step IR observation.
   Three consistent observations can produce one bounded automatic IR update; every observation and
-  applied change, its size, source event, and reason are appended to `events/history.jsonl`.
+  applied change, its size, source event, and reason are appended to `history.jsonl`.
 - If no blackout or calibration/self-test has occurred for 14 days and the UPS is at OL100, the
   daemon may run one automatic quick self-test. The result is operational evidence, never a
   capacity or battery-health claim.

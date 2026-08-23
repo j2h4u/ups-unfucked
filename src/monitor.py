@@ -255,7 +255,7 @@ class MonitorDaemon:
         self._last_self_test_check_date = check_date
         if physical_kind != BlackoutKind.ONLINE or observation.battery_pct != 100.0:
             return
-        telemetry_path = self.config.model_dir / "events" / "telemetry.jsonl"
+        telemetry_path = self.config.model_dir / "telemetry.jsonl"
         try:
             if _has_recent_quick_test_or_blackout(telemetry_path, now):
                 return
@@ -319,7 +319,7 @@ class MonitorDaemon:
         try:
             self._recover_model_update()
             if not self._feedback_replayed:
-                path = self.config.model_dir / "events" / "telemetry.jsonl"
+                path = self.config.model_dir / "telemetry.jsonl"
                 episodes = _closed_episodes(read_telemetry(path).records) if path.exists() else ()
                 self._apply_feedback(episodes)
                 self._feedback_replayed = True

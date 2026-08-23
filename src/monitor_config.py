@@ -12,7 +12,7 @@ from src.domain.safety_policy import validate_shutdown_threshold_minutes
 
 logger = logging.getLogger("ups-battery-monitor")
 
-CONFIG_DIR = Path.home() / ".config" / "ups-battery-monitor"
+STATE_DIR = Path.home() / ".local" / "state" / "ups-battery-monitor"
 POLL_INTERVAL_SEC = 1
 EMA_WINDOW_SEC = 120
 NUT_HOST = "localhost"
@@ -31,7 +31,7 @@ class Config:
     ups_name: str = "cyberpower"
     shutdown_minutes: int = 5
     capacity_ah: float = RATED_CAPACITY_AH
-    model_dir: Path = CONFIG_DIR
+    model_dir: Path = STATE_DIR
     nut_host: str = NUT_HOST
     nut_port: int = NUT_PORT
     nut_timeout: float = NUT_TIMEOUT_SEC

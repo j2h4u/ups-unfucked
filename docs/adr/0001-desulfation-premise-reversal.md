@@ -100,22 +100,3 @@ the CyberPower charger firmware and is inaccessible.
 - **Loses the "active care" narrative.** v3.0's product story — "the daemon fights back
   against sulfation" — was compelling but wrong. The corrected framing is accurate but
   less dramatic.
-
-### Deploy action — stale model.json state (operator required)
-
-Because `BatteryModel.save()` round-trips `self.state` verbatim, removing the
-`setdefault`/validation code for `sulfation_history`, `roi_history`, and `blackout_credit`
-does **not** purge those keys from a deployed `~/.config/ups-battery-monitor/model.json`.
-Per the project's single-host no-backward-compat policy there is no migration script.
-
-**Deploy action: `rm ~/.config/ups-battery-monitor/model.json` after upgrading to v3.2.**
-The daemon regenerates a clean file from live discharges on its next start. No manual
-migration is provided or required.
-
-**Cost of the deploy action:** Deleting model.json also discards the learned SoH,
-measured-capacity estimates, LUT calibration points, and cycle history accumulated from
-prior discharges. Capacity estimation restarts from scratch and re-warms over subsequent
-discharge events (typically 3+ deep discharges to reach CoV-based convergence). This
-regression is accepted under the no-backward-compat policy. Operators who have accumulated
-many calibration points on a well-characterised battery will see a period of reduced
-estimation accuracy until the model reconverges.

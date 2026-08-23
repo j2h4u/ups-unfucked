@@ -22,8 +22,7 @@ def _row(at: str, status: str, battery_pct: float) -> dict[str, object]:
 
 
 def _write(root: Path, rows: list[dict[str, object]]) -> Path:
-    path = root / "events" / "telemetry.jsonl"
-    path.parent.mkdir()
+    path = root / "telemetry.jsonl"
     path.write_bytes(b"".join(encode(row) for row in rows))
     return path
 
@@ -92,8 +91,7 @@ def test_history_classification_overrides_ambiguous_raw_status(tmp_path: Path) -
 
 def test_malformed_row_fails_with_concise_error(tmp_path: Path, capsys) -> None:
     module = _script()
-    path = tmp_path / "events" / "telemetry.jsonl"
-    path.parent.mkdir()
+    path = tmp_path / "telemetry.jsonl"
     path.write_text("not-json\n")
 
     with pytest.raises(SystemExit, match="2"):

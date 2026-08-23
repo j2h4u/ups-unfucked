@@ -1,6 +1,6 @@
 """The deliberately tiny telemetry wire format.
 
-``events/telemetry.jsonl`` is an append-only stream of UPS samples.  A sample
+``telemetry.jsonl`` is an append-only stream of UPS samples.  A sample
 is the complete wire record; lifecycle markers, IDs, learning state and
 sidecars do not belong in this file.  Event boundaries are reconstructed by
 the application adapter from the status/time sequence.

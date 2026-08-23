@@ -25,7 +25,7 @@ class TelemetryJsonlWriter:
     def __init__(
         self, model_data_dir: str | Path, *, silent_window_sec: float | None = None
     ) -> None:
-        self._path = Path(model_data_dir) / "events" / "telemetry.jsonl"
+        self._path = Path(model_data_dir) / "telemetry.jsonl"
         self._history = BatteryHistory(self._path.with_name("history.jsonl"))
         self._episode_active = False
         self._episode_records: list[dict[str, object]] = []

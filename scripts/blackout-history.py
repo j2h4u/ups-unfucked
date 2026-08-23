@@ -117,11 +117,11 @@ def main(argv: list[str] | None = None) -> None:
         state_dir = (
             arguments.state_option
             or arguments.state_dir
-            or Path.home() / ".config" / "ups-battery-monitor"
+            or Path.home() / ".local" / "state" / "ups-battery-monitor"
         )
         start, end = _period(arguments)
-        path = state_dir / "events" / "telemetry.jsonl"
-        history = _classifications(state_dir / "events" / "history.jsonl")
+        path = state_dir / "telemetry.jsonl"
+        history = _classifications(state_dir / "history.jsonl")
         episodes = _episodes(path, start, end, history) if path.exists() else ()
     except (EventStoreError, json.JSONDecodeError, OSError, TypeError, ValueError) as error:
         print(f"blackout-history: {error}", file=sys.stderr)

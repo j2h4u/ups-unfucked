@@ -23,7 +23,7 @@ systemctl is-active ups-battery-monitor.service
 upsc cyberpower@localhost ups.status
 upsc cyberpower-virtual@localhost ups.status
 upsc cyberpower-virtual@localhost battery.runtime
-test -f ~/.config/ups-battery-monitor/events/telemetry.jsonl
+test -f ~/.local/state/ups-battery-monitor/telemetry.jsonl
 scripts/blackout-history.py
 bash ~/scripts/motd/51-ups-health.sh
 journalctl -u ups-battery-monitor.service --since today --no-pager
@@ -36,9 +36,9 @@ failure invalidates the old output. `upsmon` owns host shutdown.
 
 ## Telemetry
 
-The raw event stream is `~/.config/ups-battery-monitor/events/telemetry.jsonl`. Treat it as
+The raw event stream is `~/.local/state/ups-battery-monitor/telemetry.jsonl`. Treat it as
 append-only raw data. Do not edit, truncate, merge, migrate, or reconstruct it from journald.
-`events/history.jsonl` is a compact derived aggregate containing episode summaries and eligible
+`history.jsonl` is a compact derived aggregate containing episode summaries and eligible
 learning receipts; it is not a replacement for the raw stream.
 
 The compact history command reads the raw stream and the derived history file to exclude attributed

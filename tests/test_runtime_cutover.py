@@ -156,10 +156,7 @@ def test_safety_publication_is_followed_by_minimal_telemetry(tmp_path: Path) -> 
     for _ in range(5):
         daemon.poll_once()
 
-    rows = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "telemetry.jsonl").read_text().splitlines()
-    ]
+    rows = [json.loads(line) for line in (tmp_path / "telemetry.jsonl").read_text().splitlines()]
     assert len(rows) == 4
     assert len(rows[0]) == 8
 
@@ -228,10 +225,7 @@ def test_one_closed_natural_blackout_only_persists_observation(
         daemon.poll_once()
 
     assert model.ir_k == pytest.approx(0.015)
-    history = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
-    ]
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
     assert [row["kind"] for row in history].count("ir_observation") == 1
     assert model.ir_k == pytest.approx(0.015)
     assert model.apply_calls == []
@@ -276,10 +270,7 @@ def test_three_consistent_observations_use_one_atomic_feedback_write(
 
     assert model.apply_calls[0]["ir_k"] == pytest.approx(0.023)
     assert len(model.apply_calls) == 1
-    history = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
-    ]
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
     assert [row["kind"] for row in history].count("ir_observation") == 3
     assert [row["kind"] for row in history].count("model_update") == 1
 
@@ -298,8 +289,8 @@ def test_conflicting_observations_write_no_model_or_audit(tmp_path: Path, monkey
     daemon._apply_feedback((_closed_episode(),))
 
     assert model.apply_calls == []
-    assert (tmp_path / "events" / "history.jsonl").exists()
-    assert "ir_observation" in (tmp_path / "events" / "history.jsonl").read_text()
+    assert (tmp_path / "history.jsonl").exists()
+    assert "ir_observation" in (tmp_path / "history.jsonl").read_text()
 
 
 def test_telemetry_storage_error_is_health_only(tmp_path: Path) -> None:
@@ -325,8 +316,7 @@ def test_telemetry_storage_error_is_health_only(tmp_path: Path) -> None:
 
 
 def _write_event(tmp_path: Path, status: str, at: str) -> None:
-    event_path = tmp_path / "events" / "telemetry.jsonl"
-    event_path.parent.mkdir()
+    event_path = tmp_path / "telemetry.jsonl"
     event_path.write_text(
         json.dumps(sample(at, 13.3, 80.0, 600.0, 20.0, 230.0, 230.0, status)) + "\n"
     )
@@ -418,8 +408,7 @@ def test_quick_self_test_skips_malformed_telemetry_without_affecting_publication
     monkeypatch.setattr(monitor, "NUT_COMMAND_CONFIG_PATH", command_config)
     command = Mock(return_value=Mock(returncode=0))
     monkeypatch.setattr(monitor.subprocess, "run", command)
-    event_path = tmp_path / "events" / "telemetry.jsonl"
-    event_path.parent.mkdir()
+    event_path = tmp_path / "telemetry.jsonl"
     event_path.write_text("not-json\n")
     daemon = _daemon(
         tmp_path,
@@ -527,10 +516,7 @@ def test_successful_command_is_not_provenance_across_daemon_restart(
     second.poll_once()
 
     assert result.calculation.event_class == BlackoutKind.BLACKOUT_REAL
-    history = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
-    ]
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
     assert [row["kind"] for row in history] == ["blackout"]
 
 
@@ -553,10 +539,7 @@ def test_successful_quick_test_attributes_one_mixed_battery_episode(
     assert command.call_count == 1
     assert results[2].calculation.event_class == BlackoutKind.BLACKOUT_TEST
     assert results[3].calculation.event_class == BlackoutKind.BLACKOUT_TEST
-    history = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
-    ]
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
     assert [row["kind"] for row in history] == ["self_test"]
 
 
@@ -571,10 +554,7 @@ def test_uncommanded_cal_is_real_for_safety_and_history(tmp_path: Path) -> None:
     daemon.poll_once()
 
     assert result.calculation.event_class == BlackoutKind.BLACKOUT_REAL
-    history = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
-    ]
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
     assert history[0]["kind"] == "blackout"
 
 
@@ -597,8 +577,5 @@ def test_success_marker_is_one_shot_for_the_next_natural_blackout(
 
     assert results[2].calculation.event_class == BlackoutKind.BLACKOUT_TEST
     assert results[4].calculation.event_class == BlackoutKind.BLACKOUT_REAL
-    history = [
-        json.loads(line)
-        for line in (tmp_path / "events" / "history.jsonl").read_text().splitlines()
-    ]
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
     assert [row["kind"] for row in history] == ["self_test", "blackout"]

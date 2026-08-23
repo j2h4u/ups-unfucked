@@ -6,7 +6,7 @@ completed event, authoritative capacity/SoH/Peukert update, or complete on-batte
 available locally.
 **Severity:** Evidence loss/data-integrity incident; no confirmed unsafe shutdown-path impact.
 **Status:** Historical. The proposed per-event journal was superseded by the current append-only
-`events/telemetry.jsonl` stream and compact `events/history.jsonl` aggregates.
+`telemetry.jsonl` stream and compact `history.jsonl` aggregates.
 
 ## Known timeline
 
@@ -60,6 +60,6 @@ approval.
 
 ## Resolution
 
-The daemon now records event evidence continuously in `events/telemetry.jsonl`, keeps derived
-episode and feedback receipts in `events/history.jsonl`, and treats shutdown-truncated observations
+The daemon now records event evidence continuously in `telemetry.jsonl`, keeps derived
+episode and feedback receipts in `history.jsonl`, and treats shutdown-truncated observations
 as incomplete evidence. It does not run an automatic deep-discharge test.

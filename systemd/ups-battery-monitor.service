@@ -41,7 +41,7 @@ SyslogIdentifier=ups-battery-monitor
 # Hardening
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=@INSTALL_HOME@/.config/ups-battery-monitor/
+ReadWritePaths=@INSTALL_HOME@/.local/state/ups-battery-monitor/
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
