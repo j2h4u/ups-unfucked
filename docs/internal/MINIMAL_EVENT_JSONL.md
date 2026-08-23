@@ -1,22 +1,28 @@
 # Telemetry JSONL
 
-The monitor writes one append-only stream:
+The monitor writes one append-only raw stream at:
 
 `~/.config/ups-battery-monitor/events/telemetry.jsonl`
 
-Each line is a JSON object describing one physical UPS observation. The stream may contain ordinary
-online samples, blackout samples, quick-test samples, and recharge samples. The recorder keeps up to
-120 seconds of context before and after a detected event when samples are available.
+Each line is exactly one JSON object with these eight keys:
 
-This file is the raw record. Values that NUT did not provide are `null`; derived output and CLI
-summaries must not overwrite or masquerade as raw evidence.
+| Key | Type | Meaning |
+|---|---|---|
+| `at` | UTC timestamp string | Observation time, canonical `Z` timestamp |
+| `battery_v` | number or `null` | NUT `battery.voltage` |
+| `battery_pct` | number or `null` | NUT `battery.charge` |
+| `runtime_s` | number or `null` | NUT `battery.runtime` |
+| `load_pct` | number or `null` | NUT `ups.load` |
+| `input_v` | number or `null` | NUT `input.voltage` |
+| `output_v` | number or `null` | NUT `output.voltage` |
+| `status` | non-empty string | NUT `ups.status` |
 
-The executable, commented field contract is `TelemetrySample` in
-`src/adapters/minimal_event_file.py`. Compact per-episode response fields are defined by
-`EpisodeHistoryRecord` in `src/adapters/battery_history.py`; they remain derived facts and never
-claim measured capacity, internal resistance, or state of health.
+The executable contract is `TelemetrySample` in `src/adapters/minimal_event_file.py`. Numeric values
+preserve NUT readings; unavailable values are JSON `null`; no derived value, lifecycle ID, or
+learning result belongs in this stream. The writer records outage/test/recharge evidence and up to
+120 seconds of available context around an episode; it does not continuously append every online
+poll.
 
-The response baseline is the median voltage from the 30 seconds before an episode, provided those
-samples span at least 10 seconds. `early_v` is the minimum reported voltage in the first 15 seconds;
-the window accommodates coarse voltage steps that do not necessarily coincide with the status
-transition.
+`events/history.jsonl` is separate derived state containing compact episode summaries, IR
+observations, and model-update receipts. CLI summaries must not overwrite or masquerade as raw
+telemetry. `scripts/blackout-history.py` reads both files.

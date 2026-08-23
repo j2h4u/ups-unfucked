@@ -1,7 +1,7 @@
 # Operations runbook
 
-This runbook contains safe, read-only checks for the single-host installation. It does not perform
-a migration, deep battery test, or data repair.
+This runbook contains safe, read-only checks for the single-host installation and documents the
+supported installer. It does not perform a migration, deep battery test, or data repair.
 
 ## Install
 
@@ -11,8 +11,10 @@ Use the one supported installer from a reviewed checkout:
 sudo scripts/install.sh
 ```
 
-It installs the systemd service and NUT-facing integration. Review the rendered unit and NUT
-configuration before enabling the service. Do not run a second daemon against the same UPS.
+The installer stages and validates the rendered systemd units, applies the unit and NUT changes
+transactionally, restarts the required services, verifies the virtual UPS, and enables the monitor
+last. Use `--dry-run` or a reviewed checkout when you need to inspect the planned changes. Do not run
+a second daemon against the same UPS.
 
 ## Health checks
 
@@ -27,15 +29,20 @@ bash ~/scripts/motd/51-ups-health.sh
 journalctl -u ups-battery-monitor.service --since today --no-pager
 ```
 
-The physical and virtual UPS should agree when healthy. The virtual publication must remain
-available even if telemetry recording or the history view is degraded. `upsmon` owns shutdown.
+The physical and virtual UPS should agree when healthy. Each successful poll publishes the safety
+projection before telemetry and history work. An ordinary telemetry I/O error is degraded
+operation, not a reason to edit raw data; other poll failures can stop the daemon. A publication
+failure invalidates the old output. `upsmon` owns host shutdown.
 
 ## Telemetry
 
-The only current event path is `~/.config/ups-battery-monitor/events/telemetry.jsonl`. Treat it as
+The raw event stream is `~/.config/ups-battery-monitor/events/telemetry.jsonl`. Treat it as
 append-only raw data. Do not edit, truncate, merge, migrate, or reconstruct it from journald.
+`events/history.jsonl` is a compact derived aggregate containing episode summaries and eligible
+learning receipts; it is not a replacement for the raw stream.
 
-The compact history command is a read-only projection of that file:
+The compact history command reads the raw stream and the derived history file to exclude attributed
+self-tests:
 
 ```bash
 scripts/blackout-history.py --help

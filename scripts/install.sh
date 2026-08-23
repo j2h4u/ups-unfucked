@@ -715,18 +715,17 @@ fi
 MOTD_DIR="$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/scripts/motd"
 
 if [[ -d "$MOTD_DIR" ]]; then
-    for motd_name in 51-ups-health.sh; do
-        motd_src="$REPO_ROOT/scripts/motd/$motd_name"
-        motd_dst="$MOTD_DIR/$motd_name"
-        if [[ "$DRY_RUN" == "yes" ]]; then
-            echo "[DRY-RUN] Would install (templated) $motd_src -> $motd_dst"
-        else
-            sed -e "s|@UPS_NUT_ADDRESS@|${UPS_VIRTUAL_NAME}@localhost|g" \
-                "$motd_src" > "$motd_dst"
-            chmod +x "$motd_dst"
-            log_ok "MOTD script installed to $motd_dst"
-        fi
-    done
+    motd_name=51-ups-health.sh
+    motd_src="$REPO_ROOT/scripts/motd/$motd_name"
+    motd_dst="$MOTD_DIR/$motd_name"
+    if [[ "$DRY_RUN" == "yes" ]]; then
+        echo "[DRY-RUN] Would install (templated) $motd_src -> $motd_dst"
+    else
+        sed -e "s|@UPS_NUT_ADDRESS@|${UPS_VIRTUAL_NAME}@localhost|g" \
+            "$motd_src" > "$motd_dst"
+        chmod +x "$motd_dst"
+        log_ok "MOTD script installed to $motd_dst"
+    fi
 else
     log_info "MOTD directory $MOTD_DIR not found (skipping MOTD installation)"
 fi
@@ -805,7 +804,7 @@ log_info "  1. Verify UPS status: upsc ${UPS_VIRTUAL_NAME}@localhost | head"
 log_info "  2. View daemon logs: journalctl -u ups-battery-monitor -f"
 log_info "  3. Check live UPS MOTD: bash ~/scripts/motd/51-ups-health.sh"
 log_info ""
-log_info "Optional: Configure upsmon for automated shutdown (see CONTEXT.md)"
+log_info "Optional: Review upsmon and safe operating checks in docs/OPERATIONS-RUNBOOK.md"
 log_info ""
 
 exit 0

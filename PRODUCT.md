@@ -11,14 +11,18 @@ experienced.
    `events/telemetry.jsonl` file, with up to 120 seconds of context before and after an event.
 3. Make the result understandable through the compact `blackout-history.py` CLI and the optional
    MOTD line.
-4. Run unattended. Storage or reporting trouble must not delay safety publication.
+4. Run unattended. Ordinary telemetry I/O failures do not precede safety publication; publication
+   failure remains safety-critical and must fail closed.
 
 ## Product promises
 
 - One daemon and one physical NUT input are the runtime boundary.
-- The virtual UPS is published before optional recording and diagnostics.
-- Raw telemetry is preserved as written. Missing or uncertain values are shown as missing, never
-  invented from a model.
+- Within each successful poll, the virtual UPS is published before optional recording, history, and
+  feedback work.
+- `events/telemetry.jsonl` is append-only raw evidence; `events/history.jsonl` is a derived aggregate,
+  not the evidence source. Missing or uncertain values are shown as missing, never invented from a model.
+- An eligible natural blackout may produce a load-step observation; a bounded IR update requires a
+  consistent cohort and records its reason.
 - A quick self-test may run automatically at OL100 when no blackout or calibration/self-test has
   occurred for 14 days. It validates operational behavior only; it cannot establish capacity,
   state of health, or a future runtime guarantee.
@@ -33,6 +37,7 @@ Host shutdown is a safety boundary, not proof that the battery reached zero.
 
 ## Operational boundary
 
-`upsmon` owns host shutdown. The daemon sends no UPS commands except the narrowly guarded automatic
-quick self-test described above. It does not run a deep discharge or expose an operator workflow for
-scientific calibration.
+`upsmon` owns host shutdown. The daemon sends no UPS or power commands except the narrowly guarded
+automatic quick self-test described above. It does not run a deep discharge or expose an operator
+workflow for scientific calibration. There is no operator-facing configuration file; `model.json` is
+managed runtime state.
