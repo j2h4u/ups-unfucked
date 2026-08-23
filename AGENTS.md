@@ -18,3 +18,9 @@ Refactor the boundary or explain why the release is blocked.
 The test quality gate is per-function CRAP score, with a maximum of 30. Coverage is collected only
 as an input to CRAP; there is no repository-wide coverage percentage target. Prefer tests for risky
 branches or a simpler function over padding coverage with low-value assertions.
+
+Current runtime boundaries and telemetry contracts are summarized in
+[`docs/internal/CONTEXT.md`](docs/internal/CONTEXT.md).
+The two retained decisions explain why discharge is not battery treatment and why outage evidence
+must be durable: [`ADR 0001`](docs/adr/0001-desulfation-premise-reversal.md) and
+[`ADR 0002`](docs/adr/0002-durable-discharge-journal.md).
