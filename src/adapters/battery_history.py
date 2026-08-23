@@ -15,6 +15,9 @@ from src.domain.time import utc_second
 from src.domain.values import BlackoutKind
 
 HISTORY_FILENAME = "history.jsonl"
+BASELINE_WINDOW_SECONDS = 30
+MIN_BASELINE_SPAN_SECONDS = 10
+EARLY_RESPONSE_SECONDS = 15
 
 
 # Compact facts derived from one closed battery episode.  Response voltages
@@ -255,19 +258,24 @@ def _response_metrics(
     end_index: int,
     start_at: datetime,
 ) -> ResponseMetrics | None:
-    pre_voltages = [
-        float(row["battery_v"])
-        for row in records[max(0, start_index - 5) : start_index]
-        if _finite_number(row.get("battery_v"))
+    baseline = [
+        row
+        for row in records[:start_index]
+        if 0.0
+        < (start_at - _parse_timestamp(str(row.get("at")))).total_seconds()
+        <= BASELINE_WINDOW_SECONDS
+        and _finite_number(row.get("battery_v"))
     ]
     early = [
         row
         for row in records[start_index : end_index + 1]
-        if 2.0 <= (_parse_timestamp(str(row.get("at"))) - start_at).total_seconds() <= 6.0
+        if 0.0
+        <= (_parse_timestamp(str(row.get("at"))) - start_at).total_seconds()
+        <= EARLY_RESPONSE_SECONDS
         and _finite_number(row.get("battery_v"))
         and _finite_number(row.get("load_pct"))
     ]
-    if len(pre_voltages) < 3 or len(early) < 3:
+    if not _baseline_is_sufficient(baseline) or len(early) < 3:
         return None
     early_loads = [float(row["load_pct"]) for row in early]
     if max(early_loads) - min(early_loads) > 5.0:
@@ -278,8 +286,10 @@ def _response_metrics(
     ]
     if not voltage_points:
         return None
-    pre_v = round(float(median(pre_voltages)), 1)
-    early_v = round(float(median(float(row["battery_v"]) for row in early)), 1)
+    pre_v = round(float(median(float(row["battery_v"]) for row in baseline)), 1)
+    # The UPS reports voltage in coarse plateaus, and the voltage step does not
+    # necessarily coincide with the status transition.
+    early_v = round(min(float(row["battery_v"]) for row in early), 1)
     min_row, min_v = min(voltage_points, key=lambda point: point[1])
     min_at_s = round((_parse_timestamp(str(min_row.get("at"))) - start_at).total_seconds())
     return {
@@ -290,6 +300,14 @@ def _response_metrics(
         "min_v": round(min_v, 1),
         "min_at_s": min_at_s,
     }
+
+
+def _baseline_is_sufficient(rows: list[dict[str, Any]]) -> bool:
+    if len(rows) < 3:
+        return False
+    first = _parse_timestamp(str(rows[0].get("at")))
+    last = _parse_timestamp(str(rows[-1].get("at")))
+    return (last - first).total_seconds() >= MIN_BASELINE_SPAN_SECONDS
 
 
 def _discharge_bounds(records: list[dict[str, Any]]) -> tuple[int, int] | None:
