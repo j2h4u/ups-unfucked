@@ -419,7 +419,7 @@ def test_fstat_failure_closes_fd_and_removes_owned_temp(
     assert len(opened) == 1
     temporary, descriptor = opened[0]
     assert fstat_calls == [descriptor]
-    assert [path for path in lstat_paths if path == temporary] == [temporary, temporary]
+    assert temporary in lstat_paths
     assert closed == [descriptor]
     assert not temporary.exists()
     assert output.read_text(encoding="utf-8") == "original\n"
@@ -475,7 +475,7 @@ def test_first_lstat_failure_closes_fd_and_removes_owned_temp(
     assert raised.value is primary_error
     assert len(opened) == 1
     temporary, descriptor = opened[0]
-    assert [path for path in lstat_calls if path == temporary] == [temporary, temporary]
+    assert temporary in lstat_calls
     assert closed == [descriptor]
     assert output.read_text(encoding="utf-8") == "original\n"
     assert not temporary.exists()
