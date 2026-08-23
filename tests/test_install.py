@@ -139,6 +139,7 @@ def test_install_migrates_legacy_state_without_copy_or_backup(tmp_path):
     (legacy / "model.json").write_text('{"model":1}\n')
     (events / "telemetry.jsonl").write_text('{"at":"old"}\n')
     (events / "history.jsonl").write_text('{"kind":"old"}\n')
+    (legacy / "monitor.lock").write_text("")
 
     result = _run_helper(home, dry_run=False)
 
@@ -147,6 +148,7 @@ def test_install_migrates_legacy_state_without_copy_or_backup(tmp_path):
     assert (state / "model.json").read_text() == '{"model":1}\n'
     assert (state / "telemetry.jsonl").read_text() == '{"at":"old"}\n'
     assert (state / "history.jsonl").read_text() == '{"kind":"old"}\n'
+    assert (state / "monitor.lock").is_file()
     assert not legacy.exists()
 
 

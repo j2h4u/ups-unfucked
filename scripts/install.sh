@@ -515,17 +515,19 @@ ensure_private_state() {
     local -r model="$state_dir/model.json"
     local -r telemetry="$state_dir/telemetry.jsonl"
     local -r history="$state_dir/history.jsonl"
+    local -r lock="$state_dir/monitor.lock"
     local -r legacy_model="$legacy_dir/model.json"
     local -r legacy_telemetry="$legacy_events_dir/telemetry.jsonl"
     local -r legacy_history="$legacy_events_dir/history.jsonl"
+    local -r legacy_lock="$legacy_dir/monitor.lock"
 
     # vars
     local path
 
     # code
     for path in \
-        "$INSTALL_HOME" "$state_parent" "$state_dir" "$model" "$telemetry" "$history" \
-        "$legacy_dir" "$legacy_events_dir" "$legacy_model" "$legacy_telemetry" "$legacy_history"; do
+        "$INSTALL_HOME" "$state_parent" "$state_dir" "$model" "$telemetry" "$history" "$lock" \
+        "$legacy_dir" "$legacy_events_dir" "$legacy_model" "$legacy_telemetry" "$legacy_history" "$legacy_lock"; do
         if [[ -L "$path" ]]; then
             log_error "Refusing symlink in battery state path: $path"
             exit 1
@@ -548,7 +550,7 @@ ensure_private_state() {
         log_error "Legacy event path is not a directory: $legacy_events_dir"
         exit 1
     fi
-    for path in "$model" "$telemetry" "$history" "$legacy_model" "$legacy_telemetry" "$legacy_history"; do
+    for path in "$model" "$telemetry" "$history" "$lock" "$legacy_model" "$legacy_telemetry" "$legacy_history" "$legacy_lock"; do
         if [[ -e "$path" && ! -f "$path" ]]; then
             log_error "Battery state is not a regular file: $path"
             exit 1
@@ -557,7 +559,7 @@ ensure_private_state() {
     if [[ -d "$legacy_dir" ]]; then
         while IFS= read -r -d '' path; do
             case "$path" in
-                "$legacy_model"|"$legacy_events_dir"|"$legacy_dir/discharge-events-v1.jsonl") ;;
+                "$legacy_model"|"$legacy_events_dir"|"$legacy_lock"|"$legacy_dir/discharge-events-v1.jsonl") ;;
                 *) log_error "Unexpected legacy battery state prevents migration: $path"; exit 1 ;;
             esac
         done < <(find -P "$legacy_dir" -mindepth 1 -maxdepth 1 -print0)
@@ -570,7 +572,7 @@ ensure_private_state() {
             esac
         done < <(find -P "$legacy_events_dir" -mindepth 1 -maxdepth 1 -print0)
     fi
-    for path in model.json telemetry.jsonl history.jsonl; do
+    for path in model.json telemetry.jsonl history.jsonl monitor.lock; do
         if [[ -e "$legacy_dir/$path" && -e "$state_dir/$path" ]]; then
             log_error "Both legacy and target battery state exist: $path"
             exit 1
@@ -617,6 +619,9 @@ ensure_private_state() {
     if [[ -e "$legacy_history" ]]; then
         mv -- "$legacy_history" "$history"
     fi
+    if [[ -e "$legacy_lock" ]]; then
+        mv -- "$legacy_lock" "$lock"
+    fi
     if [[ -d "$legacy_events_dir" ]]; then
         rmdir -- "$legacy_events_dir"
     fi
@@ -639,7 +644,7 @@ ModelOwner(
     fi
     chmod 600 -- "$model"
     chown --no-dereference "$RUN_USER:$RUN_USER" "$model"
-    for path in "$telemetry" "$history"; do
+    for path in "$telemetry" "$history" "$lock"; do
         if [[ -e "$path" ]]; then
             chmod 600 -- "$path"
             chown --no-dereference "$RUN_USER:$RUN_USER" "$path"
