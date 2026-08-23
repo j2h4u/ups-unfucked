@@ -873,7 +873,7 @@ log_info "  1. Verify UPS status: upsc ${UPS_VIRTUAL_NAME}@localhost | head"
 log_info "  2. View daemon logs: journalctl -u ups-battery-monitor -f"
 log_info "  3. Check live UPS MOTD: bash ~/scripts/motd/51-ups-health.sh"
 log_info ""
-log_info "Optional: Review upsmon and safe operating checks in docs/OPERATIONS-RUNBOOK.md"
+log_info "Optional: Review health checks and troubleshooting in README.md"
 log_info ""
 
 exit 0
