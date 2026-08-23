@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,8 +13,6 @@ from src.domain.safety_policy import validate_shutdown_threshold_minutes
 logger = logging.getLogger("ups-battery-monitor")
 
 CONFIG_DIR = Path.home() / ".config" / "ups-battery-monitor"
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
 POLL_INTERVAL_SEC = 1
 EMA_WINDOW_SEC = 120
 NUT_HOST = "localhost"
@@ -63,49 +60,6 @@ class Config:
             or self.nut_timeout <= 0.0
         ):
             raise ConfigError("nut_timeout must be positive")
-
-
-def load_config(*, paths: tuple[Path, ...] | None = None) -> Config:
-    """Load the first present TOML file and validate the bounded runtime schema."""
-    search_paths = paths or (CONFIG_DIR / "config.toml", REPO_ROOT / "config.toml")
-    raw: dict[str, object] = {}
-    for path in search_paths:
-        if not path.is_file():
-            continue
-        try:
-            with path.open("rb") as stream:
-                raw = tomllib.load(stream)
-        except OSError as exc:
-            raise ConfigError(f"cannot read configuration {path}: {exc}") from exc
-        except tomllib.TOMLDecodeError as exc:
-            raise ConfigError(f"malformed configuration {path}: {exc}") from exc
-        break
-
-    if "reference_load_percent" in raw:
-        raise ConfigError(
-            "reference_load_percent is model-owned and must not appear in runtime configuration"
-        )
-
-    allowed = {"ups_name", "shutdown_minutes", "capacity_ah"}
-    unknown = sorted(set(raw).difference(allowed))
-    if unknown:
-        logger.warning("Ignoring unknown configuration keys: %s", ", ".join(unknown))
-
-    ups_name = raw.get("ups_name", "cyberpower")
-    shutdown_minutes = raw.get("shutdown_minutes", 5)
-    capacity_ah = raw.get("capacity_ah", RATED_CAPACITY_AH)
-    if not isinstance(ups_name, str):
-        raise ConfigError("ups_name must be a string")
-    if isinstance(shutdown_minutes, bool) or not isinstance(shutdown_minutes, int):
-        raise ConfigError("shutdown_minutes must be a positive integer")
-    if isinstance(capacity_ah, bool) or not isinstance(capacity_ah, (int, float)):
-        raise ConfigError("capacity_ah must be a positive number")
-    return Config(
-        ups_name=ups_name,
-        shutdown_minutes=shutdown_minutes,
-        capacity_ah=float(capacity_ah),
-        model_dir=CONFIG_DIR,
-    )
 
 
 def configure_logging() -> None:

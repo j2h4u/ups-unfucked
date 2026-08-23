@@ -164,6 +164,52 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
     ]
 
 
+def test_history_records_typed_voltage_response_and_comparable_delta(tmp_path: Path) -> None:
+    history = BatteryHistory(tmp_path / "events" / "history.jsonl")
+
+    def episode(start: int, *, early_v: float, load_pct: float) -> list[dict[str, object]]:
+        base = datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(seconds=start)
+
+        def row(offset: int, status: str, voltage: float) -> dict[str, object]:
+            return {
+                "at": (base + timedelta(seconds=offset))
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z"),
+                "status": status,
+                "battery_pct": 100.0,
+                "battery_v": voltage,
+                "load_pct": load_pct,
+            }
+
+        return [
+            *(row(offset, "OL", 13.6) for offset in range(-5, 0)),
+            row(0, "OB DISCHRG", 13.4),
+            row(1, "OB DISCHRG", 13.1),
+            *(row(offset, "OB DISCHRG", early_v) for offset in range(2, 7)),
+            row(7, "OB DISCHRG", early_v - 0.1),
+            row(8, "OL", 13.0),
+        ]
+
+    history.episode(episode(0, early_v=12.9, load_pct=15.0))
+    history.episode(episode(60, early_v=12.7, load_pct=18.0))
+
+    first, second = _rows(tmp_path / "events" / "history.jsonl")
+    assert first == {
+        "kind": "blackout",
+        "at": "2026-08-22T00:00:00Z",
+        "duration_s": 8,
+        "depth_pct": 0.0,
+        "efc": 0.0,
+        "load_pct": 15.0,
+        "pre_v": 13.6,
+        "early_v": 12.9,
+        "sag_v": 0.7,
+        "min_v": 12.8,
+        "min_at_s": 7,
+    }
+    assert second["sag_delta_v"] == 0.2
+
+
 def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path: Path) -> None:
     path = tmp_path / "events" / "history.jsonl"
     path.parent.mkdir()

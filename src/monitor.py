@@ -39,7 +39,7 @@ from src.domain.values import (
     PhysicalObservation,
 )
 from src.ema_filter import EMAFilter
-from src.monitor_config import Config, ConfigError, configure_logging, load_config
+from src.monitor_config import Config, ConfigError, configure_logging
 from src.nut_client import NUTClient
 from src.virtual_ups_exporter import (
     PollPublicationContext,
@@ -586,7 +586,7 @@ def main() -> None:
     configure_logging()
     arguments = parse_args()
     try:
-        config = load_config()
+        config = Config()
         daemon = build_daemon(
             config,
             virtual_ups_path=arguments.virtual_ups_path,
@@ -613,7 +613,7 @@ def _validate_observation(observation: PhysicalObservation) -> None:
 
 
 def _closed_episodes(
-    records: Sequence[dict[str, object]],
+    records: Sequence[Mapping[str, object]],
 ) -> tuple[tuple[dict[str, object], ...], ...]:
     completed: list[tuple[dict[str, object], ...]] = []
     active: list[dict[str, object]] | None = None
@@ -621,9 +621,9 @@ def _closed_episodes(
         flags = str(record.get("status", "")).split()
         if "OB" in flags or "CAL" in flags:
             active = active or []
-            active.append(record)
+            active.append(dict(record))
         elif active is not None and "OL" in flags:
-            active.append(record)
+            active.append(dict(record))
             completed.append(tuple(active))
             active = None
     return tuple(completed)

@@ -150,15 +150,17 @@ class TelemetryJsonlWriter:
 
 def _sample(observation: PhysicalObservation) -> dict[str, object]:
     at_text = _observation_time(observation).isoformat(timespec="seconds").replace("+00:00", "Z")
-    return sample(
-        at_text,
-        observation.battery_voltage_v,
-        observation.battery_pct,
-        observation.runtime_s,
-        observation.load_percent,
-        observation.input_voltage_v,
-        observation.output_v,
-        observation.raw_status,
+    return dict(
+        sample(
+            at_text,
+            observation.battery_voltage_v,
+            observation.battery_pct,
+            observation.runtime_s,
+            observation.load_percent,
+            observation.input_voltage_v,
+            observation.output_v,
+            observation.raw_status,
+        )
     )
 
 
