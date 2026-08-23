@@ -268,6 +268,7 @@ def test_service_file_unprivileged_execution():
 
     assert "User" in service, "User directive missing"
     assert service["User"] != "root", "Service should not run as root"
+    assert service["ReadWritePaths"] == "@INSTALL_HOME@/.local/state/ups-battery-monitor/"
 
     assert "Group" in service, "Group directive missing"
     assert service["Group"] != "root", "Service should not run as root group"

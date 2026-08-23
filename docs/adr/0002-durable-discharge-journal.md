@@ -1,7 +1,7 @@
 # ADR 0002: Durable Discharge Journal and Evidence-Gated Replay
 
 **Status:** Superseded, 2026-08-23. The current implementation keeps raw evidence in
-`events/telemetry.jsonl` and derived aggregates in `events/history.jsonl`; this ADR is historical.
+`telemetry.jsonl` and derived aggregates in `history.jsonl`; this ADR is historical.
 
 ## Context
 

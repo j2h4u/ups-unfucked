@@ -503,41 +503,81 @@ finish_transaction() {
 trap finish_transaction EXIT
 
 # === PRIVATE BATTERY STATE ===
-# The daemon writes one strict model and per-blackout JSONL files below this
-# directory. Refuse symlinks before mutation.
+# The daemon keeps its model and two JSONL files together under XDG state.
+# Refuse symlinks and ambiguous migrations before mutation.
 
 ensure_private_state() {
     # consts
-    local -r config_dir="$INSTALL_HOME/.config"
-    local -r state_dir="$config_dir/ups-battery-monitor"
-    local -r events_dir="$state_dir/events"
+    local -r state_parent="$INSTALL_HOME/.local/state"
+    local -r state_dir="$state_parent/ups-battery-monitor"
+    local -r legacy_dir="$INSTALL_HOME/.config/ups-battery-monitor"
+    local -r legacy_events_dir="$legacy_dir/events"
     local -r model="$state_dir/model.json"
+    local -r telemetry="$state_dir/telemetry.jsonl"
+    local -r history="$state_dir/history.jsonl"
+    local -r legacy_model="$legacy_dir/model.json"
+    local -r legacy_telemetry="$legacy_events_dir/telemetry.jsonl"
+    local -r legacy_history="$legacy_events_dir/history.jsonl"
 
     # vars
     local path
 
     # code
-    for path in "$INSTALL_HOME" "$config_dir" "$state_dir" "$events_dir" "$model"; do
+    for path in \
+        "$INSTALL_HOME" "$state_parent" "$state_dir" "$model" "$telemetry" "$history" \
+        "$legacy_dir" "$legacy_events_dir" "$legacy_model" "$legacy_telemetry" "$legacy_history"; do
         if [[ -L "$path" ]]; then
             log_error "Refusing symlink in battery state path: $path"
             exit 1
         fi
     done
 
-    if [[ -e "$config_dir" && ! -d "$config_dir" ]]; then
-        log_error "Battery config parent is not a directory: $config_dir"
+    if [[ -e "$state_parent" && ! -d "$state_parent" ]]; then
+        log_error "Battery state parent is not a directory: $state_parent"
         exit 1
     fi
     if [[ -e "$state_dir" && ! -d "$state_dir" ]]; then
         log_error "Battery state path is not a directory: $state_dir"
         exit 1
     fi
-    if [[ -e "$events_dir" && ! -d "$events_dir" ]]; then
-        log_error "Per-blackout event path is not a directory: $events_dir"
+    if [[ -e "$legacy_dir" && ! -d "$legacy_dir" ]]; then
+        log_error "Legacy battery state path is not a directory: $legacy_dir"
         exit 1
     fi
-    if [[ -e "$model" && ! -f "$model" ]]; then
-        log_error "Battery model is not a regular file: $model"
+    if [[ -e "$legacy_events_dir" && ! -d "$legacy_events_dir" ]]; then
+        log_error "Legacy event path is not a directory: $legacy_events_dir"
+        exit 1
+    fi
+    for path in "$model" "$telemetry" "$history" "$legacy_model" "$legacy_telemetry" "$legacy_history"; do
+        if [[ -e "$path" && ! -f "$path" ]]; then
+            log_error "Battery state is not a regular file: $path"
+            exit 1
+        fi
+    done
+    if [[ -d "$legacy_dir" ]]; then
+        while IFS= read -r -d '' path; do
+            case "$path" in
+                "$legacy_model"|"$legacy_events_dir"|"$legacy_dir/discharge-events-v1.jsonl") ;;
+                *) log_error "Unexpected legacy battery state prevents migration: $path"; exit 1 ;;
+            esac
+        done < <(find -P "$legacy_dir" -mindepth 1 -maxdepth 1 -print0)
+    fi
+    if [[ -d "$legacy_events_dir" ]]; then
+        while IFS= read -r -d '' path; do
+            case "$path" in
+                "$legacy_telemetry"|"$legacy_history") ;;
+                *) log_error "Unexpected legacy event state prevents migration: $path"; exit 1 ;;
+            esac
+        done < <(find -P "$legacy_events_dir" -mindepth 1 -maxdepth 1 -print0)
+    fi
+    for path in model.json telemetry.jsonl history.jsonl; do
+        if [[ -e "$legacy_dir/$path" && -e "$state_dir/$path" ]]; then
+            log_error "Both legacy and target battery state exist: $path"
+            exit 1
+        fi
+    done
+    if [[ -e "$legacy_telemetry" && -e "$telemetry" ]] || [[ -e "$legacy_history" && -e "$history" ]]; then
+        log_error "Both legacy and target telemetry state exist"
         exit 1
     fi
     # Stop an existing writer before changing any shared private state. The
@@ -555,16 +595,34 @@ ensure_private_state() {
 
     if [[ "$DRY_RUN" == "yes" ]]; then
         echo "[DRY-RUN] Would ensure private state directory: $state_dir (owner=$RUN_USER, mode=0700)"
-        echo "[DRY-RUN] Would ensure per-blackout event directory: $events_dir (owner=$RUN_USER, mode=0700)"
+        if [[ -d "$legacy_dir" ]]; then
+            echo "[DRY-RUN] Would move legacy battery state into: $state_dir"
+        fi
         if [[ ! -e "$model" ]]; then
             echo "[DRY-RUN] Would explicitly provision strict target model: $model (owner=$RUN_USER, mode=0600)"
         fi
         return
     fi
 
-    mkdir --parents -- "$state_dir" "$events_dir"
-    chmod 700 -- "$state_dir" "$events_dir"
-    chown --no-dereference "$RUN_USER:$RUN_USER" "$state_dir" "$events_dir"
+    mkdir --parents -- "$state_dir"
+    chmod 700 -- "$state_dir"
+    chown --no-dereference "$RUN_USER:$RUN_USER" "$state_dir"
+
+    if [[ -e "$legacy_model" ]]; then
+        mv -- "$legacy_model" "$model"
+    fi
+    if [[ -e "$legacy_telemetry" ]]; then
+        mv -- "$legacy_telemetry" "$telemetry"
+    fi
+    if [[ -e "$legacy_history" ]]; then
+        mv -- "$legacy_history" "$history"
+    fi
+    if [[ -d "$legacy_events_dir" ]]; then
+        rmdir -- "$legacy_events_dir"
+    fi
+    if [[ -d "$legacy_dir" ]]; then
+        rmdir --ignore-fail-on-non-empty -- "$legacy_dir"
+    fi
 
     if [[ ! -e "$model" ]]; then
         PYTHONPATH="$REPO_ROOT" python3 -c '
@@ -581,7 +639,13 @@ ModelOwner(
     fi
     chmod 600 -- "$model"
     chown --no-dereference "$RUN_USER:$RUN_USER" "$model"
-    log_ok "Private target model and per-blackout event state ready: $state_dir"
+    for path in "$telemetry" "$history"; do
+        if [[ -e "$path" ]]; then
+            chmod 600 -- "$path"
+            chown --no-dereference "$RUN_USER:$RUN_USER" "$path"
+        fi
+    done
+    log_ok "Private battery state ready: $state_dir"
 }
 
 TRANSACTION_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ups-battery-monitor-install.XXXXXX")"

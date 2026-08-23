@@ -1,5 +1,7 @@
 """Strict runtime configuration invariants."""
 
+from pathlib import Path
+
 import pytest
 
 from src.application.publication_freshness import telemetry_loss_grace_s
@@ -65,3 +67,4 @@ def test_runtime_config_defaults_are_explicit_code_owned_values() -> None:
     assert config.ups_name == "cyberpower"
     assert config.shutdown_minutes == 5
     assert config.capacity_ah == 7.2
+    assert config.model_dir == Path.home() / ".local" / "state" / "ups-battery-monitor"

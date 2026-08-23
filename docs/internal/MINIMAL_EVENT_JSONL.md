@@ -2,7 +2,7 @@
 
 The monitor writes one append-only raw stream at:
 
-`~/.config/ups-battery-monitor/events/telemetry.jsonl`
+`~/.local/state/ups-battery-monitor/telemetry.jsonl`
 
 Each line is exactly one JSON object with these eight keys:
 
@@ -23,6 +23,6 @@ learning result belongs in this stream. The writer records outage/test/recharge 
 120 seconds of available context around an episode; it does not continuously append every online
 poll.
 
-`events/history.jsonl` is separate derived state containing compact episode summaries, IR
+`history.jsonl` is separate derived state containing compact episode summaries, IR
 observations, and model-update receipts. CLI summaries must not overwrite or masquerade as raw
 telemetry. `scripts/blackout-history.py` reads both files.

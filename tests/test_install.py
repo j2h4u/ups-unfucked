@@ -92,12 +92,12 @@ def test_install_dry_run_does_not_create_or_modify_state(tmp_path):
     result = _run_helper(home, dry_run=True)
 
     assert result.returncode == 0
-    assert "Would ensure per-blackout event directory" in result.stdout
+    assert "Would ensure private state directory" in result.stdout
 
 
 def test_install_ensures_private_state_and_repairs_modes(tmp_path):
     home = tmp_path / "home"
-    state = home / ".config" / "ups-battery-monitor"
+    state = home / ".local" / "state" / "ups-battery-monitor"
     state.mkdir(parents=True)
     state.chmod(0o755)
 
@@ -105,8 +105,6 @@ def test_install_ensures_private_state_and_repairs_modes(tmp_path):
 
     assert result.returncode == 0
     assert state.stat().st_mode & 0o777 == 0o700
-    assert (state / "events").is_dir()
-    assert (state / "events").stat().st_mode & 0o777 == 0o700
     assert (state / "model.json").is_file()
 
 
@@ -118,20 +116,55 @@ def test_install_stops_active_service_before_mutating_private_state(tmp_path):
 
     assert result.returncode == 0
     assert events.read_text().splitlines() == ["is-active", "stop", "mkdir"]
-    state = home / ".config" / "ups-battery-monitor"
-    assert (state / "events").is_dir()
+    state = home / ".local" / "state" / "ups-battery-monitor"
     assert (state / "model.json").is_file()
 
 
-def test_fresh_install_creates_candidate_layout(tmp_path):
+def test_fresh_install_creates_flat_xdg_state_layout(tmp_path):
     home = tmp_path / "home"
 
     result = _run_helper(home, dry_run=False)
 
     assert result.returncode == 0
-    state = home / ".config" / "ups-battery-monitor"
-    assert (state / "events").is_dir()
+    state = home / ".local" / "state" / "ups-battery-monitor"
     assert (state / "model.json").is_file()
+    assert not (state / "events").exists()
+
+
+def test_install_migrates_legacy_state_without_copy_or_backup(tmp_path):
+    home = tmp_path / "home"
+    legacy = home / ".config" / "ups-battery-monitor"
+    events = legacy / "events"
+    events.mkdir(parents=True)
+    (legacy / "model.json").write_text('{"model":1}\n')
+    (events / "telemetry.jsonl").write_text('{"at":"old"}\n')
+    (events / "history.jsonl").write_text('{"kind":"old"}\n')
+
+    result = _run_helper(home, dry_run=False)
+
+    assert result.returncode == 0, result.stderr
+    state = home / ".local" / "state" / "ups-battery-monitor"
+    assert (state / "model.json").read_text() == '{"model":1}\n'
+    assert (state / "telemetry.jsonl").read_text() == '{"at":"old"}\n'
+    assert (state / "history.jsonl").read_text() == '{"kind":"old"}\n'
+    assert not legacy.exists()
+
+
+def test_install_refuses_ambiguous_state_migration(tmp_path):
+    home = tmp_path / "home"
+    legacy = home / ".config" / "ups-battery-monitor"
+    target = home / ".local" / "state" / "ups-battery-monitor"
+    legacy.mkdir(parents=True)
+    target.mkdir(parents=True)
+    (legacy / "model.json").write_text("old\n")
+    (target / "model.json").write_text("new\n")
+
+    result = _run_helper(home, dry_run=False)
+
+    assert result.returncode != 0
+    assert "Both legacy and target battery state exist: model.json" in result.stderr
+    assert (legacy / "model.json").read_text() == "old\n"
+    assert (target / "model.json").read_text() == "new\n"
 
 
 def test_install_renders_and_verifies_units_before_mutation(tmp_path):

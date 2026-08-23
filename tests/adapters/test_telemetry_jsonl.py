@@ -29,9 +29,7 @@ def _observation(
 
 
 def _lines(root: Path) -> list[dict[str, object]]:
-    return [
-        json.loads(line) for line in (root / "events" / "telemetry.jsonl").read_text().splitlines()
-    ]
+    return [json.loads(line) for line in (root / "telemetry.jsonl").read_text().splitlines()]
 
 
 def test_writer_records_blackout_recharge_and_one_terminal_sample(tmp_path: Path) -> None:
@@ -175,7 +173,7 @@ def test_silent_online_remains_disk_silent_without_event(tmp_path: Path) -> None
             _observation("OL", 100.0, offset_sec=offset_sec), BlackoutKind.ONLINE
         )
 
-    assert not (tmp_path / "events" / "telemetry.jsonl").exists()
+    assert not (tmp_path / "telemetry.jsonl").exists()
 
 
 def test_failed_pre_event_flush_preserves_unwritten_samples_for_retry(
@@ -244,8 +242,7 @@ def test_rebooted_writer_continues_ob_tail_without_duplicate_lines(tmp_path: Pat
 def test_historical_fractional_timestamp_is_read_and_new_sample_is_whole_second(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "events" / "telemetry.jsonl"
-    path.parent.mkdir()
+    path = tmp_path / "telemetry.jsonl"
     historical = {
         "at": "2026-08-22T00:00:00.123456Z",
         "battery_v": 13.3,
@@ -267,7 +264,7 @@ def test_historical_fractional_timestamp_is_read_and_new_sample_is_whole_second(
 
 
 def test_append_handles_short_os_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = tmp_path / "events" / "telemetry.jsonl"
+    path = tmp_path / "telemetry.jsonl"
     record = {
         "at": "2026-08-22T00:00:00Z",
         "battery_v": 13.3,

@@ -142,8 +142,8 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
     writer.write(_observation("CAL DISCHRG", 90.0, 40), BlackoutKind.BLACKOUT_TEST)
     writer.write(_observation("OL CHRG", 100.0, 50), BlackoutKind.ONLINE)
 
-    rows = _rows(tmp_path / "events" / "history.jsonl")
-    history_lines = (tmp_path / "events" / "history.jsonl").read_text().splitlines()
+    rows = _rows(tmp_path / "history.jsonl")
+    history_lines = (tmp_path / "history.jsonl").read_text().splitlines()
     assert '"duration_s":20,' in history_lines[0]
     assert '"duration_s":10,' in history_lines[1]
     assert rows == [
@@ -165,7 +165,7 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
 
 
 def test_history_records_typed_voltage_response_and_comparable_delta(tmp_path: Path) -> None:
-    history = BatteryHistory(tmp_path / "events" / "history.jsonl")
+    history = BatteryHistory(tmp_path / "history.jsonl")
 
     def episode(start: int, *, early_v: float, load_pct: float) -> list[dict[str, object]]:
         base = datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(seconds=start)
@@ -193,7 +193,7 @@ def test_history_records_typed_voltage_response_and_comparable_delta(tmp_path: P
     history.episode(episode(0, early_v=12.9, load_pct=15.0))
     history.episode(episode(60, early_v=12.7, load_pct=18.0))
 
-    first, second = _rows(tmp_path / "events" / "history.jsonl")
+    first, second = _rows(tmp_path / "history.jsonl")
     assert first == {
         "kind": "blackout",
         "at": "2026-08-22T00:00:00Z",
@@ -241,8 +241,7 @@ def test_response_includes_voltage_change_after_status_transition() -> None:
 
 
 def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path: Path) -> None:
-    path = tmp_path / "events" / "history.jsonl"
-    path.parent.mkdir()
+    path = tmp_path / "history.jsonl"
     path.write_text(
         '{"kind":"model_update","at":"2026-08-22T00:01:00.900Z",'
         '"event_at":"2026-08-22T00:00:00.900Z","evidence_at":"2026-08-22T00:00:30.1Z",'
@@ -264,7 +263,7 @@ def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path:
 
 
 def test_history_recovers_minimal_model_receipt_exactly_once(tmp_path: Path) -> None:
-    path = tmp_path / "events" / "history.jsonl"
+    path = tmp_path / "history.jsonl"
     history = BatteryHistory(path)
     receipt = {
         "event_at": "2026-08-22T00:00:00Z",
@@ -296,7 +295,7 @@ def test_history_recovers_minimal_model_receipt_exactly_once(tmp_path: Path) -> 
 
 
 def test_ir_observations_are_compact_canonical_and_distinct(tmp_path: Path) -> None:
-    path = tmp_path / "events" / "history.jsonl"
+    path = tmp_path / "history.jsonl"
     history = BatteryHistory(path)
 
     assert history.ir_observation(
@@ -326,7 +325,7 @@ def test_ir_observations_are_compact_canonical_and_distinct(tmp_path: Path) -> N
 
 
 def test_ir_observations_after_last_ir_model_update_only(tmp_path: Path) -> None:
-    history = BatteryHistory(tmp_path / "events" / "history.jsonl")
+    history = BatteryHistory(tmp_path / "history.jsonl")
     for second in (0, 1, 2):
         history.ir_observation(
             event_at=f"2026-08-22T00:00:0{second}Z",
