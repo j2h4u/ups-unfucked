@@ -1,6 +1,7 @@
 # ADR 0004: Unified Fragment Capabilities and Recharge Linkage
 
-**Status:** Accepted, 2026-08-17
+**Status:** Superseded, 2026-08-23. The capability/fragment storage design was removed; this ADR is
+retained only as decision history.
 
 ## Context
 

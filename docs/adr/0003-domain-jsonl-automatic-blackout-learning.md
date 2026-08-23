@@ -1,6 +1,7 @@
 # ADR 0003: Domain JSONL and Automatic Blackout Learning
 
-**Status:** Accepted, 2026-08-16
+**Status:** Superseded, 2026-08-23. The per-event domain-JSONL design was removed; the current
+implementation uses one raw telemetry stream, compact derived history, and bounded IR feedback.
 
 ## Context
 
@@ -56,11 +57,9 @@ No operator, external agent, Grafana service, or manual data preparation is part
 Business decisions are pure, frozen domain values and policies. Application services orchestrate
 use cases. Adapters own NUT, JSONL, filesystem, clock, and model persistence.
 
-### Current architecture map
+### Historical candidate architecture map
 
-The following diagram is normative for the current candidate. Files under `docs/plans/` and
-`docs/reviews/` are preserved planning/review snapshots; their historical module counts and
-intermediate dependency maps are not the current architecture.
+The following diagram records the superseded candidate and is not the current architecture.
 
 ```mermaid
 flowchart LR

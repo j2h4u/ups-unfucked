@@ -5,7 +5,8 @@
 completed event, authoritative capacity/SoH/Peukert update, or complete on-battery duration was
 available locally.
 **Severity:** Evidence loss/data-integrity incident; no confirmed unsafe shutdown-path impact.
-**Status:** Closed for diagnosis; durable-journal corrective work is the approved follow-up.
+**Status:** Historical. The proposed per-event journal was superseded by the current append-only
+`events/telemetry.jsonl` stream and compact `events/history.jsonl` aggregates.
 
 ## Known timeline
 
@@ -57,14 +58,8 @@ EMA buffer, exact Ah without measured current, absolute capacity/SoH, or an exac
 The recovery artifact is not imported into `model.json` or the LUT without separate explicit
 approval.
 
-## Corrective actions
+## Resolution
 
-1. Append every accepted on-battery observation to the local `0600` JSONL journal and synchronise
-   it before declaring it durable.
-2. Replay by stable event ID across reboot; represent unknown reboot time as an explicit gap.
-3. Keep journal failure visible but independent from LB publication and `upsmon` shutdown.
-4. Separate lifecycle closure from scientific evidence class; partial/gapped events cannot mutate
-   authoritative capacity, SoH, or Peukert state.
-5. Use [CONTROLLED-CAPACITY-TEST-PROTOCOL.md](../../CONTROLLED-CAPACITY-TEST-PROTOCOL.md) for
-   any future supervised hardware test. No automatic hardware deep test is executed or
-  recommended.
+The daemon now records event evidence continuously in `events/telemetry.jsonl`, keeps derived
+episode and feedback receipts in `events/history.jsonl`, and treats shutdown-truncated observations
+as incomplete evidence. It does not run an automatic deep-discharge test.
