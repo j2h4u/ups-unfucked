@@ -8,7 +8,7 @@ Each line is exactly one JSON object with these eight keys:
 
 | Key | Type | Meaning |
 |---|---|---|
-| `at` | UTC timestamp string | Observation time, canonical `Z` timestamp |
+| `at` | UTC timestamp string | ISO-8601 `Z`; new writes use whole seconds, historical fractions remain readable |
 | `battery_v` | number or `null` | NUT `battery.voltage` |
 | `battery_pct` | number or `null` | NUT `battery.charge` |
 | `runtime_s` | number or `null` | NUT `battery.runtime` |
