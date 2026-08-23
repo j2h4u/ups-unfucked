@@ -136,14 +136,28 @@ def test_fresh_install_creates_candidate_layout(tmp_path):
 
 def test_install_renders_and_verifies_units_before_mutation(tmp_path):
     stage = tmp_path / "transaction"
+    fixture_units = tmp_path / "systemd"
+    fixture_units.mkdir()
+    target = fixture_units / "nut-driver.target"
+    server = fixture_units / "nut-server.service"
+    driver = fixture_units / "nut-driver@.service"
+    target.write_text("[Unit]\nDescription=NUT drivers\n")
+    server.write_text(
+        "[Unit]\nDescription=NUT server\n[Service]\nType=oneshot\nExecStart=/bin/true\n"
+    )
+    driver.write_text(
+        "[Unit]\nDescription=NUT driver %i\n"
+        "[Service]\nType=oneshot\nExecStart=/bin/true\nRemainAfterExit=yes\n"
+        "[Install]\nWantedBy=nut-driver.target\n"
+    )
     command = f"""
 set -euo pipefail
 REPO_ROOT={shlex.quote(str(INSTALL.parents[1]))}
 SERVICE_SRC="$REPO_ROOT/systemd/ups-battery-monitor.service"
 VIRTUAL_DRIVER_SRC="$REPO_ROOT/systemd/nut-driver@cyberpower-virtual.service"
-NUT_DRIVER_TARGET_UNIT=/usr/lib/systemd/system/nut-driver.target
-NUT_SERVER_UNIT=/usr/lib/systemd/system/nut-server.service
-NUT_DRIVER_TEMPLATE=/usr/lib/systemd/system/nut-driver@.service
+NUT_DRIVER_TARGET_UNIT={shlex.quote(str(target))}
+NUT_SERVER_UNIT={shlex.quote(str(server))}
+NUT_DRIVER_TEMPLATE={shlex.quote(str(driver))}
 TRANSACTION_ROOT={shlex.quote(str(stage))}
 RUN_USER=j2h4u
 INSTALL_HOME=/home/j2h4u
