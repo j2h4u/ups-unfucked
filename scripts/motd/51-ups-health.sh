@@ -79,3 +79,4 @@ else
 fi
 
 # Output single line
+printf '%b\n' "  ${st_color}${icon}${NC} UPS: ${st_label}${NC} ${DIM}·${NC} charge ${charge}% ${DIM}·${NC} runtime ${rt_fmt} ${DIM}·${NC} load ${load}% ${DIM}·${NC} health ${soh_color}${soh_fmt}${NC}"
