@@ -336,7 +336,7 @@ def test_alarm_during_atomic_cleanup_leaves_no_owned_temp(tmp_path: Path, monkey
         nonlocal injected
         if path == temporary and not injected:
             injected = True
-            os.kill(os.getpid(), signal.SIGALRM)
+            signal.raise_signal(signal.SIGALRM)
         original_unlink(path, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, "unlink", alarm_on_owned_temp)
