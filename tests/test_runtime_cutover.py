@@ -28,7 +28,6 @@ class _Telemetry:
 class _Model:
     def __init__(self) -> None:
         self.ir_k = 0.015
-        self.soh = 1.0
         self.apply_calls: list[dict[str, object]] = []
         self.receipt: dict[str, object] | None = None
 
@@ -37,7 +36,6 @@ class _Model:
             7.2,
             12.0,
             510.0,
-            self.soh,
             1.2,
             self.ir_k,
             0.0,
@@ -113,13 +111,17 @@ class _Publisher:
         return True
 
 
-def _observation(status: str, battery_pct: float, *, monotonic_ns: int = 1) -> PhysicalObservation:
+def _observation(
+    status: str,
+    battery_pct: float,
+    *,
+    monotonic_ns: int = 1,
+    wall_offset_sec: int = 0,
+) -> PhysicalObservation:
     return PhysicalObservation(
-        "boot",
         monotonic_ns,
-        datetime(2026, 8, 22, tzinfo=timezone.utc),
+        datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(seconds=wall_offset_sec),
         status,
-        "13.3",
         13.3,
         20.0,
         0.0 if status.startswith("OB") else 230.0,
@@ -170,11 +172,9 @@ def test_one_closed_natural_blackout_only_persists_observation(
         high_load = index >= 6
         observations.append(
             PhysicalObservation(
-                "boot",
                 index * 1_000_000_000,
                 start + timedelta(seconds=index),
                 "OB DISCHRG",
-                None,
                 12.6 - 0.001 * index - (0.3 if high_load else 0.0),
                 40.0 if high_load else 20.0,
                 0.0,
@@ -185,11 +185,9 @@ def test_one_closed_natural_blackout_only_persists_observation(
         )
     observations.append(
         PhysicalObservation(
-            "boot",
             12_000_000_000,
             start + timedelta(seconds=12),
             "OL CHRG",
-            None,
             12.3,
             40.0,
             230.0,
@@ -200,11 +198,9 @@ def test_one_closed_natural_blackout_only_persists_observation(
     )
     observations.append(
         PhysicalObservation(
-            "boot",
             13_000_000_000,
             start + timedelta(seconds=13),
             "OL",
-            None,
             13.3,
             40.0,
             230.0,
@@ -564,12 +560,12 @@ def test_success_marker_is_one_shot_for_the_next_natural_blackout(
     command = Mock()
     monkeypatch.setattr(monitor, "_run_quick_self_test", command)
     observations = (
-        _observation("OL", 100.0, monotonic_ns=1_000_000_000),
-        _observation("OL", 100.0, monotonic_ns=121_000_000_000),
-        _observation("CAL DISCHRG", 99.0, monotonic_ns=122_000_000_000),
-        _observation("OL", 100.0, monotonic_ns=123_000_000_000),
-        _observation("OB DISCHRG", 98.0, monotonic_ns=124_000_000_000),
-        _observation("OL", 100.0, monotonic_ns=125_000_000_000),
+        _observation("OL", 100.0, monotonic_ns=1_000_000_000, wall_offset_sec=0),
+        _observation("OL", 100.0, monotonic_ns=121_000_000_000, wall_offset_sec=1),
+        _observation("CAL DISCHRG", 99.0, monotonic_ns=122_000_000_000, wall_offset_sec=2),
+        _observation("OL", 100.0, monotonic_ns=123_000_000_000, wall_offset_sec=3),
+        _observation("OB DISCHRG", 98.0, monotonic_ns=124_000_000_000, wall_offset_sec=4),
+        _observation("OL", 100.0, monotonic_ns=125_000_000_000, wall_offset_sec=5),
     )
     daemon = _daemon(tmp_path, observations, TelemetryJsonlWriter(tmp_path))
 

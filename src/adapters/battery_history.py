@@ -6,7 +6,7 @@ import json
 import math
 import os
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import median
 from typing import Any, NotRequired, TypedDict
@@ -70,8 +70,9 @@ class BatteryHistory:
     ) -> None:
         summary = summarize_episode(records, physical_kind=physical_kind)
         if summary is not None:
-            self._add_sag_delta(summary)
-            self._append(summary)
+            if self._episode_at(summary["at"]) is None:
+                self._add_sag_delta(summary)
+                self._append(summary)
 
     def _add_sag_delta(self, summary: EpisodeHistoryRecord) -> None:
         load = summary.get("load_pct")
@@ -187,6 +188,18 @@ class BatteryHistory:
                     return True
         return False
 
+    def _episode_at(self, event_at: str) -> str | None:
+        if not self._path.exists():
+            return None
+        for line in self._path.read_text().splitlines():
+            record = json.loads(line)
+            if not isinstance(record, dict) or record.get("kind") not in {"blackout", "self_test"}:
+                continue
+            value = record.get("at")
+            if isinstance(value, str) and canonical_timestamp(value) == event_at:
+                return str(record["kind"])
+        return None
+
     def _append(self, record: Mapping[str, Any]) -> None:
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n"
@@ -225,9 +238,14 @@ def summarize_episode(
     discharge_percentages = [
         float(row["battery_pct"]) for row in discharge if _finite_number(row.get("battery_pct"))
     ]
+    first_active = next(iter(discharge_percentages), None)
     baseline = _last_percentage(records[:start_index])
     if baseline is None and discharge_percentages:
-        baseline = discharge_percentages[0]
+        baseline = first_active
+    elif first_active is not None and _proves_one_point_plateau(
+        records[:start_index], first_active
+    ):
+        baseline = first_active + 1.0
     depth = (
         max(0.0, baseline - min(discharge_percentages))
         if baseline is not None and discharge_percentages
@@ -331,9 +349,42 @@ def _last_percentage(records: list[dict[str, Any]]) -> float | None:
     )
 
 
+def _proves_one_point_plateau(records: list[dict[str, Any]], first_active: float) -> bool:
+    """Accept only an exact, contiguous upper-to-lower one-point transition."""
+    samples: list[tuple[datetime, float]] = []
+    for row in reversed(records):
+        if not _is_online(row) or not _finite_number(row.get("battery_pct")):
+            break
+        at = _parse_timestamp(str(row.get("at")))
+        if samples and samples[-1][0] - at != timedelta(seconds=1):
+            break
+        samples.append((at, float(row["battery_pct"])))
+        if len(samples) == 5:
+            break
+    samples.reverse()
+    values = [value for _, value in samples]
+    if len(values) < 3:
+        return False
+    for split in range(2, len(values)):
+        upper = values[:split]
+        lower = values[split:]
+        if (
+            all(value == upper[0] for value in upper)
+            and all(value == lower[0] for value in lower)
+            and lower[0] == first_active
+            and upper[0] - lower[0] == 1.0
+        ):
+            return True
+    return False
+
+
 def _is_on_battery(record: dict[str, Any]) -> bool:
     status = str(record.get("status", "")).split()
     return "OB" in status or "CAL" in status
+
+
+def _is_online(record: dict[str, Any]) -> bool:
+    return "OL" in str(record.get("status", "")).split()
 
 
 def _is_test_kind(physical_kind: BlackoutKind | str | None) -> bool:

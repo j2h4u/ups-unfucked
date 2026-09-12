@@ -522,7 +522,7 @@ ensure_private_state() {
     local -r legacy_lock="$legacy_dir/monitor.lock"
 
     # vars
-    local path
+    local path model_normalized
 
     # code
     for path in \
@@ -641,6 +641,35 @@ ModelOwner(
     create_if_missing=True,
 )
 ' "$model"
+    else
+        model_normalized="$(PYTHONPATH="$REPO_ROOT" python3 -c '
+import json
+import sys
+from pathlib import Path
+
+from src.adapters import model_state_schema as schema
+from src.adapters import model_state_persistence as files
+
+path = Path(sys.argv[1])
+state = json.loads(path.read_text())
+changed = False
+if isinstance(state, dict):
+    changed = state.pop("soh", None) is not None
+    changed = state.pop("lut", None) is not None or changed
+    physics = state.get("physics")
+    if isinstance(physics, dict) and "peukert_exponent" in physics:
+        del physics["peukert_exponent"]
+        changed = True
+if changed:
+    schema.validate_target_state(state, source=str(path))
+    files.atomic_write_model(path, schema.canonical_json(state))
+    print("yes")
+else:
+    print("no")
+' "$model")"
+        if [[ "$model_normalized" == "yes" ]]; then
+            log_ok "Removed fixed battery assumptions from model state"
+        fi
     fi
     chmod 600 -- "$model"
     chown --no-dereference "$RUN_USER:$RUN_USER" "$model"

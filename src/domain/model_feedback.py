@@ -30,7 +30,6 @@ _MAX_VOLTAGE_SLOPE_V_PER_S = 0.002
 _MAX_COHORT_SPREAD_K = 0.0015
 _MAX_OBSERVATION_UNCERTAINTY_K = 0.0035
 _VOLTAGE_QUANTUM_HALF_V = 0.05
-_IR_FIELD = "physics.ir_compensation.k_volts_per_percent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +55,6 @@ class ModelFeedbackProposal:
     to_value: float
     reason: str
     evidence_at: str
-    field: str = _IR_FIELD
 
 
 RawSample = tuple[datetime, float, float]

@@ -82,9 +82,7 @@ class ModelOwner:
         self,
         *,
         ir_k: float | None = None,
-        soh: float | None = None,
         event_receipt: Mapping[str, Any] | None = None,
-        receipt: Mapping[str, Any] | None = None,
     ) -> dict[str, tuple[float, float]]:
         """Atomically apply feedback and, when supplied, its one event receipt.
 
@@ -94,9 +92,7 @@ class ModelOwner:
         """
         with self._lock:
             self._require_writer_lock()
-            if event_receipt is not None and receipt is not None:
-                raise ValueError("provide only one of event_receipt and receipt")
-            receipt_data = _receipt_data(event_receipt if event_receipt is not None else receipt)
+            receipt_data = _receipt_data(event_receipt)
             event_at = receipt_data.get("event_at") if receipt_data is not None else None
             if event_at is not None and _same_event(self._state, event_at):
                 return {}
@@ -106,22 +102,16 @@ class ModelOwner:
             ir = physics["ir_compensation"]
             assert isinstance(ir, dict)
             before_ir_k = float(ir["k_volts_per_percent"])
-            before_soh = float(candidate["soh"])
             if ir_k is not None:
                 ir["k_volts_per_percent"] = ir_k
-            if soh is not None:
-                candidate["soh"] = soh
             schema.validate_target_state(candidate, source=str(self.model_path))
             after_ir_k = float(ir["k_volts_per_percent"])
-            after_soh = float(candidate["soh"])
             changes: dict[str, tuple[float, float]] = {}
             if ir_k is not None and before_ir_k != after_ir_k:
                 changes["physics.ir_compensation.k_volts_per_percent"] = (
                     before_ir_k,
                     after_ir_k,
                 )
-            if soh is not None and before_soh != after_soh:
-                changes["soh"] = (before_soh, after_soh)
             if not changes:
                 return changes
             if receipt_data is not None:
@@ -151,22 +141,19 @@ class ModelOwner:
         assert isinstance(physics, Mapping)
         ir = physics["ir_compensation"]
         assert isinstance(ir, Mapping)
-        lut = _snapshot_lut(state["lut"])
         return FrozenModelSnapshot(
             rated_capacity_ah=self.rated_capacity_ah,
             nominal_voltage_v=NOMINAL_VOLTAGE,
             nominal_power_watts=NOMINAL_POWER_WATTS,
-            soh=float(state["soh"]),
-            peukert_exponent=float(physics["peukert_exponent"]),
+            peukert_exponent=schema.DEFAULT_PEUKERT_EXPONENT,
             ir_k_v_per_pp=float(ir["k_volts_per_percent"]),
             ir_reference_load_percent=0.0,
-            lut=lut,
+            lut=_default_lut(),
         )
 
 
-def _snapshot_lut(raw_lut: object) -> FrozenLut:
-    assert isinstance(raw_lut, list)
-    return tuple(LutPoint(float(entry["v"]), float(entry["soc"])) for entry in raw_lut)
+def _default_lut() -> FrozenLut:
+    return tuple(LutPoint(voltage, soc) for voltage, soc in schema.DEFAULT_LUT)
 
 
 def _receipt_data(receipt: Mapping[str, Any] | None) -> dict[str, Any] | None:

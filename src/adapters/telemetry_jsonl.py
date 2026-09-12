@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import math
+from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.adapters.battery_history import BatteryHistory
+from src.adapters.battery_history import BatteryHistory, canonical_timestamp
 from src.adapters.jsonl_errors import EventCorruptionError
-from src.adapters.minimal_event_file import MinimalEvent, append, sample
+from src.adapters.minimal_event_file import MinimalEvent, TelemetrySample, append, sample
 from src.adapters.minimal_event_file import read as _read
 from src.domain.values import BlackoutKind, PhysicalObservation
 
@@ -31,12 +33,15 @@ class TelemetryJsonlWriter:
         self._episode_records: list[dict[str, object]] = []
         self._episode_kind: BlackoutKind = BlackoutKind.BLACKOUT_REAL
         self._completed_episode: tuple[dict[str, object], ...] | None = None
-        self._restore_active_episode()
+        self._recharging = False
         self._silent_window = (
             timedelta(seconds=silent_window_sec) if silent_window_sec is not None else None
         )
+        self._recent_online: deque[PhysicalObservation] = deque(maxlen=5)
         self._silent_observations: list[PhysicalObservation] = []
         self._post_full_until: datetime | None = None
+        self._restore_active_episode()
+        self._reconcile_closed_episodes()
 
     def _restore_active_episode(self) -> None:
         if not self._path.exists():
@@ -45,21 +50,67 @@ class TelemetryJsonlWriter:
             records = _read(self._path).records
         except EventCorruptionError:
             return
-        if not records or not _active_status(records[-1].get("status")):
+        if not records:
             return
-        start = len(records) - 1
-        while start > 0 and not _online_status(records[start - 1].get("status")):
-            start -= 1
-        self._episode_records = [dict(record) for record in records[start:]]
-        self._episode_active = True
+        if _active_status(records[-1].get("status")):
+            active_start = len(records) - 1
+            while active_start > 0 and _active_status(records[active_start - 1].get("status")):
+                active_start -= 1
+            context_start = active_start
+            while (
+                context_start > 0
+                and active_start - context_start < 5
+                and _online_status(records[context_start - 1].get("status"))
+            ):
+                context_start -= 1
+            context = records[context_start:active_start]
+            self._restore_recent_online(context)
+            self._episode_records = [dict(record) for record in records[context_start:]]
+            self._episode_active = True
+        elif _online_status(records[-1].get("status")):
+            self._restore_recent_online(records)
         # Provenance is process-local; an active tail from a prior daemon is
         # never allowed to become a self-test after restart.
         self._episode_kind = BlackoutKind.BLACKOUT_REAL
 
+    def _reconcile_closed_episodes(self) -> None:
+        """Recover summaries whose raw terminal OL was durable before a restart."""
+        if not self._path.exists():
+            return
+        try:
+            records = _read(self._path).records
+        except EventCorruptionError:
+            return
+        candidate = _latest_closed_episode(records)
+        if candidate is None:
+            return
+        start, end = candidate
+        start_at = _canonical_sample_time(records[start])
+        episode_starts = {
+            at
+            for at, kind in self._history.event_kinds().items()
+            if kind in {"blackout", "self_test"}
+        }
+        if start_at in episode_starts or any(at >= start_at for at in episode_starts):
+            return
+        context_start = max(0, start - 5)
+        self._history.episode(
+            [dict(row) for row in records[context_start : end + 1]],
+            physical_kind=BlackoutKind.BLACKOUT_REAL,
+        )
+
     def write(self, observation: PhysicalObservation, physical_kind: BlackoutKind) -> bool:
         """Append one eligible sample; return whether a line was written."""
-        if physical_kind in {BlackoutKind.BLACKOUT_REAL, BlackoutKind.BLACKOUT_TEST}:
-            context = [_sample(item) for item in self._silent_observations]
+        if physical_kind in {
+            BlackoutKind.BLACKOUT_REAL,
+            BlackoutKind.BLACKOUT_TEST,
+        } and _active_status(observation.raw_status):
+            if self._episode_active:
+                row = _sample(observation)
+                append(self._path, row)
+                self._episode_records.append(row)
+                return True
+            context = self._event_context_rows()
             self._flush_silent_observations()
             row = _sample(observation)
             append(self._path, row)
@@ -70,45 +121,54 @@ class TelemetryJsonlWriter:
                     else BlackoutKind.BLACKOUT_REAL
                 )
             self._episode_active = True
-            self._episode_records.extend((*context, row))
+            self._recharging = False
+            self._episode_records = [*context, row]
             self._post_full_until = None
             return True
-        elif physical_kind == BlackoutKind.ONLINE:
+        if physical_kind == BlackoutKind.ONLINE:
             return self._write_online(observation)
         return False
 
     def _write_online(self, observation: PhysicalObservation) -> bool:
-        if observation.battery_pct is not None and observation.battery_pct < 100.0:
-            self._flush_silent_observations()
-            append(self._path, _sample(observation))
-            self._silent_observations.clear()
-            if not self._episode_active:
-                self._episode_kind = BlackoutKind.BLACKOUT_REAL
-            self._episode_active = True
-            self._episode_records.append(_sample(observation))
-            self._post_full_until = None
-            return True
         if self._episode_active:
             row = _sample(observation)
             append(self._path, row)
             self._episode_records.append(row)
             self._episode_active = False
+            self._recharging = _below_full(observation)
             self._post_full_until = _post_full_deadline(observation, self._silent_window)
+            self._remember_recent_observation(observation, pending=False)
             records = self._episode_records
             self._episode_records = []
             self._history.episode(records, physical_kind=self._episode_kind)
             self._completed_episode = tuple(records)
             self._episode_kind = BlackoutKind.BLACKOUT_REAL
             return True
-        if observation.battery_pct != 100.0:
-            return False
+        if self._recharging:
+            return self._write_recharge(observation)
         if self._post_full_until is not None:
+            if _below_full(observation):
+                self._recharging = True
+                self._post_full_until = None
+                return self._write_recharge(observation)
             if _observation_time(observation) <= self._post_full_until:
                 append(self._path, _sample(observation))
+                self._remember_recent_observation(observation, pending=False)
                 return True
             self._post_full_until = None
         self._remember_silent_observation(observation)
         return False
+
+    def _write_recharge(self, observation: PhysicalObservation) -> bool:
+        row = _sample(observation)
+        append(self._path, row)
+        self._remember_recent_observation(observation, pending=False)
+        if _below_full(observation):
+            self._post_full_until = None
+        else:
+            self._recharging = False
+            self._post_full_until = _post_full_deadline(observation, self._silent_window)
+        return True
 
     def take_completed_episode(self) -> tuple[dict[str, object], ...] | None:
         """Return a newly closed episode once, after its telemetry is durable."""
@@ -134,18 +194,59 @@ class TelemetryJsonlWriter:
         return self._history.upsert_model_update(receipt)
 
     def _remember_silent_observation(self, observation: PhysicalObservation) -> None:
-        if self._silent_window is None:
-            return
-        self._silent_observations.append(observation)
-        cutoff = _observation_time(observation) - self._silent_window
-        self._silent_observations = [
-            item for item in self._silent_observations if _observation_time(item) >= cutoff
-        ]
+        self._remember_recent_observation(observation, pending=True)
 
     def _flush_silent_observations(self) -> None:
         for observation in sorted(self._silent_observations, key=_observation_time):
             append(self._path, _sample(observation))
             self._silent_observations.remove(observation)
+
+    def _remember_recent_observation(
+        self, observation: PhysicalObservation, *, pending: bool
+    ) -> None:
+        if not _online_status(observation.raw_status):
+            self._recent_online.clear()
+            self._silent_observations.clear()
+            return
+        if self._recent_online:
+            previous = _observation_time(self._recent_online[-1])
+            if _observation_time(observation) - previous != timedelta(seconds=1):
+                self._recent_online.clear()
+        self._recent_online.append(observation)
+        if pending and self._silent_window is not None:
+            self._silent_observations.append(observation)
+            cutoff = _observation_time(observation) - self._silent_window
+            self._silent_observations = [
+                item for item in self._silent_observations if _observation_time(item) >= cutoff
+            ]
+
+    def _event_context_rows(self) -> list[dict[str, object]]:
+        observations = {_observation_time(item): item for item in self._recent_online}
+        observations.update({_observation_time(item): item for item in self._silent_observations})
+        return [_sample(item) for item in sorted(observations.values(), key=_observation_time)]
+
+    def _restore_recent_online(self, records: tuple[TelemetrySample, ...]) -> None:
+        for row in records[-5:]:
+            if not _online_status(row.get("status")):
+                self._recent_online.clear()
+                continue
+            try:
+                at = _parse_observation_time(str(row["at"]))
+            except (KeyError, ValueError):
+                self._recent_online.clear()
+                continue
+            observation = PhysicalObservation(
+                monotonic_ns=0,
+                wall_time_utc=at,
+                raw_status=str(row["status"]),
+                battery_voltage_v=_optional_float(row.get("battery_v")),
+                load_percent=_optional_float(row.get("load_pct")),
+                input_voltage_v=_optional_float(row.get("input_v")),
+                battery_pct=_optional_float(row.get("battery_pct")),
+                runtime_s=_optional_float(row.get("runtime_s")),
+                output_v=_optional_float(row.get("output_v")),
+            )
+            self._remember_recent_observation(observation, pending=False)
 
 
 def _sample(observation: PhysicalObservation) -> dict[str, object]:
@@ -188,6 +289,43 @@ def _observation_time(observation: PhysicalObservation) -> datetime:
     if at.tzinfo is None:
         at = at.replace(tzinfo=timezone.utc)
     return at.astimezone(timezone.utc)
+
+
+def _parse_observation_time(value: str) -> datetime:
+    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        raise ValueError("telemetry timestamp must include a timezone")
+    return moment.astimezone(timezone.utc)
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def _canonical_sample_time(record: TelemetrySample) -> str:
+    return canonical_timestamp(record["at"])
+
+
+def _latest_closed_episode(
+    records: tuple[TelemetrySample, ...],
+) -> tuple[int, int] | None:
+    for index in range(len(records) - 1, -1, -1):
+        if not _active_status(records[index].get("status")):
+            continue
+        start = index
+        while start > 0 and _active_status(records[start - 1].get("status")):
+            start -= 1
+        end = index + 1
+        while end < len(records) and _active_status(records[end].get("status")):
+            end += 1
+        return (start, end) if end < len(records) else None
+    return None
+
+
+def _below_full(observation: PhysicalObservation) -> bool:
+    return observation.battery_pct is not None and observation.battery_pct < 100.0
 
 
 def _post_full_deadline(

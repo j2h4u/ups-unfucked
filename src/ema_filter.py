@@ -1,5 +1,4 @@
 import math
-import time
 from typing import Optional
 
 
@@ -31,12 +30,9 @@ class MetricEMA:
 
         # EMA state
         self.ema_value: Optional[float] = None
-        self._first_sample_time: Optional[float] = None
 
     def update(self, new_value: float) -> float:
         """Update EMA with new value; return smoothed value."""
-        if self._first_sample_time is None:
-            self._first_sample_time = time.monotonic()
         self.ema_value = self._update_ema(new_value, self.ema_value)
         return self.ema_value
 
@@ -58,13 +54,6 @@ class MetricEMA:
             return new_value
         alpha = self._adaptive_alpha(new_value, current_ema)
         return alpha * new_value + (1 - alpha) * current_ema
-
-    @property
-    def stabilized(self) -> bool:
-        """True if enough real time has elapsed for EMA to converge (≥ window_sec)."""
-        if self._first_sample_time is None:
-            return False
-        return (time.monotonic() - self._first_sample_time) >= self.window_sec
 
     @property
     def value(self) -> Optional[float]:
@@ -129,11 +118,6 @@ class EMAFilter:
         """
         self.voltage_ema.update(voltage)
         self.load_ema.update(load)
-
-    @property
-    def stabilized(self) -> bool:
-        """True if enough wall-clock time has elapsed (≥ window_sec) for EMA to converge."""
-        return self.voltage_ema.stabilized and self.load_ema.stabilized
 
     @property
     def voltage(self) -> Optional[float]:

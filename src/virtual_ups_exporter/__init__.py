@@ -31,7 +31,11 @@ MAX_NUT_VALUE_TEXT = 512
 # Standalone exporter default; the composition root derives the production
 # value from shutdown policy and NUT transport timing.
 MAX_PUBLICATION_AGE_SEC = 30.0
-PUBLICATION_DEADLINE_SEC = 0.8
+# A sub-second alarm produced false failures when the host was briefly under
+# memory or scheduler pressure.  The systemd watchdog remains the outer safety
+# boundary; this only prevents a genuinely stuck filesystem call from hanging
+# until then.
+PUBLICATION_DEADLINE_SEC = 10.0
 
 
 class SafetyPublicationError(RuntimeError):
@@ -44,13 +48,6 @@ class PollPublicationContext:
     snapshot: FrozenModelSnapshot
     calculation: SafetyCalculation
     poll_latency_ms: float
-
-
-@dataclass(frozen=True, slots=True)
-class _ApparentTransitionSag:
-    observed_utc: str
-    voltage_drop_v: float
-    load_delta_percent: float
 
 
 class VirtualUpsExporter:
@@ -75,8 +72,6 @@ class VirtualUpsExporter:
         self._lock = Lock()
         self._staged: PollPublicationContext | None = None
         self._last_publication: SafetyPublication | None = None
-        self._last_online_observation: PhysicalObservation | None = None
-        self._last_apparent_sag: _ApparentTransitionSag | None = None
         self._last_error: str | None = None
         self._poll_error: str | None = None
         self._storage_error: str | None = None
@@ -117,7 +112,6 @@ class VirtualUpsExporter:
                 raise SafetyPublicationError(
                     f"virtual UPS publication failed: {self._last_error}"
                 ) from exc
-            self._record_apparent_transition(context)
             self._last_publication = publication
             self._poll_error = None
             self._refresh_error_locked()
@@ -228,7 +222,6 @@ class VirtualUpsExporter:
             "battery.voltage": observation.battery_voltage_v,
             "ups.load": observation.load_percent,
             "input.voltage": observation.input_voltage_v,
-            "battery.health": round(snapshot.soh * 100.0),
             "battery.load_sag.coefficient_v_per_load_percent": snapshot.ir_k_v_per_pp,
             "ups.raw.status": publication.raw_status,
             "ups.raw.lb_observed": publication.raw_lb_observed,
@@ -239,44 +232,7 @@ class VirtualUpsExporter:
             ),
             "ups.safety.event_class": publication.event_class.value,
         }
-        if self._last_apparent_sag is not None:
-            metrics["battery.load_sag.apparent_transition_v"] = (
-                self._last_apparent_sag.voltage_drop_v
-            )
-            metrics["battery.load_sag.apparent_transition_load_delta_percent"] = (
-                self._last_apparent_sag.load_delta_percent
-            )
         return {key: value for key, value in metrics.items() if value is not None}
-
-    def _record_apparent_transition(self, context: PollPublicationContext) -> None:
-        observation = context.observation
-        if self._is_online(observation):
-            self._last_online_observation = observation
-            return
-        apparent_sag = self._apparent_sag(observation)
-        if apparent_sag is not None:
-            self._last_apparent_sag = apparent_sag
-
-    @staticmethod
-    def _is_online(observation: PhysicalObservation) -> bool:
-        flags = frozenset(observation.raw_status.split())
-        return "OL" in flags and "OB" not in flags
-
-    def _apparent_sag(self, observation: PhysicalObservation) -> _ApparentTransitionSag | None:
-        if "OB" not in observation.raw_status.split():
-            return None
-        before = self._last_online_observation
-        if before is None:
-            return None
-        values = _transition_values(before, observation)
-        if values is None:
-            return None
-        before_voltage, voltage, before_load, load = values
-        return _ApparentTransitionSag(
-            observed_utc=observation.wall_time_utc.isoformat(),
-            voltage_drop_v=before_voltage - voltage,
-            load_delta_percent=load - before_load,
-        )
 
     def _freshness_locked(self, now: float) -> PublicationFreshness:
         return self._freshness_tracker.evaluate(
@@ -344,19 +300,6 @@ class VirtualUpsExporter:
             raise SafetyPublicationError("publication runtime disagrees with staged calculation")
         if publication.raw_status != observation.raw_status:
             raise SafetyPublicationError("publication raw status disagrees with staged observation")
-
-
-def _transition_values(
-    before: PhysicalObservation,
-    observation: PhysicalObservation,
-) -> tuple[float, float, float, float] | None:
-    before_voltage = before.battery_voltage_v
-    voltage = observation.battery_voltage_v
-    before_load = before.load_percent
-    load = observation.load_percent
-    if before_voltage is None or voltage is None or before_load is None or load is None:
-        return None
-    return before_voltage, voltage, before_load, load
 
 
 def _nut_value(value: object) -> str:

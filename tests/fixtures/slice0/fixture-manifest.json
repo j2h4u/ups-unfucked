@@ -15,10 +15,9 @@
   },
   "current_schema_and_model_identity": {
     "jsonl_record_schema_version": 2,
-    "target_model_keys": ["soh", "physics", "lut"],
-    "physics_keys": ["peukert_exponent", "ir_compensation"],
-    "ir_compensation_keys": ["k_volts_per_percent"],
-    "lut_entry_keys": ["v", "soc"]
+    "target_model_keys": ["physics"],
+    "physics_keys": ["ir_compensation"],
+    "ir_compensation_keys": ["k_volts_per_percent"]
   },
   "terminal_policy": {
     "current_terminal_dispositions": [

@@ -8,7 +8,6 @@ a scientific model change is allowed; that transaction remains in
 
 import errno
 import fcntl
-import hashlib
 import os
 import stat
 import tempfile
@@ -23,11 +22,6 @@ class ModelStateFileError(RuntimeError):
 
 class ModelStateLockHeld(ModelStateFileError):
     """Another writer owns the model directory lock."""
-
-
-def persisted_hash(raw: bytes) -> str:
-    """Return the SHA-256 receipt for exact persisted bytes."""
-    return hashlib.sha256(raw).hexdigest()
 
 
 def read_model_file(path: Path, *, error_type: type[Exception] = ModelStateFileError) -> bytes:
@@ -67,11 +61,10 @@ def _read_model_bytes(
     return b"".join(chunks)
 
 
-def atomic_write_model(path: str | Path, content: str, *, mode: int = 0o600) -> str:
-    """Durably replace one model-owned file and return its exact content hash."""
+def atomic_write_model(path: str | Path, content: str, *, mode: int = 0o600) -> None:
+    """Durably replace one model-owned file."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    content_hash = persisted_hash(content.encode("utf-8"))
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -91,7 +84,6 @@ def atomic_write_model(path: str | Path, content: str, *, mode: int = 0o600) -> 
             except OSError as cleanup_error:
                 exc.add_note(f"temporary cleanup failed: {cleanup_error}")
         raise
-    return content_hash
 
 
 def sync_directory(path: Path) -> None:

@@ -20,7 +20,7 @@ _NUT_SAFE_NAME = re.compile(r"^[a-zA-Z0-9._-]+$")
 class NUTTelemetryPort(Protocol):
     """Read-only NUT contract exposed to the telemetry adapter."""
 
-    def get_ups_vars_with_tokens(self) -> tuple[dict[str, float | str], dict[str, str]]: ...
+    def get_ups_vars(self) -> dict[str, float | str]: ...
 
 
 def _validate_nut_identifier(value: str, label: str) -> None:
@@ -41,7 +41,7 @@ class NUTClient:
     - Stateless polling (reconnect on each call for automatic recovery)
     - Socket timeout prevents hanging if NUT service crashes
     - Error handling leaves socket failures visible to the read-only caller
-    - Returns parsed variables plus exact raw value tokens for provenance
+    - Returns parsed variables for the read-only telemetry caller
     """
 
     def __init__(self, host="localhost", port=3493, timeout=2.0, ups_name="cyberpower"):
@@ -70,8 +70,8 @@ class NUTClient:
             logger.debug(f"Socket close error (ignored): {e}")
 
     @staticmethod
-    def _parse_var_line_with_token(line):
-        """Parse one VAR line while retaining the exact quoted value token."""
+    def _parse_var_line(line):
+        """Parse one VAR line into its variable name and value."""
         if not line.startswith("VAR "):
             return None
         words = line.split()
@@ -86,7 +86,7 @@ class NUTClient:
             value = float(raw_value)
         except ValueError:
             value = raw_value
-        return var_name, value, raw_value
+        return var_name, value
 
     def connect(self):
         """Establish TCP connection to NUT upsd (called by _socket_session context manager)."""
@@ -146,26 +146,18 @@ class NUTClient:
             for line in payload.splitlines(keepends=True)
         )
 
-    def get_ups_vars_with_tokens(self) -> tuple[dict[str, float | str], dict[str, str]]:
-        """Fetch UPS variables and retain exact NUT value tokens for provenance.
-
-        The first mapping contains parsed values; the second mapping contains
-        the unmodified text between NUT's quotes. This lets scientific capture
-        derive voltage quantization without changing the values used by the
-        established safety path.
-        """
+    def get_ups_vars(self) -> dict[str, float | str]:
+        """Fetch and parse one NUT LIST VAR response."""
         with self._socket_session():
             assert self.sock is not None
             self.sock.sendall(f"LIST VAR {self.ups_name}\n".encode())
             raw = self._recv_until(f"END LIST VAR {self.ups_name}")
 
             values: dict[str, float | str] = {}
-            tokens: dict[str, str] = {}
             for line in raw.splitlines():
-                parsed = self._parse_var_line_with_token(line)
+                parsed = self._parse_var_line(line)
                 if parsed is None:
                     continue
-                var_name, value, raw_value = parsed
+                var_name, value = parsed
                 values[var_name] = value
-                tokens[var_name] = raw_value
-            return values, tokens
+            return values

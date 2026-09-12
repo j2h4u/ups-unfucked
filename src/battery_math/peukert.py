@@ -10,7 +10,6 @@ class PeukertParameters:
     """Independent physical inputs for one remaining-runtime prediction."""
 
     capacity_ah: float = RATED_CAPACITY_AH
-    soh: float = 1.0
     peukert_exponent: float = 1.2
     nominal_voltage: float = 12.0
     nominal_power_watts: float = NOMINAL_POWER_WATTS
@@ -36,7 +35,7 @@ def peukert_runtime_hours(
         nominal_power_watts: UPS nominal power output (W)
 
     Returns:
-        Runtime in hours at SoC=1.0, SoH=1.0
+        Runtime in hours at SoC=1.0
         Returns the canonical 24-hour safety cap for zero/negative load.
     """
     if load_percent <= 0:
@@ -63,23 +62,20 @@ def runtime_minutes(
         parameters: Frozen battery and UPS physics inputs.
 
     Returns:
-        Runtime in minutes at given SoC and SoH
+        Runtime in minutes at given SoC
     """
     if soc <= 0:
         return 0.0
     if load_percent <= 0:
         return 24.0 * 60.0
 
-    T_hours = (
-        peukert_runtime_hours(
-            load_percent,
-            parameters.capacity_ah,
-            parameters.peukert_exponent,
-            parameters.nominal_voltage,
-            parameters.nominal_power_watts,
-        )
-        * soc
-        * parameters.soh
+    T_hours = peukert_runtime_hours(
+        load_percent,
+        parameters.capacity_ah,
+        parameters.peukert_exponent,
+        parameters.nominal_voltage,
+        parameters.nominal_power_watts,
     )
+    T_hours *= soc
 
     return max(0.0, T_hours * 60)
