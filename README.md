@@ -22,9 +22,10 @@ compact and honest.
 - An eligible closed natural blackout may produce one compact, durable load-step IR observation.
   Three consistent observations can produce one bounded automatic IR update; every observation and
   applied change, its size, source event, and reason are appended to `history.jsonl`.
-- If no blackout or calibration/self-test has occurred for 14 days and the UPS is at OL100, the
-  daemon may run one automatic quick self-test. The result is operational evidence, never a
-  capacity or battery-health claim.
+- If no blackout or calibration/self-test has occurred for 14 days and the UPS is online at 100%,
+  the daemon may run one automatic quick self-test. Its one-second samples capture the initial
+  voltage sag, minimum voltage, and load for comparison with later events. This is operational
+  evidence, never a capacity or battery-health claim.
 - The installer installs the daemon and NUT-facing integration. The optional MOTD script gives a
   short status line at login.
 
@@ -69,7 +70,7 @@ diagnostics but is not a replacement for the telemetry file.
 ```bash
 sudo scripts/install.sh
 upsc cyberpower-virtual@localhost
-scripts/blackout-history.py
+scripts/blackout-history.py --year "$(date -u +%Y)"
 bash ~/scripts/motd/51-ups-health.sh
 ```
 
@@ -91,7 +92,7 @@ systemctl is-active ups-battery-monitor.service
 upsc cyberpower@localhost ups.status
 upsc cyberpower-virtual@localhost ups.status
 upsc cyberpower-virtual@localhost battery.runtime
-scripts/blackout-history.py
+scripts/blackout-history.py --day "$(date -u +%F)"
 bash ~/scripts/motd/51-ups-health.sh
 journalctl -u ups-battery-monitor.service --since today --no-pager
 ```

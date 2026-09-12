@@ -9,11 +9,9 @@ from src.domain.values import BlackoutKind, PhysicalObservation
 
 def _observation(status: str, battery_pct: float | None, offset: int) -> PhysicalObservation:
     return PhysicalObservation(
-        boot_id="boot",
         monotonic_ns=offset * 1_000_000_000,
         wall_time_utc=datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(seconds=offset),
         raw_status=status,
-        battery_voltage_raw="13.3",
         battery_voltage_v=13.3,
         load_percent=20.0,
         input_voltage_v=230.0 if "CAL" in status else 0.0,
@@ -43,7 +41,7 @@ def test_episode_summary_classifies_natural_depth_and_efc() -> None:
     }
 
 
-def test_episode_uses_last_pre_blackout_charge_as_depth_baseline() -> None:
+def test_episode_uses_pre_blackout_charge_as_depth_baseline() -> None:
     rows = [
         {"at": "2026-08-22T00:00:00Z", "status": "OL", "battery_pct": 100.0},
         {"at": "2026-08-22T00:00:01Z", "status": "OB DISCHRG", "battery_pct": 94.0},
@@ -57,6 +55,22 @@ def test_episode_uses_last_pre_blackout_charge_as_depth_baseline() -> None:
         "depth_pct": 6.0,
         "efc": 0.06,
     }
+
+
+def test_charge_drop_before_ob_is_part_of_blackout_depth() -> None:
+    rows = [
+        {"at": "2026-09-03T22:43:41Z", "status": "OL", "battery_pct": 100.0},
+        {"at": "2026-09-03T22:43:42Z", "status": "OL", "battery_pct": 100.0},
+        {"at": "2026-09-03T22:43:43Z", "status": "OL", "battery_pct": 99.0},
+        {"at": "2026-09-03T22:43:44Z", "status": "OB DISCHRG", "battery_pct": 99.0},
+        {"at": "2026-09-03T22:44:08Z", "status": "OL CHRG", "battery_pct": 99.0},
+    ]
+
+    summary = summarize_episode(rows)
+
+    assert summary is not None
+    assert summary["depth_pct"] == 1.0
+    assert summary["efc"] == 0.01
 
 
 def test_ordinary_ob_with_mains_input_is_not_a_self_test() -> None:
@@ -158,8 +172,8 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
             "kind": "self_test",
             "at": "2026-08-22T00:00:40Z",
             "duration_s": 10,
-            "depth_pct": 0.0,
-            "efc": 0.0,
+            "depth_pct": 10.0,
+            "efc": 0.1,
         },
     ]
 
@@ -245,7 +259,8 @@ def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path:
     path.write_text(
         '{"kind":"model_update","at":"2026-08-22T00:01:00.900Z",'
         '"event_at":"2026-08-22T00:00:00.900Z","evidence_at":"2026-08-22T00:00:30.1Z",'
-        '"changes":{"soh":{"from":1.0,"to":0.9,"delta":-0.1}},"reason":"old"}\n'
+        '"changes":{"physics.ir_compensation.k_volts_per_percent":'
+        '{"from":0.015,"to":0.014,"delta":-0.001}},"reason":"old"}\n'
     )
     history = BatteryHistory(path)
 
@@ -255,7 +270,13 @@ def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path:
         {
             "event_at": "2026-08-22T00:00:00.2Z",
             "evidence_at": "2026-08-22T00:00:31.2Z",
-            "changes": {"soh": {"from": 1.0, "to": 0.8, "delta": -0.2}},
+            "changes": {
+                "physics.ir_compensation.k_volts_per_percent": {
+                    "from": 0.015,
+                    "to": 0.013,
+                    "delta": -0.002,
+                }
+            },
             "reason": "new",
         }
     )
@@ -269,10 +290,10 @@ def test_history_recovers_minimal_model_receipt_exactly_once(tmp_path: Path) -> 
         "event_at": "2026-08-22T00:00:00Z",
         "evidence_at": "2026-08-22T00:00:30Z",
         "changes": {
-            "soh": {
-                "from": 1.0,
-                "to": 0.92,
-                "delta": -0.08,
+            "physics.ir_compensation.k_volts_per_percent": {
+                "from": 0.015,
+                "to": 0.012,
+                "delta": -0.003,
                 "evidence_at": "2026-08-22T00:00:31Z",
                 "reason": "curve evidence",
             }

@@ -16,11 +16,9 @@ class BlackoutKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PhysicalObservation:
-    boot_id: str
     monotonic_ns: int
     wall_time_utc: datetime
     raw_status: str
-    battery_voltage_raw: str | None
     battery_voltage_v: float | None
     load_percent: float | None
     input_voltage_v: float | None
@@ -34,7 +32,6 @@ class FrozenModelSnapshot:
     rated_capacity_ah: float
     nominal_voltage_v: float
     nominal_power_watts: float
-    soh: float
     peukert_exponent: float
     ir_k_v_per_pp: float
     ir_reference_load_percent: float

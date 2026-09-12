@@ -108,6 +108,26 @@ def test_install_ensures_private_state_and_repairs_modes(tmp_path):
     assert (state / "model.json").is_file()
 
 
+def test_install_removes_fixed_assumptions_from_current_model(tmp_path):
+    home = tmp_path / "home"
+    state = home / ".local" / "state" / "ups-battery-monitor"
+    state.mkdir(parents=True)
+    model = state / "model.json"
+    model.write_text(
+        '{"soh":1.0,"physics":{"peukert_exponent":1.2,'
+        '"ir_compensation":{"k_volts_per_percent":0.015}},'
+        '"lut":[{"v":13.7,"soc":1.0},{"v":10.8,"soc":0.0}]}\n'
+    )
+
+    result = _run_helper(home, dry_run=False)
+
+    assert result.returncode == 0, result.stderr
+    assert '"soh"' not in model.read_text()
+    assert '"peukert_exponent"' not in model.read_text()
+    assert '"lut"' not in model.read_text()
+    assert "Removed fixed battery assumptions" in result.stdout
+
+
 def test_install_stops_active_service_before_mutating_private_state(tmp_path):
     home = tmp_path / "home"
     events = tmp_path / "events.log"

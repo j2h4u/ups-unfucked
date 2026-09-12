@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,11 +15,9 @@ def _observation(
     status: str, battery_pct: float | None, *, offset_sec: int = 0
 ) -> PhysicalObservation:
     return PhysicalObservation(
-        boot_id="boot",
         monotonic_ns=1,
         wall_time_utc=datetime(2026, 8, 22, tzinfo=timezone.utc) + timedelta(seconds=offset_sec),
         raw_status=status,
-        battery_voltage_raw="13.3",
         battery_voltage_v=13.3,
         load_percent=20.0,
         input_voltage_v=0.0 if status.startswith("OB") else 230.0,
@@ -50,15 +49,16 @@ def test_writer_records_blackout_recharge_and_one_terminal_sample(tmp_path: Path
     assert rows[-1]["battery_pct"] == 100.0
     completed = writer.take_completed_episode()
     assert completed is not None
-    assert completed[-1]["status"] == "OL"
+    assert completed[-1]["status"] == "OL CHRG"
     assert writer.take_completed_episode() is None
 
 
 def test_full_online_start_is_silent_but_recharge_restart_is_recorded(tmp_path: Path) -> None:
     writer = TelemetryJsonlWriter(tmp_path)
     assert not writer.write(_observation("OL", 100.0), BlackoutKind.ONLINE)
-    assert writer.write(_observation("OL CHRG", 99.0), BlackoutKind.ONLINE)
-    assert writer.write(_observation("OL", 100.0), BlackoutKind.ONLINE)
+    assert not writer.write(_observation("OL CHRG", 99.0), BlackoutKind.ONLINE)
+    assert not writer.write(_observation("OL", 100.0), BlackoutKind.ONLINE)
+    assert not (tmp_path / "telemetry.jsonl").exists()
 
 
 def test_silent_online_samples_are_time_bounded_and_flush_before_event(tmp_path: Path) -> None:
@@ -85,8 +85,8 @@ def test_recorded_recharge_clears_silent_samples_without_duplicates(tmp_path: Pa
     full = _observation("OL", 100.0, offset_sec=2)
     event = _observation("OB DISCHRG", 90.0, offset_sec=3)
 
-    assert writer.write(charging, BlackoutKind.ONLINE)
-    assert writer.write(full, BlackoutKind.ONLINE)
+    assert not writer.write(charging, BlackoutKind.ONLINE)
+    assert not writer.write(full, BlackoutKind.ONLINE)
     assert writer.write(event, BlackoutKind.BLACKOUT_REAL)
 
     rows = _lines(tmp_path)
@@ -107,7 +107,7 @@ def test_silent_context_flushes_before_recharge_precursor_and_cal(tmp_path: Path
 
     precursor = _observation("OL", 99.0, offset_sec=3)
     calibration = _observation("CAL", 99.0, offset_sec=4)
-    assert writer.write(precursor, BlackoutKind.ONLINE)
+    assert not writer.write(precursor, BlackoutKind.ONLINE)
     assert writer.write(calibration, BlackoutKind.BLACKOUT_TEST)
 
     assert [row["at"] for row in _lines(tmp_path)] == [
@@ -117,6 +117,35 @@ def test_silent_context_flushes_before_recharge_precursor_and_cal(tmp_path: Path
         "2026-08-22T00:00:03Z",
         "2026-08-22T00:00:04Z",
     ]
+
+
+def test_online_charge_drop_before_status_change_keeps_response_context(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path, silent_window_sec=120)
+    for offset_sec in range(31):
+        observation = _observation("OL", 100.0, offset_sec=offset_sec)
+        observation = replace(observation, battery_voltage_v=13.7, load_percent=19.0)
+        assert not writer.write(observation, BlackoutKind.ONLINE)
+
+    precursor = _observation("OL", 99.0, offset_sec=31)
+    blackout = tuple(
+        _observation("OB DISCHRG", 99.0, offset_sec=offset_sec) for offset_sec in range(32, 35)
+    )
+    restored = _observation("OL", 100.0, offset_sec=35)
+    assert not writer.write(
+        replace(precursor, battery_voltage_v=13.0, load_percent=19.0), BlackoutKind.ONLINE
+    )
+    for observation in (*blackout, restored):
+        observation = replace(observation, battery_voltage_v=13.0, load_percent=19.0)
+        assert writer.write(
+            observation,
+            BlackoutKind.BLACKOUT_REAL if "OB" in observation.raw_status else BlackoutKind.ONLINE,
+        )
+
+    history = json.loads((tmp_path / "history.jsonl").read_text())
+    assert history["pre_v"] == 13.7
+    assert history["early_v"] == 13.0
+    assert history["sag_v"] == 0.7
+    assert history["load_pct"] == 19.0
 
 
 def test_full_online_keeps_recording_for_tail_then_buffers_silently(tmp_path: Path) -> None:
@@ -237,6 +266,57 @@ def test_rebooted_writer_continues_ob_tail_without_duplicate_lines(tmp_path: Pat
     rows = _lines(tmp_path)
     assert [row["status"] for row in rows] == ["OB DISCHRG", "OB DISCHRG", "OL"]
     assert len(rows) == 3
+
+
+def test_restart_after_terminal_below_full_ol_does_not_resume_recharge(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path)
+    assert writer.write(_observation("OB DISCHRG", 90.0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL", 99.0, offset_sec=1), BlackoutKind.ONLINE)
+    before = _lines(tmp_path)
+
+    rebooted = TelemetryJsonlWriter(tmp_path)
+    assert not rebooted.write(_observation("OL", 98.0, offset_sec=2), BlackoutKind.ONLINE)
+    assert _lines(tmp_path) == before
+
+
+def test_startup_does_not_replay_historical_fragments_before_newer_history(
+    tmp_path: Path,
+) -> None:
+    fragments = [
+        _observation("OB DISCHRG", 90.0, offset_sec=0),
+        _observation("OL", 100.0, offset_sec=1),
+        _observation("CAL DISCHRG", 90.0, offset_sec=2),
+        _observation("OL", 100.0, offset_sec=3),
+    ]
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    telemetry_path.write_text(
+        "\n".join(json.dumps(telemetry_jsonl._sample(item)) for item in fragments) + "\n"
+    )
+    history_path = tmp_path / "history.jsonl"
+    history_path.write_text(
+        '{"kind":"blackout","at":"2026-08-23T00:00:00Z",'
+        '"duration_s":1,"depth_pct":1.0,"efc":0.01}\n'
+    )
+    before = history_path.read_text()
+
+    TelemetryJsonlWriter(tmp_path)
+
+    assert history_path.read_text() == before
+
+
+def test_ob_during_recharge_starts_a_distinct_episode(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path)
+    assert writer.write(_observation("OB DISCHRG", 90.0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL", 99.0, offset_sec=1), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OL CHRG", 98.0, offset_sec=2), BlackoutKind.ONLINE)
+    assert writer.write(_observation("OB DISCHRG", 97.0, offset_sec=3), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL", 96.0, offset_sec=4), BlackoutKind.ONLINE)
+
+    history = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
+    assert [row["at"] for row in history] == [
+        "2026-08-22T00:00:00Z",
+        "2026-08-22T00:00:03Z",
+    ]
 
 
 def test_historical_fractional_timestamp_is_read_and_new_sample_is_whole_second(

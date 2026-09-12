@@ -1,7 +1,6 @@
 #!/bin/bash
-# MOTD module: UPS battery health status
-# Displays: status icon, charge%, runtime, load%, and health percentage
-# Colors: green (healthy), yellow (warning), red (critical)
+# MOTD module: live UPS status
+# Displays: status icon, charge%, runtime, and load%.
 #
 # Live UPS metrics come from NUT (upsc) — no jq or bundled CLI dependency.
 
@@ -33,7 +32,6 @@ ups_status=$(echo "$ups_data" | grep "^ups.status:" | cut -d' ' -f2-)
 charge=$(echo "$ups_data" | grep "^battery.charge:" | cut -d' ' -f2 | cut -d'.' -f1)
 runtime=$(echo "$ups_data" | grep "^battery.runtime:" | cut -d' ' -f2)
 load=$(echo "$ups_data" | grep "^ups.load:" | cut -d' ' -f2 | cut -d'.' -f1)
-soh_pct=$(echo "$ups_data" | grep "^battery.health:" | cut -d' ' -f2 | cut -d'.' -f1)
 
 # Format runtime: convert seconds to minutes/hours
 if [[ -n "$runtime" && "$runtime" -gt 0 ]] 2>/dev/null; then
@@ -46,21 +44,6 @@ if [[ -n "$runtime" && "$runtime" -gt 0 ]] 2>/dev/null; then
     fi
 else
     rt_fmt="?"
-fi
-
-# Format and color SoH as percentage
-if [[ -n "$soh_pct" ]]; then
-    soh_fmt="${soh_pct}%"
-    if [[ "$soh_pct" -ge 80 ]]; then
-        soh_color="$GREEN"
-    elif [[ "$soh_pct" -ge 60 ]]; then
-        soh_color="$YELLOW"
-    else
-        soh_color="$RED"
-    fi
-else
-    soh_fmt="?"
-    soh_color="$DIM"
 fi
 
 # Status icon and color
@@ -79,4 +62,4 @@ else
 fi
 
 # Output single line
-printf '%b\n' "  ${st_color}${icon}${NC} UPS: ${st_label}${NC} ${DIM}·${NC} charge ${charge}% ${DIM}·${NC} runtime ${rt_fmt} ${DIM}·${NC} load ${load}% ${DIM}·${NC} health ${soh_color}${soh_fmt}${NC}"
+printf '%b\n' "  ${st_color}${icon}${NC} UPS: ${st_label}${NC} ${DIM}·${NC} charge ${charge}% ${DIM}·${NC} runtime ${rt_fmt} ${DIM}·${NC} load ${load}%"

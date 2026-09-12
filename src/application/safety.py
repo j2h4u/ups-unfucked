@@ -103,7 +103,6 @@ def calculate_safety(
         inputs.load_percent,
         PeukertParameters(
             capacity_ah=snapshot.rated_capacity_ah,
-            soh=snapshot.soh,
             peukert_exponent=snapshot.peukert_exponent,
             nominal_voltage=snapshot.nominal_voltage_v,
             nominal_power_watts=snapshot.nominal_power_watts,

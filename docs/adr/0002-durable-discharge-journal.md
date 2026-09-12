@@ -31,7 +31,7 @@ discharge evidence.
 - Keep lifecycle (`open`, `closed_*`) separate from evidence class
   (`operational_partial`, `operational_gapped`, `operational_complete_to_safety_threshold`,
   `controlled_quick_test`, `controlled_capacity_test`). Closure is not scientific completeness.
-- Apply authoritative capacity, SoH, and Peukert state only after the explicit evidence gate and
+- Apply authoritative capacity and Peukert state only after the explicit evidence gate and
   one atomic model commit. Partial/reboot-gapped observations remain operational evidence.
 - Keep persistence fail-visible but fail-open for the safety path: a journal error must not block
   the virtual low-battery signal or NUT/upsmon shutdown.

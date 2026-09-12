@@ -13,7 +13,6 @@ class TestPeukertFormula:
             load_percent=17.0,
             parameters=PeukertParameters(
                 capacity_ah=7.2,
-                soh=1.0,
                 peukert_exponent=1.15,
                 nominal_voltage=12.0,
                 nominal_power_watts=425.0,
@@ -36,40 +35,6 @@ class TestPeukertFormula:
         """Load=0% returns capped runtime (24h), not zero — avoids false LB flag from sensor glitch."""
         result = runtime_minutes(soc=1.0, load_percent=0.0)
         assert result == 1440.0  # 24h cap
-
-
-class TestPeukertDegradation:
-    """Tests for SoH scaling."""
-
-    def test_soh_80_scales_runtime(self):
-        """SoH=0.8 scales runtime by 0.8."""
-        full = runtime_minutes(
-            soc=1.0,
-            load_percent=20.0,
-            parameters=PeukertParameters(soh=1.0),
-        )
-        degraded = runtime_minutes(
-            soc=1.0,
-            load_percent=20.0,
-            parameters=PeukertParameters(soh=0.8),
-        )
-        ratio = degraded / full
-        assert 0.78 < ratio < 0.82
-
-    def test_soh_50_scales_runtime(self):
-        """SoH=0.5 scales runtime by 0.5."""
-        full = runtime_minutes(
-            soc=1.0,
-            load_percent=20.0,
-            parameters=PeukertParameters(soh=1.0),
-        )
-        half = runtime_minutes(
-            soc=1.0,
-            load_percent=20.0,
-            parameters=PeukertParameters(soh=0.5),
-        )
-        ratio = half / full
-        assert 0.48 < ratio < 0.52
 
 
 class TestPeukertLoadNonlinearity:

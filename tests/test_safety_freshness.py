@@ -35,7 +35,6 @@ def _snapshot() -> FrozenModelSnapshot:
         7.2,
         12.0,
         510.0,
-        1.0,
         1.2,
         0.012,
         0.0,
@@ -45,15 +44,13 @@ def _snapshot() -> FrozenModelSnapshot:
 
 def _observation(status: str = "OL") -> PhysicalObservation:
     return PhysicalObservation(
-        "boot-a",
-        1_000_000_000,
-        datetime(2026, 8, 16, tzinfo=timezone.utc),
-        status,
-        "13.30",
-        13.3,
-        0.01,
-        20.0,
-        230.0,
+        monotonic_ns=1_000_000_000,
+        wall_time_utc=datetime(2026, 8, 16, tzinfo=timezone.utc),
+        raw_status=status,
+        battery_voltage_v=13.3,
+        load_percent=20.0,
+        input_voltage_v=230.0,
+        battery_pct=100.0,
     )
 
 
@@ -339,7 +336,7 @@ def test_alarm_during_atomic_cleanup_leaves_no_owned_temp(tmp_path: Path, monkey
         nonlocal injected
         if path == temporary and not injected:
             injected = True
-            os.kill(os.getpid(), signal.SIGALRM)
+            signal.raise_signal(signal.SIGALRM)
         original_unlink(path, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, "unlink", alarm_on_owned_temp)

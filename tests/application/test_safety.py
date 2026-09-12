@@ -73,7 +73,6 @@ def test_calculation_uses_one_frozen_snapshot() -> None:
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
-        soh=1.0,
         peukert_exponent=1.2,
         ir_k_v_per_pp=0.015,
         ir_reference_load_percent=0.0,
@@ -152,11 +151,9 @@ def test_lb_source_is_explicit(kind, remaining, expected_status, expected_source
 
 def test_publication_keeps_raw_lb_separate_from_modeled_decision() -> None:
     raw = PhysicalObservation(
-        boot_id="boot",
         monotonic_ns=1,
         wall_time_utc=datetime(2026, 8, 16, tzinfo=timezone.utc),
         raw_status="OB DISCHRG LB",
-        battery_voltage_raw="13.00",
         battery_voltage_v=13.0,
         load_percent=20.0,
         input_voltage_v=0.0,
@@ -178,7 +175,6 @@ def _snapshot() -> FrozenModelSnapshot:
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
-        soh=1.0,
         peukert_exponent=1.2,
         ir_k_v_per_pp=0.015,
         ir_reference_load_percent=0.0,

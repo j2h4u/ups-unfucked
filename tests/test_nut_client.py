@@ -43,7 +43,7 @@ class TestNUTClientCommunication:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        responses = [client.get_ups_vars_with_tokens()[0] for _ in range(100)]
+        responses = [client.get_ups_vars() for _ in range(100)]
 
         assert len(responses) == 100
         assert all("battery.voltage" in r for r in responses)
@@ -54,7 +54,7 @@ class TestNUTClientCommunication:
 
         client = NUTClient(timeout=2.0)
         with pytest.raises(socket.timeout):
-            client.get_ups_vars_with_tokens()
+            client.get_ups_vars()
 
     def test_connection_refused(self, mock_nut_socket):
         """Socket errors are raised, not silently ignored."""
@@ -62,7 +62,7 @@ class TestNUTClientCommunication:
 
         client = NUTClient()
         with pytest.raises(socket.error):
-            client.get_ups_vars_with_tokens()
+            client.get_ups_vars()
 
 
 class TestListVar:
@@ -73,7 +73,7 @@ class TestListVar:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        client.get_ups_vars_with_tokens()
+        client.get_ups_vars()
 
         mock_nut_socket.connect.assert_called_once()
 
@@ -82,7 +82,7 @@ class TestListVar:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        result, _ = client.get_ups_vars_with_tokens()
+        result = client.get_ups_vars()
 
         assert result["battery.voltage"] == 13.40
         assert result["ups.load"] == 16.0
@@ -97,17 +97,9 @@ class TestListVar:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        result, _ = client.get_ups_vars_with_tokens()
+        result = client.get_ups_vars()
 
         assert isinstance(result["ups.status"], str)
-
-    def test_list_var_can_preserve_exact_tokens(self, mock_nut_socket):
-        mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
-
-        values, tokens = NUTClient().get_ups_vars_with_tokens()
-
-        assert values["battery.voltage"] == 13.4
-        assert tokens["battery.voltage"] == "13.40"
 
     def test_list_var_timeout(self, mock_nut_socket):
         """socket.timeout raised correctly from LIST VAR."""
@@ -115,7 +107,7 @@ class TestListVar:
 
         client = NUTClient()
         with pytest.raises(socket.timeout):
-            client.get_ups_vars_with_tokens()
+            client.get_ups_vars()
 
     def test_recv_until_multi_chunk(self, mock_nut_socket):
         """Response split across multiple recv calls assembled correctly."""
@@ -124,7 +116,7 @@ class TestListVar:
         mock_nut_socket.recv.side_effect = [full[:mid], full[mid:]]
 
         client = NUTClient()
-        result, _ = client.get_ups_vars_with_tokens()
+        result = client.get_ups_vars()
 
         assert len(result) == 6
         assert result["battery.voltage"] == 13.40
@@ -136,7 +128,7 @@ class TestListVar:
         completed = ('VAR cyberpower battery.voltage "13.40"\nEND LIST VAR cyberpower\n').encode()
         mock_nut_socket.recv.side_effect = [deceptive_prefix, completed]
 
-        result, _ = NUTClient().get_ups_vars_with_tokens()
+        result = NUTClient().get_ups_vars()
 
         assert result["device.note"] == "END LIST VAR cyberpower"
         assert result["battery.voltage"] == 13.4
@@ -147,7 +139,7 @@ class TestListVar:
         mock_nut_socket.recv.return_value = LIST_VAR_RESPONSE.encode()
 
         client = NUTClient()
-        client.get_ups_vars_with_tokens()
+        client.get_ups_vars()
 
         mock_nut_socket.close.assert_called_once()
 
@@ -157,7 +149,7 @@ class TestListVar:
 
         client = NUTClient()
         with pytest.raises(socket.timeout):
-            client.get_ups_vars_with_tokens()
+            client.get_ups_vars()
 
         mock_nut_socket.close.assert_called_once()
 
@@ -188,7 +180,7 @@ class TestTruncatedListVar:
 
         client = NUTClient(timeout=0.1)
         with pytest.raises(socket.timeout):
-            client.get_ups_vars_with_tokens()
+            client.get_ups_vars()
 
         # Socket must still be cleaned up
         mock_nut_socket.close.assert_called_once()
@@ -200,7 +192,7 @@ class TestTruncatedListVar:
         mock_nut_socket.recv.side_effect = [truncated_response, b""]
 
         with pytest.raises(ConnectionError, match="closed before END sentinel"):
-            NUTClient().get_ups_vars_with_tokens()
+            NUTClient().get_ups_vars()
 
         mock_nut_socket.close.assert_called_once()
 

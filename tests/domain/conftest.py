@@ -16,7 +16,6 @@ def observation_factory():
             "voltage_v": 13.2,
             "load_percent": 20.0,
             "raw_status": "OB DISCHRG",
-            "boot_id": "boot-a",
             "input_voltage_v": 0.0,
         }
         unknown = set(overrides).difference(fields)
@@ -25,13 +24,10 @@ def observation_factory():
         fields.update(overrides)
         voltage_v = fields["voltage_v"]
         wall = datetime(2026, 8, 16, tzinfo=timezone.utc) + timedelta(seconds=second)
-        raw = None if voltage_v is None else f"{voltage_v:.3f}"
         return PhysicalObservation(
-            boot_id=fields["boot_id"],
             monotonic_ns=int(second * 1_000_000_000),
             wall_time_utc=wall,
             raw_status=fields["raw_status"],
-            battery_voltage_raw=raw,
             battery_voltage_v=voltage_v,
             load_percent=fields["load_percent"],
             input_voltage_v=fields["input_voltage_v"],
@@ -46,7 +42,6 @@ def frozen_snapshot():
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
-        soh=1.0,
         peukert_exponent=1.2,
         ir_k_v_per_pp=0.015,
         ir_reference_load_percent=0.0,

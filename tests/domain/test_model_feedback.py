@@ -21,7 +21,6 @@ def _snapshot(k: float = 0.020) -> FrozenModelSnapshot:
         rated_capacity_ah=7.2,
         nominal_voltage_v=12.0,
         nominal_power_watts=510.0,
-        soh=1.0,
         peukert_exponent=1.2,
         ir_k_v_per_pp=k,
         ir_reference_load_percent=20.0,
@@ -109,7 +108,7 @@ def test_three_consistent_observations_use_median_and_bound_decrement() -> None:
 
     assert isinstance(proposal, ModelFeedbackProposal)
     assert proposal.to_value == pytest.approx(0.018)
-    assert proposal.field == "physics.ir_compensation.k_volts_per_percent"
+    assert not hasattr(proposal, "field")
 
 
 def test_replayed_event_does_not_count_twice() -> None:

@@ -11,16 +11,27 @@ from src.domain.time import utc_second
 
 DEFAULT_IR_K_V_PER_PP = 0.015
 DEFAULT_PEUKERT_EXPONENT = 1.2
-TARGET_STATE_KEYS = frozenset({"soh", "physics", "lut"})
+DEFAULT_LUT: tuple[tuple[float, float], ...] = tuple(
+    (voltage + DEFAULT_IR_K_V_PER_PP * 20.0, soc)
+    for voltage, soc in (
+        (13.4, 1.00),
+        (12.8, 0.85),
+        (12.4, 0.64),
+        (12.1, 0.40),
+        (11.6, 0.18),
+        (11.0, 0.06),
+        (10.5, 0.00),
+    )
+)
+TARGET_STATE_KEYS = frozenset({"physics"})
 FEEDBACK_STATE_KEY = "last_feedback"
 
 
 IrCompensationState = TypedDict("IrCompensationState", {"k_volts_per_percent": float})
 PhysicsState = TypedDict(
     "PhysicsState",
-    {"peukert_exponent": float, "ir_compensation": IrCompensationState},
+    {"ir_compensation": IrCompensationState},
 )
-LutStatePoint = TypedDict("LutStatePoint", {"v": float, "soc": float})
 
 
 FeedbackChangeState = TypedDict(
@@ -51,9 +62,7 @@ FeedbackState = TypedDict(
 TargetModelState = TypedDict(
     "TargetModelState",
     {
-        "soh": float,
         "physics": PhysicsState,
-        "lut": list[LutStatePoint],
         "last_feedback": NotRequired[FeedbackState],
     },
 )
@@ -79,11 +88,7 @@ def validate_target_state(state: Mapping[str, Any], *, source: str = "model.json
     """Validate the exact post-transform schema without mutating it."""
     _validate_target_object(state, source=source)
     _validate_target_structure(state, source=source)
-    soh = _require_finite_in_range(state["soh"], f"{source}.soh", minimum=0.0, maximum=1.0)
-    if soh <= 0.0:
-        raise TargetModelStateError(f"{source}.soh must be > 0")
     _validate_target_physics(state["physics"], source=source)
-    _validate_lut(state["lut"], source=source)
     if FEEDBACK_STATE_KEY in state:
         _validate_last_feedback(state[FEEDBACK_STATE_KEY], source=source)
 
@@ -151,13 +156,8 @@ def _validate_feedback_change(field: object, change: object, *, source: str) -> 
 
 def _validate_target_structure(state: Mapping[str, Any], *, source: str) -> None:
     physics = state["physics"]
-    if not isinstance(physics, Mapping) or frozenset(physics) != {
-        "peukert_exponent",
-        "ir_compensation",
-    }:
-        raise TargetModelStateError(
-            f"{source}.physics must contain exactly peukert_exponent and ir_compensation"
-        )
+    if not isinstance(physics, Mapping) or frozenset(physics) != {"ir_compensation"}:
+        raise TargetModelStateError(f"{source}.physics must contain exactly ir_compensation")
     _validate_ir_compensation(physics["ir_compensation"], source=source)
 
 
@@ -168,40 +168,10 @@ def _validate_ir_compensation(value: object, *, source: str) -> None:
 
 
 def _validate_target_physics(physics: Mapping[str, Any], *, source: str) -> None:
-    _require_finite_in_range(
-        physics["peukert_exponent"],
-        f"{source}.physics.peukert_exponent",
-        minimum=1.0,
-        maximum=1.5,
-    )
     _require_finite(
         physics["ir_compensation"]["k_volts_per_percent"],
         f"{source}.physics.ir_compensation.k_volts_per_percent",
     )
-
-
-def _validate_lut(value: object, *, source: str) -> None:
-    if not isinstance(value, list) or len(value) < 2:
-        raise TargetModelStateError(f"{source}.lut must be a list with at least two entries")
-    for index, entry in enumerate(value):
-        _validate_lut_entry(entry, source=f"{source}.lut[{index}]")
-    _validate_lut_order(value, source=source)
-
-
-def _validate_lut_entry(value: object, *, source: str) -> None:
-    if not isinstance(value, dict) or set(value) != {"v", "soc"}:
-        raise TargetModelStateError(f"{source} must contain exactly v and soc")
-    _require_finite(value["v"], f"{source}.v")
-    _require_finite_in_range(value["soc"], f"{source}.soc", minimum=0.0, maximum=1.0)
-
-
-def _validate_lut_order(value: list[object], *, source: str) -> None:
-    for previous, current in zip(value, value[1:], strict=False):
-        assert isinstance(previous, dict) and isinstance(current, dict)
-        if float(previous["v"]) <= float(current["v"]):
-            raise TargetModelStateError(f"{source}.lut voltages must be strictly descending")
-        if float(previous["soc"]) < float(current["soc"]):
-            raise TargetModelStateError(f"{source}.lut SoC must be non-increasing")
 
 
 def load_target_state(path: Path) -> tuple[TargetModelState, bytes]:
@@ -218,28 +188,12 @@ def load_target_state(path: Path) -> tuple[TargetModelState, bytes]:
 
 def fresh_target_state() -> TargetModelState:
     """Create a predictor equivalent to the current Release-A defaults."""
-    offset = DEFAULT_IR_K_V_PER_PP * 20.0
-    lut = [
-        LutStatePoint(v=voltage + offset, soc=soc)
-        for voltage, soc in (
-            (13.4, 1.00),
-            (12.8, 0.85),
-            (12.4, 0.64),
-            (12.1, 0.40),
-            (11.6, 0.18),
-            (11.0, 0.06),
-            (10.5, 0.00),
-        )
-    ]
     state: TargetModelState = {
-        "soh": 1.0,
         "physics": {
-            "peukert_exponent": DEFAULT_PEUKERT_EXPONENT,
             "ir_compensation": {
                 "k_volts_per_percent": DEFAULT_IR_K_V_PER_PP,
             },
         },
-        "lut": lut,
     }
     validate_target_state(state, source="fresh target state")
     return state
@@ -255,18 +209,3 @@ def _require_finite(value: object, name: str) -> float:
     if not finite:
         raise TargetModelStateError(f"{name} must be a finite number")
     return float(value)
-
-
-def _require_finite_in_range(
-    value: object,
-    name: str,
-    *,
-    minimum: float | None = None,
-    maximum: float | None = None,
-) -> float:
-    number = _require_finite(value, name)
-    if minimum is not None and number < minimum:
-        raise TargetModelStateError(f"{name} must be >= {minimum}")
-    if maximum is not None and number > maximum:
-        raise TargetModelStateError(f"{name} must be <= {maximum}")
-    return number
