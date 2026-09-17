@@ -46,6 +46,7 @@ class TelemetryJsonlWriter:
         )
         self._silent_observations: list[PhysicalObservation] = []
         self._post_full_until: datetime | None = None
+        self._recharge_start: PhysicalObservation | None = None
         self._restore_active_episode()
         self._reconcile_closed_episodes()
 
@@ -74,16 +75,27 @@ class TelemetryJsonlWriter:
             self._episode_records = [dict(record) for record in records[context_start:]]
             self._episode_active = True
         elif _online_status(records[-1].get("status")):
-            self._restore_recent_online(records)
-            # Resume only an explicit charger state. A plain below-full OL can
-            # be a stale firmware percentage and must not create endless data.
-            last = self._recent_online[-1] if self._recent_online else None
-            self._recharging = (
-                last is not None and _charging_status(last.raw_status) and _below_full(last)
-            )
+            self._restore_online_tail(records)
         # Provenance is process-local; an active tail from a prior daemon is
         # never allowed to become a self-test after restart.
         self._episode_kind = BlackoutKind.BLACKOUT_REAL
+
+    def _restore_online_tail(self, records: tuple[TelemetrySample, ...]) -> None:
+        self._restore_recent_online(records)
+        # Resume only an explicit charger state. A plain below-full OL can be
+        # a stale firmware percentage and must not create endless data.
+        last = self._recent_online[-1] if self._recent_online else None
+        self._recharging = (
+            last is not None and _charging_status(last.raw_status) and _below_full(last)
+        )
+        if not self._recharging:
+            return
+        start = len(records) - 1
+        while start > 0 and _charging_status(records[start - 1].get("status")):
+            start -= 1
+        # Preserve the first durable charging point so a daemon restart does
+        # not throw away an already useful charge slope.
+        self._recharge_start = _observation_from_row(records[start])
 
     def _reconcile_closed_episodes(self) -> None:
         """Recover summaries whose raw terminal OL was durable before a restart."""
@@ -192,6 +204,10 @@ class TelemetryJsonlWriter:
         """Expose the small history index needed to avoid repeat feedback."""
         return self._history.event_kinds()
 
+    def recharge_start(self) -> PhysicalObservation | None:
+        """Return the durable start of an unfinished explicit recharge."""
+        return self._recharge_start
+
     def record_ir_observation(self, observation: Mapping[str, Any] | object) -> bool:
         """Persist an extracted IR observation in the existing history file."""
         values = _observation_values(observation)
@@ -243,21 +259,10 @@ class TelemetryJsonlWriter:
                 self._recent_online.clear()
                 continue
             try:
-                at = _parse_observation_time(str(row["at"]))
+                observation = _observation_from_row(row)
             except (KeyError, ValueError):
                 self._recent_online.clear()
                 continue
-            observation = PhysicalObservation(
-                monotonic_ns=0,
-                wall_time_utc=at,
-                raw_status=str(row["status"]),
-                battery_voltage_v=_optional_float(row.get("battery_v")),
-                load_percent=_optional_float(row.get("load_pct")),
-                input_voltage_v=_optional_float(row.get("input_v")),
-                battery_pct=_optional_float(row.get("battery_pct")),
-                runtime_s=_optional_float(row.get("runtime_s")),
-                output_v=_optional_float(row.get("output_v")),
-            )
             self._remember_recent_observation(observation, pending=False)
 
 
@@ -274,6 +279,20 @@ def _sample(observation: PhysicalObservation) -> dict[str, object]:
             observation.output_v,
             observation.raw_status,
         )
+    )
+
+
+def _observation_from_row(row: Mapping[str, object]) -> PhysicalObservation:
+    return PhysicalObservation(
+        monotonic_ns=0,
+        wall_time_utc=_parse_observation_time(str(row["at"])),
+        raw_status=str(row["status"]),
+        battery_voltage_v=_optional_float(row.get("battery_v")),
+        load_percent=_optional_float(row.get("load_pct")),
+        input_voltage_v=_optional_float(row.get("input_v")),
+        battery_pct=_optional_float(row.get("battery_pct")),
+        runtime_s=_optional_float(row.get("runtime_s")),
+        output_v=_optional_float(row.get("output_v")),
     )
 
 

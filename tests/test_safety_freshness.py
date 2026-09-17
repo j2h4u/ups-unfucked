@@ -6,7 +6,7 @@ import os
 import signal
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Thread
 
@@ -69,7 +69,7 @@ def test_recharge_eta_waits_for_two_percent_then_uses_observed_slope() -> None:
         estimator.estimate_seconds(
             replace(
                 _observation("OL CHRG", battery_pct=32.0),
-                monotonic_ns=181_000_000_000,
+                wall_time_utc=datetime(2026, 8, 16, tzinfo=timezone.utc) + timedelta(seconds=180),
             )
         )
         is None
@@ -78,11 +78,22 @@ def test_recharge_eta_waits_for_two_percent_then_uses_observed_slope() -> None:
         estimator.estimate_seconds(
             replace(
                 _observation("OL CHRG", battery_pct=33.0),
-                monotonic_ns=361_000_000_000,
+                wall_time_utc=datetime(2026, 8, 16, tzinfo=timezone.utc) + timedelta(seconds=360),
             )
         )
         == 12_060
     )
+
+
+def test_recharge_eta_uses_durable_start_immediately_after_restart() -> None:
+    started = _observation("OL CHRG", battery_pct=30.0)
+    estimator = RechargeEtaEstimator(started.wall_time_utc, started.battery_pct)
+    current = replace(
+        _observation("OL CHRG", battery_pct=34.0),
+        wall_time_utc=started.wall_time_utc + timedelta(minutes=12),
+    )
+
+    assert estimator.estimate_seconds(current) == 11_880
 
 
 def _publish_online(exporter: VirtualUpsExporter) -> None:

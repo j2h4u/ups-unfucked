@@ -543,13 +543,14 @@ def build_daemon(
         config.model_dir / "model.json",
         rated_capacity_ah=config.capacity_ah,
     )
-    exporter = VirtualUpsExporter(
-        virtual_ups_path=virtual_ups_path,
-        max_publication_age_s=publication_age_s,
-    )
     telemetry_writer = TelemetryJsonlWriter(
         config.model_dir,
         silent_window_sec=config.ema_window_sec,
+    )
+    exporter = VirtualUpsExporter(
+        virtual_ups_path=virtual_ups_path,
+        max_publication_age_s=publication_age_s,
+        recharge_start=telemetry_writer.recharge_start(),
     )
     client = NUTClient(
         host=config.nut_host,
