@@ -36,6 +36,9 @@ MAX_PUBLICATION_AGE_SEC = 30.0
 # boundary; this only prevents a genuinely stuck filesystem call from hanging
 # until then.
 PUBLICATION_DEADLINE_SEC = 10.0
+# The UPS reports charge in whole percentage points. Waiting for two steps
+# halves the quantization error before presenting a necessarily approximate ETA.
+RECHARGE_ETA_MIN_GAIN_PERCENT = 2.0
 
 
 class SafetyPublicationError(RuntimeError):
@@ -48,6 +51,43 @@ class PollPublicationContext:
     snapshot: FrozenModelSnapshot
     calculation: SafetyCalculation
     poll_latency_ms: float
+
+
+@dataclass(slots=True)
+class RechargeEtaEstimator:
+    """Estimate time to full from the observed slope of this recharge."""
+
+    _started_at_ns: int | None = None
+    _started_percent: float | None = None
+
+    def estimate_seconds(self, observation: PhysicalObservation) -> int | None:
+        raw_status = set(observation.raw_status.split())
+        percent = observation.battery_pct
+        if "OL" not in raw_status or "CHRG" not in raw_status or percent is None:
+            self._reset()
+            return None
+        if self._started_at_ns is None or self._started_percent is None:
+            self._start(observation.monotonic_ns, percent)
+            return None
+        if percent < self._started_percent:
+            # A lower reading is a better baseline after charger/firmware
+            # settling; keeping the old high point would invent a slower ETA.
+            self._start(observation.monotonic_ns, percent)
+            return None
+        gain_percent = percent - self._started_percent
+        elapsed_seconds = (observation.monotonic_ns - self._started_at_ns) / 1_000_000_000
+        if gain_percent < RECHARGE_ETA_MIN_GAIN_PERCENT or elapsed_seconds <= 0.0:
+            return None
+        remaining_percent = max(0.0, 100.0 - percent)
+        return round(remaining_percent * elapsed_seconds / gain_percent)
+
+    def _start(self, monotonic_ns: int, percent: float) -> None:
+        self._started_at_ns = monotonic_ns
+        self._started_percent = percent
+
+    def _reset(self) -> None:
+        self._started_at_ns = None
+        self._started_percent = None
 
 
 class VirtualUpsExporter:
@@ -80,6 +120,7 @@ class VirtualUpsExporter:
             initial_file_age_s=_existing_file_age_s(self.virtual_ups_path),
             max_age_s=self._max_publication_age_s,
         )
+        self._recharge_eta = RechargeEtaEstimator()
 
     def stage(self, context: PollPublicationContext) -> None:
         """Freeze the physical/model context consumed by the next publication."""
@@ -221,6 +262,7 @@ class VirtualUpsExporter:
         raw_status = set(observation.raw_status.split())
         charge_percent: float | int | None = calculation.charge_percent
         runtime_seconds: int | None = max(0, round(calculation.runtime_minutes * 60.0))
+        recharge_eta_seconds = self._recharge_eta.estimate_seconds(observation)
         if "OL" in raw_status and "CHRG" in raw_status:
             # Charger voltage is not open-circuit battery voltage, so the
             # voltage model invents a high SoC and runtime while recharging.
@@ -235,6 +277,9 @@ class VirtualUpsExporter:
         metrics: dict[str, object] = {
             "ups.status": publication.virtual_status_token,
             "battery.runtime": runtime_seconds,
+            # This custom NUT field keeps the estimate available to every
+            # lightweight client without teaching them to parse telemetry.
+            "battery.recharge.runtime": recharge_eta_seconds,
             "battery.charge": charge_percent,
             "battery.voltage": observation.battery_voltage_v,
             "ups.load": observation.load_percent,

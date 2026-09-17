@@ -34,3 +34,31 @@ def test_motd_prints_live_ups_summary(tmp_path: Path) -> None:
     assert "runtime 47m" in result.stdout
     assert "load 15%" in result.stdout
     assert "health" not in result.stdout
+
+
+def test_motd_replaces_discharge_runtime_with_recharge_eta(tmp_path: Path) -> None:
+    upsc = tmp_path / "upsc"
+    upsc.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' 'battery.charge: 31' 'battery.runtime:' "
+        "'battery.recharge.runtime: 12300' 'ups.load: 26' 'ups.status: OL' "
+        "'ups.raw.status: OL CHRG'\n"
+    )
+    upsc.chmod(0o755)
+    environment = os.environ | {
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "UPS_NUT_ADDRESS": "fixture@localhost",
+    }
+
+    result = subprocess.run(
+        ["bash", str(MOTD)],
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "charge 31%" in result.stdout
+    assert "full in ~3h25m" in result.stdout
+    assert "runtime" not in result.stdout
