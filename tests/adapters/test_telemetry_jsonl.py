@@ -279,6 +279,17 @@ def test_restart_after_terminal_below_full_ol_does_not_resume_recharge(tmp_path:
     assert _lines(tmp_path) == before
 
 
+def test_restart_resumes_explicit_incomplete_recharge(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path)
+    assert writer.write(_observation("OB DISCHRG", 90.0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(_observation("OL CHRG", 30.0, offset_sec=1), BlackoutKind.ONLINE)
+
+    rebooted = TelemetryJsonlWriter(tmp_path)
+    assert rebooted.write(_observation("OL CHRG", 31.0, offset_sec=2), BlackoutKind.ONLINE)
+
+    assert [row["battery_pct"] for row in _lines(tmp_path)] == [90.0, 30.0, 31.0]
+
+
 def test_startup_does_not_replay_historical_fragments_before_newer_history(
     tmp_path: Path,
 ) -> None:

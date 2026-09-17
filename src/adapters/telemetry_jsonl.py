@@ -75,6 +75,12 @@ class TelemetryJsonlWriter:
             self._episode_active = True
         elif _online_status(records[-1].get("status")):
             self._restore_recent_online(records)
+            # Resume only an explicit charger state. A plain below-full OL can
+            # be a stale firmware percentage and must not create endless data.
+            last = self._recent_online[-1] if self._recent_online else None
+            self._recharging = (
+                last is not None and _charging_status(last.raw_status) and _below_full(last)
+            )
         # Provenance is process-local; an active tail from a prior daemon is
         # never allowed to become a self-test after restart.
         self._episode_kind = BlackoutKind.BLACKOUT_REAL
@@ -349,6 +355,11 @@ def _active_status(status: object) -> bool:
 
 def _online_status(status: object) -> bool:
     return "OL" in str(status).split()
+
+
+def _charging_status(status: object) -> bool:
+    flags = str(status).split()
+    return "OL" in flags and "CHRG" in flags
 
 
 def read(path: Path) -> MinimalEvent:
