@@ -9,7 +9,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.adapters.battery_history import BatteryHistory, canonical_timestamp
+from src.adapters.battery_history import (
+    BASELINE_WINDOW_SECONDS,
+    BatteryHistory,
+    canonical_timestamp,
+)
 from src.adapters.jsonl_errors import EventCorruptionError
 from src.adapters.minimal_event_file import MinimalEvent, TelemetrySample, append, sample
 from src.adapters.minimal_event_file import read as _read
@@ -37,7 +41,7 @@ class TelemetryJsonlWriter:
         self._silent_window = (
             timedelta(seconds=silent_window_sec) if silent_window_sec is not None else None
         )
-        self._recent_online: deque[PhysicalObservation] = deque(maxlen=5)
+        self._recent_online: deque[PhysicalObservation] = deque(maxlen=BASELINE_WINDOW_SECONDS + 1)
         self._silent_observations: list[PhysicalObservation] = []
         self._post_full_until: datetime | None = None
         self._restore_active_episode()
@@ -93,7 +97,7 @@ class TelemetryJsonlWriter:
         }
         if start_at in episode_starts or any(at >= start_at for at in episode_starts):
             return
-        context_start = max(0, start - 5)
+        context_start = max(0, start - BASELINE_WINDOW_SECONDS - 1)
         self._history.episode(
             [dict(row) for row in records[context_start : end + 1]],
             physical_kind=BlackoutKind.BLACKOUT_REAL,
@@ -226,7 +230,7 @@ class TelemetryJsonlWriter:
         return [_sample(item) for item in sorted(observations.values(), key=_observation_time)]
 
     def _restore_recent_online(self, records: tuple[TelemetrySample, ...]) -> None:
-        for row in records[-5:]:
+        for row in records[-(BASELINE_WINDOW_SECONDS + 1) :]:
             if not _online_status(row.get("status")):
                 self._recent_online.clear()
                 continue
