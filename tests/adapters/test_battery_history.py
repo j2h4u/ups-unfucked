@@ -168,6 +168,10 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
             "duration_s": 20,
             "depth_pct": 60.0,
             "efc": 0.6,
+            "load_pct": 20.0,
+            "early_v": 13.3,
+            "min_v": 13.3,
+            "min_at_s": 0,
         },
         {
             "kind": "self_test",
@@ -175,6 +179,12 @@ def test_writer_emits_one_summary_for_natural_and_cal_episodes(tmp_path: Path) -
             "duration_s": 10,
             "depth_pct": 10.0,
             "efc": 0.1,
+            "load_pct": 20.0,
+            "pre_v": 13.3,
+            "early_v": 13.3,
+            "sag_v": 0.0,
+            "min_v": 13.3,
+            "min_at_s": 0,
         },
     ]
 
@@ -293,6 +303,83 @@ def test_response_includes_voltage_change_after_status_transition() -> None:
     assert summary["early_v"] == 12.3
     assert summary["sag_v"] == 1.3
     assert summary["min_at_s"] == 12
+
+
+def test_response_uses_single_pre_event_voltage_sample() -> None:
+    base = datetime(2026, 8, 22, tzinfo=timezone.utc)
+
+    def row(
+        offset: int,
+        status: str,
+        battery_pct: float,
+        *,
+        voltage: float | None = None,
+    ) -> dict[str, object]:
+        result: dict[str, object] = {
+            "at": (base + timedelta(seconds=offset))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "status": status,
+            "battery_pct": battery_pct,
+            "load_pct": 15.0,
+        }
+        if voltage is not None:
+            result["battery_v"] = voltage
+        return result
+
+    summary = summarize_episode(
+        [
+            row(-1, "OL", 100.0, voltage=13.54),
+            row(0, "OB DISCHRG", 99.0, voltage=13.4),
+            row(1, "OB DISCHRG", 98.0, voltage=13.2),
+            row(2, "OB DISCHRG", 97.0, voltage=13.1),
+            row(3, "OL", 100.0, voltage=13.1),
+        ]
+    )
+
+    assert summary is not None
+    assert summary["pre_v"] == 13.5
+    assert summary["early_v"] == 13.1
+    assert summary["sag_v"] == 0.4
+    assert summary["min_v"] == 13.1
+    assert summary["min_at_s"] == 2
+
+
+def test_response_metrics_remain_independent_without_pre_event_voltage() -> None:
+    base = datetime(2026, 8, 22, tzinfo=timezone.utc)
+
+    def row(
+        offset: int, status: str, battery_pct: float, voltage: float | None
+    ) -> dict[str, object]:
+        result: dict[str, object] = {
+            "at": (base + timedelta(seconds=offset))
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "status": status,
+            "battery_pct": battery_pct,
+            "load_pct": 15.0,
+        }
+        if voltage is not None:
+            result["battery_v"] = voltage
+        return result
+
+    summary = summarize_episode(
+        [
+            row(-1, "OL", 100.0, None),
+            row(0, "OB DISCHRG", 99.0, 13.4),
+            row(1, "OB DISCHRG", 98.0, 13.2),
+            row(2, "OB DISCHRG", 97.0, 13.1),
+            row(3, "OL", 100.0, None),
+        ]
+    )
+
+    assert summary is not None
+    assert summary["load_pct"] == 15.0
+    assert summary["early_v"] == 13.1
+    assert summary["min_v"] == 13.1
+    assert summary["min_at_s"] == 2
+    assert "pre_v" not in summary
+    assert "sag_v" not in summary
 
 
 def test_fractional_event_key_is_canonical_and_duplicate_is_suppressed(tmp_path: Path) -> None:

@@ -15,9 +15,8 @@ from src.domain.time import utc_second
 from src.domain.values import BlackoutKind
 
 HISTORY_FILENAME = "history.jsonl"
-BASELINE_WINDOW_SECONDS = 30
-MIN_BASELINE_SPAN_SECONDS = 10
-EARLY_RESPONSE_SECONDS = 15
+PRE_DISCHARGE_VOLTAGE_SLIDING_WINDOW_SECONDS = 30
+EARLY_DISCHARGE_RESPONSE_WINDOW_SECONDS = 15
 
 
 # Compact facts derived from one closed battery episode.  Response voltages
@@ -40,16 +39,16 @@ EpisodeHistoryRecord = TypedDict(
     },
 )
 
-# Complete early-response measurement; absence means the samples were insufficient.
+# Available measurements from the start of one discharge episode.
 ResponseMetrics = TypedDict(
     "ResponseMetrics",
     {
-        "load_pct": float,
-        "pre_v": float,
-        "early_v": float,
-        "sag_v": float,
-        "min_v": float,
-        "min_at_s": int,
+        "load_pct": NotRequired[float],
+        "pre_v": NotRequired[float],
+        "early_v": NotRequired[float],
+        "sag_v": NotRequired[float],
+        "min_v": NotRequired[float],
+        "min_at_s": NotRequired[int],
     },
 )
 
@@ -260,12 +259,17 @@ def summarize_episode(
         efc=depth / 100.0 if depth is not None else None,
     )
     metrics = _response_metrics(records, start_index, end_index, start_at)
-    if metrics is not None:
+    if "load_pct" in metrics:
         summary["load_pct"] = metrics["load_pct"]
+    if "pre_v" in metrics:
         summary["pre_v"] = metrics["pre_v"]
+    if "early_v" in metrics:
         summary["early_v"] = metrics["early_v"]
+    if "sag_v" in metrics:
         summary["sag_v"] = metrics["sag_v"]
+    if "min_v" in metrics:
         summary["min_v"] = metrics["min_v"]
+    if "min_at_s" in metrics:
         summary["min_at_s"] = metrics["min_at_s"]
     return summary
 
@@ -275,57 +279,50 @@ def _response_metrics(
     start_index: int,
     end_index: int,
     start_at: datetime,
-) -> ResponseMetrics | None:
-    baseline = [
-        row
+) -> ResponseMetrics:
+    pre_discharge_voltages = [
+        float(row["battery_v"])
         for row in records[:start_index]
         if 0.0
         < (start_at - _parse_timestamp(str(row.get("at")))).total_seconds()
-        <= BASELINE_WINDOW_SECONDS
+        <= PRE_DISCHARGE_VOLTAGE_SLIDING_WINDOW_SECONDS
         and _finite_number(row.get("battery_v"))
     ]
-    early = [
+    early_rows = [
         row
         for row in records[start_index : end_index + 1]
         if 0.0
         <= (_parse_timestamp(str(row.get("at"))) - start_at).total_seconds()
-        <= EARLY_RESPONSE_SECONDS
-        and _finite_number(row.get("battery_v"))
-        and _finite_number(row.get("load_pct"))
+        <= EARLY_DISCHARGE_RESPONSE_WINDOW_SECONDS
     ]
-    if not _baseline_is_sufficient(baseline) or len(early) < 3:
-        return None
-    early_loads = [float(row["load_pct"]) for row in early]
-    if max(early_loads) - min(early_loads) > 5.0:
-        return None
+    early_voltages = [
+        float(row["battery_v"]) for row in early_rows if _finite_number(row.get("battery_v"))
+    ]
+    early_loads = [
+        float(row["load_pct"]) for row in early_rows if _finite_number(row.get("load_pct"))
+    ]
     discharge = records[start_index:end_index]
     voltage_points = [
         (row, float(row["battery_v"])) for row in discharge if _finite_number(row.get("battery_v"))
     ]
-    if not voltage_points:
-        return None
-    pre_v = round(float(median(float(row["battery_v"]) for row in baseline)), 1)
-    # The UPS reports voltage in coarse plateaus, and the voltage step does not
-    # necessarily coincide with the status transition.
-    early_v = round(min(float(row["battery_v"]) for row in early), 1)
-    min_row, min_v = min(voltage_points, key=lambda point: point[1])
-    min_at_s = round((_parse_timestamp(str(min_row.get("at"))) - start_at).total_seconds())
-    return {
-        "load_pct": round(float(median(early_loads)), 1),
-        "pre_v": pre_v,
-        "early_v": early_v,
-        "sag_v": round(pre_v - early_v, 1),
-        "min_v": round(min_v, 1),
-        "min_at_s": min_at_s,
-    }
-
-
-def _baseline_is_sufficient(rows: list[dict[str, Any]]) -> bool:
-    if len(rows) < 3:
-        return False
-    first = _parse_timestamp(str(rows[0].get("at")))
-    last = _parse_timestamp(str(rows[-1].get("at")))
-    return (last - first).total_seconds() >= MIN_BASELINE_SPAN_SECONDS
+    metrics = ResponseMetrics()
+    if early_loads:
+        metrics["load_pct"] = round(float(median(early_loads)), 1)
+    if pre_discharge_voltages:
+        metrics["pre_v"] = round(float(median(pre_discharge_voltages)), 1)
+    if early_voltages:
+        # The UPS reports voltage in coarse plateaus, and the voltage step does
+        # not necessarily coincide with the status transition.
+        metrics["early_v"] = round(min(early_voltages), 1)
+    if "pre_v" in metrics and "early_v" in metrics:
+        metrics["sag_v"] = round(metrics["pre_v"] - metrics["early_v"], 1)
+    if voltage_points:
+        min_row, min_v = min(voltage_points, key=lambda point: point[1])
+        metrics["min_v"] = round(min_v, 1)
+        metrics["min_at_s"] = round(
+            (_parse_timestamp(str(min_row.get("at"))) - start_at).total_seconds()
+        )
+    return metrics
 
 
 def _discharge_bounds(records: list[dict[str, Any]]) -> tuple[int, int] | None:
