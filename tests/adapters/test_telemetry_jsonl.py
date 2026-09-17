@@ -285,6 +285,9 @@ def test_restart_resumes_explicit_incomplete_recharge(tmp_path: Path) -> None:
     assert writer.write(_observation("OL CHRG", 30.0, offset_sec=1), BlackoutKind.ONLINE)
 
     rebooted = TelemetryJsonlWriter(tmp_path)
+    recharge_start = rebooted.recharge_start()
+    assert recharge_start is not None
+    assert recharge_start.battery_pct == 30.0
     assert rebooted.write(_observation("OL CHRG", 31.0, offset_sec=2), BlackoutKind.ONLINE)
 
     assert [row["battery_pct"] for row in _lines(tmp_path)] == [90.0, 30.0, 31.0]

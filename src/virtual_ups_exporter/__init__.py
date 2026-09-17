@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Callable
@@ -57,7 +58,7 @@ class PollPublicationContext:
 class RechargeEtaEstimator:
     """Estimate time to full from the observed slope of this recharge."""
 
-    _started_at_ns: int | None = None
+    _started_at: datetime | None = None
     _started_percent: float | None = None
 
     def estimate_seconds(self, observation: PhysicalObservation) -> int | None:
@@ -66,27 +67,27 @@ class RechargeEtaEstimator:
         if "OL" not in raw_status or "CHRG" not in raw_status or percent is None:
             self._reset()
             return None
-        if self._started_at_ns is None or self._started_percent is None:
-            self._start(observation.monotonic_ns, percent)
+        if self._started_at is None or self._started_percent is None:
+            self._start(observation.wall_time_utc, percent)
             return None
         if percent < self._started_percent:
             # A lower reading is a better baseline after charger/firmware
             # settling; keeping the old high point would invent a slower ETA.
-            self._start(observation.monotonic_ns, percent)
+            self._start(observation.wall_time_utc, percent)
             return None
         gain_percent = percent - self._started_percent
-        elapsed_seconds = (observation.monotonic_ns - self._started_at_ns) / 1_000_000_000
+        elapsed_seconds = (observation.wall_time_utc - self._started_at).total_seconds()
         if gain_percent < RECHARGE_ETA_MIN_GAIN_PERCENT or elapsed_seconds <= 0.0:
             return None
         remaining_percent = max(0.0, 100.0 - percent)
         return round(remaining_percent * elapsed_seconds / gain_percent)
 
-    def _start(self, monotonic_ns: int, percent: float) -> None:
-        self._started_at_ns = monotonic_ns
+    def _start(self, at: datetime, percent: float) -> None:
+        self._started_at = at
         self._started_percent = percent
 
     def _reset(self) -> None:
-        self._started_at_ns = None
+        self._started_at = None
         self._started_percent = None
 
 
@@ -100,6 +101,7 @@ class VirtualUpsExporter:
         max_publication_age_s: float = MAX_PUBLICATION_AGE_SEC,
         publication_deadline_s: float = PUBLICATION_DEADLINE_SEC,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        recharge_start: PhysicalObservation | None = None,
     ) -> None:
         if not math.isfinite(max_publication_age_s) or max_publication_age_s <= 0.0:
             raise ValueError("max_publication_age_s must be positive and finite")
@@ -120,7 +122,10 @@ class VirtualUpsExporter:
             initial_file_age_s=_existing_file_age_s(self.virtual_ups_path),
             max_age_s=self._max_publication_age_s,
         )
-        self._recharge_eta = RechargeEtaEstimator()
+        self._recharge_eta = RechargeEtaEstimator(
+            recharge_start.wall_time_utc if recharge_start is not None else None,
+            recharge_start.battery_pct if recharge_start is not None else None,
+        )
 
     def stage(self, context: PollPublicationContext) -> None:
         """Freeze the physical/model context consumed by the next publication."""
