@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Thread
@@ -26,6 +27,7 @@ from src.battery_math.lut import LutPoint
 from src.domain.values import BlackoutKind, FrozenModelSnapshot, PhysicalObservation
 from src.virtual_ups_exporter import (
     PollPublicationContext,
+    RechargeEtaEstimator,
     SafetyPublicationError,
     VirtualUpsExporter,
     _adjust_previous_timer,
@@ -56,6 +58,30 @@ def _observation(status: str = "OL", *, battery_pct: float | None = 100.0) -> Ph
         load_percent=20.0,
         input_voltage_v=230.0,
         battery_pct=battery_pct,
+    )
+
+
+def test_recharge_eta_waits_for_two_percent_then_uses_observed_slope() -> None:
+    estimator = RechargeEtaEstimator()
+
+    assert estimator.estimate_seconds(_observation("OL CHRG", battery_pct=31.0)) is None
+    assert (
+        estimator.estimate_seconds(
+            replace(
+                _observation("OL CHRG", battery_pct=32.0),
+                monotonic_ns=181_000_000_000,
+            )
+        )
+        is None
+    )
+    assert (
+        estimator.estimate_seconds(
+            replace(
+                _observation("OL CHRG", battery_pct=33.0),
+                monotonic_ns=361_000_000_000,
+            )
+        )
+        == 12_060
     )
 
 
