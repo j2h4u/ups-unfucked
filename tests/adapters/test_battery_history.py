@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -222,6 +223,46 @@ def test_history_records_typed_voltage_response_and_comparable_delta(tmp_path: P
         "min_at_s": 7,
     }
     assert second["sag_delta_v"] == 0.2
+
+
+def test_writer_preserves_response_metrics_with_default_online_context(tmp_path: Path) -> None:
+    writer = TelemetryJsonlWriter(tmp_path)
+
+    def observation(
+        offset: int,
+        status: str,
+        battery_pct: float,
+        voltage: float,
+        load_pct: float,
+    ) -> PhysicalObservation:
+        return replace(
+            _observation(status, battery_pct, offset),
+            battery_voltage_v=voltage,
+            load_percent=load_pct,
+        )
+
+    for offset in range(11):
+        assert not writer.write(observation(offset, "OL", 100.0, 13.6, 15.0), BlackoutKind.ONLINE)
+    assert writer.write(observation(11, "OB DISCHRG", 99.0, 13.4, 15.0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(observation(12, "OB DISCHRG", 99.0, 13.1, 15.0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(observation(13, "OB DISCHRG", 99.0, 12.9, 15.0), BlackoutKind.BLACKOUT_REAL)
+    assert writer.write(observation(14, "OL", 100.0, 12.9, 15.0), BlackoutKind.ONLINE)
+
+    assert _rows(tmp_path / "history.jsonl") == [
+        {
+            "kind": "blackout",
+            "at": "2026-08-22T00:00:11Z",
+            "duration_s": 3,
+            "depth_pct": 1.0,
+            "efc": 0.01,
+            "load_pct": 15.0,
+            "pre_v": 13.6,
+            "early_v": 12.9,
+            "sag_v": 0.7,
+            "min_v": 12.9,
+            "min_at_s": 2,
+        }
+    ]
 
 
 def test_response_includes_voltage_change_after_status_transition() -> None:
