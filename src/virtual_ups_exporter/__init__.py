@@ -97,7 +97,10 @@ class VirtualUpsExporter:
             try:
                 self._validate_publication(context, publication)
                 metrics = self._virtual_metrics(context, publication)
-                payload = "".join(f"{key}: {_nut_value(value)}\n" for key, value in metrics.items())
+                payload = "".join(
+                    f"{key}: {_nut_value(value) if value is not None else ''}\n"
+                    for key, value in metrics.items()
+                )
                 _write_with_deadline(
                     self.virtual_ups_path,
                     payload,
@@ -215,10 +218,24 @@ class VirtualUpsExporter:
         observation = context.observation
         calculation = context.calculation
         snapshot = context.snapshot
+        raw_status = set(observation.raw_status.split())
+        charge_percent: float | int | None = calculation.charge_percent
+        runtime_seconds: int | None = max(0, round(calculation.runtime_minutes * 60.0))
+        if "OL" in raw_status and "CHRG" in raw_status:
+            # Charger voltage is not open-circuit battery voltage, so the
+            # voltage model invents a high SoC and runtime while recharging.
+            # The UPS charge counter is the only direct estimate available in
+            # this state; runtime becomes meaningful again after mains loss.
+            charge_percent = observation.battery_pct
+            runtime_seconds = None
+        elif "OL" in raw_status:
+            # Plain OL means charging has completed; avoid turning harmless
+            # float-voltage movement into a fake loss of charge.
+            charge_percent = 100
         metrics: dict[str, object] = {
             "ups.status": publication.virtual_status_token,
-            "battery.runtime": max(0, round(calculation.runtime_minutes * 60.0)),
-            "battery.charge": calculation.charge_percent,
+            "battery.runtime": runtime_seconds,
+            "battery.charge": charge_percent,
             "battery.voltage": observation.battery_voltage_v,
             "ups.load": observation.load_percent,
             "input.voltage": observation.input_voltage_v,
@@ -232,7 +249,9 @@ class VirtualUpsExporter:
             ),
             "ups.safety.event_class": publication.event_class.value,
         }
-        return {key: value for key, value in metrics.items() if value is not None}
+        # dummy-ups keeps omitted variables in memory. Publishing an empty
+        # value is its protocol for deleting a metric that no longer applies.
+        return metrics
 
     def _freshness_locked(self, now: float) -> PublicationFreshness:
         return self._freshness_tracker.evaluate(

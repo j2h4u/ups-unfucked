@@ -16,7 +16,12 @@ from src.application.publication_freshness import (
     PublicationFreshnessTracker,
     telemetry_loss_grace_s,
 )
-from src.application.safety import SafetyInputs, calculate_safety, make_safety_publication
+from src.application.safety import (
+    SafetyCalculation,
+    SafetyInputs,
+    calculate_safety,
+    make_safety_publication,
+)
 from src.battery_math.lut import LutPoint
 from src.domain.values import BlackoutKind, FrozenModelSnapshot, PhysicalObservation
 from src.virtual_ups_exporter import (
@@ -42,7 +47,7 @@ def _snapshot() -> FrozenModelSnapshot:
     )
 
 
-def _observation(status: str = "OL") -> PhysicalObservation:
+def _observation(status: str = "OL", *, battery_pct: float | None = 100.0) -> PhysicalObservation:
     return PhysicalObservation(
         monotonic_ns=1_000_000_000,
         wall_time_utc=datetime(2026, 8, 16, tzinfo=timezone.utc),
@@ -50,7 +55,7 @@ def _observation(status: str = "OL") -> PhysicalObservation:
         battery_voltage_v=13.3,
         load_percent=20.0,
         input_voltage_v=230.0,
-        battery_pct=100.0,
+        battery_pct=battery_pct,
     )
 
 
@@ -63,6 +68,68 @@ def _publish_online(exporter: VirtualUpsExporter) -> None:
     )
     exporter.stage(PollPublicationContext(observation, snapshot, calculation, 1.0))
     exporter.publish(make_safety_publication(observation, calculation))
+
+
+def _publish_metrics(
+    tmp_path: Path,
+    *,
+    status: str,
+    blackout_kind: BlackoutKind,
+    battery_pct: float,
+) -> tuple[dict[str, str], SafetyCalculation]:
+    output = tmp_path / "ups.dev"
+    exporter = VirtualUpsExporter(virtual_ups_path=output)
+    observation = _observation(status, battery_pct=battery_pct)
+    snapshot = _snapshot()
+    calculation = calculate_safety(
+        inputs=SafetyInputs(13.3, 20.0, blackout_kind, 5),
+        snapshot=snapshot,
+    )
+    exporter.stage(PollPublicationContext(observation, snapshot, calculation, 1.0))
+    exporter.publish(make_safety_publication(observation, calculation))
+    metrics = dict(
+        line.split(": ", maxsplit=1) for line in output.read_text(encoding="utf-8").splitlines()
+    )
+    return metrics, calculation
+
+
+def test_recharging_online_publication_uses_physical_charge_without_runtime(
+    tmp_path: Path,
+) -> None:
+    metrics, _ = _publish_metrics(
+        tmp_path,
+        status="OL CHRG",
+        blackout_kind=BlackoutKind.ONLINE,
+        battery_pct=73.0,
+    )
+
+    assert metrics["battery.charge"] == "73"
+    assert metrics["battery.runtime"] == ""
+
+
+def test_fully_online_publication_reports_full_charge(tmp_path: Path) -> None:
+    metrics, calculation = _publish_metrics(
+        tmp_path,
+        status="OL",
+        blackout_kind=BlackoutKind.ONLINE,
+        battery_pct=73.0,
+    )
+
+    assert metrics["battery.charge"] == "100"
+    assert int(metrics["battery.runtime"]) == round(calculation.runtime_minutes * 60.0)
+
+
+def test_outage_publication_keeps_modeled_charge_and_runtime(tmp_path: Path) -> None:
+    metrics, calculation = _publish_metrics(
+        tmp_path,
+        status="OB DISCHRG",
+        blackout_kind=BlackoutKind.BLACKOUT_REAL,
+        battery_pct=73.0,
+    )
+
+    assert metrics["battery.charge"] == str(calculation.charge_percent)
+    assert metrics["battery.charge"] != "73"
+    assert int(metrics["battery.runtime"]) == round(calculation.runtime_minutes * 60.0)
 
 
 def test_poll_loss_uses_grace_then_explicit_lb_fail_safe(tmp_path: Path) -> None:
