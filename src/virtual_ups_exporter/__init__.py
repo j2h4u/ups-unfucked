@@ -284,7 +284,11 @@ class VirtualUpsExporter:
             "battery.runtime": runtime_seconds,
             # This custom NUT field keeps the estimate available to every
             # lightweight client without teaching them to parse telemetry.
-            "battery.recharge.runtime": recharge_eta_seconds,
+            # Use zero outside a usable estimate because this dummy-ups build
+            # does not reliably clear a previously populated custom variable.
+            "battery.recharge.runtime": (
+                0 if recharge_eta_seconds is None else recharge_eta_seconds
+            ),
             "battery.charge": charge_percent,
             "battery.voltage": observation.battery_voltage_v,
             "ups.load": observation.load_percent,
