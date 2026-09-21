@@ -153,6 +153,7 @@ def test_fully_online_publication_reports_full_charge(tmp_path: Path) -> None:
     )
 
     assert metrics["battery.charge"] == "100"
+    assert metrics["battery.recharge.runtime"] == "0"
     assert int(metrics["battery.runtime"]) == round(calculation.runtime_minutes * 60.0)
 
 
